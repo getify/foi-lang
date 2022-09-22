@@ -1,0 +1,17 @@
+{
+	"name": "foi-lang",
+	"version": "0.0.0-preA",
+	"description": "Foi: a different kind of functional programming language",
+	"repository": "getify/foi-lang",
+	"keywords": [
+		"fp",
+		"language"
+	],
+	"bugs": {
+		"url": "https://github.com/getify/foi-lang/issues",
+		"email": "getify@gmail.com"
+	},
+	"homepage": "https://github.com/getify/foi-lang",
+	"author": "Kyle Simpson <getify@gmail.com>",
+	"license": "MIT"
+}
