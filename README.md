@@ -61,18 +61,20 @@ All function calls and operators can optionally be evaluated in a lisp-like expr
 ```c
 import log from #Std;
 
-| log, "Hello" |;               // "Hello"
+| log "Hello" |;               // "Hello"
 
-| log, | + 6, 12 ||;           // 18
+| log | + 6, 12 ||;            // 18
 ```
 
-The main reason for the optional expression-evaluation form is that it allows for partial-application (left-to-right) by providing fewer arguments than the arity of the function.
+One main reason for the optional expression-evaluation form is that it allows for partial-application (left-to-right) by providing fewer arguments than the arity of the function:
 
 ```c
-| | + 6 |, 12 |;               // 18
+| | + 6 | 12 |;                // 18
 ```
 
-Above, the `| +, 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .., 12 |` expression.
+Above, the `| + 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
+
+An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` in the earlier snippet.
 
 To define variables, use the `def` keyword (not an operator/function). To block-scope one or more definitions, use the `def (..) { .. }` block form. All definitions need a value, but you can use the `empty` value if there's no other value to specify:
 
@@ -84,6 +86,8 @@ def (tmp: empty) {
     tmp++;
 };
 ```
+
+**Note:** `def` definitions *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, `defn`, and `import`) statements. However, the `def` block form is allowed anywhere in a scope. Moreover, as `def (tmp: empty) { .. }` and `{ def tmp: empty; .. }` are equivalent, the former is preferred for readability sake.
 
 Records are immutable collections of values, delimited by `< .. >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
 
@@ -102,21 +106,41 @@ person[prop];                   // "Simpson"
 
 Above, Record/Tuple fields are accessed with `.` syntax, whether numeric or lexical-identifier. `[ .. ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
 
-To define Records/Tuples using existing values, or with arbitrary expressions, use the expression-evaluation form:
+To define Records/Tuples using arbitrary expressions, use the expression-evaluation form:
 
 ```c
 import uppercase from #Std.String;
 
 def five: 5;
-def numbers: < 4, |five|, 6 >;
+def numbers: < 4, five, 6 >;
 
 def surname: "Simpson";
-def person: < first: "Kyle", last: |uppercase, surname| >;
+def person: < first: "Kyle", last: |uppercase surname| >;
 ```
 
 To keep Record/Tuple syntax simpler, *only* the `| .. |` form of expression-evaluation (function invocation, operators, etc) is allowed inside the `< .. >` literal definition.
 
-To progressively define the contents across an arbitrary number of statements/operations, use a tuple/record *def-block* `<{ .. }>`. The block can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
+Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
+
+```c
+def chars: < "H", "e", "l", "l", "o" >;
+def str: "Hello";
+
+chars.1;                    // "e"
+str.1;                      // "e"
+```
+
+To determine the length of a string (or a Tuple), or the count of elements in a Record, use the `size(..)` function:
+
+```c
+import size from #Std;
+
+size("Hello");              // 5
+size(< "O", "K" >);         // 2
+size(< a: 1 >);             // 1
+```
+
+To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{ .. }>`. The block can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
 
 ```c
 def numbers: <{
@@ -131,7 +155,7 @@ def person: <{
 }>;
 ```
 
-To derive a new tuple/record from an existing tuple/record, use the `&` include operator:
+To derive a new Record/Tuple from an existing Record/Tuple, use the `&` include operator:
 
 ```c
 def numbers: < 4, 5, 6 >;
@@ -151,7 +175,7 @@ Function definitions are always hoisted:
 
 ```c
 add(6,12);                          // 18
-| add 6, 12 |;                     // 18
+| add 6, 12 |;                      // 18
 
 defn add(x,y) { ^x + y; };
 ```
@@ -186,7 +210,7 @@ def myFn: defn(x,y) ^x + y;
 Function definitions can optionally be curried:
 
 ```c
-defn add(x)(y) { ^x + y; };
+defn add(x)(y) ^x + y;
 
 def add6: add(6);
 
@@ -197,7 +221,7 @@ add(6)(12);                         // 18
 Note that `add(6,12)` (aka, loose currying) would not work, but the expression-evaluation form of the function call supports loose-applying arguments across currying boundaries:
 
 ```c
-defn add(x)(y) { ^x + y; };
+defn add(x)(y) ^x + y;
 
 | add 6, 12 |;                     // 18
 ```
@@ -227,7 +251,7 @@ defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-| 11 | => inc, triple, half ||;   // 18
+| 11 | => inc, triple, half ||;     // 18
 
 def composed: | => inc, triple, half |;
 composed(11);                       // 18
