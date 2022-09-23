@@ -251,7 +251,7 @@ defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-| 11 | => inc, triple, half ||;     // 18
+|| => inc, triple, half | 11 |;     // 18
 
 def composed: | => inc, triple, half |;
 composed(11);                       // 18
@@ -274,7 +274,7 @@ Type annotations in Foi are applied to values/expressions (not to variables, etc
 ```c
 def age: 42 as int;
 
-def cost: | * getQty(order), getPrice(item) | as float;
+def cost: | * getQty(order,item), getPrice(item) | as float;
 ```
 
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
