@@ -38,7 +38,9 @@ In addition to the above, I may pull parts of a long-ago description of [earlier
 
 The following is a super incomplete exploration of what I've been imagining for awhile. There's a lot still to work out.
 
-Import named dependencies (including "globals" from `std`), use the `import` keyword:
+### Imports
+
+To import named dependencies (including "globals" from `std`), use the `import` keyword:
 
 ```c
 import #Std;
@@ -55,6 +57,8 @@ import log from #Std;
 
 log("Hello");                   // "Hello"
 ```
+
+### Expression-Evaluation Form
 
 All function calls and operators can optionally be evaluated in a lisp-like expression-evaluation form (with `| |` instead of `( )`):
 
@@ -74,7 +78,11 @@ One main reason for the optional expression-evaluation form is that it allows fo
 
 Above, the `| + 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
 
+Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands). The `=>` flow (composition) operator and the `~` Tuple range operator are examples.
+
 An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` in the earlier snippet.
+
+### Defining Variables
 
 To define variables, use the `def` keyword (not an operator/function). To block-scope one or more definitions, use the `def (..) { .. }` block form. All definitions need a value, but you can use the `empty` value if there's no other value to specify:
 
@@ -88,6 +96,8 @@ def (tmp: empty) {
 ```
 
 **Note:** `def` definitions *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, `defn`, and `import`) statements. However, the `def` block form is allowed anywhere in a scope. Moreover, as `def (tmp: empty) { .. }` and `{ def tmp: empty; .. }` are equivalent, the former is preferred for readability sake.
+
+### Records And Tuples
 
 Records are immutable collections of values, delimited by `< .. >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
 
@@ -155,7 +165,34 @@ def person: <{
 }>;
 ```
 
-To derive a new Record/Tuple from an existing Record/Tuple, use the `&` include operator:
+#### Inspecting
+
+You can determine if a value is in a Tuple with the `in` operator:
+
+```c
+def numbers: < 4, 5, 6 >;
+
+7 in numbers;               // false
+| in 4 numbers |;           // true
+
+7 !in numbers;              // true
+| !in 4 numbers |;          // false
+```
+
+**Note:** The `in` operator only inspects numerically indexed fields.
+
+You can determine if a field is defined in a Record with the `has` operator:
+
+```c
+def person: < first: "Kyle", last: "Simpson" >;
+
+person has "first";          // true
+person has "middle";         // false
+```
+
+#### Deriving Instead Of Mutating
+
+Since Records/Tuples are immutable, to change their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick operator:
 
 ```c
 def numbers: < 4, 5, 6 >;
@@ -164,6 +201,91 @@ def allDigits: < 1, 2, 3, &numbers, 7, 8, 9 >;
 def person: < first: "Kyle", last: "Simpson" >;
 def friend: < &person, first: "Jenny" >;
 ```
+
+And to select only specific elements for the derived Record/Tuple:
+
+```c
+def numbers: < 4, 5, 6 >;
+def oddDigits: < 1, 3, &numbers.1, 7, 9 >;
+
+def person: < first: "Kyle", last: "Simpson" >;
+def friend: < first: "Jenny", &person.last >;
+```
+
+The `&numbers.1` and `&person.last` pick operations are just sugar for:
+
+```c
+def numbers: < 4, 5, 6 >;
+def oddDigits: < 1, 3, 2: numbers.1, 7, 9 >;
+
+def person: < first: "Kyle", last: "Simpson" >;
+def friend: < first: "Jenny", last: person >;
+```
+
+But in that less-sugared form, you could re-index or rename the field in the target Record/Tuple.
+
+As a shorthand, you can also pick multiple fields at once:
+
+```c
+def numbers: < 4, 6 >;
+def evenDigits: < 0, 2, &numbers.[0,1], 8 >;
+
+def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
+def profile: < &person.[first,nickname] >;
+```
+
+The `+` operator, when used with Records/Tuples, acts in an append-only (concatenation) form:
+
+```c
+def numbers: < 4, 5, 6 >;
+def moreNumbers: numbers + < 7, 8, 9 >;
+
+moreNumbers.5;              // 8
+```
+
+And to derive a new Tuple as a ranged subset of another one, use the `~` operator:
+
+```c
+def numbers: < 4, 5, 6 >;
+
+numbers ~ 1;                // < 5, 6 >
+numbers ~ -1;               // < 6 >
+
+| ~ numbers 0 2 |;          // < 4, 5 >
+```
+
+#### Maps
+
+A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil:
+
+```c
+def numbers: < 4, 5, 6 >;
+def dataMap: < %numbers: "my favorites" >;
+
+dataMap[numbers];           // "my favorites"
+```
+
+#### Sets
+
+A Set is an alternate Tuple definition form, using `( )` instead of `< >`, which ensures each value is only held once:
+
+```c
+def numbers: ( 4, 6, 4, 5 );
+
+numbers;                    // < 4, 6, 5 >
+```
+
+To append Set-append -- only append if not in the Tuple, use the `+.` operator:
+
+```c
+def numbers: ( 4, 5, 6 );
+
+def moreNumbers: numbers +. ( 6, 7 );
+
+moreNumbers;                // < 4, 5, 6, 7 >
+```
+
+### Functions
 
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
@@ -207,6 +329,8 @@ def myFn: defn(x,y) ^x + y;
 |;                                  // 18
 ```
 
+#### Function Currying
+
 Function definitions can optionally be curried:
 
 ```c
@@ -244,6 +368,8 @@ defn lookupCustomer(id) over (customerCache) {
 };
 ```
 
+#### Function Composition
+
 Function composition can be defined with the `=>` flow operator, like this:
 
 ```c
@@ -257,6 +383,8 @@ def composed: | => inc, triple, half |;
 composed(11);                       // 18
 ```
 
+#### Function Pipelines
+
 By contrast, the `#>` pipeline operator (F#-style) operates like this:
 
 ```c
@@ -268,6 +396,8 @@ defn half(v) ^v / 2;
 
 11 #> | => inc, triple, half |;     // 18
 ```
+
+### Type Annotations
 
 Type annotations in Foi are applied to values/expressions (not to variables, etc). These are optional, as Foi uses type inference wherever possible. But applying them can often improve the performance optimizations the Foi compiler can produce. A type annotation always begins with the `as` keyword:
 
