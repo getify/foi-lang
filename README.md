@@ -60,7 +60,7 @@ log("Hello");                   // "Hello"
 
 ### Expression-Evaluation Form
 
-All function calls and operators can optionally be evaluated in a lisp-like expression-evaluation form (with `| |` instead of `( )`):
+All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (with `| |` instead of `( )`):
 
 ```c
 import log from #Std;
@@ -70,7 +70,7 @@ import log from #Std;
 | log | + 6, 12 ||;            // 18
 ```
 
-One main reason for the optional expression-evaluation form is that it allows for partial-application (left-to-right) by providing fewer arguments than the arity of the function:
+One main reason for the optional evaluation-expression form is that it allows for partial-application (left-to-right) by providing fewer arguments than the arity of the function:
 
 ```c
 | | + 6 | 12 |;                // 18
@@ -78,24 +78,193 @@ One main reason for the optional expression-evaluation form is that it allows fo
 
 Above, the `| + 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
 
-Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands). The `=>` flow (composition) operator and the `~` Tuple range operator are examples.
+Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands). The `->` flow (composition) operator and the `~` Tuple range operator are examples.
 
 An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` in the earlier snippet.
 
 ### Defining Variables
 
-To define variables, use the `def` keyword (not an operator/function). To block-scope one or more definitions, use the `def (..) { .. }` block form. All definitions need a value, but you can use the `empty` value if there's no other value to specify:
+To define variables, use the `def` keyword (not an operator/function).
 
 ```c
 def age: 42;
-
-def (tmp: empty) {
-    tmp = age;
-    tmp++;
-};
 ```
 
-**Note:** `def` definitions *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, `defn`, and `import`) statements. However, the `def` block form is allowed anywhere in a scope. Moreover, as `def (tmp: empty) { .. }` and `{ def tmp: empty; .. }` are equivalent, the former is preferred for readability sake.
+All definitions need a value initialization, but you can use the `empty` value if there's no other value to specify.
+
+`def` definitions do not hoist, so to avoid confusion, they *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, `defn`, and `import`) statements.
+
+To reassign a variable:
+
+```c
+def age: empty;
+
+age <: 42;
+```
+
+Unlike `def` definitions, `<:` re-assignments are allowed anywhere in the scope after the associated `def` definition.
+
+`def` definitions attach to the nearest enclosing scope, whether that be module, function, or block. A block-scoped variable definition is thus:
+
+```c
+{
+    def tmp: empty;
+}
+```
+
+However, since `def` definitions must appear at the top of their respective scopes, and there may be multiple such definitions in a block, the `def`-block form should be preferred for readability sake:
+
+```c
+def (tmp: empty) {
+    tmp <: age;
+}
+```
+
+Moreover, the `def`-block is allowed anywhere in its enclosing scope, so it's more flexible than a `def`.
+
+### Boolean Logic
+
+The `true` and `false` boolean values are used primarily for decision making. As such, non-negated, boolean-returning operators, aka logical operators, begin with the `?` character.
+
+To combine two or more boolean values with logical *AND* (`?and`):
+
+```c
+def isValid: true;
+def isComplete: true;
+def isSuccess: false;
+
+isValid ?and isComplete;                    // true
+isValid ?and isComplete ?and isSuccess;     // false
+
+| ?and isValid, isComplete, isSuccess |;    // false
+```
+
+And for logical *OR* (`?or`):
+
+```c
+def isValid: true;
+def isComplete: true;
+def isSuccess: false;
+
+isValid ?or isComplete ?or isSuccess;       // true
+
+| ?or isValid, isComplete, isSuccess |;     // true
+```
+
+To negate a boolean value, use the `!` operator:
+
+```c
+def isValid: true;
+
+def isInvalid: !isValid;
+def isNotValid: | ! valid |;
+
+isInvalid;              // false
+isNotValid;             // false
+```
+
+Also, any `?`-prefixed logical boolean operator can be flipped/negated by swapping the `?` with the `!` operator. For example, `!and` is *NAND* (not-and) and `!or` is *NOR* (not-or):
+
+```c
+// instead of these:
+!(true ?and false);             // true
+!true ?or !false;               // true
+!(true ?and true);              // false
+!true ?or !true;                // false
+
+// or these:
+!(false ?or false);             // true
+!false ?and !false;             // true
+!(true ?or false);              // false
+!true ?and !false;              // false
+
+// use negated operators:
+true !and false;                // true
+true !and true;                 // false
+false !or false;                // true
+true !or false;                 // false
+```
+
+### Equality And Comparison
+
+The `?=` operator checks for equality:
+
+```c
+def x: 42;
+def y: 42;
+def z: 100;
+
+x ?= 42;                    // true
+
+| ?= x, y, z |;             // false
+```
+
+To relationally compare (`?<` less-than, `?>` greater-than):
+
+```c
+def x: 100;
+def y: 200;
+
+x ?< y;                     // true
+x ?> y;                     // false
+```
+
+And for the inclusive comparisons (`?<=` less-than-or-equal, `?>=` greater-than-or-equal):
+
+```c
+def x: 100;
+def y: 200;
+
+x ?<= x;                    // true
+y ?>= y;                    // true
+```
+
+A very common task is to check if a value is in a range between two other values:
+
+```c
+def x: 100;
+
+(x ?> 0) ?and (x ?< 500);   // true
+```
+
+However, this can be done more idiomatically with the range-check operators, `?<>` (non-inclusive) and `?<=>` (inclusive):
+
+```c
+def x: 100;
+
+| ?<> x, 0, 500 |;          // true
+| ?<=> x, 100, 100 |;       // true
+```
+
+Remember, all these `?`-prefixed operators can be flipped/negated by swapping the `?` with `!`.
+
+### Pattern Matching
+
+To make decisions, use pattern matching:
+
+```c
+import log from #Std;
+
+def myName: "Kyle";
+
+?/
+    (myName ?= "Kyle"): log("Hello!")
+    default: log("Goodbye!");
+/;
+```
+
+A pattern-match is an expression, so the matched clause's result value will be the final expression result:
+
+```c
+def myName: "Kyle";
+
+def greeting: ?/
+    (myName ?= "Kyle"): "Hello!"
+    default: "Goodbye!"
+/;
+
+greeting;               // "Hello!"
+```
 
 ### Records And Tuples
 
@@ -116,7 +285,7 @@ person[prop];                   // "Simpson"
 
 Above, Record/Tuple fields are accessed with `.` syntax, whether numeric or lexical-identifier. `[ .. ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
 
-To define Records/Tuples using arbitrary expressions, use the expression-evaluation form:
+To define Records/Tuples using arbitrary expressions, use the evaluation-expression form:
 
 ```c
 import uppercase from #Std.String;
@@ -128,7 +297,7 @@ def surname: "Simpson";
 def person: < first: "Kyle", last: |uppercase surname| >;
 ```
 
-To keep Record/Tuple syntax simpler, *only* the `| .. |` form of expression-evaluation (function invocation, operators, etc) is allowed inside the `< .. >` literal definition.
+To keep Record/Tuple syntax simpler, *only* the `| .. |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `< .. >` literal definition.
 
 Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
 
@@ -154,40 +323,42 @@ To progressively define the contents of a Record/Tuple across an arbitrary numbe
 
 ```c
 def numbers: <{
-    .1 = 4;
-    .2 = 5;
-    .3 = 6;
+    .1 <: 4;
+    .2 <: 5;
+    .3 <: 6;
 }>;
 
 def person: <{
-    .first = "Kyle";
-    .last = "Simpson";
+    .first <: "Kyle";
+    .last <: "Simpson";
 }>;
 ```
 
 #### Inspecting
 
-You can determine if a value is in a Tuple with the `in` operator:
+You can determine if a value is in a Tuple with the `?in` / `!in` operator:
 
 ```c
 def numbers: < 4, 5, 6 >;
 
-7 in numbers;               // false
-| in 4 numbers |;           // true
+7 ?in numbers;                  // false
+| ?in 4 numbers |;              // true
 
-7 !in numbers;              // true
-| !in 4 numbers |;          // false
+7 !in numbers;                  // true
+| !in 4 numbers |;              // false
 ```
 
 **Note:** The `in` operator only inspects numerically indexed fields.
 
-You can determine if a field is defined in a Record with the `has` operator:
+You can determine if a field is defined in a Record with the `?has` operator:
 
 ```c
 def person: < first: "Kyle", last: "Simpson" >;
 
-person has "first";          // true
-person has "middle";         // false
+person ?has "first";            // true
+person ?has "middle";           // false
+
+person !has "nickname";         // true
 ```
 
 #### Deriving Instead Of Mutating
@@ -256,7 +427,7 @@ numbers ~ -1;               // < 6 >
 
 #### Maps
 
-A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil:
+A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil to start the field name:
 
 ```c
 def numbers: < 4, 5, 6 >;
@@ -267,20 +438,22 @@ dataMap[numbers];           // "my favorites"
 
 #### Sets
 
-A Set is an alternate Tuple definition form, using `( )` instead of `< >`, which ensures each value is only held once:
+A Set is an alternate Tuple definition form, delimited with `[ ]` instead of `< >`, which ensures each unique value is only stored once:
 
 ```c
-def numbers: ( 4, 6, 4, 5 );
+def numbers: [ 4, 6, 4, 5 ];
 
 numbers;                    // < 4, 6, 5 >
 ```
 
-To append Set-append -- only append if not in the Tuple, use the `+.` operator:
+As you can see, a Set is merely a syntactic sugar construction form for a Tuple, filtering out any duplicate values. What's created is still a Tuple, not a different value type.
+
+The `+=` set-append operator (similar to the `+` Record/Tuple append operator) will only append values not in the previous Tuple:
 
 ```c
-def numbers: ( 4, 5, 6 );
+def numbers: [ 4, 5, 6 ];
 
-def moreNumbers: numbers +. ( 6, 7 );
+def moreNumbers: numbers += [ 6, 7 ];
 
 moreNumbers;                // < 4, 5, 6, 7 >
 ```
@@ -290,7 +463,7 @@ moreNumbers;                // < 4, 5, 6, 7 >
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
 ```c
-defn add(x,y) { ^x + y; };
+defn add(x,y) { ^x + y; }
 ```
 
 Function definitions are always hoisted:
@@ -299,13 +472,13 @@ Function definitions are always hoisted:
 add(6,12);                          // 18
 | add 6, 12 |;                      // 18
 
-defn add(x,y) { ^x + y; };
+defn add(x,y) { ^x + y; }
 ```
 
 Function definitions are also expressions (first-class values), so they can be assigned and passed around:
 
 ```c
-def myFn: defn add(x,y) { ^x + y; };
+def myFn: defn add(x,y) { ^x + y; }
 
 add(6,12);                          // 18
 myFn(6,12);                         // 18
@@ -329,6 +502,40 @@ def myFn: defn(x,y) ^x + y;
 |;                                  // 18
 ```
 
+#### Default Parameter Values
+
+To default a function parameter value:
+
+```c
+defn add(x: 0, y: 0) ^x + y;
+```
+
+#### Function Recursion
+
+Function recursion is supported:
+
+```c
+defn factorial(v) {
+    ^?/
+        (v ?<= 1): v
+        default: v * factorial(v - 1)
+    /;
+}
+```
+
+**Note:** The `?/ .. /` syntax is pattern-matching, explained earlier.
+
+Tail-calls (recursive or not) are automatically optimized by the Foi compiler to save call-stack resources:
+
+```c
+defn factorial(v,tot: 1) {
+    ^?/
+        (v ?<= 1): tot
+        default: factorial(v - 1,tot * v)
+    /;
+}
+```
+
 #### Function Currying
 
 Function definitions can optionally be curried:
@@ -342,7 +549,7 @@ add6(12);                           // 18
 add(6)(12);                         // 18
 ```
 
-Note that `add(6,12)` (aka, loose currying) would not work, but the expression-evaluation form of the function call supports loose-applying arguments across currying boundaries:
+Note that `add(6,12)` (aka, loose currying) would not work, but the evaluation-expression form of the function call supports loose-applying arguments across currying boundaries:
 
 ```c
 defn add(x)(y) ^x + y;
@@ -360,26 +567,41 @@ defn lookupCustomer(id) over (customerCache) {
     // ..
 
     // this reassignment side-effect allowed:
-    customerCache = cacheAppend(customerCache,customer);
+    customerCache <: cacheAppend(customerCache,customer);
 
     // but this is disallowed because `count`
     // isn't listed in the `over` clause:
     count++;
-};
+}
 ```
 
 #### Function Composition
 
-Function composition can be defined with the `=>` flow operator, like this:
+Function composition can be defined with the `->` flow operator:
 
 ```c
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| => inc, triple, half | 11 |;     // 18
+|| -> inc, triple, half | 11 |;     // 18
 
-def composed: | => inc, triple, half |;
+def composed: | -> inc, triple, half |;
+
+composed(11);                       // 18
+```
+
+Right-to-left style composition is defined with the `<-` flow-right operator:
+
+```c
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+|| <- half, triple, inc | 11 |;     // 18
+
+def composed: | <- half, triple, inc |;
+
 composed(11);                       // 18
 ```
 
@@ -394,7 +616,42 @@ defn half(v) ^v / 2;
 
 11 #> inc #> triple #> half;        // 18
 
-11 #> | => inc, triple, half |;     // 18
+11 #> | -> inc, triple, half |;     // 18
+```
+
+The first expression in a pipeline must be a value or an expression that produces a value. Each subsequent step must either be a function, or an expression that resolves to a function, which then produces a value to pass on to the next step.
+
+Since the `#>` operator is n-ary, multiple steps can also be used in the evaluation-expression form:
+
+```c
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+| #> 11, inc, triple, half |;       // 18
+```
+
+The *topic* of a pipeline step is implicitly passed as the single argument to the function, but can be explicitly be passed using the `#` sigil:
+
+```c
+defn add(x,y) ^x + y;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+11 #> add(1,#) #> triple #> half;        // 18
+11 #> | add 1, # | #> triple #> half;    // 18
+```
+
+A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
+
+```c
+defn add(x,y) ^x + y;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+defn compute(x) #> add(1,#) #> triple #> half;
+
+compute(11);                            // 18
 ```
 
 ### Type Annotations
@@ -410,7 +667,7 @@ def cost: | * getQty(order,item), getPrice(item) | as float;
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
 
 ```c
-deft OrderStatus { empty, "pending", "shipped" };
+deft OrderStatus { empty, "pending", "shipped" }
 
 def myStatus: getOrderStatus(order) as OrderStatus;
 ```
@@ -422,7 +679,7 @@ deft InterestingFunc (int,string) -> empty;
 
 defn whatever(id,name) as InterestingFunc {
     // ..
-};
+}
 ```
 
 ## License
