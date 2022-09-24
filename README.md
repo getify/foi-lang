@@ -42,7 +42,7 @@ The following is a super incomplete exploration of what I've been imagining for 
 
 To import named dependencies (including "globals" from `std`), use the `import` keyword:
 
-```c
+```java
 import #Std;
 
 Std.log("Hello");               // "Hello"
@@ -52,7 +52,7 @@ Std.log(6 + 12);                // 18
 
 Or import specific members `from` dependencies:
 
-```c
+```java
 import log from #Std;
 
 log("Hello");                   // "Hello"
@@ -62,7 +62,7 @@ log("Hello");                   // "Hello"
 
 All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (with `| |` instead of `( )`):
 
-```c
+```java
 import log from #Std;
 
 | log "Hello" |;               // "Hello"
@@ -70,23 +70,27 @@ import log from #Std;
 | log | + 6, 12 ||;            // 18
 ```
 
-One main reason for the optional evaluation-expression form is that it allows for partial-application (left-to-right) by providing fewer arguments than the arity of the function:
+An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` above.
 
-```c
+The primary reason for this optional evaluation-expression form is that it allows additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`).
+
+For example, evaluation-expression allows for partial-application (left-to-right) by providing fewer arguments than the declared minimum arity of the function:
+
+```java
 | | + 6 | 12 |;                // 18
 ```
 
 Above, the `| + 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
 
-Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands). The `->` flow (composition) operator and the `~` Tuple range operator are examples.
+Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands) usage. Many operators in Foi are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
 
-An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` in the earlier snippet.
+There are other capabilities of this call-site form that we'll see later in this guide.
 
 ### Defining Variables
 
 To define variables, use the `def` keyword (not an operator/function).
 
-```c
+```java
 def age: 42;
 ```
 
@@ -96,7 +100,7 @@ All definitions need a value initialization, but you can use the `empty` value i
 
 To reassign a variable:
 
-```c
+```java
 def age: empty;
 
 age <: 42;
@@ -106,17 +110,18 @@ Unlike `def` definitions, `<:` re-assignments are allowed anywhere in the scope 
 
 `def` definitions attach to the nearest enclosing scope, whether that be module, function, or block. A block-scoped variable definition is thus:
 
-```c
+```java
 {
-    def tmp: empty;
+    def tmp: 42;
+    tmp <: 43;
 }
 ```
 
 However, since `def` definitions must appear at the top of their respective scopes, and there may be multiple such definitions in a block, the `def`-block form should be preferred for readability sake:
 
-```c
-def (tmp: empty) {
-    tmp <: age;
+```java
+def (tmp: 42) {
+    tmp <: 43;
 }
 ```
 
@@ -128,7 +133,7 @@ The `true` and `false` boolean values are used primarily for decision making. As
 
 To combine two or more boolean values with logical *AND* (`?and`):
 
-```c
+```java
 def isValid: true;
 def isComplete: true;
 def isSuccess: false;
@@ -141,7 +146,7 @@ isValid ?and isComplete ?and isSuccess;     // false
 
 And for logical *OR* (`?or`):
 
-```c
+```java
 def isValid: true;
 def isComplete: true;
 def isSuccess: false;
@@ -153,7 +158,7 @@ isValid ?or isComplete ?or isSuccess;       // true
 
 To negate a boolean value, use the `!` operator:
 
-```c
+```java
 def isValid: true;
 
 def isInvalid: !isValid;
@@ -165,7 +170,7 @@ isNotValid;             // false
 
 Also, any `?`-prefixed logical boolean operator can be flipped/negated by swapping the `?` with the `!` operator. For example, `!and` is *NAND* (not-and) and `!or` is *NOR* (not-or):
 
-```c
+```java
 // instead of these:
 !(true ?and false);             // true
 !true ?or !false;               // true
@@ -189,7 +194,7 @@ true !or false;                 // false
 
 The `?=` operator checks for equality:
 
-```c
+```java
 def x: 42;
 def y: 42;
 def z: 100;
@@ -201,7 +206,7 @@ x ?= 42;                    // true
 
 To relationally compare (`?<` less-than, `?>` greater-than):
 
-```c
+```java
 def x: 100;
 def y: 200;
 
@@ -211,7 +216,7 @@ x ?> y;                     // false
 
 And for the inclusive comparisons (`?<=` less-than-or-equal, `?>=` greater-than-or-equal):
 
-```c
+```java
 def x: 100;
 def y: 200;
 
@@ -221,7 +226,7 @@ y ?>= y;                    // true
 
 A very common task is to check if a value is in a range between two other values:
 
-```c
+```java
 def x: 100;
 
 (x ?> 0) ?and (x ?< 500);   // true
@@ -229,7 +234,7 @@ def x: 100;
 
 However, this can be done more idiomatically with the range-check operators, `?<>` (non-inclusive) and `?<=>` (inclusive):
 
-```c
+```java
 def x: 100;
 
 | ?<> x, 0, 500 |;          // true
@@ -242,20 +247,24 @@ Remember, all these `?`-prefixed operators can be flipped/negated by swapping th
 
 To make decisions, use pattern matching:
 
-```c
+```java
 import log from #Std;
 
 def myName: "Kyle";
 
 ?/
     (myName ?= "Kyle"): log("Hello!")
-    default: log("Goodbye!");
+    default: log("Goodbye!")
 /;
 ```
 
-A pattern-match is an expression, so the matched clause's result value will be the final expression result:
+Each match clause begins with a conditional -- either `( .. )` delimited expression or a `| .. |` evaluation-expression -- followed by a `:` colon an its consequent -- either an expression or a `{ }` block. If the match's conditional evaluates to `true`, the consequent is evaluated, and the pattern-match completes.
 
-```c
+Otherwise, the next match conditional is evaluated, and so on. If no match conditional succeeds, the (required) `default` clause's consequent is evaluated.
+
+The matched clause's consequent result value will be the final expression result:
+
+```java
 def myName: "Kyle";
 
 def greeting: ?/
@@ -270,7 +279,7 @@ greeting;               // "Hello!"
 
 Records are immutable collections of values, delimited by `< .. >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
 
-```c
+```java
 def idx: 2;
 def prop: "last";
 
@@ -287,7 +296,7 @@ Above, Record/Tuple fields are accessed with `.` syntax, whether numeric or lexi
 
 To define Records/Tuples using arbitrary expressions, use the evaluation-expression form:
 
-```c
+```java
 import uppercase from #Std.String;
 
 def five: 5;
@@ -301,7 +310,7 @@ To keep Record/Tuple syntax simpler, *only* the `| .. |` form of evaluation-expr
 
 Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
 
-```c
+```java
 def chars: < "H", "e", "l", "l", "o" >;
 def str: "Hello";
 
@@ -311,7 +320,7 @@ str.1;                      // "e"
 
 To determine the length of a string (or a Tuple), or the count of elements in a Record, use the `size(..)` function:
 
-```c
+```java
 import size from #Std;
 
 size("Hello");              // 5
@@ -321,7 +330,7 @@ size(< a: 1 >);             // 1
 
 To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{ .. }>`. The block can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
 
-```c
+```java
 def numbers: <{
     .1 <: 4;
     .2 <: 5;
@@ -338,7 +347,7 @@ def person: <{
 
 You can determine if a value is in a Tuple with the `?in` / `!in` operator:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 
 7 ?in numbers;                  // false
@@ -352,7 +361,7 @@ def numbers: < 4, 5, 6 >;
 
 You can determine if a field is defined in a Record with the `?has` operator:
 
-```c
+```java
 def person: < first: "Kyle", last: "Simpson" >;
 
 person ?has "first";            // true
@@ -365,7 +374,7 @@ person !has "nickname";         // true
 
 Since Records/Tuples are immutable, to change their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick operator:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 def allDigits: < 1, 2, 3, &numbers, 7, 8, 9 >;
 
@@ -375,7 +384,7 @@ def friend: < &person, first: "Jenny" >;
 
 And to select only specific elements for the derived Record/Tuple:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 def oddDigits: < 1, 3, &numbers.1, 7, 9 >;
 
@@ -385,7 +394,7 @@ def friend: < first: "Jenny", &person.last >;
 
 The `&numbers.1` and `&person.last` pick operations are just sugar for:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 def oddDigits: < 1, 3, 2: numbers.1, 7, 9 >;
 
@@ -397,7 +406,7 @@ But in that less-sugared form, you could re-index or rename the field in the tar
 
 As a shorthand, you can also pick multiple fields at once:
 
-```c
+```java
 def numbers: < 4, 6 >;
 def evenDigits: < 0, 2, &numbers.[0,1], 8 >;
 
@@ -407,29 +416,29 @@ def profile: < &person.[first,nickname] >;
 
 The `+` operator, when used with Records/Tuples, acts in an append-only (concatenation) form:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 def moreNumbers: numbers + < 7, 8, 9 >;
 
 moreNumbers.5;              // 8
 ```
 
-And to derive a new Tuple as a ranged subset of another one, use the `~` operator:
+And to derive a new Tuple as a ranged subset of another one, use the `..` operator:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 
-numbers ~ 1;                // < 5, 6 >
-numbers ~ -1;               // < 6 >
+numbers..1;                 // < 5, 6 >
+numbers..-1;                // < 6 >
 
-| ~ numbers 0 2 |;          // < 4, 5 >
+| .. numbers 0 2 |;          // < 4, 5 >
 ```
 
 #### Maps
 
 A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil to start the field name:
 
-```c
+```java
 def numbers: < 4, 5, 6 >;
 def dataMap: < %numbers: "my favorites" >;
 
@@ -440,7 +449,7 @@ dataMap[numbers];           // "my favorites"
 
 A Set is an alternate Tuple definition form, delimited with `[ ]` instead of `< >`, which ensures each unique value is only stored once:
 
-```c
+```java
 def numbers: [ 4, 6, 4, 5 ];
 
 numbers;                    // < 4, 6, 5 >
@@ -450,7 +459,7 @@ As you can see, a Set is merely a syntactic sugar construction form for a Tuple,
 
 The `+=` set-append operator (similar to the `+` Record/Tuple append operator) will only append values not in the previous Tuple:
 
-```c
+```java
 def numbers: [ 4, 5, 6 ];
 
 def moreNumbers: numbers += [ 6, 7 ];
@@ -462,13 +471,13 @@ moreNumbers;                // < 4, 5, 6, 7 >
 
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
-```c
+```java
 defn add(x,y) { ^x + y; }
 ```
 
 Function definitions are always hoisted:
 
-```c
+```java
 add(6,12);                          // 18
 | add 6, 12 |;                      // 18
 
@@ -477,8 +486,8 @@ defn add(x,y) { ^x + y; }
 
 Function definitions are also expressions (first-class values), so they can be assigned and passed around:
 
-```c
-def myFn: defn add(x,y) { ^x + y; }
+```java
+def myFn: defn add(x,y) { ^x + y; };
 
 add(6,12);                          // 18
 myFn(6,12);                         // 18
@@ -486,15 +495,15 @@ myFn(6,12);                         // 18
 
 Function definition expressions can also be immediately invoked:
 
-```c
+```java
 |
     |defn add(x,y) { ^x + y; }| 6, 12
 |;                                  // 18
 ```
 
-Concise function definitions may omit the name and/or the `{ .. }` around the body, but the body must be an expression delimited by the `^` return sigil:
+Concise function definitions may omit the name and/or the `{ .. }` around the body, but the concise body must be an expression marked by the initial `^` return sigil:
 
-```c
+```java
 def myFn: defn(x,y) ^x + y;
 
 |
@@ -506,41 +515,58 @@ def myFn: defn(x,y) ^x + y;
 
 To default a function parameter value:
 
-```c
+```java
 defn add(x: 0, y: 0) ^x + y;
+```
+
+The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
+
+#### Named Arguments
+
+To override positional argument-parameter binding at a function call-site, the evaluation-expression form can specify which parameter name each argument corresponds to (in any order):
+
+```java
+defn add(x: 0, y) ^x + y;
+
+| add x:3, y:4 |;               // 7
+| add y:5 |;                    // 5
 ```
 
 #### Function Recursion
 
 Function recursion is supported:
 
-```c
+```java
 defn factorial(v) {
     ^?/
         (v ?<= 1): v
         default: v * factorial(v - 1)
     /;
 }
+
+factorial(5);                   // 120
 ```
 
 **Note:** The `?/ .. /` syntax is pattern-matching, explained earlier.
 
 Tail-calls (recursive or not) are automatically optimized by the Foi compiler to save call-stack resources:
 
-```c
+```java
 defn factorial(v,tot: 1) {
     ^?/
         (v ?<= 1): tot
         default: factorial(v - 1,tot * v)
     /;
 }
+
+factorial(5);                   // 120
 ```
 
 #### Function Currying
 
 Function definitions can optionally be curried:
 
-```c
+```java
 defn add(x)(y) ^x + y;
 
 def add6: add(6);
@@ -551,7 +577,7 @@ add(6)(12);                         // 18
 
 Note that `add(6,12)` (aka, loose currying) would not work, but the evaluation-expression form of the function call supports loose-applying arguments across currying boundaries:
 
-```c
+```java
 defn add(x)(y) ^x + y;
 
 | add 6, 12 |;                     // 18
@@ -559,7 +585,7 @@ defn add(x)(y) ^x + y;
 
 Function definitions must declare side-effects (reassignment of free/outer variables) using the `over` keyword:
 
-```c
+```java
 def customerCache: empty;
 def count: 0;
 
@@ -577,30 +603,30 @@ defn lookupCustomer(id) over (customerCache) {
 
 #### Function Composition
 
-Function composition can be defined with the `->` flow operator:
+Function composition can be defined with the `>>` flow operator:
 
-```c
+```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| -> inc, triple, half | 11 |;     // 18
+|| >> inc, triple, half | 11 |;     // 18
 
-def composed: | -> inc, triple, half |;
+def composed: | >> inc, triple, half |;
 
 composed(11);                       // 18
 ```
 
-Right-to-left style composition is defined with the `<-` flow-right operator:
+Right-to-left style composition is defined with the `<<` flow-right operator:
 
-```c
+```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| <- half, triple, inc | 11 |;     // 18
+|| << half, triple, inc | 11 |;     // 18
 
-def composed: | <- half, triple, inc |;
+def composed: | << half, triple, inc |;
 
 composed(11);                       // 18
 ```
@@ -609,21 +635,21 @@ composed(11);                       // 18
 
 By contrast, the `#>` pipeline operator (F#-style) operates like this:
 
-```c
+```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
 11 #> inc #> triple #> half;        // 18
 
-11 #> | -> inc, triple, half |;     // 18
+11 #> | >> inc, triple, half |;     // 18
 ```
 
 The first expression in a pipeline must be a value or an expression that produces a value. Each subsequent step must either be a function, or an expression that resolves to a function, which then produces a value to pass on to the next step.
 
 Since the `#>` operator is n-ary, multiple steps can also be used in the evaluation-expression form:
 
-```c
+```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
@@ -633,7 +659,7 @@ defn half(v) ^v / 2;
 
 The *topic* of a pipeline step is implicitly passed as the single argument to the function, but can be explicitly be passed using the `#` sigil:
 
-```c
+```java
 defn add(x,y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
@@ -644,7 +670,7 @@ defn half(v) ^v / 2;
 
 A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
 
-```c
+```java
 defn add(x,y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
@@ -658,7 +684,7 @@ compute(11);                            // 18
 
 Type annotations in Foi are applied to values/expressions (not to variables, etc). These are optional, as Foi uses type inference wherever possible. But applying them can often improve the performance optimizations the Foi compiler can produce. A type annotation always begins with the `as` keyword:
 
-```c
+```java
 def age: 42 as int;
 
 def cost: | * getQty(order,item), getPrice(item) | as float;
@@ -666,7 +692,7 @@ def cost: | * getQty(order,item), getPrice(item) | as float;
 
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
 
-```c
+```java
 deft OrderStatus { empty, "pending", "shipped" }
 
 def myStatus: getOrderStatus(order) as OrderStatus;
@@ -674,7 +700,7 @@ def myStatus: getOrderStatus(order) as OrderStatus;
 
 Function signatures may optionally be typed via custom types:
 
-```c
+```java
 deft InterestingFunc (int,string) -> empty;
 
 defn whatever(id,name) as InterestingFunc {
