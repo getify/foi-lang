@@ -58,7 +58,7 @@ import log from #Std;
 log("Hello");                   // "Hello"
 ```
 
-### Expression-Evaluation Form
+### Evaluation-Expression Form
 
 All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (with `| |` instead of `( )`):
 
@@ -72,19 +72,122 @@ import log from #Std;
 
 An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` above.
 
-The primary reason for this optional evaluation-expression form is that it allows additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`).
+The primary reason for this optional evaluation-expression form is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`).
 
-For example, evaluation-expression allows for partial-application (left-to-right) by providing fewer arguments than the declared minimum arity of the function:
+#### Reversing Argument Order
+
+One such flexibility is that we can control the treatment of input arguments in various ways.
+
+Some operators like `+` are commutative, so the operand/argument order doesn't matter. But other operators, like `-`, are not commutative, so the order matters.
+
+To reverse the order of applied arguments of the operator-function in question, which we can do with the `'` prime operator applied first to it:
 
 ```java
-| | + 6 | 12 |;                // 18
+| | ' - | 1, 6 |;               // 5
 ```
 
-Above, the `| + 6 |` creates a partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
+Yes, with `| ' - |`, we just used one operator to modify another operator!
 
-Another advantage of this form is that it allows n-ary operators, where typically operators would be limited to unary (single operand) or binary (two operands) usage. Many operators in Foi are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
+**Note:** The `'` prime operator has no prefix-operator form (like `'something(42)` or `1 '- 6`); that sort of syntax could cause chaos for readbility. Thus, it can only be used inside an evaluation-expression form, as shown above.
 
-There are other capabilities of this call-site form that we'll see later in this guide.
+Since this operation will be extremely common, a special sugar short-hand is available. The prime operator may appear immediately preceding (no whitespace) the operator/function (or expression) it's modifying:
+
+```java
+| '- 1, 6 |;                    // 5
+```
+
+This short-hand form of `'` should be preferred for readability sake wherever practical.
+
+#### Partial Application
+
+It's common in functional programming to produce more specialized functions by applying only some inputs to a more generalized (higher-arity) function; the result is a another function that expects the subsequent arguments.
+
+This is referred to as partial application, and is another flexible capability afforded by the evaluation-expression form.
+
+Consider the `+` mathematical operator, which has a minimum arity of 2. If we provide it only one argument, the result is a partially applied function that's still waiting for the second argument:
+
+```java
+| | + 6 | 12 |;                 // 18
+```
+
+Here, the `| + 6 |` creates the partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
+
+Partial application operates according to the default argument ordering, which is left-to-right. However, it's quite common (especially with operators) to want to reverse the partial application order (right-to-left). This is most useful for producing point-free expressions.
+
+For example, let's say we want to produce a function (from the `-` operator) that will subtract `1` from its next input value. How do we partially apply the `1` when it's the second/right-most argument?
+
+We use the `'` prime operator to reverse the argument ordering, and then partially apply:
+
+```java
+| | '- 1 | 6 |;                 // 5
+```
+
+The `| '- 1 |` evaluation-expression applies `1` as the right-most argument, and since that's the only argument provided, the result is a right-partially applied function.
+
+*That* function -- which is back to regular left-to-right ordering, by the way -- is then expecting its next (and final) argument, provided by the `| .. 6 |` outer evaluation-expression.
+
+#### N-Ary Operators
+
+Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
+
+Many operators in Foi are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
+
+For example, say you want to add 5 numbers together. You can obviously do:
+
+```java
+1 + 2 + 3 + 4 + 5;
+```
+
+But because `+` is an n-ary operator, you can also do:
+
+```java
+| + 1, 2, 3, 4, 5 |;
+```
+
+It's nice to only need to list the operator once instead of 4 times!
+
+Still, as the `+` operator is a single symbol, this example (including padded whitespace) yields a slightly longer expression, which may seem disfavorable.
+
+However, other operators are comprised of two or more symbols, so the length of the evaluation-expression form will likely end up shorter depending on how many arguments are provided.
+
+Also, some operators may result in a change of value-type from the operand(s) to the result. In those cases, you cannot simply combine multiple infix operator usages like we did with `+`.
+
+For example, say you wanted to test 3 variables as all being equal to each other. The `?=` infix operator can only accept two operands (left and right), so we're forced to do multiple expressions, and combine their results with the logical-AND `?and` operator:
+
+```java
+(x ?= y) ?and (y ?= z) ?and (x ?= z);
+```
+
+**Note:** The `?=` equality comparison may not be transitive, depending on the types being compared, hence why we included the `x ?= z` check for good measure.
+
+But since the `?=` operator is n-ary, we can provide it 3 or more arguments using the evaluation-expression form, resulting in a much shorter/nicer-to-read expression:
+
+```java
+| ?= x, y, z |;
+```
+
+It should be clear how much more preferable n-ary operator evaluation can be!
+
+#### Apply (aka Spread)
+
+Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator (which is only available in the evaluation-expression form):
+
+```java
+| + ...numbers |;
+| + 0, ...numbers, 1000 |;
+```
+
+OK, that's useful. But what about modifying an operator/function to automatically accept its inputs as a list?
+
+```java
+| | ... + | numbers |;
+```
+
+Since `...` is an operator, when applied against an operator/function like `+`, it produces a new function that will expect a single (Tuple) argument that's then *spread out* to the underlying operator/function.
+
+----
+
+As you can see from the last several sections, there's lots of additional power in the evaluation-expression form, but there are yet still other capabilities that we'll encounter later in this guide.
 
 ### Defining Variables
 
@@ -129,9 +232,9 @@ Moreover, the `def`-block is allowed anywhere in its enclosing scope, so it's mo
 
 ### Boolean Logic
 
-The `true` and `false` boolean values are used primarily for decision making. As such, non-negated, boolean-returning operators, aka logical operators, begin with the `?` character.
+The `true` and `false` boolean values are used primarily for decision making. Accordingly, non-negated, boolean-returning operators, aka logical operators, begin with the `?` character (to signal asking a question to make a decision).
 
-To combine two or more boolean values with logical *AND* (`?and`):
+To combine two or more boolean values with logical-AND (`?and`):
 
 ```java
 def isValid: true;
@@ -144,7 +247,7 @@ isValid ?and isComplete ?and isSuccess;     // false
 | ?and isValid, isComplete, isSuccess |;    // false
 ```
 
-And for logical *OR* (`?or`):
+And for logical-OR (`?or`):
 
 ```java
 def isValid: true;
@@ -156,7 +259,9 @@ isValid ?or isComplete ?or isSuccess;       // true
 | ?or isValid, isComplete, isSuccess |;     // true
 ```
 
-To negate a boolean value, use the `!` operator:
+**Note:** As you can see, the `?and` and `?or` operators are n-ary, meaning they can take 2 or more arguments -- but only in the evaluation-expression form.
+
+To negate a boolean value, use the unary `!` operator:
 
 ```java
 def isValid: true;
@@ -190,6 +295,8 @@ false !or false;                // true
 true !or false;                 // false
 ```
 
+We'll see more `?`-prefixed, boolean-returning operators in the next section, all of which can also be negated by swapping `?` for `!`.
+
 ### Equality And Comparison
 
 The `?=` operator checks for equality:
@@ -203,6 +310,8 @@ x ?= 42;                    // true
 
 | ?= x, y, z |;             // false
 ```
+
+**Note:** `?=` is another n-ary operator in the evaluation-expression form. Keep in mind, equality comparison in Foi is not necessarily transitive.
 
 To relationally compare (`?<` less-than, `?>` greater-than):
 
@@ -224,6 +333,8 @@ x ?<= x;                    // true
 y ?>= y;                    // true
 ```
 
+**Note:** These four operators are also n-ary operator in the evaluation-expression form. They compare the first operand against all other operands/inputs. For example, `| ?< x, y, z |` is the equivalent of `(x ?< y) ?and (x ?< z)`, but *does not* compare `y ?< z`.
+
 A very common task is to check if a value is in a range between two other values:
 
 ```java
@@ -237,15 +348,40 @@ However, this can be done more idiomatically with the range-check operators, `?<
 ```java
 def x: 100;
 
-| ?<> x, 0, 500 |;          // true
-| ?<=> x, 100, 100 |;       // true
+| ?<>  0,   x, 500 |;   // true
+| ?<=> 100, x, 100 |;   // true
 ```
 
-Remember, all these `?`-prefixed operators can be flipped/negated by swapping the `?` with `!`.
+**Note:** Because these two operators have an arity of exactly 3, they cannot be used in the typical infix expression form, which would only allow two operands (left and right).
+
+As mentioned in the previous section, all these `?`-prefixed comparison operators can also be flipped/negated by swapping the `?` with `!`:
+
+```java
+def x: 42;
+def y: 100;
+
+x ?= 42;                // true
+x != 42;                // false
+
+x ?> y;                 // false
+x !> y;                 // true
+x ?>= y;                // false
+x !>= y;                // true
+
+x ?< y;                 // true
+x !< y;                 // false
+x ?<= y;                // true
+x !<= y;                // false
+
+| ?<>  40,  x, 50  |;   // true
+| !<>  40,  x, 50  |;   // false
+| ?<>= 100, y, 100 |;   // true
+| !<>= 100, y, 100 |;   // false
+```
 
 ### Pattern Matching
 
-To make decisions, use pattern matching:
+To make decisions (with booleans!), use pattern matching:
 
 ```java
 import log from #Std;
@@ -617,19 +753,21 @@ def composed: | >> inc, triple, half |;
 composed(11);                       // 18
 ```
 
-Right-to-left style composition is defined with the `<<` flow-right operator:
+Recall that we can reverse the order of argument application with the `'` prime operator. Thus, we can perform right-to-left style composition:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| << half, triple, inc | 11 |;     // 18
+|| '>> half, triple, inc | 11 |;     // 18
 
-def composed: | << half, triple, inc |;
+def composed: | '>> half, triple, inc |;
 
 composed(11);                       // 18
 ```
+
+**Note:** Probably the most obvious reason for right-to-left composition style is the visual-ordering coherency between `three(two(one(v)))` and `| '>> three, two, one |`.
 
 #### Function Pipelines
 
@@ -657,7 +795,17 @@ defn half(v) ^v / 2;
 | #> 11, inc, triple, half |;       // 18
 ```
 
-The *topic* of a pipeline step is implicitly passed as the single argument to the function, but can be explicitly be passed using the `#` sigil:
+Recall that we can reverse the order of arguments with the `'` prime operator, allowing us to do right-to-left pipelining if we wanted to for some reason:
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+| '#> half, triple, inc, 11 |;       // 18
+```
+
+The *topic* of a pipeline step is the result of the previous step, and is implicitly passed as the single argument to the step's function. But the *topic* can be explicitly referred to with the `#` sigil:
 
 ```java
 defn add(x,y) ^x + y;
@@ -666,6 +814,17 @@ defn half(v) ^v / 2;
 
 11 #> add(1,#) #> triple #> half;        // 18
 11 #> | add 1, # | #> triple #> half;    // 18
+```
+
+Of course, if the `add(..)` function is curried, we can get back to point-free style (without needing the `#` topic):
+
+```java
+defn add(x)(y) ^x + y;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+11 #> add(1) #> triple #> half;        // 18
+11 #> | add 1 | #> triple #> half;    // 18
 ```
 
 A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
