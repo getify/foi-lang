@@ -101,3 +101,174 @@ x <: 1;
     }
 }
 ```
+**Function calls**
+```javascript
+log("hello")
+```
+`AST`
+```
+{
+  "type": "ExpressionStatement",
+  "expression": {
+    "type": "CallExpression",
+    "callee": {
+      "type": "Identifier",
+      "name": "log"
+    },
+    "arguments": [
+      {
+        "type": "Literal",
+        "value": "hello",
+        "raw": "\"hello\""
+      }
+    ]
+  }
+}
+```
+**Function calls**
+```javascript
+| log "hello" |
+```
+`AST`
+```
+{
+  "type": "ExpressionStatement",
+  "expression": {
+    "type": "EvalCallExpression",
+    "callee": {
+      "type": "Identifier",
+      "name": "log"
+    },
+    "arguments": [
+      {
+        "type": "Literal",
+        "value": "hello",
+        "raw": "\"hello\""
+      }
+    ]
+  }
+}
+```
+```javascript
+| log | + 2, 3 ||
+```
+```
+{
+      "type": "ExpressionStatement",
+      "expression": {
+        "type": "EvalCallExpression",
+        "callee": {
+          "type": "Identifier",
+          "name": "log"
+        },
+        "arguments": [
+          {
+            "type": "EvalCallExpression",
+            "callee": {
+              "type": "Identifier",
+              "name": "+"
+            },
+            "arguments": [
+              {
+                "type": "Literal",
+                "value": 2,
+                "raw": "2"
+              },
+              {
+                "type": "Literal",
+                "value": 3,
+                "raw": "3"
+              }
+            ]
+          }
+        ]
+      }
+    }
+```
+**Reverse Function Call Order**
+```javascript
+| |'- | 1, 6 |
+| '- 1, 6 |
+```
+```
+{
+  "type": "ExpressionStatement",
+  "expression": {
+    "type": "UnaryExpression",
+    "operator": "'",
+    "argument": {
+        "type": "EvalCallExpression",
+        "callee": {
+          "type": "Identifier",
+          "name": "-"
+        },
+        "arguments": [
+          {
+            "type": "Literal",
+            "value": 1,
+            "raw": "1"
+          },
+          {
+            "type": "Literal",
+            "value": 6,
+            "raw": "6"
+          }
+        ]
+    },
+  }
+}
+```
+**Partial Function Application**
+```javascript
+// where `+` has an arity of 2
+| + 2 |
+```
+```
+{
+  "type": "ExpressionStatement",
+  "expression": {
+    "type": "PartialCallApplication",
+    "callee": {
+      "type": "Identifier",
+      "name": "+"
+    },
+    "arguments": [
+      {
+        "type": "Literal",
+        "value": 2,
+        "raw": "2"
+      }
+    ]
+  }
+}
+```
+```javascript
+| | + 2 | 2 | // 4
+```
+`AST`
+```
+{
+  "type": "EvalCallExpression",
+  "callee": {
+    "type": "PartialCallApplication",
+    "callee": {
+      "type": "Identifier",
+      "name": "+"
+    },
+    "arguments": [
+      {
+        "type": "Literal",
+        "value": 2,
+        "raw": "2"
+      }
+    ]
+  },
+  "arguments": [
+    {
+      "type": "Literal",
+      "value": 2,
+      "raw": "2"
+    }
+  ]
+}
+```
