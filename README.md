@@ -509,7 +509,7 @@ size(< "O", "K" >);         // 2
 size(< a: 1 >);             // 1
 ```
 
-To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{ .. }>`:
+To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{    }>`:
 
 ```java
 def numbers: <{
@@ -703,7 +703,7 @@ Function definition expressions can also be immediately invoked, using the evalu
 
 **Note:** In the above example, the `|` pair surrounding the `defn` expression is technically optional. But it's recommended for readability sake, to visually disambiguate where the inline function expression begins and ends.
 
-Concise function definitions may omit the name and/or the `{ .. }` around the body, but the concise body must be an expression marked by the initial `^` return sigil:
+Concise function definitions may omit the name and/or the `{    }` around the body, but the concise body must be an expression marked by the initial `^` return sigil:
 
 ```java
 def myFn: defn(x,y) ^x + y;
@@ -749,7 +749,7 @@ defn factorial(v) {
 factorial(5);                   // 120
 ```
 
-**Note:** The `?/ .. /` syntax is pattern-matching, explained earlier.
+**Note:** The `?/    /` syntax is pattern-matching, explained earlier.
 
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
@@ -886,7 +886,7 @@ defn half(v) ^v / 2;
 11 #> | add 1, # | #> triple #> half;    // 18
 ```
 
-Of course, if the `add(..)` function is curried, we can get back to point-free style (no need for the explicit `#` topic):
+Of course, if the `add()` function is curried, we can get back to point-free style (no need for the explicit `#` topic):
 
 ```java
 defn add(x)(y) ^x + y;
