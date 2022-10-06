@@ -1,6 +1,6 @@
 # Foi: a different kind of functional programming language
 
-I'm jotting down some very early thoughts on what I think I want to design for the Foi language. This stuff is pretty much all subject to change. Consider everything experimental R&D for the foreseeable future.
+I'm jotting down some very early thoughts on what I think I want to design for the **Foi** language. This stuff is pretty much all subject to change. Consider everything experimental R&D for the foreseeable future.
 
 ## Aspirational Design Ideas
 
@@ -58,9 +58,27 @@ import log from #Std;
 log("Hello");                   // "Hello"
 ```
 
+### Function Calls
+
+The traditional function call-form (e.g., `log("Hello")`) always requires `(    )` around the argument list, and must immediately follow the function name (no whitespace). If there are no arguments to pass, the call looks like `someFn()`.
+
+Inside the argument list, assigning arguments to the function's parameters is done positionally, from left-to-right. To skip an argument/parameter position, simply omit anything (exception optional whitespace) between two successive `,` commas:
+
+```java
+myFn(1,,3,,,6);
+```
+
+Omitting an argument is the same as specifying `empty` for that argument:
+
+```java
+myFn(1,empty,3,empty,empty,6);
+```
+
+**Note:** Trailing comma(s) are allowed (and ignored).
+
 ### Evaluation-Expression Form
 
-All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (with `| |` instead of `( )`):
+All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form, with `| |` delimiters, instead of the more typical `( )` lisp parentheses:
 
 ```java
 import log from #Std;
@@ -70,9 +88,17 @@ import log from #Std;
 | log | + 6, 12 ||;            // 18
 ```
 
-An evaluation-expression `| .. |` expects the first element to be a function (or operator), followed optionally by whitespace. Any subsequent elements are treated as the parameter list (internally comma-separated), hence `| + 6, 12 |` above.
+**Note:** Whitespace is optional inside the `|    |` form, except as required after the first element (must be function expression) before the comma-separated argument list (e.g., `6, 12` above). So, `|log "Hello"|` and `|log |+ 6,12||` are the minimal whitespace forms of the above code snippet.
 
-The primary reason for this optional evaluation-expression form is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`).
+A special case is when `|    |` contains only one element, essentially a function expression with no arguments list. In this case, the function is *not* invoked. Thus, there is no evaluation-expression equivalent of the zero-argument call form `someFn()`.
+
+If an identifier like `someFn` holds a function, and is expressed as `| someFn |`, that's treated the same as a `someFn` expression (no invocation). The optional surrounding `|    |` are allowed merely as a readability affordance. This is mostly useful for visually delimiting a full inline function expression (via `defn`, covered later) inside another evaluation-expression expression.
+
+----
+
+The primary reason for this optional `|    |` evaluation-expression form is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
+
+We'll cover many of those capabilities in the following sub-sections.
 
 #### Reversing Argument Order
 
@@ -110,27 +136,29 @@ Consider the `+` mathematical operator, which has a minimum arity of 2. If we pr
 | | + 6 | 12 |;                 // 18
 ```
 
-Here, the `| + 6 |` creates the partially applied (operator) function, which is then provided a second argument `12` in the outer `| .. 12 |` expression.
+Here, the `| + 6 |` creates the partially applied (operator) function, which is then provided a second argument `12` in the outer `|    12 |` expression.
+
+**Note:** As with the traditional call form, arguments can be skipped with successive `,` commas with nothing (except optional whitespace) between them. Also trailing comma(s) are allowed (but ignored). As such, an expression like `| myFn 1, 2, |` will be treated (for partial application argument counting purposes) as 2 arguments, not 3. To specify a third affirmative empty argument at the end of the list, add an additional trailing `,` comma (e.g., `| myFn 1, 2,, |`) or specify `empty` explicitly (e.g., `| myFn 1, 2, empty |`).
 
 Partial application operates according to the default argument ordering, which is left-to-right. However, it's quite common (especially with operators) to want to reverse the partial application order (right-to-left). This is most useful for producing point-free expressions.
 
 For example, let's say we want to produce a function (from the `-` operator) that will subtract `1` from its next input value. How do we partially apply the `1` when it's the second/right-most argument?
 
-We use the `'` prime operator to reverse the argument ordering, and then partially apply:
+To accomplish this, recall the `'` prime operator, which reverses the argument ordering:
 
 ```java
 | | '- 1 | 6 |;                 // 5
 ```
 
-The `| '- 1 |` evaluation-expression applies `1` as the right-most argument, and since that's the only argument provided, the result is a right-partially applied function.
+The `| '- 1 |` evaluation-expression applies `1` as the right-most argument to `-`, and since that's the only argument provided, the result is a right-partially applied function.
 
-*That* function -- which is back to regular left-to-right ordering, by the way -- is then expecting its next (and final) argument, provided by the `| .. 6 |` outer evaluation-expression.
+*That* function -- which is back to regular left-to-right ordering, by the way -- is then expecting its final argument, which is then provided by the outer `|    6 |` evaluation-expression.
 
 #### N-Ary Operators
 
 Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
 
-Many operators in Foi are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
+Many operators in **Foi** are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
 
 For example, say you want to add 5 numbers together. You can obviously do:
 
@@ -170,7 +198,7 @@ It should be clear how much more preferable n-ary operator evaluation can be!
 
 #### Apply (aka Spread)
 
-Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator (which is only available in the evaluation-expression form):
+Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator (only available in the evaluation-expression form):
 
 ```java
 | + ...numbers |;
@@ -311,7 +339,7 @@ x ?= 42;                    // true
 | ?= x, y, z |;             // false
 ```
 
-**Note:** `?=` is another n-ary operator in the evaluation-expression form. Keep in mind, equality comparison in Foi is not necessarily transitive.
+**Note:** `?=` is another n-ary operator in the evaluation-expression form. Keep in mind, equality comparison in **Foi** is not necessarily transitive.
 
 To relationally compare (`?<` less-than, `?>` greater-than):
 
@@ -394,7 +422,7 @@ def myName: "Kyle";
 /;
 ```
 
-Each match clause begins with a conditional -- either `( .. )` delimited expression or a `| .. |` evaluation-expression -- followed by a `:` colon an its consequent -- either an expression or a `{ }` block. If the match's conditional evaluates to `true`, the consequent is evaluated, and the pattern-match completes.
+Each match clause begins with a conditional -- either `(    )` delimited expression or a `|    |` evaluation-expression -- followed by a `:` colon an its consequent -- either an expression or a `{ }` block. If the match's conditional evaluates to `true`, the consequent is evaluated, and the pattern-match completes.
 
 Otherwise, the next match conditional is evaluated, and so on. If no match conditional succeeds, the (required) `default` clause's consequent is evaluated.
 
@@ -413,7 +441,7 @@ greeting;               // "Hello!"
 
 ### Records And Tuples
 
-Records are immutable collections of values, delimited by `< .. >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
+Records are immutable collections of values, delimited by `<    >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
 
 ```java
 def idx: 2;
@@ -428,9 +456,26 @@ person.first;                   // "Kyle"
 person[prop];                   // "Simpson"
 ```
 
-Above, Record/Tuple fields are accessed with `.` syntax, whether numeric or lexical-identifier. `[ .. ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
+Above, Record/Tuple fields are accessed with `.` operator, whether numeric or lexical-identifier. `[    ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
 
-To define Records/Tuples using arbitrary expressions, use the evaluation-expression form:
+Since `.` is an operator, Record/Tuple field access can also be performed in the evaluation-expression form, in which case it evaluates the second argument as an expression (like the `[    ]` form does):
+
+```java
+def idx: 2;
+def prop: "last";
+
+def numbers: < 4, 5, 6 >;
+
+| . numbers, 1 |;               // 5
+| . numbers, idx |;             // 6
+
+def person: < first: "Kyle", last: "Simpson" >;
+
+| . person, "first" |;          // "Kyle"
+| . person, prop |;             // "Simpson"
+```
+
+To define Records/Tuples using arbitrary expressions for the values, use the evaluation-expression form:
 
 ```java
 import uppercase from #Std.String;
@@ -442,7 +487,7 @@ def surname: "Simpson";
 def person: < first: "Kyle", last: |uppercase surname| >;
 ```
 
-To keep Record/Tuple syntax simpler, *only* the `| .. |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `< .. >` literal definition.
+To keep Record/Tuple syntax complexity to a minimum, *only* the `|    |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `<    >` literal definition.
 
 Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
 
@@ -454,7 +499,7 @@ chars.1;                    // "e"
 str.1;                      // "e"
 ```
 
-To determine the length of a string (or a Tuple), or the count of elements in a Record, use the `size(..)` function:
+To determine the length of a string (or a Tuple), or the count of fields in a Record, use the `size()` function:
 
 ```java
 import size from #Std;
@@ -464,20 +509,29 @@ size(< "O", "K" >);         // 2
 size(< a: 1 >);             // 1
 ```
 
-To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{ .. }>`. The block can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
+To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{ .. }>`:
 
 ```java
 def numbers: <{
-    .1 <: 4;
-    .2 <: 5;
-    .3 <: 6;
+    def five: 5;
+    def six: empty;
+
+    #1 <: 4;
+    #2 <: five;
+
+    six <: #1 + #2 - 3;
+    #3 <: six;
 }>;
 
 def person: <{
-    .first <: "Kyle";
-    .last <: "Simpson";
+    #first <: "Kyle";
+    #last <: "Simpson";
 }>;
 ```
+
+As shown, the `<{    }>` *def-block* can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
+
+Inside a `<{    }>` *def-block*, the `#` sigil indicates a self-reference to the current Record/Tuple context that's being defined, and can be used either in l-value (assignment target) or r-value (value expression) positions. However, these special self-references cannot cross inner-function boundaries.
 
 #### Inspecting
 
@@ -495,7 +549,7 @@ def numbers: < 4, 5, 6 >;
 
 **Note:** The `in` operator only inspects numerically indexed fields.
 
-You can determine if a field is defined in a Record with the `?has` operator:
+You can determine if a field is defined in a Record with the `?has` / `!has` operator:
 
 ```java
 def person: < first: "Kyle", last: "Simpson" >;
@@ -508,7 +562,7 @@ person !has "nickname";         // true
 
 #### Deriving Instead Of Mutating
 
-Since Records/Tuples are immutable, to change their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick operator:
+Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick sigil:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -518,7 +572,9 @@ def person: < first: "Kyle", last: "Simpson" >;
 def friend: < &person, first: "Jenny" >;
 ```
 
-And to select only specific elements for the derived Record/Tuple:
+Above, the entire contents of `numbers` and `person` are *picked*, to be included in the new Tuple and Record values, respectively.
+
+To *pick* only specific elements:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -528,27 +584,29 @@ def person: < first: "Kyle", last: "Simpson" >;
 def friend: < first: "Jenny", &person.last >;
 ```
 
-The `&numbers.1` and `&person.last` pick operations are just sugar for:
+The `&numbers.1` and `&person.last` are sugar for:
 
 ```java
 def numbers: < 4, 5, 6 >;
 def oddDigits: < 1, 3, 2: numbers.1, 7, 9 >;
 
 def person: < first: "Kyle", last: "Simpson" >;
-def friend: < first: "Jenny", last: person >;
+def friend: < first: "Jenny", last: person.last >;
 ```
 
-But in that less-sugared form, you could re-index or rename the field in the target Record/Tuple.
+But, one advantage of this less-sugared form is, you can re-index/rename the field in the target Record/Tuple.
 
-As a shorthand, you can also pick multiple fields at once:
+As a convenience shorthand, you can also *pick* multiple fields at once:
 
 ```java
 def numbers: < 4, 6 >;
-def evenDigits: < 0, 2, &numbers.[0,1], 8 >;
+def evenDigits: < 2, &numbers.(0,1), 8 >;
 
 def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
-def profile: < &person.[first,nickname] >;
+def profile: < &person.(first,nickname) >;
 ```
+
+**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a `<    >` Record/Tuple definition (not a `<{    }>` *def-block*).
 
 The `+` operator, when used with Records/Tuples, acts in an append-only (concatenation) form:
 
@@ -570,6 +628,8 @@ numbers..-1;                // < 6 >
 | .. numbers 0 2 |;          // < 4, 5 >
 ```
 
+**Note:** the specific expression `..0` (or `| .. 0 |`) is effectively a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
+
 #### Maps
 
 A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil to start the field name:
@@ -581,6 +641,8 @@ def dataMap: < %numbers: "my favorites" >;
 dataMap[numbers];           // "my favorites"
 ```
 
+**Note:** Like `&`, the `%` (map-field) sigil is not an operator, and can only be used inside a `<    >` Record/Tuple definition.
+
 #### Sets
 
 A Set is an alternate Tuple definition form, delimited with `[ ]` instead of `< >`, which ensures each unique value is only stored once:
@@ -591,14 +653,14 @@ def numbers: [ 4, 6, 4, 5 ];
 numbers;                    // < 4, 6, 5 >
 ```
 
-As you can see, a Set is merely a syntactic sugar construction form for a Tuple, filtering out any duplicate values. What's created is still a Tuple, not a different value type.
+As you can see, a Set is merely a syntactic sugar construction form for a Tuple, filtering out any duplicate values. What's created is still a Tuple, not a different value type. The rules of `<    >` still apply inside the `[    ]`, including use of the `&` and `%` sigils.
 
-The `+=` set-append operator (similar to the `+` Record/Tuple append operator) will only append values not in the previous Tuple:
+The `++` unique-append operator (similar to the `+` Record/Tuple append operator) will only append values not in the previous Tuple:
 
 ```java
-def numbers: [ 4, 5, 6 ];
+def numbers: [ 4, 5, 5, 6 ];
 
-def moreNumbers: numbers += [ 6, 7 ];
+def moreNumbers: numbers ++ [ 6, 7 ];
 
 moreNumbers;                // < 4, 5, 6, 7 >
 ```
@@ -611,7 +673,7 @@ To define a function, use the `defn` keyword. To return a value from anywhere in
 defn add(x,y) { ^x + y; }
 ```
 
-Function definitions are always hoisted:
+Function definitions are always hoisted to their enclosing scope:
 
 ```java
 add(6,12);                          // 18
@@ -625,17 +687,21 @@ Function definitions are also expressions (first-class values), so they can be a
 ```java
 def myFn: defn add(x,y) { ^x + y; };
 
-add(6,12);                          // 18
 myFn(6,12);                         // 18
+add(6,12);                          // 18
+
+somethingElse(myFn);
 ```
 
-Function definition expressions can also be immediately invoked:
+Function definition expressions can also be immediately invoked, using the evaluation-expression:
 
 ```java
 |
     |defn add(x,y) { ^x + y; }| 6, 12
 |;                                  // 18
 ```
+
+**Note:** In the above example, the `|` pair surrounding the `defn` expression is technically optional. But it's recommended for readability sake, to visually disambiguate where the inline function expression begins and ends.
 
 Concise function definitions may omit the name and/or the `{ .. }` around the body, but the concise body must be an expression marked by the initial `^` return sigil:
 
@@ -685,7 +751,7 @@ factorial(5);                   // 120
 
 **Note:** The `?/ .. /` syntax is pattern-matching, explained earlier.
 
-Tail-calls (recursive or not) are automatically optimized by the Foi compiler to save call-stack resources:
+Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
 defn factorial(v,tot: 1) {
@@ -733,13 +799,15 @@ defn lookupCustomer(id) over (customerCache) {
 
     // but this is disallowed because `count`
     // isn't listed in the `over` clause:
-    count++;
+    count <: count + 1;
 }
 ```
 
+**Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `over` clause. The `over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
+
 #### Function Composition
 
-Function composition can be defined with the `>>` flow operator:
+Function composition can be defined in left-to-right style, with the `>>` flow operator:
 
 ```java
 defn inc(v) ^v + 1;
@@ -753,25 +821,27 @@ def composed: | >> inc, triple, half |;
 composed(11);                       // 18
 ```
 
-Recall that we can reverse the order of argument application with the `'` prime operator. Thus, we can perform right-to-left style composition:
+**Note:** The `>>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional arguments are ignored.
+
+It's also very common to prefer right-to-left style composition. Probably the most obvious reason is the visual-ordering coherency between `half(triple(inc(v)))` and a composition argument list like `half, triple, inc`.
+
+Rather than **Foi** providing another `<<` operator dedicated for this purpose, recall that we can reverse the order of argument application with the `'` prime operator. Thus:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| '>> half, triple, inc | 11 |;     // 18
+|| '>> half, triple, inc | 11 |;    // 18
 
 def composed: | '>> half, triple, inc |;
 
 composed(11);                       // 18
 ```
 
-**Note:** Probably the most obvious reason for right-to-left composition style is the visual-ordering coherency between `three(two(one(v)))` and `| '>> three, two, one |`.
-
 #### Function Pipelines
 
-By contrast, the `#>` pipeline operator (F#-style) operates like this:
+By contrast, the `#>` pipeline operator (F#-style) operates left-to-right like this:
 
 ```java
 defn inc(v) ^v + 1;
@@ -783,7 +853,7 @@ defn half(v) ^v / 2;
 11 #> | >> inc, triple, half |;     // 18
 ```
 
-The first expression in a pipeline must be a value or an expression that produces a value. Each subsequent step must either be a function, or an expression that resolves to a function, which then produces a value to pass on to the next step.
+The first expression in a pipeline must be a value (or an expression that produces a value). Each subsequent step must resolve to a function, which when invoked produces a value to pass on to the next step.
 
 Since the `#>` operator is n-ary, multiple steps can also be used in the evaluation-expression form:
 
@@ -795,7 +865,7 @@ defn half(v) ^v / 2;
 | #> 11, inc, triple, half |;       // 18
 ```
 
-Recall that we can reverse the order of arguments with the `'` prime operator, allowing us to do right-to-left pipelining if we wanted to for some reason:
+Recall that we can reverse the order of arguments with the `'` prime operator, allowing us to do right-to-left pipelining (if we wanted to for some reason):
 
 ```java
 defn inc(v) ^v + 1;
@@ -805,7 +875,7 @@ defn half(v) ^v / 2;
 | '#> half, triple, inc, 11 |;       // 18
 ```
 
-The *topic* of a pipeline step is the result of the previous step, and is implicitly passed as the single argument to the step's function. But the *topic* can be explicitly referred to with the `#` sigil:
+The *topic* of a pipeline step is the result of the previous step, and is implicitly passed as the single argument to the step's function. But the *topic* (i.e., the previous step's result value) can be explicitly referred to with the `#` sigil:
 
 ```java
 defn add(x,y) ^x + y;
@@ -816,7 +886,7 @@ defn half(v) ^v / 2;
 11 #> | add 1, # | #> triple #> half;    // 18
 ```
 
-Of course, if the `add(..)` function is curried, we can get back to point-free style (without needing the `#` topic):
+Of course, if the `add(..)` function is curried, we can get back to point-free style (no need for the explicit `#` topic):
 
 ```java
 defn add(x)(y) ^x + y;
@@ -839,9 +909,35 @@ defn compute(x) #> add(1,#) #> triple #> half;
 compute(11);                            // 18
 ```
 
+And again, if we define `add()` as curried function, we can avoid the `#` topic reference:
+
+```java
+defn add(x)(y) ^x + y;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+defn compute(x) #> add(1) #> triple #> half;
+
+compute(11);                            // 18
+```
+
+Compare this `#>` *pipeline function* form to the previously-discussed `>>` flow operator:
+
+```java
+defn add(x)(y) ^x + y;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+def composed: | >> add(1), triple, half |;
+
+composed(11);                           // 18
+```
+
+Compared to this `>>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
+
 ### Type Annotations
 
-Type annotations in Foi are applied to values/expressions (not to variables, etc). These are optional, as Foi uses type inference wherever possible. But applying them can often improve the performance optimizations the Foi compiler can produce. A type annotation always begins with the `as` keyword:
+Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce. A type annotation always begins with the `as` keyword:
 
 ```java
 def age: 42 as int;
