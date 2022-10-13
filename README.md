@@ -96,7 +96,7 @@ If an identifier like `someFn` holds a function, and is expressed as `| someFn |
 
 ----
 
-The primary reason for this optional `|    |` evaluation-expression form is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
+The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
 
 We'll cover many of those capabilities in the following sub-sections.
 
@@ -106,17 +106,17 @@ One such flexibility is that we can control the treatment of input arguments in 
 
 Some operators like `+` are commutative, so the operand/argument order doesn't matter. But other operators, like `-`, are not commutative, so the order matters.
 
-To reverse the order of applied arguments of the operator-function in question, which we can do with the `'` prime operator applied first to it:
+To reverse the order of applied arguments of the operator-function in question, we can use the `'` prime operator, applied first to the function:
 
 ```java
 | | ' - | 1, 6 |;               // 5
 ```
 
-Yes, with `| ' - |`, we just used one operator to modify another operator!
+Yes, with `| ' - |`, we just applied one operator against another operator!
 
 **Note:** The `'` prime operator has no prefix-operator form (like `'something(42)` or `1 '- 6`); that sort of syntax could cause chaos for readbility. Thus, it can only be used inside an evaluation-expression form, as shown above.
 
-Since this operation will be extremely common, a special sugar short-hand is available. The prime operator may appear immediately preceding (no whitespace) the operator/function (or expression) it's modifying:
+Since this operation will be extremely common, a special sugar short-hand is available. The `'` prime operator may appear immediately preceding (no whitespace) the operator/function (or expression) it's modifying:
 
 ```java
 | '- 1, 6 |;                    // 5
