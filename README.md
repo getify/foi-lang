@@ -796,6 +796,78 @@ defn add(x: 0, y: 0) ^x + y;
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
 
+#### Function Pre-conditions
+
+It's common that we write function logic with certain assumptions/expectations/pre-requisites for the parameter inputs.
+
+Functions should be as obvious as possible in surfacing such pre-conditions as part of the function signature, rather than embedding this logic into the runtime of its body. Ideally, a reader can determine these pre-conditions by looking only at the function's signature, without reading its implementation.
+
+Additionally, some pre-conditions may be verifiable at compile time. And even more importantly, pre-conditions can be pattern-matched against at run-time, *before* the function has been invoked.
+
+**Note:** Pre-conditions should not be thought of as *assertions*; **Foi** doesn't support exceptions (to throw if an assertion failed). Rather, pre-conditions are affirmative matches that define function returns. That said, a pre-condition can return a value that *signals* failure to the calling code.
+
+These aspects of the function's signature go beyond parameter [type annotations](#type-annotations). It's more than, "is this parameter always an `int`?"; pre-conditions are lifted to the call-site, applied against the function's argument input *value(s)*, and indeed the *relationship(s)* between such argument values.
+
+Consider a function that explicitly returns `1` if its argument is less than or equal to `1`. We might call this a "base condition" or an "early return" in certain styles of programming. You *could* write it this way:
+
+```java
+defn myFn(x) {
+    ?/
+        (x ?<= 1): ^1
+        default: empty
+    /?;
+
+    // ..
+}
+```
+
+This `^1` "early return" isn't particularly obvious, and requires reading into the body to determine. **Foi** functions can and should do better.
+
+Pre-conditions are annotated as `?(    ): expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition after the `(    )` parameter list, but before the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
+
+Thus, the above `myFn()` function could be more appropriately defined as:
+
+```java
+defn myFn(x) ?(x ?<= 1): 1 {
+    // ..
+}
+```
+
+Pre-conditions are evaluated at (before!) function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned -- the `^` return sigil is optional and thus typically omitted -- and thus the rest of the function invocation is skipped.
+
+Just like with pattern matching expressions, a preceeding `!` (in place of the `?`) negates the pre-condition. For example, if you want to define a function that only computes its result when the input is greater than `10`:
+
+```java
+defn myFn(x) !(x ?> 10): empty {
+    // ..
+}
+```
+
+**Note:** Here, `empty` indicates to the calling code that the function could not validly perform the intended computation. However, there are other types of values that could (should!?) be returned here, such as a Maybe@None or an Either@Left. More on monads later.
+
+If a function has multiple parameters, a pre-condition may imply a *relationship* between them. For example, to define a function where the first parameter must be larger than the second:
+
+```java
+defn myFn(x,y) !(x ?> y): empty {
+    ^(x - y);
+}
+```
+
+Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the pre-condition result will be `empty`:
+
+```java
+defn myFn(x,y) !(x ?> y): empty {
+    ^(x - y);
+}
+
+def result: ?(myFn(5,2))/
+    !(empty): #
+    default: 0
+/?;
+
+result;             // 3
+```
+
 #### Named Arguments
 
 To override positional argument-parameter binding at a function call-site, the evaluation-expression form can specify which parameter name each argument corresponds to (in any order):
