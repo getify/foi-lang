@@ -90,9 +90,18 @@ import log from #Std;
 
 **Note:** Whitespace is optional inside the `|    |` form, except as required after the first element (must be function expression) before the comma-separated argument list (e.g., `6, 12` above). So, `|log "Hello"|` and `|log |+ 6,12||` are the minimal whitespace forms of the above code snippet.
 
-A special case is when `|    |` contains only one element, essentially a function expression with no arguments list. In this case, the function is *not* invoked. Thus, there is no evaluation-expression equivalent of the zero-argument call form `someFn()`.
+Any function name -- or expression that evaluates to a function -- can be used in the first (callee) position of the `|    |` expression. However, with one exception, keywords (`import`, `def`, etc) may not be used in the callee position.
 
-If an identifier like `someFn` holds a function, and is expressed as `| someFn |`, that's treated the same as a `someFn` expression (no invocation). The optional surrounding `|    |` are allowed merely as a readability affordance. This is mostly useful for visually delimiting a full inline function expression (via `defn`, covered later) inside another evaluation-expression expression.
+The `defn` keyword (for function definitions -- see later) is the single exception; this keyword can be used as a (function-defining!) function in the evaluation-expression form. The single argument to `defn` is the full function signature (including any optional whitespace):
+
+```js
+def fn: | defn myFn(x) ^x + 1 |;
+
+// equivalent to:
+def fn: defn myFn(x) ^x + 1;
+```
+
+In the above snippet, it doesn't seem like the special case `| defn    |` form offers any benefit, as the shorter form without the `|    |` is identical. However, it's quite helpful for readability sake, when visually delimiting an inline function definition inside in another evaluation-expression. More on this later.
 
 ----
 
@@ -433,7 +442,7 @@ def myName: "Kyle";
 // Hello!
 ```
 
-In this example, the topic is the `myName` variable, which is evaluated once. Each pattern clause is evaluated, in order, and compared for equality with the topic. The first pattern to match, its consequent is evaluated and the result returned for the overall pattern match expression.
+In this example, the topic is the `myName` variable, which is evaluated once. Each pattern clause is evaluated, in order, and compared for equality with the topic. For the first clause whose pattern is matched, its consequent is evaluated and the result returned for the overall pattern match expression.
 
 Dependent pattern matching expressions *should be* determinate, in that all possible conditional branches are defined. The result of a pattern matching expression is thus the consequent expression of whichever conditional clause was matched:
 
@@ -450,20 +459,33 @@ greeting;               // "Hello!"
 
 However, if no pattern matches, the default result of the expression is a Maybe@None -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
 
-To explicitly define a default pattern, use the `default` keyword (which must be the last clause in the pattern matching expression):
+To explicitly define a default pattern, use `?:` (which must be the last clause in the pattern matching expression):
 
 ```java
 def myName: "Kyle";
 
 def greeting: ?(myName)/
     ?("Kyle"): "Hello!"
-    default: "Goodbye!"
+    ?: "Goodbye!"
 /?;
 
 greeting;               // "Hello!"
 ```
 
-**Note:** Comparing this example to the previous one, `default` is equivalent to the `!("Kyle")` pattern. Readability preferences may dictate either style, depending on the circumstances.
+**Note:** Comparing this example to the previous one, `?:` is equivalent to the `!("Kyle")` pattern. Readability preferences may dictate either style, depending on the circumstances.
+
+A dependent style pattern can include a `,` comma separated list of multiple values, any of which may match the topic:
+
+```java
+def myName: "Kyle";
+
+def greeting: ?(myName)/
+    ?("Kyle","Fred"): "Hello!"
+    ?: "Goodbye!"
+/?;
+
+greeting;               // "Hello!"
+```
 
 It may also be useful to access the topic of a pattern matching expression inside its clause(s); the topic is bound to the `#` symbol:
 
@@ -472,13 +494,13 @@ def myName: "Kyle";
 
 def greeting: ?(myName)/
     ?("Kyle"): | + "Hello ", #, "!" |
-    default: "Goodbye!"
+    ?: "Goodbye!"
 /?;
 
 greeting;               // "Hello Kyle!"
 ```
 
-Dependent pattern matching should only be used when all clauses equality-compare a single discrete value to the topic.
+Dependent pattern matching should only be used if the patterns only need equality-comparison of one or more discrete value(s) against the topic.
 
 For more complex boolean-logic matching patterns, the independent pattern matching form is appropriate. Independent pattern matching has no topic, and thus begins with a `?/` instead of a `?(    )/`.
 
@@ -497,20 +519,20 @@ greeting;               // "Hello!"
 
 **Note:** The pattern-match conditional `!(myName ?= "Kyle")` is equivalent to `(myName != "Kyle")`. Readability preferences may dictate either style, depending on the circumstances.
 
-Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default clause (final clause), the `default` keyword may be used:
+Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default (final) clause, `?:` may be used:
 
 ```java
 def myName: "Kyle";
 
 def greeting: ?/
     ?(myName ?= "Kyle"): "Hello!"
-    default: "Goodbye!"
+    ?: "Goodbye!"
 /?
 
 greeting;               // "Hello!"
 ```
 
-**Note:** Again comparing this example to the previous one, `default` is equivalent to the `!(myName ?= "Kyle")` conditional. Readability preferences may dictate either style, depending on the circumstances.
+**Note:** Again comparing this example to the previous one, `?:` is equivalent to the `!(myName ?= "Kyle")` conditional. Readability preferences may dictate either style, depending on the circumstances.
 
 ### Records And Tuples
 
@@ -814,7 +836,7 @@ Consider a function that explicitly returns `1` if its argument is less than or 
 defn myFn(x) {
     ?/
         ?(x ?<= 1): ^1
-        default: empty
+        ?: empty
     /?;
 
     // ..
@@ -862,7 +884,7 @@ defn myFn(x,y) !(x ?> y): empty {
 
 def result: ?(myFn(5,2))/
     !(empty): #
-    default: 0
+    ?: 0
 /?;
 
 result;             // 3
@@ -886,7 +908,7 @@ Function recursion is supported:
 ```java
 defn factorial(v) ^?/
     ?(v ?<= 1): 1
-    default: v * factorial(v - 1)
+    ?: v * factorial(v - 1)
 /?
 
 factorial(5);                   // 120
@@ -897,7 +919,7 @@ Tail-calls (recursive or not) are automatically optimized by the **Foi** compile
 ```java
 defn factorial(v,tot: 1) ^?/
     ?(v ?<= 1): tot
-    default: factorial(v - 1,tot * v)
+    ?: factorial(v - 1,tot * v)
 /?
 
 factorial(5);                   // 120
