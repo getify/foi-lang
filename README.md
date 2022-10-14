@@ -906,10 +906,9 @@ defn add(x: 0, y) ^x + y;
 Function recursion is supported:
 
 ```java
-defn factorial(v) ^?/
-    ?(v ?<= 1): 1
-    ?: v * factorial(v - 1)
-/?
+defn factorial(v) ?(v ?<= 1): 1 {
+    ^v * factorial(v - 1);
+}
 
 factorial(5);                   // 120
 ```
@@ -917,10 +916,9 @@ factorial(5);                   // 120
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
-defn factorial(v,tot: 1) ^?/
-    ?(v ?<= 1): tot
-    ?: factorial(v - 1,tot * v)
-/?
+defn factorial(v,tot: 1) ?(v ?<= 1): tot {
+    ^factorial(v - 1,tot * v)
+}
 
 factorial(5);                   // 120
 ```
