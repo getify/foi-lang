@@ -409,24 +409,95 @@ x !<= y;                // false
 
 ### Pattern Matching
 
-To make decisions (with booleans!), use pattern matching:
+To make decisions (with booleans!), use pattern matching. There are two forms:
+
+1. Dependent: each pattern is matched against (dependent on) a single topic.
+
+2. Independent: each pattern has its own independent topic.
+
+Generally, both forms are delimited with a `?/` or `?(    )/` to start the expression, and a `/?` to close the expression.
+
+Each pattern clause is defined by `(    ): expr`, where the conditional is defined by the `(    )`. A pattern can be negated as `!(    )`. The pattern match clause's consequent can either be a single `expr` expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
+
+Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    )/` tag.
+
+Consider:
 
 ```java
-import log from #Std;
-
 def myName: "Kyle";
 
-?/
-    (myName ?= "Kyle"): log("Hello!")
-    default: log("Goodbye!")
-/;
+?(myName)/
+    ("Kyle"): log("Hello!")
+    !("Kyle"): log("Goodbye!")
+/?
+// Hello!
 ```
 
-Each match clause begins with a conditional -- either `(    )` delimited expression or a `|    |` evaluation-expression -- followed by a `:` colon an its consequent -- either an expression or a `{ }` block. If the match's conditional evaluates to `true`, the consequent is evaluated, and the pattern-match completes.
+In this example, the topic is the `myName` variable, which is evaluated once. Each pattern clause is evaluated, in order, and compared for equality with the topic. The first pattern to match, its consequent is evaluated and the result returned for the overall pattern match expression.
 
-Otherwise, the next match conditional is evaluated, and so on. If no match conditional succeeds, the (required) `default` clause's consequent is evaluated.
+Dependent pattern matching expressions *should be* determinate, in that all possible conditional branches are defined. The result of a pattern matching expression is thus the consequent expression of whichever conditional clause was matched:
 
-The matched clause's consequent result value will be the final expression result:
+```java
+def myName: "Kyle";
+
+def greeting: ?(myName)/
+    ("Kyle"): "Hello!"
+    !("Kyle"): "Goodbye!"
+/?
+
+greeting;               // "Hello!"
+```
+
+However, if no pattern matches, the default result of the expression is a Maybe@None -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
+
+To explicitly define a default pattern, use the `default` keyword (which must be the last clause in the pattern matching expression):
+
+```java
+def myName: "Kyle";
+
+def greeting: ?(myName)/
+    ("Kyle"): "Hello!"
+    default: "Goodbye!"
+/?;
+
+greeting;               // "Hello!"
+```
+
+**Note:** Comparing this example to the previous one, `default` is equivalent to the `!("Kyle")` pattern. Readability preferences may dictate either style, depending on the circumstances.
+
+It may also be useful to access the topic of a pattern matching expression inside its clause(s); the topic is bound to the `#` symbol:
+
+```java
+def myName: "Kyle";
+
+def greeting: ?(myName)/
+    ("Kyle"): | + "Hello ", #, "!" |
+    default: "Goodbye!"
+/?;
+
+greeting;               // "Hello Kyle!"
+```
+
+Dependent pattern matching should only be used when all clauses equality-compare a single discrete value to the topic.
+
+For more complex boolean-logic matching patterns, the independent pattern matching form is appropriate. Independent pattern matching has no topic, and thus begins with a `?/` instead of a `?(    )/`.
+
+In this form, each clause matches only if the pattern is a conditional that evaluates to `true`. You could thus mentally model `?/` as if it was shorthand for `?(true)/`.
+
+```java
+def myName: "Kyle";
+
+def greeting: ?/
+    (myName ?= "Kyle"): "Hello!"
+    !(myName ?= "Kyle"): "Goodbye!"
+/?
+
+greeting;               // "Hello!"
+```
+
+**Note:** The pattern-match conditional `!(myName ?= "Kyle")` is equivalent to `(myName != "Kyle")`. Readability preferences may dictate either style, depending on the circumstances.
+
+Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default clause (final clause), the `default` keyword may be used:
 
 ```java
 def myName: "Kyle";
@@ -434,10 +505,12 @@ def myName: "Kyle";
 def greeting: ?/
     (myName ?= "Kyle"): "Hello!"
     default: "Goodbye!"
-/;
+/?
 
 greeting;               // "Hello!"
 ```
+
+**Note:** Again comparing this example to the previous one, `default` is equivalent to the `!(myName ?= "Kyle")` conditional. Readability preferences may dictate either style, depending on the circumstances.
 
 ### Records And Tuples
 
@@ -739,27 +812,21 @@ defn add(x: 0, y) ^x + y;
 Function recursion is supported:
 
 ```java
-defn factorial(v) {
-    ^?/
-        (v ?<= 1): v
-        default: v * factorial(v - 1)
-    /;
-}
+defn factorial(v) ^?/
+    (v ?<= 1): 1
+    default: v * factorial(v - 1)
+/?
 
 factorial(5);                   // 120
 ```
 
-**Note:** The `?/    /` syntax is pattern-matching, explained earlier.
-
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
-defn factorial(v,tot: 1) {
-    ^?/
-        (v ?<= 1): tot
-        default: factorial(v - 1,tot * v)
-    /;
-}
+defn factorial(v,tot: 1) ^?/
+    (v ?<= 1): tot
+    default: factorial(v - 1,tot * v)
+/?
 
 factorial(5);                   // 120
 ```
