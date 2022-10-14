@@ -417,7 +417,7 @@ To make decisions (with booleans!), use pattern matching. There are two forms:
 
 Generally, both forms are delimited with a `?/` or `?(    )/` to start the expression, and a `/?` to close the expression.
 
-Each pattern clause is defined by `(    ): expr`, where the conditional is defined by the `(    )`. A pattern can be negated as `!(    )`. The pattern match clause's consequent can either be a single `expr` expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
+Each pattern clause is defined by `?(    ): expr`, where the pattern is defined inside the `(    )`. A pattern can be negated as `!(    )`. The pattern match clause's consequent can either be a single `expr` expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
 
 Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    )/` tag.
 
@@ -427,7 +427,7 @@ Consider:
 def myName: "Kyle";
 
 ?(myName)/
-    ("Kyle"): log("Hello!")
+    ?("Kyle"): log("Hello!")
     !("Kyle"): log("Goodbye!")
 /?
 // Hello!
@@ -441,7 +441,7 @@ Dependent pattern matching expressions *should be* determinate, in that all poss
 def myName: "Kyle";
 
 def greeting: ?(myName)/
-    ("Kyle"): "Hello!"
+    ?("Kyle"): "Hello!"
     !("Kyle"): "Goodbye!"
 /?
 
@@ -456,7 +456,7 @@ To explicitly define a default pattern, use the `default` keyword (which must be
 def myName: "Kyle";
 
 def greeting: ?(myName)/
-    ("Kyle"): "Hello!"
+    ?("Kyle"): "Hello!"
     default: "Goodbye!"
 /?;
 
@@ -471,7 +471,7 @@ It may also be useful to access the topic of a pattern matching expression insid
 def myName: "Kyle";
 
 def greeting: ?(myName)/
-    ("Kyle"): | + "Hello ", #, "!" |
+    ?("Kyle"): | + "Hello ", #, "!" |
     default: "Goodbye!"
 /?;
 
@@ -488,7 +488,7 @@ In this form, each clause matches only if the pattern is a conditional that eval
 def myName: "Kyle";
 
 def greeting: ?/
-    (myName ?= "Kyle"): "Hello!"
+    ?(myName ?= "Kyle"): "Hello!"
     !(myName ?= "Kyle"): "Goodbye!"
 /?
 
@@ -503,7 +503,7 @@ Just as with dependent pattern matching, it's preferable for the overall indepen
 def myName: "Kyle";
 
 def greeting: ?/
-    (myName ?= "Kyle"): "Hello!"
+    ?(myName ?= "Kyle"): "Hello!"
     default: "Goodbye!"
 /?
 
@@ -813,7 +813,7 @@ Consider a function that explicitly returns `1` if its argument is less than or 
 ```java
 defn myFn(x) {
     ?/
-        (x ?<= 1): ^1
+        ?(x ?<= 1): ^1
         default: empty
     /?;
 
@@ -885,7 +885,7 @@ Function recursion is supported:
 
 ```java
 defn factorial(v) ^?/
-    (v ?<= 1): 1
+    ?(v ?<= 1): 1
     default: v * factorial(v - 1)
 /?
 
@@ -896,7 +896,7 @@ Tail-calls (recursive or not) are automatically optimized by the **Foi** compile
 
 ```java
 defn factorial(v,tot: 1) ^?/
-    (v ?<= 1): tot
+    ?(v ?<= 1): tot
     default: factorial(v - 1,tot * v)
 /?
 
