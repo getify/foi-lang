@@ -885,17 +885,27 @@ The default is applied if the corresponding argument supplied has the `empty` va
 
 #### Function Pre-conditions
 
-It's common that we write function logic with certain assumptions/expectations/pre-requisites for the parameter inputs.
+It's common that we write function logic while making certain assumptions (aka: expectations, requirements, pre-requisites) for the parameter inputs.
 
-Functions should be as obvious as possible in surfacing such pre-conditions as part of the function signature, rather than embedding this logic into the runtime of its body. Ideally, a reader can determine these pre-conditions by looking only at the function's signature, without reading its implementation.
+Functions should be as obvious as possible in surfacing such assumptions, rather than merely embedding this logic into the function body's runtime. Ideally, these pre-conditions are part of the explicit function signature, so a reader doesn't need to inspect and mentally execute the function's implementation.
 
-Additionally, some pre-conditions may be verifiable at compile time. And even more importantly, pre-conditions can be pattern-matched against at run-time, *before* the function has been invoked.
+Additionally, some pre-conditions may be verifiable at compile time. And even more importantly, pre-conditions can be evaluated *before* the function has been invoked, where a function might not even need to be invoked!
 
-**Note:** Pre-conditions should not be thought of as *assertions*; **Foi** doesn't support exceptions (to throw if an assertion failed). Rather, pre-conditions are affirmative matches that define function returns. That said, a pre-condition can return a value that *signals* failure to the calling code.
+----
+
+In most other programming languages, a pre-condition means: "if this condition *is not met*, the function cannot run". We might even call this an "assertion". And in some languages, exceptions might be thrown to indicate this failure.
+
+In **Foi**, it's the opposite (indeed, **Foi** doesn't have exceptions).
+
+We're intentionally flipping the mental model from "the function runs only if it *can*" to "the function runs only if it needs to". If a function's pre-condition *is met*, the function **doesn't need to run**; its result value is already explicitly known.
+
+----
 
 These aspects of the function's signature go beyond parameter [type annotations](#type-annotations). It's more than, "is this parameter always an `int`?"; pre-conditions are lifted to the call-site, applied against the function's argument input *value(s)*, and indeed the *relationship(s)* between such argument values.
 
-Consider a function that explicitly returns `1` if its argument is less than or equal to `1`. We might call this a "base condition" or an "early return" in certain styles of programming. You *could* write it this way:
+Consider a function that returns `1` if its argument is less than or equal to `1`. We might call this a "base condition" or an "early return" in certain styles of programming.
+
+You *could* write it this way:
 
 ```java
 defn myFn(x) {
@@ -908,9 +918,11 @@ defn myFn(x) {
 }
 ```
 
-This `^1` "early return" isn't particularly obvious, and requires reading into the body to determine. **Foi** functions can and should do better.
+The problem is, this `^1` "early return" isn't particularly obvious, and requires reading into the body to determine.
 
-Pre-conditions are annotated as `?(    ): expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition after the `(    )` parameter list, but before the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
+**Foi** functions ***can and should do better***.
+
+Pre-conditions are annotated as `?(    ): expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
 
 Thus, the above `myFn()` function could be more appropriately defined as:
 
@@ -920,9 +932,13 @@ defn myFn(x) ?(x ?<= 1): 1 {
 }
 ```
 
-Pre-conditions are evaluated at (before!) function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned -- the `^` return sigil is optional and thus typically omitted -- and thus the rest of the function invocation is skipped.
+Pre-conditions are evaluated (hoisted to the call-site!), before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned -- no `^` return sigil! -- and thus the function invocation is skipped.
 
-Just like with pattern matching expressions, a preceeding `!` (in place of the `?`) negates the pre-condition. For example, if you want to define a function that only computes its result when the input is greater than `10`:
+----
+
+Just like with pattern matching expressions, a preceeding `!` (in place of the `?`) negates the pre-condition. By using this form of a pre-condition, you somewhat conform it to the typical mental model of pre-conditions (as discussed earlier).
+
+For example, if you want to define a function that only computes its result when the input is greater than `10`:
 
 ```java
 defn myFn(x) !(x ?> 10): empty {
@@ -930,7 +946,11 @@ defn myFn(x) !(x ?> 10): empty {
 }
 ```
 
-**Note:** Here, `empty` indicates to the calling code that the function could not validly perform the intended computation. However, there are other types of values that could (should!?) be returned here, such as a Maybe@None or an Either@Left. More on monads later.
+You can read/interpret the `!(x ?> 10): empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
+
+**Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a Maybe@None or an Either@Left. More on monads later.
+
+----
 
 If a function has multiple parameters, a pre-condition may imply a *relationship* between them. For example, to define a function where the first parameter must be larger than the second:
 
@@ -940,19 +960,24 @@ defn myFn(x,y) !(x ?> y): empty {
 }
 ```
 
-Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the pre-condition result will be `empty`:
+Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the result (from the pre-condition) will be `empty`:
 
 ```java
 defn myFn(x,y) !(x ?> y): empty {
     ^(x - y);
 }
 
-def result: ?(myFn(5,2))/
+def result1: ?(myFn(5,2))/
+    !(empty): #
+    ?: 0
+/?;
+def result2: ?(myFn(2,5))/
     !(empty): #
     ?: 0
 /?;
 
-result;             // 3
+result1;            // 3
+result2;            // 0
 ```
 
 #### Named Arguments
