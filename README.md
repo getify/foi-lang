@@ -754,18 +754,41 @@ def moreNumbers: numbers + < 7, 8, 9 >;
 moreNumbers.5;              // 8
 ```
 
-And to derive a new Tuple as a ranged subset of another one, use the `..` operator:
+And to derive a new Tuple as a ranged subset of another one, use the `..` range operator with its first operand being a tuple:
 
 ```java
 def numbers: < 4, 5, 6 >;
 
-numbers..1;                 // < 5, 6 >
-numbers..-1;                // < 6 >
+def head: numbers.0;        // single .
+def tail: numbers..1;       // double ..
 
-| .. numbers 0 2 |;          // < 4, 5 >
+def last: numbers.-1;       // single .
+def trailing: numbers..-1;  // double ..
+
+head;                       // 4
+tail;                       // < 5, 6 >
+
+last;                       // 6
+trailing;                   // < 6 >
 ```
 
 **Note:** the specific expression `..0` (or `| .. 0 |`) is effectively a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
+
+To define the bounds (start index — end index, both inclusive) of the ranged tuple subset, use the evaluation-expression form:
+
+```java
+def numbers: < 4, 5, 6 >;
+
+def leading: | .. numbers 0, 2 |;
+def tail: | .. numbers 1, -1 |;
+
+leading;                    // < 4, 5 >
+trailing;                   // < 5, 6 >
+```
+
+The default end index for a ranged subset is `-1` (meaning up to, and including, the final value).
+
+So, `| .. numbers 1, -1 |` is the same as `| .. numbers 1 |` (and `numbers..1`). This example with `-1` explicitly specified is included for illustration purposes, but for readability the preferred form omits the end index in such a case.
 
 #### Maps
 
