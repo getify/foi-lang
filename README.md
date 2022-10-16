@@ -655,9 +655,39 @@ person ?has "middle";           // false
 person !has "nickname";         // true
 ```
 
+#### Generating Sequences (Ranges)
+
+If you want to generate a list (tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or evaluation-expression form).
+
+This usage of the `..` operator is valid with naturally sequential (ordered, fixed interval) values, such as integers and characters:
+
+```java
+def someInts: 2..13;
+
+someInts.5;                     // 7
+
+def alphabet: | .. "a", "z" |;
+
+alphabet.5;                     // "e"
+```
+
+The bounds (start and end) of a sequence/range can be held in variables:
+
+```java
+def two: 2;
+def thirteen: 13;
+def someInts: two..thirteen;
+
+def a: "a";
+def z: "z";
+def alphabet: a..z;
+```
+
+The start/end values must be of the same data type; `3.."g"` will not work.
+
 #### Deriving Instead Of Mutating
 
-Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick sigil:
+Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick sigil prefixed on a variable name (not an arbitrary expression):
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -668,6 +698,18 @@ def friend: < &person, first: "Jenny" >;
 ```
 
 Above, the entire contents of `numbers` and `person` are *picked*, to be included in the new Tuple and Record values, respectively.
+
+Picking can be useful for merging multiple sequences, for example to define the base-64 characters:
+
+```java
+def upper: "A".."Z";
+def lower: "a".."z";
+def digits: "0".."9";
+
+def base64: < &upper, &lower, &digits, "+", "/" >;
+```
+
+**Note:** For type consistency, we intentionally defined `digits` as the character sequence `"0".."9"` instead of the integer sequence `0..9`.
 
 To *pick* only specific elements:
 
@@ -689,7 +731,7 @@ def person: < first: "Kyle", last: "Simpson" >;
 def friend: < first: "Jenny", last: person.last >;
 ```
 
-But, one advantage of this less-sugared form is, you can re-index/rename the field in the target Record/Tuple.
+But, one advantage of this more verbose (less-sugared) form is, you could re-index/rename the field (something other than `2` or `last`, respectively) in the target Record/Tuple.
 
 As a convenience shorthand, you can also *pick* multiple fields at once:
 
