@@ -1212,6 +1212,37 @@ defn whatever(id,name) as InterestingFunc {
 }
 ```
 
+The `?as` operator corresponds to the `as` type annotation keyword. It's a boolean operator that returns true if a value/expression matches the indicated type.
+
+```java
+def age: 42;
+
+age ?as int;                // true
+
+(age as bool) ?as int;      // false
+```
+
+This operator is useful in pattern matching:
+
+```java
+deft SimpleFunc (int) -> empty;
+deft InterestingFunc (int,string) -> empty;
+
+def result1: ?(myFn)/
+    ?(?as SimpleFunc): myFn(42)
+    ?(?as InterestingFunction): myFn(42,"Kyle")
+    ?: myFn()
+/?;
+
+// or:
+
+def result2: ?/
+    ?(myFn ?as SimpleFunc): myFn(42)
+    ?(myFn ?as InterestingFunction): myFn(42,"Kyle")
+    ?: myFn()
+/?;
+```
+
 ## License
 
 [![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
