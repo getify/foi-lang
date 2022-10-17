@@ -2,41 +2,74 @@
 
 I'm jotting down some very early thoughts on what I think I want to design for the **Foi** language. This stuff is pretty much all subject to change. Consider everything experimental R&D for the foreseeable future.
 
-## Aspirational Design Ideas
+<details>
+    <summary>Aspirational Design Ideas for Foi</summary>
+    <p></p>
+    <ul>
+        <li>versioned, with no backwards-compat guarantee</li>
+        <li>parsed, JIT'd, compiled (probably WASM), with full-fidelity AST (preserves everything including whitespace, comments, etc)</li>
+        <li>semicolons and braces (both required) -- no ASI, no implicit blocks</li>
+        <li>lexical and block scoped, functions are first-class and have closure</li>
+        <li>side effects (non-local reassignments) must be explicitly declared in function signature</li>
+        <li>no global scope (everything is in a module scope)</li>
+        <li>no circular dependencies, only synchronous module initialization</li>
+        <li>no references or pointers</li>
+        <li>no class, nor prototype, nor `this`-awareness</li>
+        <li>functional (tail-call optimized, pattern matching, curried function definitions, composition syntax, native monads, no exception handling, etc)</li>
+        <li>no `const`</li>
+        <li>no `let` -- block-scoped declarations are explicit syntax as part of the block</li>
+        <li>function auto-hoisting, but no variable hoisting</li>
+        <li>only one empty value</li>
+        <li>numeric types: int, float, bigint, bigfloat</li>
+        <li>everything is an expression (no statements)</li>
+        <li>iteration/looping (for/foreach/filter/map) are syntactic expressions, but accept functions</li>
+        <li>all keywords and operators are functions (with optional lisp-like call syntax)</li>
+        <li>records/tuples (instead of objects/arrays) that are immutable and by-value primitives</li>
+        <li>syntax for mutable data collection (dynamically define props/indices, like objects or arrays), but in order to use/read/pass-around, must first be "frozen" into an immutable record or tuple -- somewhat like a heap-allocated typed-array that's then accessed by a "view" (a record or tuple)</li>
+        <li>strings are sugar for tuples of characters, and are interoperable as such</li>
+        <li>optional named-argument call syntax</li>
+        <li>asynchrony built in (syntax for future values and reactivity/streams)</li>
+        <li>garbage collected</li>
+        <li>type awareness: weakly typed (small, limited set of type coercions), with dynamic type inferencing as well as optional type annotations on values/expressions</li>
+    </ul>
+    <p>
+        In addition to the above, I may pull parts of a long-ago description of [earlier ideas for this language (then called "FoilScript")](https://github.com/getify/FoilScript#whats-in).
+    </p>
+</details>
 
-* versioned, with no backwards-compat guarantee
-* parsed, JIT'd, compiled (probably WASM), with full-fidelity AST (preserves everything including whitespace, comments, etc)
-* semicolons and braces (both required) -- no ASI, no implicit blocks
-* lexical and block scoped, functions are first-class and have closure
-* side effects (non-local reassignments) must be explicitly declared in function signature
-* no global scope (everything is in a module scope)
-* no circular dependencies, only synchronous module initialization
-* no references or pointers
-* no class, nor prototype, nor `this`-awareness
-* functional (tail-call optimized, pattern matching, curried function definitions, composition syntax, native monads, no exception handling, etc)
-* no `const`
-* no `let` -- block-scoped declarations are explicit syntax as part of the block
-* function auto-hoisting, but no variable hoisting
-* only one empty value
-* numeric types: int, float, bigint, bigfloat
-* everything is an expression (no statements)
-* iteration/looping (for/foreach/filter/map) are syntactic expressions, but accept functions
-* all keywords and operators are functions (with optional lisp-like call syntax)
-* records/tuples (instead of objects/arrays) that are immutable and by-value primitives
-* syntax for mutable data collection (dynamically define props/indices, like objects or arrays), but in order to use/read/pass-around, must first be "frozen" into an immutable record or tuple -- somewhat like a heap-allocated typed-array that's then accessed by a "view" (a record or tuple)
-* strings are sugar for tuples of characters, and are interoperable as such
-* optional named-argument call syntax
-* asynchrony built in (syntax for future values and reactivity/streams)
-* garbage collected
-* type awareness: weakly typed (small, limited set of type coercions), with dynamic type inferencing as well as optional type annotations on values/expressions
+## Table of Contents
 
-## Prior Ideas
+The following is a partial exploration of what I've been imagining for awhile. There's a lot still to work out.
 
-In addition to the above, I may pull parts of a long-ago description of [earlier ideas for this language (then called "FoilScript")](https://github.com/getify/FoilScript#whats-in).
-
-## Exploring Code Ideas
-
-The following is a super incomplete exploration of what I've been imagining for awhile. There's a lot still to work out.
+* [Imports](#imports)
+* [Function Calls](#function-calls)
+* [Evaluation-Expression Form](#evaluation-expression-form) (optional lisp-like function call form)
+    - [Reversing Argument Order](#reversing-argument-order)
+    - [Partial Application](#partial-application)
+    - [N-Ary Operators](#n-ary-operators)
+    - [Apply (aka Spread)](#apply-aka-spread)
+* [Defining Variables](#defining-variables)
+* [Boolean Logic](#boolean-logic)
+* [Equality and Comparison](#equality-and-comparison)
+* [Pattern Matching](#pattern-matching)
+* [Records and Tuples](#records-and-tuples)
+    - [Inspecting](#inspecting)
+    - [Generating Sequences (Ranges)](#generating-sequences-ranges)
+    - [Deriving Instead Of Mutating](#deriving-instead-of-mutating)
+    - [Maps](#maps)
+    - [Sets](#sets)
+* [Functions](#functions)
+    - [Default Parameter Values](#default-parameter-values)
+    - [Negating a Predicate](#negating-a-predicate)
+    - [Function Pre-conditions](#function-pre-conditions)
+    - [Named Arguments](#named-arguments)
+    - [Function Recursion](#function-recursion)
+    - [Function Currying](#function-currying)
+    - [Function Composition](#function-composition)
+    - [Function Pipelines](#function-pipelines)
+* [Loops and Comprehensions](#loops-and-comprehensions)
+    - [Tagged Comprehensions](#tagged-comprehensions)
+* [Type Annotations](#type-annotations)
 
 ### Imports
 
@@ -1203,7 +1236,7 @@ compute(11);    // 18
 
 Compared to this `>>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
 
-### Loops & Comprehensions
+### Loops and Comprehensions
 
 Perhaps some of the most distinctive features in various programming languages (FP-oriented versus more general) is the mechanics of looping/iteration. Imperative languages tend to have a variety of loop types (`for`, `while`, `do..while`, etc), whereas FP languages favor iterations/comprehensions (`map`, `filter`, `reduce` / `fold`, etc).
 
@@ -1292,9 +1325,11 @@ In general, the result of the `~` operation is another *range* (e.g., Record/Tup
 
 **Note:** For `~` looping over a Record/Tuple *range*, `~` by default produces the same *range* as its result. But in the case where the *range* was a conditional, the result of `~` will be the final boolean `false` that terminated the *range*.
 
-However, moving beyond imperative looping to comprehensions (more specific kinds of iteration), `~` can be *tagged*. A tagged `~` comprehension overrides control over the *iteration* and the final `~` result.
+#### Tagged Comprehensions
 
-Valid comprehension tags on the `~` operator are: `~map`, `~filter`, `~fold`, and `~foldR`.
+However, moving beyond imperative looping to comprehensions, `~` can be *tagged*, to indicate a more specific, declarative kind of iteration. A tagged `~` comprehension overrides control of the *iteration* and the final `~` expression result.
+
+Supported comprehension tags on the `~` operator are: `~map`, `~filter`, `~fold`, and `~foldR`.
 
 For example:
 
