@@ -883,6 +883,25 @@ defn add(x: 0, y: 0) ^x + y;
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
 
+#### Negating A Predicate
+
+A predicate is a boolean-returning function. For example:
+
+```java
+defn isOdd(v) ^mod(v,2) ?= 0;
+```
+
+It can be quite useful to negate a predicate, which is easily done with the unary `!` and a function value:
+
+```java
+def isEven: !isOdd;
+
+// or:
+def isEven: | ! isOdd |;
+```
+
+**Note:** `!` is overloaded to produce a negated (aka, complement) function if used against a function value. Otherwise, it acts to flip/negate a boolean value.
+
 #### Function Pre-conditions
 
 It's common that we write function logic while making certain assumptions (aka: expectations, requirements, pre-requisites) for the parameter inputs.
