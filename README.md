@@ -1065,9 +1065,9 @@ defn half(v) ^v / 2;
 
 || >> inc, triple, half | 11 |;     // 18
 
-def composed: | >> inc, triple, half |;
+def compute: | >> inc, triple, half |;
 
-composed(11);                       // 18
+compute(11);                       // 18
 ```
 
 **Note:** The `>>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional arguments are ignored.
@@ -1083,9 +1083,9 @@ defn half(v) ^v / 2;
 
 || '>> half, triple, inc | 11 |;    // 18
 
-def composed: | '>> half, triple, inc |;
+def compute: | '>> half, triple, inc |;
 
-composed(11);                       // 18
+compute(11);                       // 18
 ```
 
 #### Function Pipelines
@@ -1143,7 +1143,7 @@ defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
 11 #> add(1) #> triple #> half;        // 18
-11 #> | add 1 | #> triple #> half;    // 18
+11 #> | add 1 | #> triple #> half;     // 18
 ```
 
 A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
@@ -1155,7 +1155,7 @@ defn half(v) ^v / 2;
 
 defn compute(x) #> add(1,#) #> triple #> half;
 
-compute(11);                            // 18
+compute(11);    // 18
 ```
 
 And again, if we define `add()` as curried function, we can avoid the `#` topic reference:
@@ -1167,7 +1167,7 @@ defn half(v) ^v / 2;
 
 defn compute(x) #> add(1) #> triple #> half;
 
-compute(11);                            // 18
+compute(11);    // 18
 ```
 
 Compare this `#>` *pipeline function* form to the previously-discussed `>>` flow operator:
@@ -1177,12 +1177,229 @@ defn add(x)(y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def composed: | >> add(1), triple, half |;
+def compute: | >> add(1), triple, half |;
 
-composed(11);                           // 18
+compute(11);    // 18
 ```
 
 Compared to this `>>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
+
+### Loops & Comprehensions
+
+Perhaps some of the most distinctive features in various programming languages (FP-oriented versus more general) is the mechanics of looping/iteration. Imperative languages tend to have a variety of loop types (`for`, `while`, `do..while`, etc), whereas FP languages favor iterations/comprehensions (`map`, `filter`, `reduce` / `fold`, etc).
+
+**Foi** is unquestionably an FP-oriented language, but tries (to an extent!) to cast a wider, more pragmatic net, in hopes of being inclusive of broader programming styles. As such, there's a unified syntax which can be used for both imperative looping and declarative iteration/comprehension.
+
+Let's start with the typical imperative loop approach. Here's a loop that prints `"Hello!"` four times, using the `~` loop operator:
+
+```java
+0..3 ~ {
+    log("Hello!");
+};
+// Hello!
+// Hello!
+// Hello!
+// Hello!
+```
+
+`~` is a operator/function that can be used either in the infix form (shown above) or the evaluation-expression form. The first operand to `~` defines the *range*, and the second operand defines the *iteration* operation(s).
+
+1. The *range* is an expression that determines the *bounds* of the loop processing; this expression can take two forms:
+
+    - If the *range* expression resolves to a Record/Tuple, the contents of the value are set as fixed *bounds* for loop processing. Examples of such an expression: an identifier, a function call, generated (`0..3`, as above), or explicit inline (such as `< 0, 1, 2, 3 >`).
+
+    - If the *range* expression is a conditional of the form `?(    )` or `!(    )` -- same as the conditional of an independent [pattern matching](#pattern-matching) clause -- the expression will be evaluated *before* each iteration, and will only proceed with the iteration if `true`; `false` signals the end of the *range* and terminates the loop. For example:
+
+        ```java
+        def done: false;
+
+        !(done) ~ {
+            // ..
+        };
+        ```
+
+    - If the `range` expression is omitted, `~` returns another function that expects a single argument defining the *range*. For example:
+
+        ```java
+        def printAll: ~ log;
+
+        printAll(< 1, 3, 5, 7, 9 >);
+        // 1
+        // 3
+        // 5
+        // 7
+        // 9
+        ```
+
+2. The *iteration* is an expression that defines what operation(s) to perform for each iteration. This expression can take several forms:
+
+    - an expression that evaluates to a function to invoke for each iteration. For example:
+
+        ```java
+        0..3 ~ log;
+        // 0
+        // 1
+        // 2
+        // 3
+        ```
+
+    - an inline expression block that corresponds to the `def (    ) {    }` block-scoped statement (without the `def` keyword), with one or more comma-separated bindings in the `(    )` list. For example:
+
+        ```java
+        2..5 ~ (v, idx) {
+            log(idx + ": " + v);
+        };
+        // 0: 2
+        // 1: 3
+        // 2: 4
+        // 3: 5
+        ```
+
+        **Warning:** Beware that any initializations of these bindings (e.g., `(v: 3, idx: 7)`) may very well be overwritten as they are assigned per-iteration, according to the loop `range` and the iteration-type.
+
+        If the loop doesn't need any bindings, omit the `(    )` bindings clause:
+
+        ```java
+        0..3 ~ {
+            log("Hello!");
+        };
+        // Hello!
+        // Hello!
+        // Hello!
+        // Hello!
+        ```
+
+In general, the result of the `~` operation is another *range* (e.g., Record/Tuple), such that multiple `~` expressions can be chained together. For example, `a ~ b ~ c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~` operation. The same would be true of `| ~ a, b, c |`.
+
+**Note:** For `~` looping over a Record/Tuple *range*, `~` by default produces the same *range* as its result. But in the case where the *range* was a conditional, the result of `~` will be the final boolean `false` that terminated the *range*.
+
+However, moving beyond imperative looping to comprehensions (more specific kinds of iteration), `~` can be *tagged*. A tagged `~` comprehension overrides control over the *iteration* and the final `~` result.
+
+Valid comprehension tags on the `~` operator are: `~map`, `~filter`, `~fold`, and `~foldR`.
+
+For example:
+
+```java
+defn double(v) ^v * 2;
+
+def evens: 0..5 ~map double;
+// < 0, 2, 4, 6, 8, 10 >
+```
+
+You can also use the inline function definition form:
+
+```java
+def evens: 0..5 ~map defn(v) ^v * 2;
+// < 0, 2, 4, 6, 8, 10 >
+```
+
+And with the the inline-block form:
+
+```java
+def evens: 0..5 ~map (v) {
+    v * 2;
+};
+// < 0, 2, 4, 6, 8, 10 >
+```
+
+To compose multiple comprehensions:
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+def odds: < 1, 3, 5, 7, 9 >;
+
+odds ~map inc ~map triple ~map half;
+// < 3, 6, 9, 12, 15 >
+
+odds ~map | >> inc, triple, half |;
+// < 3, 6, 9, 12, 15 >
+
+| ~map odds, inc, triple, half |;
+// < 3, 6, 9, 12, 15 >
+```
+
+Further, we can take advantage of omitting the *range* to create a function out of the comprehension composition:
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+def compute1: ~map inc ~map triple ~map half;
+def compute2: | ~map , inc, triple, half |;
+
+compute1(< 1, 3, 5, 7, 9 >);
+// < 3, 6, 9, 12, 15 >
+
+compute2(< 1, 3, 5, 7, 9 >);
+// < 3, 6, 9, 12, 15 >
+```
+
+The `~filter` comprehension works like this:
+
+```java
+defn isEven(v) ^mod(v,2) ?= 0;
+
+def evens: 0..9 ~filter isEven;
+// < 0, 2, 4, 6, 8 >
+
+def odds: 0..9 ~filter (v) {
+    !isEven(v);
+};
+// < 1, 3, 5, 7, 9 >
+```
+
+The `~fold` comprehension (left-to-right) works like this:
+
+```java
+defn add(x,y) ^x + y;
+
+0..9 ~fold add;
+// 45
+
+0..9 ~fold (acc,v) {
+    acc + v;
+};
+// 45
+```
+
+The result (and type) of the `~fold` comprehension is determined by the return value of the final *iteration* (`add()` above).
+
+The `~fold` comprehension accepts an optional third argument as an *initial-value* for the fold; however, this can only be provided in the evaluation-expression form:
+
+```java
+defn sub(x,y) ^x - y;
+
+| ~fold 1..5, sub, 100 |;
+// 85   (100 - 1 - 2 - 3 - 4 - 5)
+```
+
+Folds *can* produce a Record/Tuple result. One common way to accomplish this is for the *initial-value* to be a Record/Tuple:
+
+```java
+defn onlyOdds(list,v) ^?/
+    ?(mod(v,2) ?= 1): list + < v >
+    ?: list
+/?;
+
+| ~fold 0..9, onlyOdds, <> |;
+// < 1, 3, 5, 7, 9 >
+```
+
+The `~foldR` comprehension works identically to the `~fold` comprehension, but in right-to-left order. Compare the two comprehensions here:
+
+```java
+defn sub(x,y) ^x - y;
+
+1..5 ~foldR sub;
+// -5    (5 - 4 - 3 - 2 - 1)
+
+1..5 ~fold sub;
+// -13   (1 - 2 - 3 - 4 - 5)
+```
 
 ### Type Annotations
 
@@ -1212,7 +1429,7 @@ defn whatever(id,name) as InterestingFunc {
 }
 ```
 
-The `?as` operator corresponds to the `as` type annotation keyword. It's a boolean operator that returns true if a value/expression matches the indicated type.
+The `?as` operator corresponds to the `as` type annotation keyword; it's a boolean operator that returns `true` if a value/expression matches the indicated type, `false` otherwise:
 
 ```java
 def age: 42;
