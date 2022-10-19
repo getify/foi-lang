@@ -201,7 +201,7 @@ The `| '- 1 |` evaluation-expression applies `1` as the right-most argument to `
 
 Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
 
-Many operators in **Foi** are n-ary, such as the `+` operator, the `>>` flow (composition) operator, and the `..` Tuple range operator.
+Many operators in **Foi** are n-ary, such as the `+` operator, the `:>` flow (composition) operator, and the `..` Tuple range operator.
 
 For example, say you want to add 5 numbers together. You can obviously do:
 
@@ -291,7 +291,7 @@ Unlike `def` definitions, `<:` re-assignments are allowed anywhere in the scope 
 }
 ```
 
-However, since `def` definitions must appear at the top of their respective scopes, and there may be multiple such definitions in a block, the `def`-block form should be preferred for readability sake:
+However, since `def` definitions must appear at the top of their respective scopes, and there may be multiple such definitions in a block, the definitions-block form should be preferred for readability sake:
 
 ```java
 def (tmp: 42) {
@@ -299,7 +299,7 @@ def (tmp: 42) {
 }
 ```
 
-Moreover, the `def`-block is allowed anywhere in its enclosing scope, so it's more flexible than a `def`.
+Moreover, the definitions-block is allowed anywhere in its enclosing scope, so it's more flexible than a non-block `def` declaration.
 
 ### Boolean Logic
 
@@ -1129,34 +1129,34 @@ defn lookupCustomer(id) over (customerCache) {
 
 #### Function Composition
 
-Function composition can be defined in left-to-right style, with the `>>` flow operator:
+Function composition can be defined in left-to-right style, with the `:>` flow operator:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| >> inc, triple, half | 11 |;     // 18
+|| :> inc, triple, half | 11 |;     // 18
 
-def compute: | >> inc, triple, half |;
+def compute: | :> inc, triple, half |;
 
 compute(11);                       // 18
 ```
 
-**Note:** The `>>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional arguments are ignored.
+**Note:** The `:>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional arguments are ignored.
 
 It's also very common to prefer right-to-left style composition. Probably the most obvious reason is the visual-ordering coherency between `half(triple(inc(v)))` and a composition argument list like `half, triple, inc`.
 
-Rather than **Foi** providing another `<<` operator dedicated for this purpose, recall that we can reverse the order of argument application with the `'` prime operator. Thus:
+Since **Foi** already has a `<:` assignment operator, it cannot be used as a flow-right/compose operator. But recall, we can reverse the order of argument application with the `'` prime operator. Thus:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| '>> half, triple, inc | 11 |;    // 18
+|| ':> half, triple, inc | 11 |;    // 18
 
-def compute: | '>> half, triple, inc |;
+def compute: | ':> half, triple, inc |;
 
 compute(11);                       // 18
 ```
@@ -1172,7 +1172,7 @@ defn half(v) ^v / 2;
 
 11 #> inc #> triple #> half;        // 18
 
-11 #> | >> inc, triple, half |;     // 18
+11 #> | :> inc, triple, half |;     // 18
 ```
 
 The first expression in a pipeline must be a value (or an expression that produces a value). Each subsequent step must resolve to a function, which when invoked produces a value to pass on to the next step.
@@ -1243,19 +1243,19 @@ defn compute(x) #> add(1) #> triple #> half;
 compute(11);    // 18
 ```
 
-Compare this `#>` *pipeline function* form to the previously-discussed `>>` flow operator:
+Compare this `#>` *pipeline function* form to the previously-discussed `:>` flow operator:
 
 ```java
 defn add(x)(y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def compute: | >> add(1), triple, half |;
+def compute: | :> add(1), triple, half |;
 
 compute(11);    // 18
 ```
 
-Compared to this `>>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
+Compared to this `:>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
 
 ### Loops and Comprehensions
 
@@ -1393,7 +1393,7 @@ def odds: < 1, 3, 5, 7, 9 >;
 odds ~map inc ~map triple ~map half;
 // < 3, 6, 9, 12, 15 >
 
-odds ~map | >> inc, triple, half |;
+odds ~map | :> inc, triple, half |;
 // < 3, 6, 9, 12, 15 >
 
 | ~map odds, inc, triple, half |;
