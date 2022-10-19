@@ -49,10 +49,11 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [N-Ary Operators](#n-ary-operators)
     - [Apply (aka Spread)](#apply-aka-spread)
 * [Defining Variables](#defining-variables)
+    - [Block-Definitions Clause](#block-definitions-clause)
 * [Boolean Logic](#boolean-logic)
 * [Equality and Comparison](#equality-and-comparison)
 * [Pattern Matching](#pattern-matching)
-    * [Guard Expressions](#guard-expressions)
+    - [Guard Expressions](#guard-expressions)
 * [Records and Tuples](#records-and-tuples)
     - [Inspecting](#inspecting)
     - [Generating Sequences (Ranges)](#generating-sequences-ranges)
@@ -299,7 +300,54 @@ def (tmp: 42) {
 }
 ```
 
-Moreover, the definitions-block is allowed anywhere in its enclosing scope, so it's more flexible than a non-block `def` declaration.
+Moreover, this definitions-block form is allowed anywhere in its enclosing scope, so it's more flexible than a non-block `def` declaration.
+
+#### Block-Definitions Clause
+
+In addition to the definitions-block form just shown, several other expressions in **Foi** allow a `{    }` block to be declared as part of the larger expression. For syntactic convenience, many of these expressions' blocks can be prefaced by the optional `(   )` block-definitions clause:
+
+* A [guard block](#guard-expressions) with block-definitions clause:
+
+    ```java
+    // if x > y, swap them
+    // (tmp is block-scoped)
+    ?[x ?> y]: (tmp: x) {
+        x <: y;
+        y <: tmp;
+    }
+    ```
+
+* A [pattern matching clause block](#pattern-matching) with block-definitions clause:
+
+    ```java
+    ?{
+        // x is odd?
+        // (tmp is block-scoped to the clause)
+        ?[mod(x,2) ?= 1]: (tmp) {
+            tmp <: (x * 3) + 1;
+            ?[tmp ?> 100]: tmp <: 100
+            myFn(tmp);
+        }
+
+        // x is non-zero (and even)?
+        ?[x != 0]: myFn(x)
+
+        // otherwise, x must be zero,
+        // so skip calling function and
+        // default to fixed value 1
+        ?: 1
+    }
+    ```
+
+* A [loop iteration block](#loops-and-comprehensions) with block-definitions clause:
+
+    ```java
+    0..3 ~ (v, idx) {
+        log(v + ": " + idx)
+    }
+    ```
+
+**Note:** While function body definitions, and the Record/Tuple *def*-block, both have `{    }` blocks, these *cannot* be prefaced by a block definitions clause.
 
 ### Boolean Logic
 
@@ -584,7 +632,6 @@ def myName: "Kyle";
 ?[myName != empty]: printGreeting(myName);
 
 // or:
-
 ![myName ?= empty]: printGreeting(myName);
 ```
 
@@ -1320,7 +1367,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // 3
         ```
 
-    - an inline expression block that corresponds to the `def (    ) {    }` block-scoped statement (without the `def` keyword), with one or more comma-separated bindings in the `(    )` list. For example:
+    - an inline block with a `(    )` block-definitions clause (list of comma-separated definitions). For example:
 
         ```java
         2..5 ~ (v, idx) {
@@ -1332,9 +1379,9 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // 3: 5
         ```
 
-        **Warning:** Beware that any initializations of these bindings (e.g., `(v: 3, idx: 7)`) may very well be overwritten as they are assigned per-iteration, according to the loop `range` and the iteration-type.
+        **Warning:** Beware that any initializations of these definitions (e.g., `(v: 3, idx: 7)`) may very well be overwritten immediately, as they are assigned per-iteration according to the loop `range` and the iteration-type.
 
-        If the loop doesn't need any bindings, omit the `(    )` bindings clause:
+        If the loop iteration doesn't need any block-scoped definitions, omit the `(    )` block-definitions clause:
 
         ```java
         0..3 ~ {
