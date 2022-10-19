@@ -52,6 +52,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Boolean Logic](#boolean-logic)
 * [Equality and Comparison](#equality-and-comparison)
 * [Pattern Matching](#pattern-matching)
+    * [Guard Expressions](#guard-expressions)
 * [Records and Tuples](#records-and-tuples)
     - [Inspecting](#inspecting)
     - [Generating Sequences (Ranges)](#generating-sequences-ranges)
@@ -565,6 +566,28 @@ greeting;               // "Hello!"
 
 **Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Readability preferences may dictate any of those style options, depending on the circumstances.
 
+#### Guard Expressions
+
+When an independent pattern matching expression would only have one clause, the clause can be specified standalone, as a *guard* expression.
+
+For example:
+
+```java
+def myName: "Kyle";
+
+// full pattern matching expression:
+?{
+    ?[myName != empty]: printGreeting(myName)
+}
+
+// standalone guard expression:
+?[myName != empty]: printGreeting(myName);
+
+// or:
+
+![myName ?= empty]: printGreeting(myName);
+```
+
 ### Records And Tuples
 
 Records are immutable collections of values, delimited by `<    >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
@@ -972,7 +995,7 @@ The problem is, this `^1` "early return" isn't particularly obvious, and require
 
 **Foi** functions ***can and should do better***.
 
-Pre-conditions are annotated as `?[    ]: expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
+Pre-conditions are [guard expressions](#guard-expressions), of the form `?[    ]: expr` or `![    ]: expr`, which are applied to *guard* against the need to run the function. One or more of these pre-conditions may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
 
 Thus, the above `myFn()` function could be more appropriately defined as:
 
