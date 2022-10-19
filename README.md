@@ -453,25 +453,23 @@ x !<= y;                // false
 
 To make decisions (with booleans!), use pattern matching. There are two forms:
 
-1. Dependent: each pattern is matched against (dependent on) a single topic.
+1. Dependent: each pattern is matched against (dependent on) a single topic; delimited with an opening of `?(    ){`, and closed with `}`.
 
-2. Independent: each pattern has its own independent topic.
+2. Independent: each pattern has its own independent topic; delimited with an opening of `?{`, and closed with `}`.
 
-Generally, both forms are delimited with a `?/` or `?(    )/` to start the expression, and a `/?` to close the expression.
+Each pattern clause is defined by `?[    ]: consq`, where the pattern is defined inside the `[    ]`. A pattern can be negated as `![    ]`. The pattern match clause's consequent (`consq`) can either be a single expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
 
-Each pattern clause is defined by `?(    ): expr`, where the pattern is defined inside the `(    )`. A pattern can be negated as `!(    )`. The pattern match clause's consequent can either be a single `expr` expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
-
-Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    )/` tag.
+Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    ){` tag.
 
 Consider:
 
 ```java
 def myName: "Kyle";
 
-?(myName)/
-    ?("Kyle"): log("Hello!")
-    !("Kyle"): log("Goodbye!")
-/?
+?(myName){
+    ?["Kyle"]: log("Hello!")
+    !["Kyle"]: log("Goodbye!")
+}
 // Hello!
 ```
 
@@ -482,10 +480,10 @@ Dependent pattern matching expressions *should be* determinate, in that all poss
 ```java
 def myName: "Kyle";
 
-def greeting: ?(myName)/
-    ?("Kyle"): "Hello!"
-    !("Kyle"): "Goodbye!"
-/?
+def greeting: ?(myName){
+    ?["Kyle"]: "Hello!"
+    !["Kyle"]: "Goodbye!"
+};
 
 greeting;               // "Hello!"
 ```
@@ -497,25 +495,25 @@ To explicitly define a default pattern, use `?:` (which must be the last clause 
 ```java
 def myName: "Kyle";
 
-def greeting: ?(myName)/
-    ?("Kyle"): "Hello!"
+def greeting: ?(myName){
+    ?["Kyle"]: "Hello!"
     ?: "Goodbye!"
-/?;
+};
 
 greeting;               // "Hello!"
 ```
 
-**Note:** Comparing this example to the previous one, `?:` is equivalent to the `!("Kyle")` pattern. Readability preferences may dictate either style, depending on the circumstances.
+**Note:** Comparing this example to the previous one, `?:` is equivalent to the `!["Kyle"]` pattern. Readability preferences may dictate either style, depending on the circumstances.
 
 A dependent style pattern can include a `,` comma separated list of multiple values, any of which may match the topic:
 
 ```java
 def myName: "Kyle";
 
-def greeting: ?(myName)/
-    ?("Kyle","Fred"): "Hello!"
+def greeting: ?(myName){
+    ?["Kyle","Fred"]: "Hello!"
     ?: "Goodbye!"
-/?;
+};
 
 greeting;               // "Hello!"
 ```
@@ -525,47 +523,47 @@ It may also be useful to access the topic of a pattern matching expression insid
 ```java
 def myName: "Kyle";
 
-def greeting: ?(myName)/
-    ?("Kyle"): | + "Hello ", #, "!" |
+def greeting: ?(myName){
+    ?["Kyle"]: | + "Hello ", #, "!" |
     ?: "Goodbye!"
-/?;
+};
 
 greeting;               // "Hello Kyle!"
 ```
 
 Dependent pattern matching should only be used if the patterns only need equality-comparison of one or more discrete value(s) against the topic.
 
-For more complex boolean-logic matching patterns, the independent pattern matching form is appropriate. Independent pattern matching has no topic, and thus begins with a `?/` instead of a `?(    )/`.
+For more complex boolean-logic matching patterns, the independent pattern matching form is appropriate. Independent pattern matching has no topic, and thus begins with a `?{` instead of a `?(    ){`.
 
-In this form, each clause matches only if the pattern is a conditional that evaluates to `true`. You could thus mentally model `?/` as if it was shorthand for `?(true)/`.
+In this form, each clause matches only if the pattern is a conditional that evaluates to `true`. You could thus mentally model `?{` as if it was shorthand for `?(true){`:
 
 ```java
 def myName: "Kyle";
 
-def greeting: ?/
-    ?(myName ?= "Kyle"): "Hello!"
-    !(myName ?= "Kyle"): "Goodbye!"
-/?
+def greeting: ?{
+    ?[myName ?= "Kyle"]: "Hello!"
+    ![myName ?= "Kyle"]: "Goodbye!"
+};
 
 greeting;               // "Hello!"
 ```
 
-**Note:** The pattern-match conditional `!(myName ?= "Kyle")` is equivalent to `(myName != "Kyle")`. Readability preferences may dictate either style, depending on the circumstances.
+**Note:** The pattern-match conditional `![myName ?= "Kyle"]` is equivalent to `?[myName != "Kyle"]`. Readability preferences may dictate either style, depending on the circumstances.
 
 Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default (final) clause, `?:` may be used:
 
 ```java
 def myName: "Kyle";
 
-def greeting: ?/
-    ?(myName ?= "Kyle"): "Hello!"
+def greeting: ?{
+    ?[myName ?= "Kyle"]: "Hello!"
     ?: "Goodbye!"
-/?
+};
 
 greeting;               // "Hello!"
 ```
 
-**Note:** Again comparing this example to the previous one, `?:` is equivalent to the `!(myName ?= "Kyle")` conditional. Readability preferences may dictate either style, depending on the circumstances.
+**Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Readability preferences may dictate any of those style options, depending on the circumstances.
 
 ### Records And Tuples
 
@@ -961,10 +959,10 @@ You *could* write it this way:
 
 ```java
 defn myFn(x) {
-    ?/
-        ?(x ?<= 1): ^1
+    ?{
+        ?[x ?<= 1]: ^1
         ?: empty
-    /?;
+    }
 
     // ..
 }
@@ -974,17 +972,17 @@ The problem is, this `^1` "early return" isn't particularly obvious, and require
 
 **Foi** functions ***can and should do better***.
 
-Pre-conditions are annotated as `?(    ): expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
+Pre-conditions are annotated as `?[    ]: expr`, which looks and operates like a single clause of an [independent pattern matching expression](#pattern-matching). One or more of these pre-condition clauses may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
 
 Thus, the above `myFn()` function could be more appropriately defined as:
 
 ```java
-defn myFn(x) ?(x ?<= 1): 1 {
+defn myFn(x) ?[x ?<= 1]: 1 {
     // ..
 }
 ```
 
-Pre-conditions are evaluated (hoisted to the call-site!), before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned -- no `^` return sigil! -- and thus the function invocation is skipped.
+Pre-conditions are evaluated -- hoisted to the call-site -- before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned (no `^` return sigil) and thus the function invocation is skipped.
 
 ----
 
@@ -993,12 +991,12 @@ Just like with pattern matching expressions, a preceeding `!` (in place of the `
 For example, if you want to define a function that only computes its result when the input is greater than `10`:
 
 ```java
-defn myFn(x) !(x ?> 10): empty {
+defn myFn(x) ![x ?> 10]: empty {
     // ..
 }
 ```
 
-You can read/interpret the `!(x ?> 10): empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
+You can read/interpret the `![x ?> 10]: empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
 
 **Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a Maybe@None or an Either@Left. More on monads later.
 
@@ -1007,7 +1005,7 @@ You can read/interpret the `!(x ?> 10): empty` pre-condition as: "x must be grea
 If a function has multiple parameters, a pre-condition may imply a *relationship* between them. For example, to define a function where the first parameter must be larger than the second:
 
 ```java
-defn myFn(x,y) !(x ?> y): empty {
+defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
 }
 ```
@@ -1015,16 +1013,16 @@ defn myFn(x,y) !(x ?> y): empty {
 Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the result (from the pre-condition) will be `empty`:
 
 ```java
-defn myFn(x,y) !(x ?> y): empty {
+defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
 }
 
-def result1: ?(myFn(5,2))/
-    !(empty): #
+def result1: ?(myFn(5,2)){
+    ![empty]: #
     ?: 0
-/?;
-def result2: ?(myFn(2,5))/
-    !(empty): #
+};
+def result2: ?(myFn(2,5)){
+    ![empty]: #
     ?: 0
 /?;
 
@@ -1048,7 +1046,7 @@ defn add(x: 0, y) ^x + y;
 Function recursion is supported:
 
 ```java
-defn factorial(v) ?(v ?<= 1): 1 {
+defn factorial(v) ?[v ?<= 1]: 1 {
     ^v * factorial(v - 1);
 }
 
@@ -1058,7 +1056,7 @@ factorial(5);                   // 120
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
-defn factorial(v,tot: 1) ?(v ?<= 1): tot {
+defn factorial(v,tot: 1) ?[v ?<= 1]: tot {
     ^factorial(v - 1,tot * v)
 }
 
@@ -1260,15 +1258,19 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 
     - If the *range* expression resolves to a Record/Tuple, the contents of the value are set as fixed *bounds* for loop processing. Examples of such an expression: an identifier, a function call, generated (`0..3`, as above), or explicit inline (such as `< 0, 1, 2, 3 >`).
 
-    - If the *range* expression is a conditional of the form `?(    )` or `!(    )` -- same as the conditional of an independent [pattern matching](#pattern-matching) clause -- the expression will be evaluated *before* each iteration, and will only proceed with the iteration if `true`; `false` signals the end of the *range* and terminates the loop. For example:
+    - If the *range* expression is a conditional of the form `?[    ]` or `![    ]` -- same as the conditional of an independent [pattern matching](#pattern-matching) clause -- the expression will be evaluated *before* each iteration, and will only proceed with the iteration if `true`; `false` signals the end of the *range* and terminates the loop.
+
+        For example:
 
         ```java
         def done: false;
 
-        !(done) ~ {
+        ![done] ~ {
             // ..
         };
         ```
+
+        This loop will keep running as long as `done` is false. The *range* could also have been written as `?[!done]`, but the former should generally be preferred as easier to read.
 
     - If the `range` expression is omitted, `~` returns another function that expects a single argument defining the *range*. For example:
 
@@ -1434,10 +1436,9 @@ defn sub(x,y) ^x - y;
 Folds *can* produce a Record/Tuple result. One common way to accomplish this is for the *initial-value* to be a Record/Tuple:
 
 ```java
-defn onlyOdds(list,v) ^?/
-    ?(mod(v,2) ?= 1): list + < v >
-    ?: list
-/?;
+defn onlyOdds(list,v)
+    ![mod(v,2) ?= 1]: list
+        ^list + < v >
 
 | ~fold 0..9, onlyOdds, <> |;
 // < 1, 3, 5, 7, 9 >
@@ -1499,19 +1500,19 @@ This operator is useful in pattern matching:
 deft SimpleFunc (int) -> empty;
 deft InterestingFunc (int,string) -> empty;
 
-def result1: ?(myFn)/
-    ?(?as SimpleFunc): myFn(42)
-    ?(?as InterestingFunction): myFn(42,"Kyle")
+def result1: ?(myFn){
+    ?[?as SimpleFunc]: myFn(42)
+    ?[?as InterestingFunction]: myFn(42,"Kyle")
     ?: myFn()
-/?;
+};
 
 // or:
 
-def result2: ?/
-    ?(myFn ?as SimpleFunc): myFn(42)
-    ?(myFn ?as InterestingFunction): myFn(42,"Kyle")
+def result2: ?{
+    ?[myFn ?as SimpleFunc]: myFn(42)
+    ?[myFn ?as InterestingFunction]: myFn(42,"Kyle")
     ?: myFn()
-/?;
+};
 ```
 
 ## License
