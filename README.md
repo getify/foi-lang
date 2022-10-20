@@ -788,19 +788,55 @@ The start/end values must be of the same data type; `3.."g"` will not work.
 
 #### Deriving Instead Of Mutating
 
-Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple. One way to do so is the `&` pick sigil prefixed on a variable name (not an arbitrary expression):
+Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple.
+
+One way to derive a new Record/Tuple is to select multiple elements using the `.<    >` syntax, with one or more source indices/keys separated by commas:
+
+```java
+def numbers: < 3, 4, 5, 6, 7 >;
+def evenDigits: numbers.<1,3>;
+// < 4, 6 >
+
+def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
+def profile: person.<first,nickname>;
+// < first: "Kyle", nickname: "getify" >
+```
+
+Another approach is to select a ranged Tuple subset, with the `.[  ..  ]` syntax:
+
+```java
+def numbers: < 3, 4, 5, 6, 7 >;
+
+def head: numbers.0;                // 3
+def first: numbers.[..0];           // < 3 >
+def leading: numbers.[..3];         // < 3, 4, 5 >
+
+def last: numbers.-1;               // 7
+def trailing: numbers.[..-1];       // < 7 >
+def tail: numbers.[1..];            // < 4, 5, 6, 7 >
+
+def middle: numbers.[1..3];         // < 4, 5, 6 >
+```
+
+**Note:** The range `.[0..-1]` would be effectively be a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
+
+Additionally, in the definition of a Record/Tuple, the `&` pick sigil prefixed on a variable name (not an arbitrary expression) *includes* some or all of the contents of that other Record/Tuple:
 
 ```java
 def numbers: < 4, 5, 6 >;
-def allDigits: < 1, 2, 3, &numbers, 7, 8, 9 >;
+def allDigits: < 0, 1, 2, 3, &numbers, 7, 8, 9 >;
+// < 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 >
 
 def person: < first: "Kyle", last: "Simpson" >;
 def friend: < &person, first: "Jenny" >;
+// < first: "Jenny", last: "Simpson" >
 ```
 
-Above, the entire contents of `numbers` and `person` are *picked*, to be included in the new Tuple and Record values, respectively.
+**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a `<    >` Record/Tuple definition (but not a `<{    }>` *def-block*).
 
-Picking can be useful for merging multiple sequences, for example to define the base-64 characters:
+Above, the entire contents of `numbers` and `person` are *picked*, to be included in the new Tuple and Record values, respectively. The order of field definitions is left-to-right, and subsequent field definitions override previous ones; thus, `first: "Kyle"` is reassigned to `first: "Jenny"` above.
+
+Picking is useful for merging multiple sequences. For example, to define a Tuple holding all the base-64 characters:
 
 ```java
 def upper: "A".."Z";
@@ -808,88 +844,50 @@ def lower: "a".."z";
 def digits: "0".."9";
 
 def base64: < &upper, &lower, &digits, "+", "/" >;
+// < "A", "B", "C", "D", ... "8", "9", "+", "/" >
 ```
 
 **Note:** For type consistency, we intentionally defined `digits` as the character sequence `"0".."9"` instead of the integer sequence `0..9`.
 
-To *pick* only specific elements:
+To *pick* only a specific element:
 
 ```java
 def numbers: < 4, 5, 6 >;
 def oddDigits: < 1, 3, &numbers.1, 7, 9 >;
+// < 1, 3, 5, 7, 9 >
 
 def person: < first: "Kyle", last: "Simpson" >;
 def friend: < first: "Jenny", &person.last >;
+// < first: "Jenny", last: "Simpson" >
 ```
 
-The `&numbers.1` and `&person.last` are sugar for:
+Moreover, the `&numbers.1` and `&person.last` are equivalent to the more explicit:
 
 ```java
 def numbers: < 4, 5, 6 >;
 def oddDigits: < 1, 3, 2: numbers.1, 7, 9 >;
+// < 1, 3, 5, 7, 9 >
 
 def person: < first: "Kyle", last: "Simpson" >;
 def friend: < first: "Jenny", last: person.last >;
+// < first: "Jenny", last: "Simpson" >
 ```
 
-But, one advantage of this more verbose (less-sugared) form is, you could re-index/rename the field (something other than `2` or `last`, respectively) in the target Record/Tuple.
+**Note:** one advantage of this more verbose form is, you can re-index/rename the field (something other than `2` or `last`, respectively) in the target Record/Tuple.
 
-As a convenience shorthand, you can also *pick* multiple fields at once:
+The `.<    >` and `.[  ..  ]` syntaxes also work with the `&` pick sigil:
 
 ```java
-def numbers: < 4, 6 >;
-def evenDigits: < 2, &numbers.(0,1), 8 >;
+def numbers: < 3, 4, 5, 6, 7 >;
+def evenDigits: < 2, &numbers.<1,3>, 8 >;
+// < 2, 4, 6, 8 >
+def fiveBelow: < 0, 1, 2, &numbers.[..2] >;
+// < 0, 1, 2, 3, 4, 5 >
 
 def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
-def profile: < &person.(first,nickname) >;
+def profile: < &person.<first,nickname> >;
+// < first: "Kyle", nickname: "getify">
 ```
-
-**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a `<    >` Record/Tuple definition (not a `<{    }>` *def-block*).
-
-The `+` operator, when used with Records/Tuples, acts in an append-only (concatenation) form:
-
-```java
-def numbers: < 4, 5, 6 >;
-def moreNumbers: numbers + < 7, 8, 9 >;
-
-moreNumbers.5;              // 8
-```
-
-And to derive a new Tuple as a ranged subset of another one, use the `..` range operator with its first operand being a tuple:
-
-```java
-def numbers: < 4, 5, 6 >;
-
-def head: numbers.0;        // single .
-def tail: numbers..1;       // double ..
-
-def last: numbers.-1;       // single .
-def trailing: numbers..-1;  // double ..
-
-head;                       // 4
-tail;                       // < 5, 6 >
-
-last;                       // 6
-trailing;                   // < 6 >
-```
-
-**Note:** the specific expression `..0` (or `| .. 0 |`) is effectively a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
-
-To define the bounds (start index — end index, both inclusive) of the ranged tuple subset, use the evaluation-expression form:
-
-```java
-def numbers: < 4, 5, 6 >;
-
-def leading: | .. numbers 0, 2 |;
-def tail: | .. numbers 1, -1 |;
-
-leading;                    // < 4, 5 >
-trailing;                   // < 5, 6 >
-```
-
-The default end index for a ranged subset is `-1` (meaning up to, and including, the final value).
-
-So, `| .. numbers 1, -1 |` is the same as `| .. numbers 1 |` (and `numbers..1`). This example with `-1` explicitly specified is included for illustration purposes, but for readability the preferred form omits the end index in such a case.
 
 #### Maps
 
@@ -902,29 +900,32 @@ def dataMap: < %numbers: "my favorites" >;
 dataMap[numbers];           // "my favorites"
 ```
 
-**Note:** Like `&`, the `%` (map-field) sigil is not an operator, and can only be used inside a `<    >` Record/Tuple definition.
+**Note:** Like `&`, the `%` (map-field) sigil is not an operator, and can only be used inside a `<    >` Record definition.
 
 #### Sets
 
-A Set is an alternate Tuple definition form, delimited with `[ ]` instead of `< >`, which ensures each unique value is only stored once:
+A Set is a Tuple that only has unique values. An alternate Tuple definition form, delimited with `<[    ]>` instead, is provided for convenience, to ensure each unique value is only stored once:
 
 ```java
-def numbers: [ 4, 6, 4, 5 ];
-
-numbers;                    // < 4, 6, 5 >
+def something: < 4, 5, 6 >;
+def another: < 6, 7 >;
+def uniques: <[ &something, &another ]>;
+// < 4, 5, 6, 7 >
 ```
 
-As you can see, a Set is merely a syntactic sugar construction form for a Tuple, filtering out any duplicate values. What's created is still a Tuple, not a different value type. The rules of `<    >` still apply inside the `[    ]`, including use of the `&` and `%` sigils.
+All syntax rules of Tuples `<    >` still apply inside the `<[    ]>`, including use of the `&` and `%` sigils; as Sets are Tuples, not Records, field names are not allowed.
 
-The `++` unique-append operator (similar to the `+` Record/Tuple append operator) will only append values not in the previous Tuple:
+The `+` operator, when both operands are Tuples, acts as a unique-only Set-append operation:
 
 ```java
-def numbers: [ 4, 5, 5, 6 ];
+def numbers: <[ 4, 5, 5, 6 ]>;
 
-def moreNumbers: numbers ++ [ 6, 7 ];
+def moreNumbers: numbers + < 6, 7 >;
 
 moreNumbers;                // < 4, 5, 6, 7 >
 ```
+
+**Warning** The `+` operator only works on Tuples (Sets), not Records.
 
 ### Functions
 
