@@ -283,6 +283,14 @@ age := 42;
 
 Unlike `def` definitions, `:=` re-assignments are allowed anywhere in the scope after the associated `def` definition.
 
+Multiple re-assignments (of the same value) can also be chained:
+
+```java
+x := y := z := 0;
+
+| := x, y, z, 0 |;
+```
+
 `def` definitions attach to the nearest enclosing scope, whether that be module, function, or block. A block-scoped variable definition is thus:
 
 ```java
