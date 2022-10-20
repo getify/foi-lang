@@ -202,7 +202,7 @@ The `| '- 1 |` evaluation-expression applies `1` as the right-most argument to `
 
 Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
 
-Many operators in **Foi** are n-ary, such as the `+` operator, the `:>` flow (composition) operator, and the `..` Tuple range operator.
+Many operators in **Foi** are n-ary, such as the `+` operator, `+>` flow (composition) operator, and `?<=>` range-check operator.
 
 For example, say you want to add 5 numbers together. You can obviously do:
 
@@ -278,17 +278,17 @@ To reassign a variable:
 ```java
 def age: empty;
 
-age <: 42;
+age := 42;
 ```
 
-Unlike `def` definitions, `<:` re-assignments are allowed anywhere in the scope after the associated `def` definition.
+Unlike `def` definitions, `:=` re-assignments are allowed anywhere in the scope after the associated `def` definition.
 
 `def` definitions attach to the nearest enclosing scope, whether that be module, function, or block. A block-scoped variable definition is thus:
 
 ```java
 {
     def tmp: 42;
-    tmp <: 43;
+    tmp := 43;
 }
 ```
 
@@ -296,7 +296,7 @@ However, since `def` definitions must appear at the top of their respective scop
 
 ```java
 def (tmp: 42) {
-    tmp <: 43;
+    tmp := 43;
 }
 ```
 
@@ -312,8 +312,8 @@ In addition to the definitions-block form just shown, several other expressions 
     // if x > y, swap them
     // (tmp is block-scoped)
     ?[x ?> y]: (tmp: x) {
-        x <: y;
-        y <: tmp;
+        x := y;
+        y := tmp;
     }
     ```
 
@@ -324,8 +324,8 @@ In addition to the definitions-block form just shown, several other expressions 
         // x is odd?
         // (tmp is block-scoped to the clause)
         ?[mod(x,2) ?= 1]: (tmp) {
-            tmp <: (x * 3) + 1;
-            ?[tmp ?> 100]: tmp <: 100
+            tmp := (x * 3) + 1;
+            ?[tmp ?> 100]: tmp := 100
             myFn(tmp);
         }
 
@@ -712,16 +712,16 @@ def numbers: <{
     def five: 5;
     def six: empty;
 
-    #1 <: 4;
-    #2 <: five;
+    #1 := 4;
+    #2 := five;
 
-    six <: #1 + #2 - 3;
-    #3 <: six;
+    six := #1 + #2 - 3;
+    #3 := six;
 }>;
 
 def person: <{
-    #first <: "Kyle";
-    #last <: "Simpson";
+    #first := "Kyle";
+    #last := "Simpson";
 }>;
 ```
 
@@ -1165,11 +1165,11 @@ defn lookupCustomer(id) over (customerCache) {
     // ..
 
     // this reassignment side-effect allowed:
-    customerCache <: cacheAppend(customerCache,customer);
+    customerCache := cacheAppend(customerCache,customer);
 
     // but this is disallowed because `count`
     // isn't listed in the `over` clause:
-    count <: count + 1;
+    count := count + 1;
 }
 ```
 
@@ -1177,36 +1177,36 @@ defn lookupCustomer(id) over (customerCache) {
 
 #### Function Composition
 
-Function composition can be defined in left-to-right style, with the `:>` flow operator:
+Function composition can be defined in left-to-right style, with the `+>` flow operator:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| :> inc, triple, half | 11 |;     // 18
+def compute1: inc +> triple +> half;
+def compute2: | +> inc, triple, half |;
 
-def compute: | :> inc, triple, half |;
-
-compute(11);                       // 18
+compute1(11);           // 18
+compute2(11);           // 18
 ```
 
-**Note:** The `:>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional arguments are ignored.
+**Note:** The `+>` flow operator produces a unary function, meaning it will only accept and pass-along a single argument; any additional passed arguments are ignored.
 
-It's also very common to prefer right-to-left style composition. Probably the most obvious reason is the visual-ordering coherency between `half(triple(inc(v)))` and a composition argument list like `half, triple, inc`.
+It's also very common in FP to prefer right-to-left style composition. Probably the most obvious reason is the visual-ordering coherency between `half(triple(inc(v)))` and a composition argument list like `half, triple, inc`.
 
-Since **Foi** already has a `<:` assignment operator, it cannot be used as a flow-right/compose operator. But recall, we can reverse the order of argument application with the `'` prime operator. Thus:
+The `<+` compose-right operator is equivalent to using the `'` prime operator to reverse the order of the `+>` operator's arguments, as `'+>`:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-|| ':> half, triple, inc | 11 |;    // 18
+def compute1: | <+ half, triple, inc |;
+def compute2: | '+> half, triple, inc |;
 
-def compute: | ':> half, triple, inc |;
-
-compute(11);                       // 18
+compute1(11);           // 18
+compute2(11);           // 18
 ```
 
 #### Function Pipelines
@@ -1220,7 +1220,7 @@ defn half(v) ^v / 2;
 
 11 #> inc #> triple #> half;        // 18
 
-11 #> | :> inc, triple, half |;     // 18
+11 #> | +> inc, triple, half |;     // 18
 ```
 
 The first expression in a pipeline must be a value (or an expression that produces a value). Each subsequent step must resolve to a function, which when invoked produces a value to pass on to the next step.
@@ -1291,19 +1291,19 @@ defn compute(x) #> add(1) #> triple #> half;
 compute(11);    // 18
 ```
 
-Compare this `#>` *pipeline function* form to the previously-discussed `:>` flow operator:
+Compare this `#>` *pipeline function* form to the previously-discussed `+>` flow operator:
 
 ```java
 defn add(x)(y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def compute: | :> add(1), triple, half |;
+def compute: | +> add(1), triple, half |;
 
 compute(11);    // 18
 ```
 
-Compared to this `:>` flow operator form, the previous `#>` *pipeline function* form is more powerful/flexible, in that you can declare multiple parameters, and access any of them throughout the pipeline.
+The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
 
 ### Loops and Comprehensions
 
@@ -1441,7 +1441,7 @@ def odds: < 1, 3, 5, 7, 9 >;
 odds ~map inc ~map triple ~map half;
 // < 3, 6, 9, 12, 15 >
 
-odds ~map | :> inc, triple, half |;
+odds ~map | +> inc, triple, half |;
 // < 3, 6, 9, 12, 15 >
 
 | ~map odds, inc, triple, half |;
