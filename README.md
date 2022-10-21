@@ -805,8 +805,14 @@ def numbers: < 3, 4, 5, 6, 7 >;
 def evenDigits: numbers.<1,3>;
 // < 4, 6 >
 
+| .<1,3> numbers |;
+// < 4, 6 >
+
 def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
 def profile: person.<first,nickname>;
+// < first: "Kyle", nickname: "getify" >
+
+| .<first,nickname> person |;
 // < first: "Kyle", nickname: "getify" >
 ```
 
@@ -824,6 +830,8 @@ def trailing: numbers.[..-1];       // < 7 >
 def tail: numbers.[1..];            // < 4, 5, 6, 7 >
 
 def middle: numbers.[1..3];         // < 4, 5, 6 >
+
+| .[1..3] numbers |;                // < 4, 5, 6 >
 ```
 
 **Note:** The range `.[0..-1]` would be effectively be a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
