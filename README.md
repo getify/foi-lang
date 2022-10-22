@@ -55,6 +55,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Pattern Matching](#pattern-matching)
     - [Guard Expressions](#guard-expressions)
 * [Records and Tuples](#records-and-tuples)
+    - [Equality Comparison](#equality-comparison)
     - [Inspecting](#inspecting)
     - [Generating Sequences (Ranges)](#generating-sequences-ranges)
     - [Deriving Instead Of Mutating](#deriving-instead-of-mutating)
@@ -72,6 +73,8 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Loops and Comprehensions](#loops-and-comprehensions)
     - [Tagged Comprehensions](#tagged-comprehensions)
 * [Monads](#monads)
+    - [The Monad Laws](#the-monad-laws)
+    - [Do Syntax](#do-syntax)
 * [Type Annotations](#type-annotations)
 
 ### Imports
@@ -546,7 +549,7 @@ def greeting: ?(myName){
 greeting;               // "Hello!"
 ```
 
-However, if no pattern matches, the default result of the expression is a Maybe@None -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
+However, if no pattern matches, the default result of the expression is a Maybe::None -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
 
 To explicitly define a default pattern, use `?:` (which must be the last clause in the pattern matching expression):
 
@@ -646,7 +649,9 @@ def myName: "Kyle";
 
 ### Records And Tuples
 
-Records are immutable collections of values, delimited by `<    >`. You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
+Records are immutable collections of values, delimited by `<    >`.
+
+You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
 
 ```java
 def idx: 2;
@@ -680,7 +685,7 @@ def person: < first: "Kyle", last: "Simpson" >;
 | . person, prop |;             // "Simpson"
 ```
 
-To define Records/Tuples using arbitrary expressions for the values, use the evaluation-expression form:
+To define Records/Tuples using arbitrary expressions (other than simple identifiers) for the values, use the evaluation-expression form:
 
 ```java
 import uppercase from #Std.String;
@@ -692,7 +697,7 @@ def surname: "Simpson";
 def person: < first: "Kyle", last: |uppercase surname| >;
 ```
 
-To keep Record/Tuple syntax complexity to a minimum, *only* the `|    |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `<    >` literal definition.
+**Note:** To keep Record/Tuple syntax complexity to a minimum, *only* the `|    |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `<    >` literal definition.
 
 Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
 
@@ -750,9 +755,33 @@ As shown, the `<{    }>` *def-block* can contain any arbitrary logic for determi
 
 Inside a `<{    }>` *def-block*, the `#` sigil indicates a self-reference to the current Record/Tuple context that's being defined, and can be used either in l-value (assignment target) or r-value (value expression) positions. However, these special self-references cannot cross inner-function boundaries.
 
+#### Equality Comparison
+
+Since Records/Tuples are primitive (and immutable) value types in **Foi**, equality comparison is structural (meaning deep contents comparison rather than reference identity).
+
+```java
+def a: < 4, 5, 6 >;
+def b: < 4, 5, 6 >;
+def c: < 5, 4, 6 >;
+
+a ?= b;         // true
+b ?= c;         // false
+c ?= a;         // false
+```
+
+```java
+def a: < one: "hello", two: "world" >;
+def b: < one: "hello", two: "world" >;
+def c: < two: "world", one: "hello" >;
+
+a ?= b;         // true
+b ?= c;         // true
+c ?= a;         // true
+```
+
 #### Inspecting
 
-You can determine if a value is in a Tuple with the `?in` / `!in` operator:
+You can determine if a value is *in* a Tuple with the `?in` / `!in` operator:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -942,7 +971,7 @@ def uniques: <[ &something, &another ]>;
 // < 4, 5, 6, 7 >
 ```
 
-All syntax rules of Tuples `<    >` still apply inside the `<[    ]>`, including use of the `&` and `%` sigils; as Sets are Tuples, not Records, field names are not allowed.
+All syntax rules of Tuple definition `<    >` still apply inside the `<[    ]>`, including use of the `&` and `%` sigils; as Sets *are* Tuples, not Records, field names are not allowed.
 
 The `+` operator, when both operands are Tuples, acts as a unique-only Set-append operation:
 
@@ -955,6 +984,23 @@ moreNumbers;                // < 4, 5, 6, 7 >
 ```
 
 **Warning** The `+` operator only works on Tuples (Sets), not Records.
+
+Set equality comparison deserves special attention. Since Sets are merely a construction form for Tuples, the `?=` will perform Tuple equality comparison, where order matters. This may produce undesired results (false negatives).
+
+As such, the `?$=` (set equality) operator, and the corresponding `!$=` (set non-equality), perform unordered comparison of Sets (Tuples):
+
+```java
+def set1: <[ 4, 5, 5, 6 ]>;     // < 4, 5, 6 >
+def set2: <[ 5, 5, 6, 4 ]>;     // < 5, 6, 4 >
+def set3: <[ 6, 4, 5, 0 ]>;     // < 6, 4, 5, 0 >
+
+set1 ?= set2;                   // false
+
+set1 ?$= set2;                  // true
+set1 !$= set3;                  // true
+```
+
+**Note:** Unordered (Set equality) comparison is slower than ordered comparison (Tuple equality). This cost is worth paying if you really need to compare two Sets, but it may be worth examining if a different approach is feasible.
 
 ### Functions
 
@@ -1098,7 +1144,7 @@ defn myFn(x) ![x ?> 10]: empty {
 
 You can read/interpret the `![x ?> 10]: empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
 
-**Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a Maybe@None or an Either@Left. More on monads later.
+**Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a Maybe::None or an Either::Left. More on monads later.
 
 ----
 
@@ -1560,14 +1606,23 @@ defn sub(x,y) ^x - y;
 
 The identity monad in **Foi** is called `Id`, and the empty monad is called `None`.
 
-The `@` operator applies the "unit constructor" for any monad type, thus a monad value can be expressed like this:
+The `@` operator applies the "unit constructor" for any monad type, thus a monadic value can be expressed like this:
 
 ```java
 def m: Id @ 42;         // Id{42}
 | @ Id 42 |;            // Id{42}
 
-def nil: None@;         // None{}
-| @ None |;             // None{}
+def nil: None@;         // None
+| @ None |;             // None
+```
+
+A monadic value is a primitive, immutable value type in **Foi**, meaning equality comparison is structural (just like Records/Tuples). As such:
+
+```java
+def m: Id @ 42;
+def g: Id @ 42;
+
+m ?= g;                 // true
 ```
 
 If `@` is partially applied, you get a regular function for constructing a specific monad type:
@@ -1590,9 +1645,11 @@ def m: Id @ 21;
 
 m ~map double;          // Id{42}
 m ~filter isOdd;        // Id{21}
-m ~filter isEven;       // None{}
+m ~filter isEven;       // None
 m ~fold id;             // 21
 ```
+
+**Note:** The `~map` comprehension expresses Functor behavior, and the `~fold` comprehension expresses Foldable behavior; these are related (but distinct) to monads and algebraic structures.
 
 In addition to the standard comprehensions, monads (of course!) also can also be used with the `~bind` comprehension:
 
@@ -1608,6 +1665,52 @@ m ~. (double +> Id @);          // Id{42}
 
 **Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable.
 
+`None` exposes a no-op `~.` bind operation:
+
+```java
+defn double(v) ^v * 2;
+
+Id @ 21 ~. double ~fold log;    // Id{42}
+None@ ~. double ~fold log;      //
+```
+
+Neither the `double()` invocation nor the `log()` invocation will happen for the `None@` monadic value.
+
+#### The Monad Laws
+
+For completeness sake, let's illustrate the 3 monad laws using the `Id` monad, the `@` unit-constructor, and the `~.` *bind* operator:
+
+1. **Left Identity:**
+
+    ```java
+    defn incM(v) ^(Id @ v + 1);
+    defn doubleM(v) ^(Id @ v * 2);
+
+    (Id @ 41) ~. incM;                  // Id{42}
+    ```
+
+2. **Right Identity:**
+
+    ```java
+    Id @ 42 ~. (Id @);
+    // Id{42}
+    ```
+
+3. **Associativity:**
+
+    ```java
+    defn incM(v) ^(Id @ v + 1);
+    defn doubleM(v) ^(Id @ v * 2);
+
+    Id @ 20 ~. incM ~. doubleM;         // Id{42}
+
+    Id @ 20 ~. (v) {
+        incM(v) ~. doubleM;
+    };                                  // Id{42}
+    ```
+
+#### Do Syntax
+
 Composing multiple *bind* steps together can get hairy if subsequent steps need access to the results from earlier steps:
 
 ```java
@@ -1619,8 +1722,7 @@ def incM: inc +> Id @;
 def doubleM: double +> Id @;
 
 def m:
-    incM(1)
-    ~. (x) {
+    incM(1) ~. (x) {
         doubleM(x) ~. (y) {
             Id @ (3 * x) + y;
         }
