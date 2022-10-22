@@ -713,6 +713,18 @@ size(< "O", "K" >);         // 2
 size(< a: 1 >);             // 1
 ```
 
+When defining a Record and the field name matches the variable holding the value, a concise syntax is allowed:
+
+```java
+def first: "Kyle";
+def last: "Simpson";
+
+def person: < :first, :last >;
+
+// instead of:
+def person: < first: first, last: last >;
+```
+
 To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{    }>`:
 
 ```java
