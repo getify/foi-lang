@@ -75,6 +75,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Monads](#monads)
     - [The Monad Laws](#the-monad-laws)
     - [Do Syntax](#do-syntax)
+    - [Monadic Function Returns](#monadic-function-returns)
 * [Type Annotations](#type-annotations)
 
 ### Imports
@@ -1192,7 +1193,7 @@ defn add(x: 0, y) ^x + y;
 Function recursion is supported:
 
 ```java
-defn factorial(v) ?[v ?<= 1]: 1 {
+defn factorial(v) ![v ?> 1]: 1 {
     ^v * factorial(v - 1);
 }
 
@@ -1202,8 +1203,8 @@ factorial(5);                   // 120
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
-defn factorial(v,tot: 1) ?[v ?<= 1]: tot {
-    ^factorial(v - 1,tot * v)
+defn factorial(v,tot: 1) ![v ?> 1]: tot {
+    ^factorial(v - 1,tot * v);
 }
 
 factorial(5);                   // 120
@@ -1747,6 +1748,38 @@ def m: Id @ {
 ```
 
 Inside the `@ {    }` do-block, a unary/prefixed `@` expression implicitly chains a monad to the current block's monad context, resulting in the underlying value.
+
+#### Monadic Function Returns
+
+A function's return value can be explicitly expressed monadically:
+
+```java
+defn incM(v) ^(Id @ v + 1);
+
+incM(3);                // Id{4}
+```
+
+Non-monadic-returning functions can also be composed with the intended unit constructor:
+
+```java
+defn inc(v) ^v + 1;
+def incM: inc +> Id @;
+
+incM(3);                // Id{4}
+```
+
+That approach is often useful if the non-monadic-returning function is already independently defined, so effectively a monad is just being *wrapped* around the function's return value.
+
+Monadic function returns can also be integrated directly into a function's logic:
+
+```java
+defn factorialM(v,tot: Id @ 1) ![v ?> 1]: tot {
+    tot := tot ~map (t) { t * v; };
+    ^factorialM(v - 1,tot);
+}
+
+factorialM(5);                   // Id{120}
+```
 
 ### Type Annotations
 
