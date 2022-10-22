@@ -71,6 +71,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Function Pipelines](#function-pipelines)
 * [Loops and Comprehensions](#loops-and-comprehensions)
     - [Tagged Comprehensions](#tagged-comprehensions)
+* [Monads](#monads)
 * [Type Annotations](#type-annotations)
 
 ### Imports
@@ -1554,6 +1555,96 @@ defn sub(x,y) ^x - y;
 1..5 ~fold sub;
 // -13   (1 - 2 - 3 - 4 - 5)
 ```
+
+### Monads
+
+The identity monad in **Foi** is called `Id`, and the empty monad is called `None`.
+
+The `@` operator applies the "unit constructor" for any monad type, thus a monad value can be expressed like this:
+
+```java
+def m: Id @ 42;         // Id{42}
+| @ Id 42 |;            // Id{42}
+
+def nil: None@;         // None{}
+| @ None |;             // None{}
+```
+
+If `@` is partially applied, you get a regular function for constructing a specific monad type:
+
+```java
+def ofId: Id @;
+
+ofId(42);               // Id{42}
+```
+
+A monadic value is a valid *range* for loops/comprehensions (`~map`, `~filter`, `~fold`, etc):
+
+```java
+defn id(v) ^v;
+defn double(v) ^v * 2;
+defn isEven(v) ^(mod(v,2) ?= 0)
+def isOdd: !isEven;
+
+def m: Id @ 21;
+
+m ~map double;          // Id{42}
+m ~filter isOdd;        // Id{21}
+m ~filter isEven;       // None{}
+m ~fold id;             // 21
+```
+
+In addition to the standard comprehensions, monads (of course!) also can also be used with the `~bind` comprehension:
+
+```java
+defn double(v) ^v * 2;
+
+def m: Id @ 21;
+
+m ~bind (double +> Id @);       // Id{42}
+m ~chain (double +> Id @);      // Id{42}
+m ~. (double +> Id @);          // Id{42}
+```
+
+**Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable.
+
+Composing multiple *bind* steps together can get hairy if subsequent steps need access to the results from earlier steps:
+
+```java
+defn id(v) ^v;
+defn inc(v) ^v + 1;
+defn double(v) ^v * 2;
+
+def incM: inc +> Id @;
+def doubleM: double +> Id @;
+
+def m:
+    incM(1)
+    ~. (x) {
+        doubleM(x) ~. (y) {
+            Id @ (3 * x) + y;
+        }
+    };
+// Id{10}
+```
+
+To have access to both `x` and `y` in the final *chain* step, we used a nested scope/closure. Alternatively, you could pack both values into a Record/Tuple to pass into the final step, but that's even uglier.
+
+To improve the ergonomics of such a task, **Foi** supports a "do syntax" for imperatively expressing *chain* compositions in a single shared scope:
+
+```java
+defn incM(v) ^(Id @ v + 1);
+defn doubleM(v) ^(Id @ v * 2);
+
+def m: Id @ {
+    def x: @incM(1);
+    def y: @doubleM(x);
+    (3 * x) + y;
+};
+// Id{10}
+```
+
+Inside the `@ {    }` do-block, a unary/prefixed `@` expression implicitly chains a monad to the current block's monad context, resulting in the underlying value.
 
 ### Type Annotations
 
