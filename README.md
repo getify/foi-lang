@@ -76,6 +76,9 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [The Monad Laws](#the-monad-laws)
     - [Do Syntax](#do-syntax)
     - [Monadic Function Returns](#monadic-function-returns)
+    - [Maybe Monad](#maybe-monad)
+    - [Foldable](#foldable)
+    - [Either Monad](#either-monad)
 * [Type Annotations](#type-annotations)
 
 ### Imports
@@ -550,7 +553,7 @@ def greeting: ?(myName){
 greeting;               // "Hello!"
 ```
 
-However, if no pattern matches, the default result of the expression is a Maybe::None -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
+However, if no pattern matches, the default result of the expression is a `empty` -- **Foi** can be configured to issue a warning notice in such a case. More on monads later.
 
 To explicitly define a default pattern, use `?:` (which must be the last clause in the pattern matching expression):
 
@@ -1145,7 +1148,7 @@ defn myFn(x) ![x ?> 10]: empty {
 
 You can read/interpret the `![x ?> 10]: empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
 
-**Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a Maybe::None or an Either::Left. More on monads later.
+**Note:** In this usage, `empty` indicates to the calling code that the function had no valid computation to perform. However, there are other types of values that could (should!?) be returned here, such as a `None` or `Left` monads (more later).
 
 ----
 
@@ -1611,7 +1614,7 @@ The `@` operator applies the "unit constructor" for any monad type, thus a monad
 
 ```java
 def m: Id @ 42;         // Id{42}
-| @ Id 42 |;            // Id{42}
+| @ Id, 42 |;           // Id{42}
 
 def nil: None@;         // None
 | @ None |;             // None
@@ -1637,7 +1640,6 @@ ofId(42);               // Id{42}
 A monadic value is a valid *range* for loops/comprehensions (`~map`, `~filter`, `~fold`, etc):
 
 ```java
-defn id(v) ^v;
 defn double(v) ^v * 2;
 defn isEven(v) ^(mod(v,2) ?= 0)
 def isOdd: !isEven;
@@ -1647,10 +1649,9 @@ def m: Id @ 21;
 m ~map double;          // Id{42}
 m ~filter isOdd;        // Id{21}
 m ~filter isEven;       // None
-m ~fold id;             // 21
 ```
 
-**Note:** The `~map` comprehension expresses Functor behavior, and the `~fold` comprehension expresses Foldable behavior; these are related (but distinct) to monads and algebraic structures.
+**Note:** The `~map` comprehension expresses Functor behavior, which is related (but distinct) to monads and other algebraic structures.
 
 In addition to the standard comprehensions, monads (of course!) also can also be used with the `~bind` comprehension:
 
@@ -1715,7 +1716,6 @@ For completeness sake, let's illustrate the 3 monad laws using the `Id` monad, t
 Composing multiple *bind* steps together can get hairy if subsequent steps need access to the results from earlier steps:
 
 ```java
-defn id(v) ^v;
 defn inc(v) ^v + 1;
 defn double(v) ^v * 2;
 
@@ -1779,6 +1779,114 @@ defn factorialM(v,tot: Id @ 1) ![v ?> 1]: tot {
 }
 
 factorialM(5);                   // Id{120}
+```
+
+#### `Maybe` Monad
+
+The `Id` and `None` monads are paired as the `Maybe` Sum type monad:
+
+```java
+Maybe @ 42;             // Id{42}
+Maybe @ empty;          // None
+
+Id @ empty;             // Id{empty}
+None@;                  // None
+```
+
+**Note:** `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`.
+
+As show above, the `Maybe @` unit constructor selects `None` when it encounters the `empty` value, and `Id` for any other value. You can instead define custom constructor functions that select `None` or `Id` for various values:
+
+```java
+defn nonZero(v)
+    ?[v ?= 0]: None@
+    ^Id @ v;
+
+def qty: nonZero(0);            // None
+```
+
+One common idiom where `Maybe` is used is conditional property access:
+
+```java
+defn prop(name)(obj) ^Maybe @ obj[name];
+
+def order: Maybe @ <
+    shippingAddress: <
+        street: "123 Easy St",
+        city: "TX",
+        zip: "78889"
+    >
+>;
+
+order
+~. prop("shippingAddress")
+~. prop("street");
+// Id{"123 Easy St"}
+
+order
+~. prop("billingAddress")
+~. prop("street");
+// None
+```
+
+#### Foldable
+
+**Foi** monads have Foldable behavior built-in, expressed with the `~fold` comprehension. As with other comprehension types, the *range* argument affects the context (and structure!) of the *iteration* expression of the comprehension.
+
+When *range* is a monadic value, the `~fold` comprehension requires two *iteration* expressions; because this is 3 operands, the evaluation-expression form is required.
+
+For `None`, the *default iteration* expression (second operand, `"default!"`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `id`s below) is invoked.
+
+```java
+defn id(v) ^v;
+
+def m: Maybe @ 42;                  // Id{42}
+def g: Maybe @ empty;               // None
+
+| ~fold m, "default!", id |;        // 42
+| ~fold g, "default!", id |;        // default!
+```
+
+**Note:** Folding a monadic value *usually* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting or logging a value (as shown in these snippets) is a much less typical usage; that's merely convenient for illustration purposes here.
+
+#### `Either` Monad
+
+The `Either` monad is a Sum type, comprised of `Left` and `Right`. Additionally, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`.
+
+`Left` is like `None`, except it can represent an affirmative value -- typically, an error message to indicate failure to perform an operation. `Right` is like `Id`.
+
+```java
+defn print(v) ^log("Value: " + v);
+defn halve(v)
+    ![v ?> 1]: Left @ "Value must be greater than 1"
+    ![mod(v,2) ?= 0]: Right @ (v + 1) / 2
+    ^Right @ v / 2;
+
+def e1: halve(0);   // Left{"Value must be greater than 1"}
+def e2: halve(4);   // Right{2}
+
+e1 ~map print;      //
+e2 ~map print;      // Value: 2
+```
+
+As with `Maybe`, `Either` is foldable, so we can define *natural transformations* between them:
+
+```java
+defn id(v) ^v;
+defn halve(v)
+    ![v ?> 1]: Left @ "Value must be greater than 1"
+    ![mod(v,2) ?= 0]: Right @ (v + 1) / 2
+    ^Right @ v / 2;
+defn maybeFromEither(e)
+    ^| ~fold e, None@, Id@ |;
+defn eitherFromMaybe(m)
+    ^| ~fold m, Left @ "Missing!", Right@ |;
+
+def m1: 0 #> halve #> maybeFromEither;          // None
+def m2: 4 #> halve #> maybeFromEither;          // Id{2}
+
+| ~fold eitherFromMaybe(m1), id, id | #> log;   // Missing!
+| ~fold eitherFromMaybe(m2), id, id | #> log;   // 2
 ```
 
 ### Type Annotations
