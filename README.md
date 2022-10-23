@@ -80,6 +80,10 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Maybe Monad](#maybe-monad)
     - [Foldable](#foldable)
     - [Either Monad](#either-monad)
+* [Broader Category Theory Capabilities](#broader-category-theory-capabilities)
+    - [Applicative](#applicative)
+    - [Concatable / Semigroup](#concatable--semigroup)
+    - [Monoid](#monoid)
 * [Type Annotations](#type-annotations)
 
 ### Imports
@@ -1493,6 +1497,8 @@ def evens: 0..5 ~map double;
 // < 0, 2, 4, 6, 8, 10 >
 ```
 
+**Note:** The `~map` comprehension expresses Functor/Mappable behavior from [broader Category Theory](#broader-category-theory-capabilities), specifically for lists (Tuples).
+
 You can also use the inline function definition form:
 
 ```java
@@ -1600,7 +1606,9 @@ defn sub(x,y) ^x - y;
 
 When an initial value is provided to a fold/reduce, it is set as the initial *accumulator* argument to the first *iteration*, and the first value in the list (Tuple) is the *iteration-value* argument.
 
-So above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being the value `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
+So in the snippet above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being the value `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
+
+**Note:** Be aware that a `~fold` must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If the list (Tuple) is empty, or if the *initial-value* is not provided, the `~fold` operation is invalid, and thus returns an `Either.Left` value with an error message.
 
 Folds *can even* produce a Record/Tuple result. One common way to accomplish this is for the *initial-value* to be a Record/Tuple:
 
@@ -1656,23 +1664,19 @@ def ofId: Id @;
 ofId(42);               // Id{42}
 ```
 
-A monadic value is a valid *range* for loops/comprehensions (`~map`, `~filter`, `~fold`, etc):
+A monadic value is a valid *range* for certain comprehensions. As [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can use the `~fmap` (aka, "functor map") comprehension, a specialized operation with equivalent behavior to the `~map` comprehension for lists (Tuples):
 
 ```java
 defn double(v) ^v * 2;
-defn isEven(v) ^(mod(v,2) ?= 0)
-def isOdd: !isEven;
 
 def m: Id @ 21;
 
-m ~map double;          // Id{42}
-m ~filter isOdd;        // Id{21}
-m ~filter isEven;       // None
+m ~fmap double;                 // Id{42}
+
+m ~fmap (v) { v * 2; };         // Id{42}
 ```
 
-**Note:** The `~map` comprehension expresses Functor behavior, which is related (but distinct) to monads and other algebraic structures.
-
-In addition to the standard comprehensions, monads (of course!) also can also be used with the `~bind` comprehension:
+Monadic values also (obviously!) support the `~bind` comprehension:
 
 ```java
 defn double(v) ^v * 2;
@@ -1684,18 +1688,18 @@ m ~chain (double +> Id @);      // Id{42}
 m ~. (double +> Id @);          // Id{42}
 ```
 
-**Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable.
+**Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable. But for brevity sake, `~.` is generally most preferable.
 
-Comprehensions for `None` are all no-op operations, meaning they skip any behaviors and simply result in the same `None` value again:
+Comprehension operations for `None` are all no-ops, meaning they do nothing but simply return the same `None` value again:
 
 ```java
 defn double(v) ^v * 2;
 
-Id @ 21 ~. double ~fold log;    // Id{42}
+Id @ 21 ~. double ~fold log;    // 42
 None@ ~. double ~fold log;      // None
 ```
 
-Neither the `double()` invocation nor the `log()` invocation will happen for the `None@` monadic value.
+**Note:** Neither the `double()` invocation nor the `log()` invocation will happen for the `None@` monadic value.
 
 #### The Monad Laws
 
@@ -1896,7 +1900,7 @@ e1 ~map print;      // Left{"Value must be greater than 1"}
 e2 ~map print;      // Value: 2
 ```
 
-As with `Maybe`, `Either` is foldable, so we can define *natural transformations* between them:
+Both `Maybe` and `Either` are foldable, so we can define *natural transformations* between them:
 
 ```java
 defn id(v) ^v;
@@ -1914,17 +1918,133 @@ defn eitherFromMaybe(m)
 def m1: 0 #> halve #> maybeFromEither;          // None
 def m2: 4 #> halve #> maybeFromEither;          // Id{2}
 
-| ~fold eitherFromMaybe(m1), id, id | #> log;   // "Missing!"
-| ~fold eitherFromMaybe(m2), id, id | #> log;   // 2
+| ~fold eitherFromMaybe(m1), id, id |;          // "Missing!"
+| ~fold eitherFromMaybe(m2), id, id |;          // 2
 ```
 
-Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `Maybe` (`None`) with the `maybeFromEither()` utility. `halve(4)` produces a `Right` holding `2`, which when transformed to a `Maybe` becomes `Id` with `2`.
+Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right` holding `2`, which is transformed to `Id` holding `2`.
 
-Then, for each instance of `Maybe`, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. Finally, we fold the resulting `Either` instances, extracting the values `"Missing!"` and `2`, respectively.
+Then, for `m1` and `m2` instances, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. We fold the resulting `Either` instances, extracting the values `"Missing!"` and `2`, respectively.
+
+### Broader Category Theory Capabilities
+
+So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as [Functor](#tagged-comprehensions) (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable) (with `~fold` comprehension).
+
+But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, they are separate topics.
+
+#### Applicative
+
+Applicative is a pattern for holding a function in a monadic instance, then "applying" the underlying value from another monadic instance as an input to this function, returning the result back as another monadic value. If the function requires multiple inputs, this "application" can be performed multiple times, providing one input at a time.
+
+For example:
+
+```java
+defn add(x)(y) ^x + y;
+
+(Id @ add)
+    ~ap (Id @ 3)
+    ~ap (Id @ 4);       // Id{7}
+```
+
+Above, the first `~ap` applies the underlying `3` as the first argument (`x`) to the `add()` function, which returns back another function expecting a second input; that function is placed back in an `Id` monadic value.
+
+The second `~ap` repeats the process, passing `4` in as the `y` argument; the result (`7`) is put back in another `Id` monadic value.
+
+#### Concatable / Semigroup
+
+Concatable (formally, Semigroup) defines the ability for values to be "concatenated" (appended to each other).
+
+We've already seen a number of value types in **Foi** that are concatable. For example, strings and numbers are concatable. In fact, the `+` operator expresses the underlying *concatable* behavior for these value types:
+
+```java
+1 + 2 + 3 + 4 + 5;                  // 15
+| + 1, 2, 3, 4, 5 |;                // 15
+
+"Hello" + " " + "world";            // "Hello world"
+| + "Hello", " ", "world" |;        // "Hello world"
+```
+
+Monadic values in **Foi** also implement Concatable, meaning that if used with `+`, they will delegate concatenation to their underlying value (if it is also Concatable):
+
+```java
+(Id @ 30) + (Id @ 12);
+// Id{42}
+
+| + Id @ "Hello", Id @ " ", Id @ "world" |;
+// Id{"Hello world"}
+```
+
+#### Monoid
+
+Monoid is a Semigroup plus an "empty value" -- such that when concatenated produces no change to the original value. For example, string concatenation is a monoid with the `""` (empty string), numeric addition is a monoid with the `0` (empty number), and list (Tuple) concatenation is a monoid with the `<>` (empty list/Tuple).
+
+Revisiting concatenation from the previous section, a concatenation is a specialized type of fold, so we can use the list (Tuple) `~fold` comprehension together with the `+` operator:
+
+```java
+| ~fold < "Hello", " ", "world" >, + |;
+// "Hello world"
+```
+
+We can do the same with a list (Tuple) of monadic values:
+
+```java
+| ~fold < Id @ "Hello", Id @ " ", Id @ "world" >, + |;
+// Id{"Hello world"}
+```
+
+But it can be useful instead to perform a mapping on each of a list's values as they're being folded/concatenated, using the `~foldMap` comprehension:
+
+```java
+< "Hello", " ", "world" > ~foldMap Id@;
+// Id{"Hello world"}
+```
+
+Recall that `~fold` (and indeed, `~foldMap`) requires at least two values in the list (Tuple) to operate on, and that one form of the comprehension provides an *initial-value* in order to (potentially) satisfy this requirement. The "empty value" of a Monoid is one such candidate.
+
+As such, `~foldMap` is only valid (fully defined) for a list (Tuple) of one or more monoidal values.
+
+**Note:** Similarly to `~fold`, an invalid `~foldMap` will result in a `Either::Left` holding an error message.
+
+To define a custom monoid, provide a suitable "empty value", which can be specified as an *initial-value* to the `~fold` / `~foldMap` operations.
+
+For example, we could define a monoid for the boolean-AND (`?and`) operation over a list of boolean values using `true` as the "empty value". We can do similarly for the boolean-OR (`?or`) operation with `false`:
+
+```java
+defn all(bools) ^| ~fold bools, true, ?and |;
+defn any(bools) ^| ~fold bools, false, ?or |;
+
+def a: < true, true, true, true >;
+def b: < true, false, true, true >;
+
+all(a);     // true
+all(b);     // false
+
+any(b);     // true
+```
+
+But how do we extend this to support for monadic values such as `Id{true}`? The `?and` and `?or` operations do not inherently work with monadic values. Let's define custom monadic-concatenation logic (`andM()` and `orM()` below) and use `~foldMap`:
+
+```java
+defn andM(x,y) ^x ~fmap (xv) { xv ?and y; };
+defn orM(x,y) ^x ~fmap (xv) { xv ?or y; };
+
+defn all(bools) ^| ~foldMap bools, Id @ true, andM |;
+defn any(bools) ^| ~foldMap bools, Id @ false, orM |;
+
+def a: < true, true, true, true >;
+def b: < true, false, true, true >;
+
+all(a);     // Id{true}
+all(b);     // Id{false}
+
+any(b);     // Id{true}
+```
 
 ### Type Annotations
 
-Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce. A type annotation always begins with the `as` keyword:
+Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce.
+
+A type annotation always begins with the `as` keyword:
 
 ```java
 def age: 42 as int;
