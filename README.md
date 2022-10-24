@@ -75,6 +75,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Lists And Fold Comprehensions](#lists-and-fold-comprehensions)
 * [Monads (And Friends)](#monads-and-friends)
     - [The Monad Laws](#the-monad-laws)
+    - [Pattern Matching Monads](#pattern-matching-monads)
     - [Do Syntax](#do-syntax)
     - [Monadic Function Returns](#monadic-function-returns)
     - [Maybe Monad](#maybe-monad)
@@ -1486,7 +1487,7 @@ In general, the result of the `~` operation is another *range* (e.g., Record/Tup
 
 However, moving beyond imperative looping to comprehensions, `~` can be *tagged*, to indicate a more specific, declarative kind of iteration. A tagged `~` comprehension overrides control of the *iteration* and the final `~` expression result.
 
-Supported comprehension tags on the `~` operator are: `~map`, `~filter`, `~fold`, and `~foldR`.
+Some list (Tuple) comprehension tags on the `~` operator: `~map`, `~filter`, `~fold`, and `~foldR`; these must have a non-conditional *range* operand.
 
 For example:
 
@@ -1515,7 +1516,7 @@ def evens: 0..5 ~map (v) {
 // < 0, 2, 4, 6, 8, 10 >
 ```
 
-To compose multiple comprehensions:
+To compose multiple (`~map`) comprehensions:
 
 ```java
 defn inc(v) ^v + 1;
@@ -1527,10 +1528,10 @@ def odds: < 1, 3, 5, 7, 9 >;
 odds ~map inc ~map triple ~map half;
 // < 3, 6, 9, 12, 15 >
 
-odds ~map | +> inc, triple, half |;
+| ~map odds, inc, triple, half |;
 // < 3, 6, 9, 12, 15 >
 
-| ~map odds, inc, triple, half |;
+odds ~map | +> inc, triple, half |;
 // < 3, 6, 9, 12, 15 >
 ```
 
@@ -1550,6 +1551,8 @@ compute1(< 1, 3, 5, 7, 9 >);
 compute2(< 1, 3, 5, 7, 9 >);
 // < 3, 6, 9, 12, 15 >
 ```
+
+**Note:** In the evaluation-expression form (for the `compute2` definition), the leading `,` in the arguments list indicates explicitly omitting the *range*, thereby producing a right-partially-applied function that expects the *range*.
 
 The `~filter` comprehension works like this:
 
@@ -1585,13 +1588,13 @@ defn add(x,y) ^x + y;
 
 In this form of the `~fold` comprehension, the first *iteration* evaluation will receive the first value from the list (Tuple) as the *accumulator* (above: `x`, `acc`) argument, and the second value from the list as the *iteration-value* (above: `y`, `v`) argument.
 
-So above, the first invocation of `add()` in each loop will have `x` set as `0` and `y` set as `1`. That return result (`1`) comes in as `x` for the second invocation of `add()`, with `y` being `2`. And so on.
+So in the above snippet, the first invocation of `add()` in each comprehension will have `x` set as `0` and `y` set as `1`. That return result (`1`) comes in as `x` for the second invocation of `add()`, with `y` being `2`. And so on.
 
 ----
 
-But, folds/reductions sometimes need to start with a specific *initial value* rather than with just the first value in the list (Tuple). In this usage, we see the `~fold` comprehension as a representation of generalized [Foldable behavior](#foldable) (covered later).
+But, folds/reductions sometimes need to start with a specific *initial value* rather than with just the first value in the list (Tuple). In this usage, the `~fold` comprehension is a representation of generalized [Foldable behavior](#foldable) (covered later).
 
-If the `~fold` comprehension's *range* argument is a list (Tuple), and there are two other operands specified, then the second operand will be interpreted as the *initial-value* (or *default-value*), and the third operand as the *iteration* expression.
+If the `~fold` comprehension's *range* argument is a list (Tuple), and there are at least two other operands specified (i.e., 3 or more operands total), then the second operand will be interpreted as the *initial-value* (or *default-value*), and the third operand as an *iteration* expression.
 
 For example:
 
@@ -1604,13 +1607,13 @@ defn sub(x,y) ^x - y;
 
 **Note:** As shown, 3 or more operands require the evaluation-expression form.
 
-When an initial value is provided to a fold/reduce, it is set as the initial *accumulator* argument to the first *iteration*, and the first value in the list (Tuple) is the *iteration-value* argument.
+When an initial value is provided to a fold/reduce, it is set as the *accumulator* argument to the first *iteration*, and the first value in the list (Tuple) is the *iteration-value* argument.
 
-So in the snippet above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being the value `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
+So in the snippet above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
 
-**Note:** Be aware that a `~fold` must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If the list (Tuple) is empty, or if the *initial-value* is not provided, the `~fold` operation is invalid, and thus returns an `Either.Left` value with an error message.
+**Warning:** Be aware that a `~fold` comprehension must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If there are not at least two values provided, the `~fold` operation is invalid, and thus returns an `Either.Left` value with an error message. More on [Monads](#monads) later.
 
-Folds *can even* produce a Record/Tuple result. One common way to accomplish this is for the *initial-value* to be a Record/Tuple:
+Folds *can even* produce another Record/Tuple result. One typical way to accomplish this is for the *initial-value* operand to be an empty Record/Tuple (`<>`):
 
 ```java
 defn onlyOdds(list,v)
@@ -1635,9 +1638,9 @@ defn sub(x,y) ^x - y;
 
 ### Monads (And Friends)
 
-The identity monad in **Foi** is called `Id`, and the empty monad is called `None`.
+The identity monad in **Foi** is called `Id`, and the empty monad is called `None`. These two are actually paired in the [`Maybe` monad type](#maybe-monad), as discussed later.
 
-The `@` operator applies the "unit constructor" for any monad type, thus a monadic value can be expressed like this:
+The `@` operator applies the "unit constructor" for any monad type, thus a monadic value can be constructed like this:
 
 ```java
 def m: Id @ 42;         // Id{42}
@@ -1656,15 +1659,17 @@ def g: Id @ 42;
 m ?= g;                 // true
 ```
 
-If `@` is partially applied, you get a regular function for constructing a specific monad type:
+For any monadic value besides instances of `None`, if `@` is partially applied with a monad type, you get a regular factory function for constructing that specific monad instance:
 
 ```java
-def ofId: Id @;
+def ofId: Id@;
 
 ofId(42);               // Id{42}
 ```
 
-A monadic value is a valid *range* for certain comprehensions. As [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can use the `~fmap` (aka, "functor map") comprehension, a specialized operation with equivalent behavior to the `~map` comprehension for lists (Tuples):
+A monadic value is a valid *range* for certain comprehensions.
+
+As [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can use the `~fmap` (aka, "functor map") comprehension, a specialized operation with equivalent behavior to the list (Tuple) `~map` comprehension:
 
 ```java
 defn double(v) ^v * 2;
@@ -1683,9 +1688,9 @@ defn double(v) ^v * 2;
 
 def m: Id @ 21;
 
-m ~bind (double +> Id @);       // Id{42}
-m ~chain (double +> Id @);      // Id{42}
-m ~. (double +> Id @);          // Id{42}
+m ~bind (double +> Id@);        // Id{42}
+m ~chain (double +> Id@);       // Id{42}
+m ~. (double +> Id@);           // Id{42}
 ```
 
 **Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable. But for brevity sake, `~.` is generally most preferable.
@@ -1699,11 +1704,11 @@ Id @ 21 ~. double ~fold log;    // 42
 None@ ~. double ~fold log;      // None
 ```
 
-**Note:** Neither the `double()` invocation nor the `log()` invocation will happen for the `None@` monadic value.
+**Note:** Neither the `double()` invocation nor the `log()` invocation will happen for the `None@`-constructed monadic value.
 
 #### The Monad Laws
 
-For completeness sake, let's illustrate the 3 monad laws using the `Id` monad, the `@` unit-constructor, and the `~.` *bind* operator:
+For formality sake, here are the 3 monad laws using the `Id` monad, the `@` unit-constructor, and the `~.` *bind* operator:
 
 1. **Left Identity:**
 
@@ -1717,7 +1722,7 @@ For completeness sake, let's illustrate the 3 monad laws using the `Id` monad, t
 2. **Right Identity:**
 
     ```java
-    Id @ 42 ~. (Id @);
+    Id @ 42 ~. Id@;
     // Id{42}
     ```
 
@@ -1734,6 +1739,23 @@ For completeness sake, let's illustrate the 3 monad laws using the `Id` monad, t
     };                                  // Id{42}
     ```
 
+#### Pattern Matching Monads
+
+You can use [pattern matching](#pattern-matching) to determine which type of monad instance is being dealt with:
+
+```java
+def m: getSomeMonad(42);
+
+?(m){
+    ?[?as { Id, Right }]: something(m)
+    ?[?as None]: something(m,"default!")
+    ?[?as Left]: something(m,"oops")
+    ?: something(Left @ "Unknown!","oops")
+};
+```
+
+**Note:** More on [types and the `?as` operator](#type-annotations) later.
+
 #### Do Syntax
 
 Composing multiple *bind* steps together can get hairy if subsequent steps need access to the results from earlier steps:
@@ -1742,8 +1764,8 @@ Composing multiple *bind* steps together can get hairy if subsequent steps need 
 defn inc(v) ^v + 1;
 defn double(v) ^v * 2;
 
-def incM: inc +> Id @;
-def doubleM: double +> Id @;
+def incM: inc +> Id@;
+def doubleM: double +> Id@;
 
 def m:
     incM(1) ~. (x) {
@@ -1786,7 +1808,7 @@ Non-monadic-returning functions can also be composed with the intended unit cons
 
 ```java
 defn inc(v) ^v + 1;
-def incM: inc +> Id @;
+def incM: inc +> Id@;
 
 incM(3);                // Id{4}
 ```
@@ -1806,19 +1828,43 @@ factorialM(5);                   // Id{120}
 
 #### `Maybe` Monad
 
-The `Id` and `None` monads are paired as the `Maybe` Sum type monad. For readability preferences, `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`.
-
-Consider:
+The `Id` and `None` monads are paired in the `Maybe` Sum type monad. For readability preferences, `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`. Moreover, to adhere to the monadic laws, `Maybe @` is the same as `Id @`:
 
 ```java
 Maybe @ 42;             // Id{42}
-Maybe @ empty;          // None
-
+Maybe @ empty;          // Id{empty}
 Id @ empty;             // Id{empty}
 None@;                  // None
 ```
 
-As show above, the `Maybe @` unit constructor selects `None` when it encounters the `empty` value, and `Id` for any other value. You can instead define custom constructor functions that select `None` or `Id` for various values:
+But that's not particularly useful or interesting: we could already select `Id` or `None` explicitly.
+
+A special `Maybe._` constructor (not the main unit constructor) inspects the provided value and selects `None` when it encounters the `empty` value, and `Id` for any other value:
+
+```java
+Maybe._(42);            // Id{42}
+Maybe._(empty);         // None
+```
+
+For syntactic consistency, you can still use the `@` form:
+
+```java
+Maybe._ @ 42;           // Id{42}
+Maybe._ @ empty;        // None
+```
+
+For further convenience, you may choose to do this:
+
+```java
+def May: Maybe._@;
+
+May(42);                // Id{42}
+May(empty);             // None
+May @ 42;               // Id{42}
+May @ empty;            // None
+```
+
+Instead of using `Maybe._`, you can define custom constructor functions that select `None` or `Id` for various values:
 
 ```java
 defn nonZero(v)
@@ -1826,14 +1872,15 @@ defn nonZero(v)
     ^Id @ v;
 
 def qty: nonZero(0);            // None
+def cost: nonZero @ 1.99;       // Id{1.99}
 ```
 
 One common idiom where `Maybe` is used is conditional property access:
 
 ```java
-defn prop(name)(obj) ^Maybe @ obj[name];
+defn prop(name)(obj) ^Maybe._ @ obj[name];
 
-def order: Maybe @ <
+def order: Id @ <
     shippingAddress: <
         street: "123 Easy St",
         city: "TX",
@@ -1856,9 +1903,7 @@ order
 
 We briefly mentioned Foldable earlier, with the `~fold` comprehension and lists (Tuples). We'll revisit the generalized Foldable behavior now, in the context of monads.
 
-Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` comprehension. As with other comprehension types, the *range* argument affects the context (and structure!) of the *iteration* expression(s) of the comprehension.
-
-For a monadic value *range*, the `~fold` comprehension requires multiple *iteration* expressions, one for each component of the Sum type; again, because this is 3 or more operands, the evaluation-expression form is required.
+Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` comprehension. For a monadic value *range*, the `~fold` comprehension requires multiple *iteration* expressions, one for each component of the Sum type; again, because this is 3 or more operands, the evaluation-expression form is required.
 
 Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"default!"`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `id`s below) is invoked.
 
@@ -1866,19 +1911,42 @@ For example:
 
 ```java
 defn id(v) ^v;
+defn defaultMsg() ^"default!";
 
-def m: Maybe @ 42;                  // Id{42}
-def g: Maybe @ empty;               // None
+def m: Maybe._ @ 42;                // Id{42}
+def g: Maybe._ @ empty;             // None
 
-| ~fold m, "default!", id |;        // 42
-| ~fold g, "default!", id |;        // default!
+| ~fold m, defaultMsg, id |;        // 42
+| ~fold g, defaultMsg, id |;        // default!
 ```
 
-**Note:** Folding a monadic value *usually* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting or logging a value (as shown in these snippets) is a much less typical usage; that's merely convenient for illustration purposes here.
+**Note:** Folding a monadic value *usually* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting a value (via `id()` as shown) is a much less typical usage; that's merely convenient for illustration purposes here.
+
+----
+
+There's some useful conceptual symmetry to recognize, between `~fold`ing a list (Tuple) with an *initial-value*, versus `~fold`ing a binary Sum type:
+
+```java
+defn id(v) ^v;
+defn two() ^2;
+defn mult(x,y) ^x * y;
+
+def list: < 1, 3, 7 >;
+def m: Maybe._ @ 42;
+
+| ~fold list,  two(), mult |;    // 42
+
+| ~fold m,     two,   id   |;    // Id{42}
+| ~fold None@, two,   id   |;    // 2
+```
+
+For the list (Tuple) `~fold`, the `two()` function is eagerly invoked, using its return value as the *initial-value* for the folding.
+
+But for the monadic `~fold`, the `two` function is merely specified to be invoked in the case of a `None` instance.
 
 #### `Either` Monad
 
-The `Either` monad is another binary Sum type, comprised of `Left` and `Right`. For readability preferences, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`. Also, the `Either @` unit constructor is an alias for `Right @`.
+The `Either` monad is another binary Sum type, pairing `Left` and `Right`. For readability preferences, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`. Also, the `Either @` unit constructor is an alias for `Right @`.
 
 `Either` is typically used for error flow-control in FP programs (as opposed to exception handling).
 
@@ -1915,14 +1983,14 @@ defn maybeFromEither(e)
 defn eitherFromMaybe(m)
     ^| ~fold m, Left @ "Missing!", Right@ |;
 
-def m1: 0 #> halve #> maybeFromEither;          // None
-def m2: 4 #> halve #> maybeFromEither;          // Id{2}
+def m1: halve(0) #> maybeFromEither;            // None
+def m2: halve(4) #> maybeFromEither;            // Id{2}
 
 | ~fold eitherFromMaybe(m1), id, id |;          // "Missing!"
 | ~fold eitherFromMaybe(m2), id, id |;          // 2
 ```
 
-Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right` holding `2`, which is transformed to `Id` holding `2`.
+Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right{2}`, which is transformed to `Id{2}`.
 
 Then, for `m1` and `m2` instances, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. We fold the resulting `Either` instances, extracting the values `"Missing!"` and `2`, respectively.
 
@@ -2001,9 +2069,7 @@ But it can be useful instead to perform a mapping on each of a list's values as 
 
 Recall that `~fold` (and indeed, `~foldMap`) requires at least two values in the list (Tuple) to operate on, and that one form of the comprehension provides an *initial-value* in order to (potentially) satisfy this requirement. The "empty value" of a Monoid is one such candidate.
 
-As such, `~foldMap` is only valid (fully defined) for a list (Tuple) of one or more monoidal values.
-
-**Note:** Similarly to `~fold`, an invalid `~foldMap` will result in a `Either::Left` holding an error message.
+As such, `~foldMap` is only valid (fully defined) when provided two or more monoidal values. Similarly to `~fold`, an invalid `~foldMap` will result in a `Left` holding an error message.
 
 To define a custom monoid, provide a suitable "empty value", which can be specified as an *initial-value* to the `~fold` / `~foldMap` operations.
 
@@ -2022,14 +2088,16 @@ all(b);     // false
 any(b);     // true
 ```
 
-But how do we extend this to support for monadic values such as `Id{true}`? The `?and` and `?or` operations do not inherently work with monadic values. Let's define custom monadic-concatenation logic (`andM()` and `orM()` below) and use `~foldMap`:
+But how do we apply this for monadic values such as `Id{true}`? Unfortunately, the `?and` and `?or` operations do not inherently work with monadic values.
+
+Let's instead define custom monadic-concatenation logic (`andM()` and `orM()` below):
 
 ```java
 defn andM(x,y) ^x ~fmap (xv) { xv ?and y; };
 defn orM(x,y) ^x ~fmap (xv) { xv ?or y; };
 
-defn all(bools) ^| ~foldMap bools, Id @ true, andM |;
-defn any(bools) ^| ~foldMap bools, Id @ false, orM |;
+defn all(bools) ^| ~fold bools, Id @ true, andM |;
+defn any(bools) ^| ~fold bools, Id @ false, orM |;
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
