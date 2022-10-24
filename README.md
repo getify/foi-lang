@@ -1611,7 +1611,7 @@ When an initial value is provided to a fold/reduce, it is set as the *accumulato
 
 So in the snippet above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
 
-**Warning:** Be aware that a `~fold` comprehension must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If there are not at least two values provided, the `~fold` operation is invalid, and thus returns an `Either.Left` value with an error message. More on [Monads](#monads) later.
+**Warning:** Be aware that a `~fold` comprehension must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If there are not at least two values provided, the `~fold` operation is invalid, and thus returns a `Left` value with an error message. More on [Monads](#monads) later.
 
 Folds *can even* produce another Record/Tuple result. One typical way to accomplish this is for the *initial-value* operand to be an empty Record/Tuple (`<>`):
 
@@ -2053,23 +2053,30 @@ Revisiting concatenation from the previous section, a concatenation is a special
 // "Hello world"
 ```
 
-We can do the same with a list (Tuple) of monadic values:
+We can do the same with a list (Tuple) of monadic (monoidal) values:
 
 ```java
 | ~fold < Id @ "Hello", Id @ " ", Id @ "world" >, + |;
 // Id{"Hello world"}
 ```
 
-But it can be useful instead to perform a mapping on each of a list's values as they're being folded/concatenated, using the `~foldMap` comprehension:
+But it can be useful instead to perform a mapping on each of a list's values as they're being folded/concatenated. The `~foldMap` comprehension does so, while assuming the `+` concatenation as the *fold*:
 
 ```java
 < "Hello", " ", "world" > ~foldMap Id@;
 // Id{"Hello world"}
 ```
 
-Recall that `~fold` (and indeed, `~foldMap`) requires at least two values in the list (Tuple) to operate on, and that one form of the comprehension provides an *initial-value* in order to (potentially) satisfy this requirement. The "empty value" of a Monoid is one such candidate.
+The `~foldMap` comprehension (just like `~fold`) requires at least two values in the list (Tuple) to *fold*. Recall that one form of the `~fold` comprehension provides an *initial-value* in order to (potentially) satisfy this requirement; the same is true for `~foldMap`.
 
-As such, `~foldMap` is only valid (fully defined) when provided two or more monoidal values. Similarly to `~fold`, an invalid `~foldMap` will result in a `Left` holding an error message.
+As such, if the list (Tuple) only has one element, the "empty value" of a Monoid (`""` below) is a likely candidate to satisfy this requirement:
+
+```java
+| ~foldMap < "Hello" >, "", Id@ |;
+// Id{"Hello"}
+```
+
+**Warning:** Similarly to `~fold`, an invalid `~foldMap` -- one without at least two monoids to *fold* -- will result in a `Left` holding an error message.
 
 To define a custom monoid, provide a suitable "empty value", which can be specified as an *initial-value* to the `~fold` / `~foldMap` operations.
 
@@ -2088,9 +2095,11 @@ all(b);     // false
 any(b);     // true
 ```
 
-But how do we apply this for monadic values such as `Id{true}`? Unfortunately, the `?and` and `?or` operations do not inherently work with monadic values.
+But how do we apply this approach for monadic values such as `Id{true}`?
 
-Let's instead define custom monadic-concatenation logic (`andM()` and `orM()` below):
+Though we *can* define the necessary monoidal empty value (`true` or `false`), there's no built-in *concatenation* operation (`+`) defined for booleans in **Foi**. Even if there were, the `?and` and `?or` are not monadic-aware operations.
+
+To address these concerns, let's instead define custom monadic-concatenation logic (`andM()` and `orM()` below):
 
 ```java
 defn andM(x,y) ^x ~fmap (xv) { xv ?and y; };
@@ -2107,6 +2116,8 @@ all(b);     // Id{false}
 
 any(b);     // Id{true}
 ```
+
+In essence, `~fold` has the ability to define custom concatenation logic for values. By contrast, `~foldMap` must rely on the assumed `+` concatenation logic of the values being *fold*ed (and indeed, any underlying values the `+` concatenation delegates to).
 
 ### Type Annotations
 
