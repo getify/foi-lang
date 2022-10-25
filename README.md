@@ -709,7 +709,7 @@ def person: < first: "Kyle", last: |uppercase surname| >;
 
 **Note:** To keep Record/Tuple syntax complexity to a minimum, *only* the `|    |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `<    >` literal definition.
 
-Strings are just syntax sugar for tuples of characters. Once defined, a string and a tuple of characters will behave the same.
+Strings are just syntax sugar for Tuples of characters. Once defined, a string and a Tuple of characters will behave the same.
 
 ```java
 def chars: < "H", "e", "l", "l", "o" >;
@@ -818,7 +818,7 @@ person !has "nickname";         // true
 
 #### Generating Sequences (Ranges)
 
-If you want to generate a list (tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or evaluation-expression form).
+If you want to generate a list (Tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or evaluation-expression form).
 
 This usage of the `..` operator is valid with naturally sequential (ordered, fixed interval) values, such as integers and characters:
 
@@ -875,7 +875,7 @@ def numbers: < 3, 4, 5, 6, 7 >;
 
 def head: numbers.0;                // 3
 def first: numbers.[..0];           // < 3 >
-def leading: numbers.[..3];         // < 3, 4, 5 >
+def leading: numbers.[..3];         // < 3, 4, 5, 6 >
 
 def last: numbers.-1;               // 7
 def trailing: numbers.[..-1];       // < 7 >
@@ -886,7 +886,7 @@ def middle: numbers.[1..3];         // < 4, 5, 6 >
 | .[1..3] numbers |;                // < 4, 5, 6 >
 ```
 
-**Note:** The range `.[0..-1]` would be effectively be a no-op expression, since it results in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
+**Note:** The ranges `.[0..]` and `.[0..-1]` would effectively be no-op expressions, since they result in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
 
 Additionally, in the definition of a Record/Tuple, the `&` pick sigil prefixed on a variable name (not an arbitrary expression) *includes* some or all of the contents of that other Record/Tuple:
 
