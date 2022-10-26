@@ -71,7 +71,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
 * [Loops and Comprehensions](#loops-and-comprehensions)
-    - [Tagged Comprehensions](#tagged-comprehensions)
+    - [Comprehensions](#comprehensions)
     - [Lists And Fold Comprehensions](#lists-and-fold-comprehensions)
 * [Monads (And Friends)](#monads-and-friends)
     - [The Monad Laws](#the-monad-laws)
@@ -364,7 +364,7 @@ In addition to the definitions-block form just shown, several other expressions 
 * A [loop iteration block](#loops-and-comprehensions) with block-definitions clause:
 
     ```java
-    0..3 ~ (v, idx) {
+    0..3 ~each (v, idx) {
         log(v + ": " + idx)
     }
     ```
@@ -530,7 +530,7 @@ To make decisions (with booleans!), use pattern matching. There are two forms:
 
 Each pattern clause is defined by `?[    ]: consq`, where the pattern is defined inside the `[    ]`. A pattern can be negated as `![    ]`. The pattern match clause's consequent (`consq`) can either be a single expression, or a `{   }` block; either way, it's only evaluated if the pattern is matched via the conditional.
 
-Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    ){` tag.
+Let's examine each pattern matching form separately, starting with dependent pattern matching. The topic of the match is any arbitrary expression, defined in the `?(    ){` clause.
 
 Consider:
 
@@ -1396,10 +1396,10 @@ Perhaps some of the most distinctive features in various programming languages (
 
 **Foi** is unquestionably an FP-oriented language, but tries (to an extent!) to cast a wider, more pragmatic net, in hopes of being inclusive of broader programming styles. As such, there's a unified syntax which can be used for both imperative looping and declarative iteration/comprehension.
 
-Let's start with the typical imperative loop approach. Here's a loop that prints `"Hello!"` four times, using the `~` loop operator:
+Let's start with the typical imperative loop approach. Here's a loop that prints `"Hello!"` four times, using the `~each` loop operator:
 
 ```java
-0..3 ~ {
+0..3 ~each {
     log("Hello!");
 };
 // Hello!
@@ -1408,7 +1408,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 // Hello!
 ```
 
-`~` is a operator/function that can be used either in the infix form (shown above) or the evaluation-expression form. The first operand to `~` defines the *range*, and the second operand defines the *iteration* operation(s).
+`~each` is a operator/function that can be used either in the infix form (shown above) or the evaluation-expression form. The first operand to `~each` defines the *range*, and the second operand defines the *iteration* operation(s).
 
 1. The *range* is an expression that determines the *bounds* of the loop processing; this expression can take two forms:
 
@@ -1421,17 +1421,17 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         ```java
         def done: false;
 
-        ![done] ~ {
+        ![done] ~each {
             // ..
         };
         ```
 
         This loop will keep running as long as `done` is false. The *range* could also have been written as `?[!done]`, but the former should generally be preferred as easier to read.
 
-    - If the `range` expression is omitted, `~` returns another function that expects a single argument defining the *range*. For example:
+    - If the `range` expression is omitted, `~each` returns another function that expects a single argument defining the *range*. For example:
 
         ```java
-        def printAll: ~ log;
+        def printAll: ~each log;
 
         printAll(< 1, 3, 5, 7, 9 >);
         // 1
@@ -1446,7 +1446,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
     - an expression that evaluates to a function to invoke for each iteration. For example:
 
         ```java
-        0..3 ~ log;
+        0..3 ~each log;
         // 0
         // 1
         // 2
@@ -1456,7 +1456,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
     - an inline block with a `(    )` block-definitions clause (list of comma-separated definitions). For example:
 
         ```java
-        2..5 ~ (v, idx) {
+        2..5 ~each (v, idx) {
             log(idx + ": " + v);
         };
         // 0: 2
@@ -1470,7 +1470,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         If the loop iteration doesn't need any block-scoped definitions, omit the `(    )` block-definitions clause:
 
         ```java
-        0..3 ~ {
+        0..3 ~each {
             log("Hello!");
         };
         // Hello!
@@ -1479,15 +1479,13 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // Hello!
         ```
 
-In general, the result of the `~` operation is another *range* (e.g., Record/Tuple), such that multiple `~` expressions can be chained together. For example, `a ~ b ~ c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~` operation. The same would be true of `| ~ a, b, c |`.
+In general, the result of the `~each` operation is another *range* (e.g., Record/Tuple), such that multiple `~each` expressions can be chained together. For example, `a ~each b ~each c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~each` operation. The same would be true of `| ~each a, b, c |`.
 
-**Note:** For `~` looping over a Record/Tuple *range*, `~` by default produces the same *range* as its result. But in the case where the *range* was a conditional, the result of `~` will be the final boolean `false` that terminated the *range*.
+**Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be the final boolean `false` that terminated the *range*.
 
-#### Tagged Comprehensions
+#### Comprehensions
 
-However, moving beyond imperative looping to comprehensions, `~` can be *tagged*, to indicate a more specific, declarative kind of iteration. A tagged `~` comprehension overrides control of the *iteration* and the final `~` expression result.
-
-Some list (Tuple) comprehension tags on the `~` operator: `~map`, `~filter`, `~fold`, and `~foldR`; these must have a non-conditional *range* operand.
+However, moving beyond imperative `~each` looping, **Foi** provides several comprehensions, including: `~map`, `~filter`, `~fold`, and `~foldR`; these must have a non-conditional *range* operand.
 
 For example:
 
