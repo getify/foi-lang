@@ -161,7 +161,7 @@ myFn(1,empty,3,empty,empty,6);
 All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form, with `| |` delimiters, instead of the more typical `( )` lisp parentheses:
 
 ```java
-import log from #Std;
+import log from "#Std";
 
 | log "Hello" |;               // "Hello"
 
@@ -729,7 +729,7 @@ def person: < first: "Kyle", last: "Simpson" >;
 To define Records/Tuples using arbitrary expressions (other than simple identifiers) for the values, use the evaluation-expression form:
 
 ```java
-import uppercase from #Std.String;
+import uppercase from "#Std.String";
 
 def five: 5;
 def numbers: < 4, five, 6 >;
@@ -753,7 +753,7 @@ str.1;                      // "e"
 To determine the length of a string (or a Tuple), or the count of fields in a Record, use the `size()` function:
 
 ```java
-import size from #Std;
+import size from "#Std";
 
 size("Hello");              // 5
 size(< "O", "K" >);         // 2
@@ -1690,7 +1690,7 @@ def ys: < 7, 8 >;
 
 There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~.` version) at the top of this section.
 
-First off, the `~~` operator's "range" operand is optional, and if omitted essentially defaults to an empty list (Tuple), like `<>`. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? Hang with me.
+First off, the `~~` operator's "range" operand is optional, and if omitted defaults to [`List`](#list-monad), effectively the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? Hang with me.
 
 More importantly, notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is: pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
 
@@ -2045,7 +2045,7 @@ def m: getSomeMonad(42);
 
 **Note:** More on [types and the `?as` operator](#type-annotations) later.
 
-#### List Monad
+#### `List` Monad
 
 For something to be a monad, we need it to be able to satisfy [the 3 monadic laws](#the-monad-laws). In particular, it needs a *bind* operation and it needs a unit constructor.
 
