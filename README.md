@@ -41,7 +41,7 @@ I'm jotting down some very early thoughts on what I think I want to design for t
 
 The following is a partial exploration of what I've been imagining for awhile. There's a lot still to work out.
 
-* [Imports](#imports)
+* [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
 * [Evaluation-Expression Form](#evaluation-expression-form) (optional lisp-like function call form)
     - [Reversing Argument Order](#reversing-argument-order)
@@ -94,12 +94,12 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Monoid](#monoid)
 * [Type Annotations](#type-annotations)
 
-### Imports
+### Imports And Exports
 
-To import named dependencies (including "globals" from `std`), use the `import` keyword:
+To import named dependencies (including "globals" from the built-in `#Std`), use the `import` keyword:
 
 ```java
-import #Std;
+def Std: import "#Std";
 
 Std.log("Hello");               // "Hello"
 
@@ -109,10 +109,34 @@ Std.log(6 + 12);                // 18
 Or import specific members `from` dependencies:
 
 ```java
-import log from #Std;
+def log: import from "#Std";
 
 log("Hello");                   // "Hello"
 ```
+
+The project manifest maps dependency files to identifiers, which can then be imported by name:
+
+```java
+def myHelper: import from "Utils";
+```
+
+----
+
+To export lexical members from a module (no renaming, source and target names match):
+
+```java
+export { :login, :logout };
+```
+
+To rename lexical exports (e.g., from lexical `login` / `logout` to exported names `doLogin` / `doLogout`):
+
+```java
+export { doLogin: login, doLogout: logout };
+```
+
+When exporting, keep in mind that `defn` function definitions *do* hoist -- so they can appear anywhere in the outmost module scope, even below an `export` statement. This is the most common type of value to export from a module.
+
+However, `def` variable definitions (even if they hold functions) do not hoist. Those must always appear at the top of a scope, thus before any `export` statements. Those variables must be assigned an intended value to *export* before an `export` statement; subsequent variable assignments are not retroactively exported.
 
 ### Function Calls
 
