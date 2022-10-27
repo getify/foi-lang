@@ -70,14 +70,21 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Function Currying](#function-currying)
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
-* [Loops and Comprehensions](#loops-and-comprehensions)
-    - [Comprehensions](#comprehensions)
-    - [Lists And Fold Comprehensions](#lists-and-fold-comprehensions)
+* [Loops](#loops)
+* [List Comprehensions](#list-comprehensions)
+    - [Filter Comphrension (List)](#filter-comprehension-list)
+    - [Map Comprehension (List)](#map-comprehension-list)
+    - [FlatMap Comprehension (List)](#flatmap-comprehension-list)
+    - [Do Comprehension (List)](#do-comprehension-list)
+    - [Fold Comprehensions (List)](#fold-comprehensions-list)
 * [Monads (And Friends)](#monads-and-friends)
+    - [Monadic Map](#monadic-map)
+    - [Monadic Bind](#monadic-bind)
     - [The Monad Laws](#the-monad-laws)
-    - [Pattern Matching Monads](#pattern-matching-monads)
-    - [Do Syntax](#do-syntax)
+    - [Monadic Do Comprehension](#monadic-do-comprehension)
     - [Monadic Function Returns](#monadic-function-returns)
+    - [Pattern Matching Monads](#pattern-matching-monads)
+    - [List Monad](#list-monad)
     - [Maybe Monad](#maybe-monad)
     - [Foldable](#foldable)
     - [Either Monad](#either-monad)
@@ -1390,7 +1397,7 @@ compute(11);    // 18
 
 The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
 
-### Loops and Comprehensions
+### Loops
 
 Perhaps some of the most distinctive features in various programming languages (FP-oriented versus more general) is the mechanics of looping/iteration. Imperative languages tend to have a variety of loop types (`for`, `while`, `do..while`, etc), whereas FP languages favor iterations/comprehensions (`map`, `filter`, `reduce` / `fold`, etc).
 
@@ -1483,11 +1490,35 @@ In general, the result of the `~each` operation is another *range* (e.g., Record
 
 **Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be the final boolean `false` that terminated the *range*.
 
-#### Comprehensions
+### List Comprehensions
 
-However, moving beyond imperative `~each` looping, **Foi** provides several comprehensions, including: `~map`, `~filter`, `~fold`, and `~foldR`; these must have a non-conditional *range* operand.
+However, moving beyond imperative `~each` looping of Records/Tuples, **Foi** provides a variety of comprehensions, including: `~map`, `~flatMap`, `~filter`, `~fold`, and `~foldR`.
 
-For example:
+These must all have a non-conditional *range* operand; when the *range* is a list (Tuple), they act as *list comprehensions*.
+
+#### Filter Comprehension (List)
+
+The *iteration* operand for the `~filter` comprehension is a *predicate*, meaning for each value in the list (Tuple), it must compute a `true` to keep (aka, "filter in") the value, or `false` to discard (aka, "filter out") the value:
+
+```java
+defn isEven(v) ^mod(v,2) ?= 0;
+
+def evens: 0..9 ~filter isEven;
+// < 0, 2, 4, 6, 8 >
+
+def odds: 0..9 ~filter (v) {
+    !isEven(v);
+};
+// < 1, 3, 5, 7, 9 >
+```
+
+The `~filter` comprehension requires a list (Tuple) *range*, and its final result is always another list (Tuple).
+
+**Note:** Just like with loops, all these comprehensions support the *iteration* operand being a function, an inline function definition, or an inline-block.
+
+#### Map Comprehension (List)
+
+Perhaps one of the most common/recognizable list comprehensions is *map*:
 
 ```java
 defn double(v) ^v * 2;
@@ -1496,23 +1527,14 @@ def evens: 0..5 ~map double;
 // < 0, 2, 4, 6, 8, 10 >
 ```
 
-**Note:** The `~map` comprehension expresses Functor/Mappable behavior from [broader Category Theory](#broader-category-theory-capabilities), specifically for lists (Tuples).
-
-You can also use the inline function definition form:
-
 ```java
-def evens: 0..5 ~map defn(v) ^v * 2;
+def evens: 0..5 ~map (v) { v * 2; };
 // < 0, 2, 4, 6, 8, 10 >
 ```
 
-And with the the inline-block form:
+**Note:** The `~map` comprehension expresses Functor/Mappable behavior from [broader Category Theory](#broader-category-theory-capabilities) (more later).
 
-```java
-def evens: 0..5 ~map (v) {
-    v * 2;
-};
-// < 0, 2, 4, 6, 8, 10 >
-```
+----
 
 To compose multiple (`~map`) comprehensions:
 
@@ -1552,21 +1574,167 @@ compute2(< 1, 3, 5, 7, 9 >);
 
 **Note:** In the evaluation-expression form (for the `compute2` definition), the leading `,` in the arguments list indicates explicitly omitting the *range*, thereby producing a right-partially-applied function that expects the *range*.
 
-The `~filter` comprehension works like this:
+----
+
+A *map iteration* doesn't always have to produce a single discrete value.
+
+Let's consider the case where a *map* operation itself returns a list (Tuple) instead of a single discrete value; the result is a list of sub-lists. This operation is typically called a *zip*:
 
 ```java
-defn isEven(v) ^mod(v,2) ?= 0;
+defn zip(xs,ys) ^xs ~map (x,i) { < x, ys[i] >; };
 
-def evens: 0..9 ~filter isEven;
-// < 0, 2, 4, 6, 8 >
-
-def odds: 0..9 ~filter (v) {
-    !isEven(v);
-};
-// < 1, 3, 5, 7, 9 >
+zip(< 1, 2, 3 >,< 4, 5, 6 >);
+// < <1,4>, <2,5>, <3,6> >
 ```
 
-#### Lists And Fold Comprehensions
+As shown, returning a list (Tuple) from the *map iteration* ends up with a list of sub-lists. When a *zip* is called for, this is the approach.
+
+#### FlatMap Comprehension (List)
+
+When *mapping* two or more lists (Tuples) together, sometimes what we want is a single-level list, with all the sub-lists flattened out. This operation can be referred to as a *merge*.
+
+To perform *merge* (aka, flattening while mapping), we can use the `~flatMap` comprehension:
+
+```java
+defn merge(xs,ys) ^xs ~flatMap (x,i) { < x, ys[i] >; };
+
+merge(< 1, 2, 3 >,< 4, 5, 6 >);
+// < 1, 4, 2, 5, 3, 6 >
+```
+
+**Note:** You may recognize that "flatMap" often goes by alternate names in other contexts/languages: "bind", "chain", etc. As we'll see later with [Monadic Bind](#monadic-bind), `~flatMap` has various aliases: `~bind`, `~chain`, and the shorter/generally more preferred `~.`. They all work identically, so readability preferences dictate which to use.
+
+#### Do Comprehension (List)
+
+It may not seem obvious yet, but `~.` (aka, `~flatMap`, `~bind`, or `~chain`) is likely to be a fairly common list (Tuple) comprehension operation in your programs.
+
+For example, it's common to *flat-map* with multiple lists, and need access to a value from each list to perform the mapping:
+
+```java
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+xs ~. (x) {
+    ys ~. (y) {
+        < x + y >;
+    }
+};
+// < 9, 10, 11, 12 >
+```
+
+Notice that to pull this off -- accessing both `x` and `y` in the same scope! -- we had to nest the second `~.` operation inside the *iteration* scope of the first `~.` operation. That works, but it should *smell* a little bit.
+
+----
+
+By the way, we illustrated the above with two `~.` *flat-map*s, but there's an alternate way to think about it:
+
+```java
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+xs ~. (x) {
+    ys ~map (y) {
+        x + y;
+    }
+};
+// < 9, 10, 11, 12 >
+```
+
+Notice that here, I replaced the inner `~.` with a `~map`, and then omitted the `<    >` Tuple wrapped around the `x + y` computation.
+
+The end result is equivalent. Generally, it doesn't really matter which way makes most sense to you; pick one and go with it. But for the purposes of this discussion, I'll stick with the former double `~.` processing model.
+
+----
+
+Whichever way we mentally model this task, we'll likely encounter it rather often. And as ugly as multiple nested scopes can get (especially if there's 3 or more of these steps/nestings involved), **Foi** provides a special comprehension: `~~`, called the *do comprehension*.
+
+**Note:** In other languages (e.g., Haskell, Scala, etc), you may see something similar referred to as the "do syntax", most commonly in a monadic context. However, here we're broadening/generalizing the concept to include lists (Tuples).
+
+Consider:
+
+```java
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+~~ {
+    def x:: xs;
+    def y:: ys;
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~.` version) at the top of this section.
+
+First off, the `~~` operator's "range" operand is optional, and if omitted essentially defaults to an empty list (Tuple), like `<>`. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? Hang with me.
+
+More importantly, notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is: pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
+
+*THAT* you should recognize as a comprehension. Moreover, the second `def y:: ys` is pulling out each value from `y` one at a time, and assigning it to `y`. Again: comprehension.
+
+Here's the tricky part: the second comprehension is happening **for each iteration of the first comprehension**. In other words, the second is *nested in* the first. Just like the earlier double `~.` snippet, right?
+
+When each *iteration*'s `x + y` operation is performed, the result is automatically wrapped in **the same type as** the *range* context -- remember: if omitted, an empty `<>` tuple is assumed for the *range*. Finally, that result is *flat-map*ped into the overall result.
+
+There's also a variety of syntactic variations available here. All the following snippets are equivalent to the previous snippet's `~~` *do comprehension* form:
+
+```java
+~~ {
+    def x;
+    def y;
+
+    x ::= xs;
+    y ::= ys;
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+Notice the `::=` form of assignment (as compared to typical `:=`).
+
+```java
+~~ (x,y) {
+    x ::= xs;
+    y ::= ys;
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+Notice we can declare the `x` and `y` in a [block-definitions clause](#block-definitions-clause) attached to the loop, and then use the special `::=` assignment form.
+
+```java
+~~ (x:: xs, y:: ys) {
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+Notice we can also just include the special iterative assignments in the block-definitions clause. As each form is equivalent, readability and other code maintenance concerns dictate the appropriate style to choose.
+
+----
+
+You may have noticed that a single list (Tuple) in this `~~` *do comprehension* form is equivalent to the `~map` comprehension on a single list:
+
+```java
+~~ (x:: xs) {
+    x * 10;
+}
+// < 20, 40 >
+```
+
+```java
+xs ~map (x) {
+    x * 10;
+}
+// < 20, 40 >
+```
+
+The `~map` form is clearer here -- seems a bit more obvious and less magical -- and should probably be preferred in the specific case of having a single comprehension.
+
+By contrast, the *do comprehension* form really shines when there are multiple comprehensions composed together, especially computations need to access values from each of them need, in a single scope. That's precisely what the magical *do comprehension* is all about.
+
+#### Fold Comprehensions (List)
 
 The `~fold` comprehension (left-to-right), often referred to as *reduce*, works like this with lists (Tuples):
 
@@ -1641,7 +1809,7 @@ The identity monad in **Foi** is called `Id`, and the empty monad is called `Non
 The `@` operator applies the "unit constructor" for any monad type, thus a monadic value can be constructed like this:
 
 ```java
-def m: Id @ 42;         // Id{42}
+def m: Id@ 42;          // Id{42}
 | @ Id, 42 |;           // Id{42}
 
 def nil: None@;         // None
@@ -1651,8 +1819,8 @@ def nil: None@;         // None
 A monadic value is a primitive, immutable value type in **Foi**, meaning equality comparison is structural (just like Records/Tuples). As such:
 
 ```java
-def m: Id @ 42;
-def g: Id @ 42;
+def m: Id@ 42;
+def g: Id@ 42;
 
 m ?= g;                 // true
 ```
@@ -1665,98 +1833,96 @@ def ofId: Id@;
 ofId(42);               // Id{42}
 ```
 
-A monadic value is a valid *range* for certain comprehensions.
+A monadic value is a valid *range* for certain comprehensions, as we'll now explore.
 
-As [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can use the `~fmap` (aka, "functor map") comprehension, a specialized operation with equivalent behavior to the list (Tuple) `~map` comprehension:
+#### Monadic Map
 
-```java
-defn double(v) ^v * 2;
-
-def m: Id @ 21;
-
-m ~fmap double;                 // Id{42}
-
-m ~fmap (v) { v * 2; };         // Id{42}
-```
-
-Monadic values also (obviously!) support the `~bind` comprehension:
+Since [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can also be used as the *range* for a `~map` comprehension:
 
 ```java
 defn double(v) ^v * 2;
 
-def m: Id @ 21;
+def m: Id@ 21;
 
-m ~bind (double +> Id@);        // Id{42}
-m ~chain (double +> Id@);       // Id{42}
-m ~. (double +> Id@);           // Id{42}
+m ~map double;                  // Id{42}
+
+m ~map (v) { v * 2; };          // Id{42}
 ```
 
-**Note:** For convenience/familiarity sake, `~.` and `~chain` are both aliases for the `~bind` comprehension; all 3 are interchangable. But for brevity sake, `~.` is generally most preferable.
+**Note:** Unless the *range* is a [`List` monad](#list-monad), the *iteration* for monadic `~map` will always be provided the instance's single held value as argument; for list (Tuple) and the `List` monad, the *interation* is provided both value and index arguments.
+
+----
 
 Comprehension operations for `None` are all no-ops, meaning they do nothing but simply return the same `None` value again:
 
 ```java
 defn double(v) ^v * 2;
 
-Id @ 21 ~. double ~fold log;    // 42
-None@ ~. double ~fold log;      // None
+Id@ 21 ~map double ~fold log;   // 42
+None@ ~map double ~fold log;    // None
 ```
 
 **Note:** Neither the `double()` invocation nor the `log()` invocation will happen for the `None@`-constructed monadic value.
 
+#### Monadic Bind
+
+Monadic values also (obviously!) support the `~bind` comprehension:
+
+```java
+defn double(v) ^v * 2;
+
+def m: Id@ 21;
+
+m ~bind (double +> Id@);        // Id{42}
+m ~flatMap (double +> Id@);     // Id{42}
+m ~chain (double +> Id@);       // Id{42}
+m ~. (double +> Id@);           // Id{42}
+```
+
+**Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~.` are all aliases for the `~bind` comprehension. All 4 are interchangable, but for brevity sake, `~.` is generally most preferable.
+
 #### The Monad Laws
 
-For formality sake, here are the 3 monad laws using the `Id` monad, the `@` unit-constructor, and the `~.` *bind* operator:
+For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad (via its `@` unit-constructor) and the `~.` *bind* operator:
 
 1. **Left Identity:**
 
     ```java
-    defn incM(v) ^(Id @ v + 1);
-    defn doubleM(v) ^(Id @ v * 2);
+    defn incM(v) ^(Id@ v + 1);
 
-    (Id @ 41) ~. incM;                  // Id{42}
+    Id@ 41 ~. incM;
+    // Id{42}
     ```
 
 2. **Right Identity:**
 
     ```java
-    Id @ 42 ~. Id@;
+    Id@ 42 ~. Id@;
     // Id{42}
     ```
 
 3. **Associativity:**
 
     ```java
-    defn incM(v) ^(Id @ v + 1);
-    defn doubleM(v) ^(Id @ v * 2);
+    defn incM(v) ^(Id@ v + 1);
+    defn doubleM(v) ^(Id@ v * 2);
 
-    Id @ 20 ~. incM ~. doubleM;         // Id{42}
+    Id@ 20 ~. incM ~. doubleM;
+    // Id{42}
 
-    Id @ 20 ~. (v) {
+    Id@ 20 ~. (v) {
         incM(v) ~. doubleM;
-    };                                  // Id{42}
+    };
+    // Id{42}
     ```
 
-#### Pattern Matching Monads
+#### Monadic Do Comprehension
 
-You can use [pattern matching](#pattern-matching) to determine which type of monad instance is being dealt with:
+Recall the [*do comprehension* for lists](#do-comprehension-list) with the `~~` operator.
 
-```java
-def m: getSomeMonad(42);
+In the same way that `~~` makes it convenient to compose multiple list comprehensions (via `~.` *chain*ing) while accessing values from each within a single scope, the same is possible and useful for monadic comprehensions.
 
-?(m){
-    ?[?as Id, $as Right]: something(m)
-    ?[?as None]: something(m,"default!")
-    ?[?as Left]: something(m,"oops")
-    ?: something(Left @ "Unknown!","oops")
-};
-```
-
-**Note:** More on [types and the `?as` operator](#type-annotations) later.
-
-#### Do Syntax
-
-Composing multiple *bind* steps together can get hairy if subsequent steps need access to the results from earlier steps:
+Here's the nested `~.` form:
 
 ```java
 defn inc(v) ^v + 1;
@@ -1765,39 +1931,53 @@ defn double(v) ^v * 2;
 def incM: inc +> Id@;
 def doubleM: double +> Id@;
 
-def m:
-    incM(1) ~. (x) {
-        doubleM(x) ~. (y) {
-            Id @ (3 * x) + y;
-        }
-    };
+incM(1) ~. (x) {
+    doubleM(x) ~. (y) {
+        Id@ (3 * x) + y;
+    }
+};
 // Id{10}
 ```
 
-To have access to both `x` and `y` in the final *chain* step, we used a nested scope/closure. Alternatively, you could pack both values into a Record/Tuple to pass into the final step, but that's even uglier.
+To have access to both `x` and `y` in the final *chain* step, we used a nested scope. Alternatively, you could pack both values into a Record/Tuple to pass into the final step, but that's even uglier.
 
-To improve the ergonomics of such a task, **Foi** supports a "do syntax" for imperatively expressing *chain* compositions in a single shared scope:
+Here's the more ergonomic `~~` *do comprehension* form (in several variations):
 
 ```java
-defn incM(v) ^(Id @ v + 1);
-defn doubleM(v) ^(Id @ v * 2);
-
-def m: Id @ {
-    def x: @incM(1);
-    def y: @doubleM(x);
+Id ~~ (x:: incM(1), y:: doubleM(x)) {
     (3 * x) + y;
 };
 // Id{10}
 ```
 
-Inside the `@ {    }` do-block, a unary/prefixed `@` expression implicitly chains a monad to the current block's monad context, resulting in the underlying value.
+```java
+Id ~~ (x,y) {
+    x ::= incM(1);
+    y ::= doubleM(x);
+    (3 * x) + y;
+};
+// Id{10}
+```
+
+```java
+Id ~~ {
+    def x:: incM(1);
+    def y:: doubleM(x);
+    (3 * x) + y;
+};
+// Id{10}
+```
+
+**Note:** These snippets should look familiar to the various styles presented in the [Do Comprehension (List)](#do-comprehension-list) section earlier.
+
+In these snippets, the only substantive difference from the list comprehension form is the `Id` (monad type) being passed as the first (*range*) operand to `~~`. This provides the *type* of monad to wrap (via its `@` unit constructor) around the final computed value. Remember: if omitted, a general list (Tuple) type is assumed, which is *not* desired here.
 
 #### Monadic Function Returns
 
 A function's return value can be explicitly expressed monadically:
 
 ```java
-defn incM(v) ^(Id @ v + 1);
+defn incM(v) ^(Id@ v + 1);
 
 incM(3);                // Id{4}
 ```
@@ -1816,22 +1996,73 @@ That approach is often useful if the non-monadic-returning function is already i
 Monadic function returns can also be integrated directly into a function's logic:
 
 ```java
-defn factorialM(v,tot: Id @ 1) ![v ?> 1]: tot {
-    tot := tot ~fmap (t) { t * v; };
+defn factorialM(v,tot: Id@ 1) ![v ?> 1]: tot {
+    tot := tot ~map (t) { t * v; };
     ^factorialM(v - 1,tot);
 }
 
 factorialM(5);                   // Id{120}
 ```
 
-#### `Maybe` Monad
+#### Pattern Matching Monads
 
-The `Id` and `None` monads are paired in the `Maybe` Sum type monad. For readability preferences, `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`. Moreover, to adhere to the monadic laws, `Maybe @` is the same as `Id @`:
+You can use [pattern matching](#pattern-matching) to determine which type of monad instance is being dealt with:
 
 ```java
-Maybe @ 42;             // Id{42}
-Maybe @ empty;          // Id{empty}
-Id @ empty;             // Id{empty}
+def m: getSomeMonad(42);
+
+?(m){
+    ?[?as Id, $as Right]: something(m)
+    ?[?as None]: something(m,"default!")
+    ?[?as Left]: something(m,"oops")
+    ?: something(Left@ "Unknown!","oops")
+};
+```
+
+**Note:** More on [types and the `?as` operator](#type-annotations) later.
+
+#### List Monad
+
+For something to be a monad, we need it to be able to satisfy [the 3 monadic laws](#the-monad-laws). In particular, it needs a *bind* operation and it needs a unit constructor.
+
+Well... we've already seen that lists (Tuples) have the `~.` (aka `~flatMap`, `~bind`, or `~chain`) operator defined. So, all we're missing is a unit constructor for a list (Tuple).
+
+Thankfully, **Foi** provides `List`, such that `List@` produces `<>` and `List @ 42` produces `< 42 >`.
+
+We can thus prove `List` (any Tuple) is a monad:
+
+```java
+defn incM(v) ^(List@ v + 1);
+defn doubleM(v) ^(List@ v * 2);
+
+// (1) Left Identity:
+List@ 41 ~. incM;
+// < 42 >
+
+// (2) Right Identity:
+List@ 42 ~. List@;
+// < 42 >
+
+// (3) Associativity:
+List@ 20 ~. incM ~. doubleM;
+// < 42 >
+
+List@ 20 ~. (v) {
+    incM(v) ~. doubleM;
+};
+// < 42 >
+```
+
+So, there you go: the `List` monad.
+
+#### `Maybe` Monad
+
+The `Id` and `None` monads are paired in the `Maybe` Sum type monad. For readability preferences, `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`. Moreover, to adhere to the monadic laws, `Maybe@` is the same as `Id@`:
+
+```java
+Maybe@ 42;              // Id{42}
+Maybe@ empty;           // Id{empty}
+Id@ empty;              // Id{empty}
 None@;                  // None
 ```
 
@@ -1858,8 +2089,8 @@ def May: Maybe._@;
 
 May(42);                // Id{42}
 May(empty);             // None
-May @ 42;               // Id{42}
-May @ empty;            // None
+May@ 42;                // Id{42}
+May@ empty;             // None
 ```
 
 Instead of using `Maybe._`, you can define custom constructor functions that select `None` or `Id` for various values:
@@ -1867,10 +2098,10 @@ Instead of using `Maybe._`, you can define custom constructor functions that sel
 ```java
 defn nonZero(v)
     ?[v ?= 0]: None@
-    ^Id @ v;
+    ^Id@ v;
 
 def qty: nonZero(0);            // None
-def cost: nonZero @ 1.99;       // Id{1.99}
+def cost: nonZero@ 1.99;        // Id{1.99}
 ```
 
 One common idiom where `Maybe` is used is conditional property access:
@@ -1878,7 +2109,7 @@ One common idiom where `Maybe` is used is conditional property access:
 ```java
 defn prop(name)(obj) ^Maybe._ @ obj[name];
 
-def order: Id @ <
+def order: Id@ <
     shippingAddress: <
         street: "123 Easy St",
         city: "TX",
@@ -1944,26 +2175,26 @@ But for the monadic `~fold`, the `two` function is merely specified to be invoke
 
 #### `Either` Monad
 
-The `Either` monad is another binary Sum type, pairing `Left` and `Right`. For readability preferences, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`. Also, the `Either @` unit constructor is an alias for `Right @`.
+The `Either` monad is another binary Sum type, pairing `Left` and `Right`. For readability preferences, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`. Also, the `Either@` unit constructor is an alias for `Right@`.
 
 `Either` is typically used for error flow-control in FP programs (as opposed to exception handling).
 
 By holding an error message in a `Left` -- similar to `None`, except it can represent an affirmative value -- this error message can propagate through monadic operations (which are skipped), until the program handles the message. `Right` is like `Id`, in that it only holds some *success* value, and all its comprehensions are valid.
 
-In this example, the error message specified for `halve(0)` sets `e1` as a `Left`, and thus its associated `~fmap` comprehension does nothing:
+In this example, the error message specified for `halve(0)` sets `e1` as a `Left`, and thus its associated `~map` comprehension does nothing:
 
 ```java
 defn print(v) ^log("Value: " + v);
 defn halve(v)
-    ![v ?> 1]: Left @ "Value must be greater than 1"
-    ![mod(v,2) ?= 0]: Right @ (v + 1) / 2
-    ^Right @ v / 2;
+    ![v ?> 1]: Left@ "Value must be greater than 1"
+    ![mod(v,2) ?= 0]: Right@ (v + 1) / 2
+    ^Right@ v / 2;
 
 def e1: halve(0);   // Left{"Value must be greater than 1"}
 def e2: halve(4);   // Right{2}
 
-e1 ~fmap print;     // Left{"Value must be greater than 1"}
-e2 ~fmap print;     // Value: 2
+e1 ~map print;      // Left{"Value must be greater than 1"}
+e2 ~map print;      // Value: 2
 ```
 
 Both `Maybe` and `Either` are foldable, so we can define *natural transformations* between them:
@@ -1971,15 +2202,15 @@ Both `Maybe` and `Either` are foldable, so we can define *natural transformation
 ```java
 defn id(v) ^v;
 defn halve(v)
-    ![v ?> 1]: Left @ "Value must be greater than 1"
-    ![mod(v,2) ?= 0]: Right @ (v + 1) / 2
-    ^Right @ v / 2;
+    ![v ?> 1]: Left@ "Value must be greater than 1"
+    ![mod(v,2) ?= 0]: Right@ (v + 1) / 2
+    ^Right@ v / 2;
 
 // natural transformation utilities
 defn maybeFromEither(e)
     ^| ~fold e, None@, Id@ |;
 defn eitherFromMaybe(m)
-    ^| ~fold m, Left @ "Missing!", Right@ |;
+    ^| ~fold m, Left@ "Missing!", Right@ |;
 
 def m1: halve(0) #> maybeFromEither;            // None
 def m2: halve(4) #> maybeFromEither;            // Id{2}
@@ -1994,7 +2225,7 @@ Then, for `m1` and `m2` instances, we perform a *natural* transformation back to
 
 ### Broader Category Theory Capabilities
 
-So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` and `~fmap` comprehensions), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable) (with `~fold` comprehension).
+So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable) (with `~fold` comprehension).
 
 But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, these are separate topics.
 
@@ -2004,19 +2235,58 @@ Applicative is a pattern for holding a function in a monadic instance, then "app
 
 If the function requires multiple inputs, this "application" can be performed multiple times, providing one input at a time.
 
-For example:
+Here's how we can perform *Applicative* with `~.` and `~map`:
 
 ```java
 defn add(x)(y) ^x + y;
 
-(Id @ add)
-    ~ap (Id @ 3)
-    ~ap (Id @ 4);       // Id{7}
+def three: Id@ 3;
+def four: Id@ 4;
+
+(Id@ add)
+    ~. (fn) {
+        three ~map fn
+    }
+    ~. (fn) {
+        four ~map fn
+    };
+// Id{7}
 ```
 
-Above, the first `~ap` applies the underlying `3` as the first argument (`x`) to the `add()` function, which returns back another function expecting a second input; that function is wrapped back in another `Id` monadic value.
+In this snippet, the `add()` function is wrapped in an `Id`, and then `~.` chained to access the `fn` it holds. That function is used to *map* the `three` monad, which calls `add(3)` and wraps the curried function back in another `Id`.
 
-The second `~ap` repeats the process, passing `4` in as the `y` argument; the result (`7`) is wrapped back in yet another `Id` monadic value.
+*That* `Id` is then `~.` chained again to access the curried function `fn`, and *that* function is used to *map* the `four` monad. This invokes `add(3)(4)` producing `7`, and then wraps that in yet another `Id`.
+
+Restating: *Applicative* is pattern to *apply* the value(s) held in one or more monads, one at a time, as the inputs to a curried function (also held in a monad).
+
+Of course, we could define a function helper to make this process a little cleaner:
+
+```java
+defn add(x)(y) ^x + y;
+defn ap(m2)(m1) ^m1 ~. (fn) { m2 ~map fn; };
+
+def three: Id@ 3;
+def four: Id@ 4;
+
+(Id@ add)
+    #> ap(three)
+    #> ap(four);
+// Id{7}
+```
+
+However, for further built-in convenience and expressiveness, **Foi** provides the `~ap` operator:
+
+```java
+defn add(x)(y) ^x + y;
+
+def three: Id@ 3;
+def four: Id@ 4;
+
+(Id@ add)
+    ~ap three
+    ~ap four;
+// Id{7}
+```
 
 #### Concatable / Semigroup
 
@@ -2035,10 +2305,10 @@ We've already seen a number of value types in **Foi** that are concatable. For e
 Monadic values in **Foi** also implement Concatable, meaning that if used with `+`, they will delegate concatenation to their underlying value (if it is also Concatable):
 
 ```java
-(Id @ 30) + (Id @ 12);
+(Id@ 30) + (Id@ 12);
 // Id{42}
 
-| + Id @ "Hello", Id @ " ", Id @ "world" |;
+| + Id@ "Hello", Id@ " ", Id@ "world" |;
 // Id{"Hello world"}
 ```
 
@@ -2060,7 +2330,7 @@ Revisiting concatenation from the previous section, a concatenation is a special
 We can do the same with a list (Tuple) of monadic (monoidal) values:
 
 ```java
-| ~fold < Id @ "Hello", Id @ " ", Id @ "world" >, + |;
+| ~fold < Id@ "Hello", Id@ " ", Id@ "world" >, + |;
 // Id{"Hello world"}
 ```
 
@@ -2127,11 +2397,11 @@ Moreover, even if there were such a default `+` concatenation for booleans, the 
 So, let's instead define custom, monad-aware concatenation logic (`andM()` and `orM()` below):
 
 ```java
-defn andM(x,y) ^x ~fmap (xv) { xv ?and y; };
-defn orM(x,y) ^x ~fmap (xv) { xv ?or y; };
+defn andM(x,y) ^x ~map (xv) { xv ?and y; };
+defn orM(x,y) ^x ~map (xv) { xv ?or y; };
 
-defn all(bools) ^| ~fold bools, Id @ true, andM |;
-defn any(bools) ^| ~fold bools, Id @ false, orM |;
+defn all(bools) ^| ~fold bools, Id@ true, andM |;
+defn any(bools) ^| ~fold bools, Id@ false, orM |;
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
