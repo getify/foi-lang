@@ -881,7 +881,17 @@ The start/end values must be of the same data type; `3.."g"` will not work.
 
 Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple.
 
-One way to derive a new Record/Tuple is to select multiple elements using the `.<    >` syntax, with one or more source indices/keys separated by commas:
+The most basic way to derive a new Tuple is to concatenate two (or more) Tuples with `+`:
+
+```java
+def odds: < 1, 3, 5, 7, 9 >;
+def evens: < 0, 2, 4, 6, 8 >;
+
+odds + evens;
+// < 1, 3, 5, 7, 9, 0, 2, 4, 6, 8 >
+```
+
+Another way to derive a new Record/Tuple is to select multiple elements using the `.<    >` syntax, with one or more source indices/keys separated by commas:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
@@ -899,7 +909,7 @@ def profile: person.<first,nickname>;
 // < first: "Kyle", nickname: "getify" >
 ```
 
-Another approach is to select a ranged Tuple subset, with the `.[  ..  ]` syntax:
+You can also select a ranged Tuple subset, with the `.[  ..  ]` syntax:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
@@ -1014,17 +1024,17 @@ def uniques: <[ &something, &another ]>;
 
 All syntax rules of Tuple definition `<    >` still apply inside the `<[    ]>`, including use of the `&` and `%` sigils; as Sets *are* Tuples, not Records, field names are not allowed.
 
-The `+` operator, when both operands are Tuples, acts as a unique-only Set-append operation:
+Unlike `+` which merely concatenates, the `$+` operator acts as a unique-only Set-append operation:
 
 ```java
 def numbers: <[ 4, 5, 5, 6 ]>;
 
-def moreNumbers: numbers + < 6, 7 >;
+def moreNumbers: numbers $+ < 6, 7 >;
 
 moreNumbers;                // < 4, 5, 6, 7 >
 ```
 
-**Warning** The `+` operator only works on Tuples (Sets), not Records.
+**Warning** The `$+` operator only works on Tuples (Sets), not Records.
 
 Set equality comparison deserves special attention. Since Sets are merely a construction form for Tuples, the `?=` will perform Tuple equality comparison, where order matters. This may produce undesired results (false negatives).
 
@@ -2036,7 +2046,7 @@ You can use [pattern matching](#pattern-matching) to determine which type of mon
 def m: getSomeMonad(42);
 
 ?(m){
-    ?[?as Id, $as Right]: something(m)
+    ?[?as Id, ?as Right]: something(m)
     ?[?as None]: something(m,"default!")
     ?[?as Left]: something(m,"oops")
     ?: something(Left@ "Unknown!","oops")
@@ -2455,7 +2465,7 @@ Custom types can be defined, for use in subsequent annotations, with the `deft` 
 ```java
 deft OrderStatus { empty, "pending", "shipped" }
 
-def myStatus: getOrderStatus(order) as OrderStatus;
+def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
 
 Function signatures may optionally be typed via custom types:
@@ -2463,7 +2473,7 @@ Function signatures may optionally be typed via custom types:
 ```java
 deft InterestingFunc (int,string) -> empty;
 
-defn whatever(id,name) as InterestingFunc {
+defn whatever(id,name) :as InterestingFunc {
     // ..
 }
 ```
