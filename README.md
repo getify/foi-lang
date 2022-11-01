@@ -485,6 +485,25 @@ x ?= 42;                    // true
 
 **Note:** `?=` is another n-ary operator in the evaluation-expression form. Keep in mind, equality comparison in **Foi** is not necessarily transitive.
 
+The `empty` value semantically means *absence of a value*. As such, checking for equality with `empty` is somewhat of a confusing construct. It's valid to do so (`x ?= empty`), but a dedicated `?empty` prefix boolean operator is provided to reduce confusion:
+
+```java
+def x: 42;
+def y: empty;
+def z: empty;
+
+x ?= empty;                 // false
+y ?= empty;                 // true  -- but a bit confusing!
+
+?empty x;                   // false
+?empty y;                   // true  -- clearer!
+
+| ?empty x, y, z |;         // false
+| ?empty y, z |;            // true
+```
+
+----
+
 To relationally compare (`?<` less-than, `?>` greater-than):
 
 ```java
@@ -526,14 +545,20 @@ def x: 100;
 
 **Note:** Because these two operators have an arity of exactly 3, they cannot be used in the typical infix expression form, which would only allow two operands (left and right).
 
+----
+
 As mentioned in the previous section, all these `?`-prefixed comparison operators can also be flipped/negated by swapping the `?` with `!`:
 
 ```java
 def x: 42;
 def y: 100;
+def z: empty;
 
 x ?= 42;                // true
 x != 42;                // false
+
+?empty z;               // true
+!empty z;               // false
 
 x ?> y;                 // false
 x !> y;                 // true
@@ -590,7 +615,9 @@ def greeting: ?(myName){
 greeting;               // "Hello!"
 ```
 
-However, if no pattern matches, the default result of the expression is an `empty` -- **Foi** can be configured to issue a warning notice in such a case.
+However, if no pattern matches, the default result of the expression is an `empty`.
+
+**Note:** You can configure **Foi** to issue a warning notice in such a case.
 
 To explicitly define a default pattern -- like an "else" clause, that matches if nothing else previously matched -- use `?:` as the last clause in the pattern matching expression:
 
@@ -635,6 +662,8 @@ greeting;               // "Hello Kyle!"
 
 Dependent pattern matching should only be used if the patterns only need equality-comparison of one or more discrete value(s) against the topic.
 
+----
+
 For more complex boolean-logic matching patterns, the independent pattern matching form is appropriate. Independent pattern matching has no topic, and thus begins with a `?{` instead of a `?(    ){`.
 
 In this form, each clause matches only if the pattern is a conditional that evaluates to `true`. You could thus mentally model `?{` as if it was shorthand for `?(true){`:
@@ -665,7 +694,7 @@ def greeting: ?{
 greeting;               // "Hello!"
 ```
 
-**Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Readability preferences may dictate any of those style options, depending on the circumstances.
+**Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Moreover, `?:` is also equivalent to `?[true]`, which clearly would *always match*. Readability preferences may dictate any of those style options, depending on the circumstances, but generally the shorter `?:` form is most idiomatic.
 
 #### Guard Expressions
 
@@ -678,14 +707,14 @@ def myName: "Kyle";
 
 // full pattern matching expression:
 ?{
-    ?[myName != empty]: printGreeting(myName)
+    ?[!empty myName]: printGreeting(myName)
 }
 
 // standalone guard expression:
-?[myName != empty]: printGreeting(myName);
+?[!empty myName]: printGreeting(myName);
 
 // or:
-![myName ?= empty]: printGreeting(myName);
+![?empty myName]: printGreeting(myName);
 ```
 
 ### Records And Tuples
@@ -891,7 +920,7 @@ odds + evens;
 // < 1, 3, 5, 7, 9, 0, 2, 4, 6, 8 >
 ```
 
-Another way to derive a new Record/Tuple is to select multiple elements using the `.<    >` syntax, with one or more source indices/keys separated by commas:
+Another way to derive a new Record/Tuple is to select multiple elements using the `.<    >` syntax -- should be treated as a singular compound operator -- with one or more source indices/keys separated by commas:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
@@ -909,7 +938,9 @@ def profile: person.<first,nickname>;
 // < first: "Kyle", nickname: "getify" >
 ```
 
-You can also select a ranged Tuple subset, with the `.[  ..  ]` syntax:
+**Note:** The `.<` of this operator cannot have any whitespace between the two symbols, but whitespace is allowed inside the `.<    >`.
+
+You can also select a ranged Tuple subset, with the `.[  ..  ]` syntax -- should be treated as a singular compound operator -- as a shorthand for the `.<    >` form:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
@@ -919,7 +950,7 @@ def first: numbers.[..0];           // < 3 >
 def leading: numbers.[..3];         // < 3, 4, 5, 6 >
 
 def last: numbers.-1;               // 7
-def trailing: numbers.[..-1];       // < 7 >
+def trailing: numbers.[-1..];       // < 7 >
 def tail: numbers.[1..];            // < 4, 5, 6, 7 >
 
 def middle: numbers.[1..3];         // < 4, 5, 6 >
@@ -927,9 +958,15 @@ def middle: numbers.[1..3];         // < 4, 5, 6 >
 | .[1..3] numbers |;                // < 4, 5, 6 >
 ```
 
-**Note:** The ranges `.[0..]` and `.[0..-1]` would effectively be no-op expressions, since they result in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in such a case.
+**Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols, nor can the `1..3` expression have whitespace; however, whitespace is allowed *around* the range (`.[ 1..3 ]`).
 
-Additionally, in the definition of a Record/Tuple, the `&` pick sigil prefixed on a variable name (not an arbitrary expression) *includes* some or all of the contents of that other Record/Tuple:
+A ranged Tuple subset such as `.[2..5]` is a shorthand equivalent for `.<2,3,4,5>` -- selecting out specific indices `2`, `3`, `4`, and `5`.
+
+Certain ranges (e.g., `.[0..]`, `.[..-1]`, and `.[0..-1]`) are no-op expressions, since they result in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in these cases.
+
+----
+
+Additionally, inside the `<    >` syntactic definition of a Record/Tuple, a special `&` pick sigil prefixed on a variable name (not an arbitrary expression) *picks and includes* some or all of the contents of that other Record/Tuple:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -941,9 +978,9 @@ def friend: < &person, first: "Jenny" >;
 // < first: "Jenny", last: "Simpson" >
 ```
 
-**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a `<    >` Record/Tuple definition (but not a `<{    }>` *def-block*).
+**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a static `<    >` Record/Tuple definition; it cannot be used in a `<{    }>` *def-block* or the evaluation-expression `|    |`.
 
-Above, the entire contents of `numbers` and `person` are *picked*, to be included in the new Tuple and Record values, respectively. The order of field definitions is left-to-right, and subsequent field definitions override previous ones; thus, `first: "Kyle"` is reassigned to `first: "Jenny"` above.
+The annotations `&numbers` and `&person` *pick* the entire contents of `numbers` and `person`, respectively, to be included in the new Tuple and Record values. The order of field definitions is always left-to-right, so subsequent field definitions override previous ones; thus, `first: "Kyle"` is reassigned to `first: "Jenny"` above.
 
 Picking is useful for merging multiple sequences. For example, to define a Tuple holding all the base-64 characters:
 
@@ -970,7 +1007,7 @@ def friend: < first: "Jenny", &person.last >;
 // < first: "Jenny", last: "Simpson" >
 ```
 
-Moreover, the `&numbers.1` and `&person.last` are equivalent to the more explicit:
+Moreover, the *picks* `&numbers.1` and `&person.last` are shorthand equivalents for:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -982,9 +1019,9 @@ def friend: < first: "Jenny", last: person.last >;
 // < first: "Jenny", last: "Simpson" >
 ```
 
-**Note:** one advantage of this more verbose form is, you can re-index/rename the field (something other than `2` or `last`, respectively) in the target Record/Tuple.
+One advantage of this more verbose form is, you can re-index/rename the field (something other than `2` or `last`, respectively) in the target Record/Tuple.
 
-The `.<    >` and `.[  ..  ]` syntaxes also work with the `&` pick sigil:
+The `.<    >` and `.[  ..  ]` syntaxes also work with the `&` pick sigil inside a `<     >` Record/Tuple literal:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
@@ -997,6 +1034,22 @@ def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
 def profile: < &person.<first,nickname> >;
 // < first: "Kyle", nickname: "getify">
 ```
+
+----
+
+There is no dedicated *exclude* syntactic form for "skipping" an index/field while deriving a new Record/Tuple. However, subsequently assigning an `empty` value to an index or field has the same effect:
+
+```java
+def numbers: < 3, 4, 5, 6, 7 >;
+def fewer: < 0, &numbers, 2: empty, 4: empty >;
+// < 0, 3, 5, 6 >
+
+def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
+def entry: < &person, nickname: empty >;
+// < first: "Kyle", last: "Simpson" >
+```
+
+As shown, `empty` means the *absence of a value*, and thus cannot actually be held in a Record/Tuple.
 
 #### Maps
 
