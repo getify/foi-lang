@@ -1847,7 +1847,7 @@ So in the above snippet, the first invocation of `add()` in each comprehension w
 
 But, folds/reductions sometimes need to start with a specific *initial value* rather than with just the first value in the list (Tuple). In this usage, the `~fold` comprehension is a representation of generalized [Foldable behavior](#foldable--catamorphism) (covered later).
 
-If the `~fold` comprehension's *range* argument is a list (Tuple), and there are at least two other operands specified (i.e., 3 or more operands total), then the second operand will be interpreted as the *initial-value* (or *default-value*), and the third operand as an *iteration* expression.
+If the `~fold` comprehension's *range* argument is a list (Tuple), and there are at least two other operands specified (i.e., 3 or more operands total), then the second operand will be interpreted as the *initial-value* (or *default-value*), and the third operand is an *iteration* expression.
 
 For example:
 
@@ -1864,7 +1864,15 @@ When an initial value is provided to a fold/reduce, it is set as the *accumulato
 
 So in the snippet above, `100` is the *initial value*, and comes in as `x` in the first invocation of `sub()`, with `y` being `1`. That return result (`99`) comes in as `x` for the second invocation of `sub()`, with `y` being `2`. And so on.
 
-**Warning:** Be aware that a `~fold` comprehension must have at least two values for the first *iteration* to operate upon. If the list (Tuple) only has one value in it, then the *initial-value* must be provided. If there are not at least two values provided, the `~fold` operation is invalid, and thus returns a `Left` value with an error message. More on [Monads](#monads) later.
+For a `~fold` comprehension to execute, there should be at least two values to operate upon. If the list (Tuple) only has one value in it, then specifying the *initial-value* provides this second value.
+
+If there's only one value (either in the list or as the specified *initial-value*), the `~fold` comprehension short-circuits (i.e., skips evaluating the *iteration* operand), returning that single value.
+
+But if there isn't at least one value provided, the `~fold` operation is invalid, and `empty` is the result.
+
+**Note:** You can configure **Foi** to issue a warning notice in such a case.
+
+----
 
 Folds *can even* produce another Record/Tuple result. One typical way to accomplish this is for the *initial-value* operand to be an empty Record/Tuple (`<>`):
 
@@ -2381,7 +2389,7 @@ def four: Id@ 4;
 
 #### Concatable / Semigroup
 
-Concatable (formally, Semigroup) defines the ability for values to be "concatenated" (appended to each other).
+Concatable (formally, Semigroup) defines the ability for values to be "concatenated" (combined with each other).
 
 We've already seen a number of value types in **Foi** that are concatable. For example: strings and numbers. In fact, the `+` operator invokes the underlying *concatable* behavior for all such value types:
 
@@ -2393,7 +2401,7 @@ We've already seen a number of value types in **Foi** that are concatable. For e
 | + "Hello", " ", "world" |;        // "Hello world"
 ```
 
-Monadic values in **Foi** also implement Concatable, meaning that if used with `+`, they will delegate concatenation to their underlying value (if it is also Concatable):
+Most monadic values in **Foi** also implement Concatable, meaning that if used with `+`, they will delegate concatenation to their underlying value (if it is also Concatable):
 
 ```java
 (Id@ 30) + (Id@ 12);
@@ -2425,23 +2433,31 @@ We can do the same with a list (Tuple) of monadic (monoidal) values:
 // Id{"Hello world"}
 ```
 
-It can be useful to perform a mapping on each of a list's values as they're being folded/concatenated. The `~foldMap` comprehension does so, while applying the `+` concatenation as the *fold*:
+It can be useful to perform a mapping on each of a list's values as they're being folded/concatenated, especially when that mapping is to lift non-monadic-but-monoidal values into monads. The `~foldMap` comprehension does so, while applying the `+` concatenation as its *fold*:
 
 ```java
 < "Hello", " ", "world" > ~foldMap Id@;
 // Id{"Hello world"}
 ```
 
- *Folds* (such as the `~foldMap` and `~fold` comprehensions) always require at least two values in the list (Tuple) to *fold*. Recall that an expanded form of the `~fold` comprehension provides an *initial-value* in order to (potentially) satisfy this requirement. The same form is available for `~foldMap`.
+As shown, the `Id@` unit constructor maps each string to a monad, and then since the `Id` monad has a *concatenation* monoid (`+`) defined -- and the underlying string values are monoidal with a `+`string *concatenation* -- `~foldMap` then folds the monads (monoids) together, producing the single `Id{"Hello world"}` value.
 
-Thus, if the list (Tuple) only has one element, the "empty value" of a monoid (`""` below) is a useful candidate to ensure a valid *fold*:
+----
+
+For the list (Tuple) `~fold` comprehension, recall that:
+
+* To perform a *fold*, at least two values are necessary, either both in the list (Tuple) to *fold*, or one value in the list and the *initial-value* provided in the expanded `~fold` form.
+
+* If there's only one value provided, the *iteration* is skipped and that value is simply returned.
+
+* If there's no value available, the `~fold` operation is invalid and returns `empty`; configure **Foi** to report a warning in such a case.
+
+Thankfully, this familiar behavior is defined the same for `~foldMap`. Thus, if the list (Tuple) only has one element, the "empty value" of a monoid (`""` below) is a useful candidate to provide as the *default-value*, to ensure a *fold* actually occurs:
 
 ```java
 | ~foldMap < "Hello" >, "", Id@ |;
 // Id{"Hello"}
 ```
-
-**Warning:** Similarly to `~fold`, an invalid `~foldMap` -- one without at least two monoids to *fold* -- will result in a `Left` holding an error message.
 
 ----
 
@@ -2479,7 +2495,7 @@ all(b);     // false
 any(b);     // true
 ```
 
-But how do we apply this approach for monadic values such as `Id{true}`?
+So how do we apply this approach for monadic values such as `Id{true}`?
 
 We *have* already identified the necessary monoidal empty value (`true` or `false`), which can be wrapped in `Id` (i.e., `Id{true}` and `Id{false}`). However, there's no default *concatenation* operation (`+`) defined for booleans in **Foi**; how could it know automatically whether the *concatenation* of booleans should be computed with logical-AND or logical-OR!?
 
@@ -2503,7 +2519,7 @@ all(b);     // Id{false}
 any(b);     // Id{true}
 ```
 
-In essence, `~fold` lets you specify custom *fold*ing (concatenation) logic for values, but `~foldMap` assumes/relies on the built-in `+` for values being *fold*ed (and recursively, any underlying values).
+`~fold` is more flexible in letting you specify custom *fold*ing (concatenation) logic for values. By contrast, `~foldMap` assumes/relies on the built-in `+` operation for values being *fold*ed (and recursively, concatenating underlying values).
 
 ### Type Annotations
 
