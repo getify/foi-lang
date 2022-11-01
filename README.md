@@ -86,7 +86,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Pattern Matching Monads](#pattern-matching-monads)
     - [List Monad](#list-monad)
     - [Maybe Monad](#maybe-monad)
-    - [Foldable](#foldable)
+    - [Foldable / Catamorphism](#foldable--catamorphism)
     - [Either Monad](#either-monad)
 * [Broader Category Theory Capabilities](#broader-category-theory-capabilities)
     - [Applicative](#applicative)
@@ -1845,7 +1845,7 @@ So in the above snippet, the first invocation of `add()` in each comprehension w
 
 ----
 
-But, folds/reductions sometimes need to start with a specific *initial value* rather than with just the first value in the list (Tuple). In this usage, the `~fold` comprehension is a representation of generalized [Foldable behavior](#foldable) (covered later).
+But, folds/reductions sometimes need to start with a specific *initial value* rather than with just the first value in the list (Tuple). In this usage, the `~fold` comprehension is a representation of generalized [Foldable behavior](#foldable--catamorphism) (covered later).
 
 If the `~fold` comprehension's *range* argument is a list (Tuple), and there are at least two other operands specified (i.e., 3 or more operands total), then the second operand will be interpreted as the *initial-value* (or *default-value*), and the third operand as an *iteration* expression.
 
@@ -2215,13 +2215,15 @@ order
 // None
 ```
 
-#### Foldable
+#### Foldable / Catamorphism
 
-We briefly mentioned Foldable earlier, with the `~fold` comprehension and lists (Tuples). We'll revisit the generalized Foldable behavior now, in the context of monads.
+We briefly mentioned Foldable earlier, with the `~fold` comprehension and lists (Tuples). We'll revisit the generalized Foldable (more broadly, Catamorphism) behavior now, in the context of monads.
 
-Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` comprehension. For a monadic value *range*, the `~fold` comprehension requires multiple *iteration* expressions, one for each component of the Sum type; again, because this is 3 or more operands, the evaluation-expression form is required.
+Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` / `~cata` (catamorphism) comprehensions. For a monadic value *range*, the `~fold` / `~cata` comprehensions require multiple *iteration* expressions, one for each component of the Sum type; again, because this is 3 or more operands, the evaluation-expression form is required.
 
-Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"default!"`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `id`s below) is invoked.
+The difference between monadic `~fold` and `~cata` is with the *default iteration* operand. For `~fold`, this operand is an already computed *default-value*, whereas for `~cata` it's a function that computes the *default-value*. In either case, this operand is evaluated/used when the first/left-most component of the Sum type is encountered.
+
+Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"defaultMsg`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `id`s below) is invoked.
 
 For example:
 
@@ -2232,15 +2234,17 @@ defn defaultMsg() ^"default!";
 def m: Maybe._ @ 42;                // Id{42}
 def g: Maybe._ @ empty;             // None
 
-| ~fold m, defaultMsg, id |;        // 42
-| ~fold g, defaultMsg, id |;        // default!
+| ~fold m, defaultMsg(), id |;      // 42
+| ~cata g, defaultMsg,   id |;      // default!
 ```
 
-**Note:** Folding a monadic value *usually* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting a value (via `id()` as shown) is a much less typical usage; that's merely convenient for illustration purposes here.
+As shown, for the `~fold` comprehension, we provide the already-computed result of the `defaultMsg()` function for the *default iteration* operand. With `~cata`, we provide that `defaultMsg` function reference, for it to be invoked if needed.
+
+**Note:** Folding (Catamorphism) of a monadic value *often* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting a value (via `id()` as shown) is a much less typical usage; that's merely convenient for illustration purposes here.
 
 ----
 
-There's some useful conceptual symmetry to recognize, between `~fold`ing a list (Tuple) with an *initial-value*, versus `~fold`ing a binary Sum type:
+There's some useful conceptual symmetry to recognize, specifically between `~fold`ing a list (Tuple) with an *initial-value*, versus `~fold`ing a binary Sum type:
 
 ```java
 defn id(v) ^v;
@@ -2252,13 +2256,13 @@ def m: Maybe._ @ 42;
 
 | ~fold list,  two(), mult |;    // 42
 
-| ~fold m,     two,   id   |;    // Id{42}
-| ~fold None@, two,   id   |;    // 2
+| ~fold m,     two(), id   |;    // Id{42}
+| ~fold None@, two(), id   |;    // 2
 ```
 
-For the list (Tuple) `~fold`, the `two()` function is eagerly invoked, using its return value as the *initial-value* for the folding.
+For the list (Tuple) `~fold`, the `two()` function is eagerly invoked to provide the *initial-value* operand for the folding.
 
-But for the monadic `~fold`, the `two` function is merely specified to be invoked in the case of a `None` instance.
+For the monadic `~fold`, the `two()` instead provides the *default-value* operand to use in the case of a `None` instance.
 
 #### `Either` Monad
 
@@ -2312,7 +2316,7 @@ Then, for `m1` and `m2` instances, we perform a *natural* transformation back to
 
 ### Broader Category Theory Capabilities
 
-So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable) (with `~fold` comprehension).
+So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` comprehension).
 
 But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, these are separate topics.
 
