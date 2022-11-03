@@ -44,6 +44,8 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
 * [Evaluation-Expression Form](#evaluation-expression-form) (optional lisp-like function call form)
+    - [Expression Readability](#expression-readability)
+    - [Motivations](#motivations)
     - [Reversing Argument Order](#reversing-argument-order)
     - [Partial Application](#partial-application)
     - [N-Ary Operators](#n-ary-operators)
@@ -158,7 +160,7 @@ myFn(1,empty,3,empty,empty,6);
 
 ### Evaluation-Expression Form
 
-All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form, with `| |` delimiters, instead of the more typical `( )` lisp parentheses:
+All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (aka [S-expressions](https://en.wikipedia.org/wiki/S-expression)), with `| |` delimiters, instead of the canonical `( )` Lisp parentheses:
 
 ```java
 import log from "#Std";
@@ -168,9 +170,11 @@ import log from "#Std";
 | log | + 6, 12 ||;            // 18
 ```
 
-**Note:** Whitespace is optional inside the `|    |` form, except as required after the first element (must be function expression) before the comma-separated argument list (e.g., `6, 12` above). So, `|log "Hello"|` and `|log |+ 6,12||` are the minimal whitespace forms of the above code snippet.
+**Note:** Whitespace is optional inside the `|    |` form, except as required between the first element -- this must be function-resolving expression, including operators -- and the comma-separated argument list (e.g., `6, 12` above). So, `|log "Hello"|` and `|log |+ 6,12||` are the minimal whitespace forms of the above code snippet.
 
 Any function name -- or expression that evaluates to a function -- can be used in the first (callee) position of the `|    |` expression. However, with one exception, keywords (`import`, `def`, etc) may not be used in the callee position.
+
+----
 
 The `defn` keyword (for function definitions -- see later) is the single exception; this keyword can be used as a (function-defining!) function in the evaluation-expression form. The single argument to `defn` is the full function signature (including any optional whitespace):
 
@@ -181,13 +185,115 @@ def fn: | defn myFn(x) ^x + 1 |;
 def fn: defn myFn(x) ^x + 1;
 ```
 
-In the above snippet, it doesn't seem like the special case `| defn    |` form offers any benefit, as the shorter form without the `|    |` is identical. However, it's quite helpful for readability sake, when visually delimiting an inline function definition inside in another evaluation-expression. More on this later.
+In the above snippet, it doesn't seem like the special case `| defn    |` form offers any benefit, as the shorter form without the `|    |` is identical.
+
+It can be helpful for readability sake, when visually delimiting an inline function definition (aka, a "lambda") inside another evaluation-expression. In fairness, perhaps a wrapping `(    )` would be better here than a wrapping `|    |`. More on this in the following sections.
+
+#### Expression Readability
+
+It's clearly an idiosyncratic choice for **Foi** to use `|    |` [for its S-expressions](https://en.wikipedia.org/wiki/S-expression), instead of the nearly-universal `(    )` Lisp form.
+
+I wanted to take a moment to explain my justification for this choice.
+
+Unlike all those other Lisp languages, **Foi** takes the very unusual step of combining a prefix-Lisp form in the same language as an infix function call form.
+
+And because of the strong familiarity (from non-Lisp) languages of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in infix language form) for expression grouping, providing yet another complication.
+
+Syntactically/grammatically, it's thus challenging to support variations like `whatever(42)` (infix function call form), `(whatever 42)` (prefix Lisp form), and `(42 + whatever())` (infix expression grouping)... all in the same language, especially as these expressions nest inside each other in complicated ways.
+
+Simpler Lisp languages are free to use `(    )` for their S-expressions mostly because they don't really use `(    )` for any of these other purposes. However, **Foi** must address the conflation issue.
+
+Even if it wasn't grammatically hard for all these forms to co-exist in **Foi**, I believe it would be a significant readability barrier for authors and readers of such code, to be encountering frequent `(    )` conflation (use for different purposes) in the same program.
+
+As such, I've chosen for **Foi** to use something other than `(    )` for delimiting its evaluation-expression (Lisp) form.
 
 ----
 
-The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional call-site form (e.g., `fn(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
+Unfortunately, `[    ]`, `<    >`, and (especially!) `{    }` pairs are already reserved for other important purposes, so they're out of consideration.
 
-We'll cover many of those capabilities in the following sub-sections.
+There's no more standard character pairs that have visually-obvious opening and closing characters (`/` and `\` have obvious conflicts). We've also [explored a variety of other options](https://github.com/getify/foi-lang/discussions/4), including arbitrary forms like `$    |`, or multi-character delimiters (`[|    |]`, etc).
+
+Ultimately, it seems to me like the best option is just bare `|    |`, given their "tall" visual distinctiveness.
+
+Regrettably, this choice doesn't provide any distinction between opening and closing characters in a pair. It means that in some cases, sequences where a `|` appears adjacent to another `|` may be a bit confusing/visually ambiguous; they could be two opening or two closing characters (most likely), or it could be a closing followed by an opening, or the reverse.
+
+Still, there's some visual ambiguity downsides to `|` being used as an enclosing pair this way.
+
+----
+
+Let's consider a particularly nasty looking (albeit contrived/pathological) example:
+
+```java
+||defn(x,y)^x+y| |+ 1,2,whatever(3)|,|* |+ 1,2,|/ 1,2||,3||;
+```
+
+That's a bit tough to visually parse out, right!?
+
+Indentation/new-lines are often used in Lisp-style to aid readability:
+
+```java
+|defn(x,y)^x+y
+    |+ 1,2,whatever(3)|,
+    |* |+ 1,2,
+        |/ 1,2||,
+        3||;
+```
+
+**Note:** with this formatting, the `defn ..` expression can visually stand alone on the first line, without *needing* its own `|    |` (or `(    )`) wrapping around it.
+
+Better? A bit.
+
+Here's what the typical Lisp-style version with `(    )` would look like (but still with **Foi** commas between arguments, instead of only whitespace):
+
+```java
+(defn(x,y)^x+y
+    (+ 1,2,whatever(3)),
+    (* (+ 1,2,
+        (/ 1,2)),
+        3));
+
+// without newlines/indentation:
+((defn(x,y)^x+y) (+ 1,2,whatever(3)),(* (+ 1,2,(/ 1,2)), 3));
+```
+
+**Note:** In the single-line form, I added `(    )` around the `defn ..` just for a bit of extra clarity.
+
+TBH, I'm not sure canonical `(    )` Lisp form is *significantly* more readable. But at least it's clear what's opening `(`, and what's closing `)`.
+
+----
+
+Let's finally look at what I'm proposing as **Foi**'s readability compromise. In any case where two or more `|` characters might appear adjacent to each other, and there's a concern that it's not clear what each one means, use `(    )` grouping around each `|    |` expression -- always valid grammatically -- to visually disambiguate.
+
+Consider:
+
+```java
+(|defn(x,y)^x+y
+    (|+ 1,2,whatever(3)|),
+    (|* (|+ 1,2,
+        (|/ 1,2|)|),
+        3|)|);
+
+// without newlines/indentation:
+(|(defn(x,y)^x+y) (|+ 1,2,whatever(3)|),(|* (|+ 1,2,(|/ 1,2|)|),3|)|);
+```
+
+Take a few moments for that to sink in.
+
+This approach essentially means `(|    |)` is an optional evaluation-expression form, as opposed to the bare `|    |` form.
+
+Even though it's more characters to type and read, I honestly kind of like it; I find it a bit easier to scan. It's not only clear where opening and closing are happening, but *also* clear where evaluation-expression is happening separate from any other use of `(    )`.
+
+You could even just think of `(|` as the opening tag and `|)` as the closing tag -- perhaps even "requiring" them in your own code/style guide/linting -- if you favor the consistency and don't mind the double-character delimiters.
+
+That's probably what I will do, personally. Given the above analysis and constraints, I think this is a reasonable compromise for **Foi** to make.
+
+#### Motivations
+
+So... why does **Foi** even include this optional Lisp-like form? It adds complexity to the language -- for implementers, authors, and readers! -- but for what purpose?
+
+The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional infix call-site form (e.g., `whatever(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
+
+We'll cover many of those capabilities over several following sub-sections.
 
 #### Reversing Argument Order
 
