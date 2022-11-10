@@ -1816,7 +1816,7 @@ def ys: < 7, 8 >;
 xs ~. (x) {
     ys ~. (y) {
         < x + y >;
-    }
+    };
 };
 // < 9, 10, 11, 12 >
 ```
@@ -1834,14 +1834,14 @@ def ys: < 7, 8 >;
 xs ~. (x) {
     ys ~map (y) {
         x + y;
-    }
+    };
 };
 // < 9, 10, 11, 12 >
 ```
 
-Notice that here, I replaced the inner `~.` with a `~map`, and then omitted the `<    >` Tuple wrapped around the `x + y` computation.
+Notice that here, I replaced the innermost `~.` with a `~map`, and then omitted the `<    >` Tuple wrapped around the `x + y` computation.
 
-The end result is equivalent. Generally, it doesn't really matter which way makes most sense to you; pick one and go with it. But for the purposes of this discussion, I'll stick with the former double `~.` processing model.
+The end result is equivalent. Generally, it doesn't really matter which way makes most sense to you; pick one and go with it. But for this guide, I'll stick with the former double `~.` processing model.
 
 ----
 
@@ -1865,9 +1865,9 @@ def ys: < 7, 8 >;
 
 There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~.` version) at the top of this section.
 
-First off, the `~~` operator's "range" operand is optional, and if omitted defaults to [`List`](#list-monad), effectively the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? Hang with me.
+First off, the `~~` operator's "range" operand is optional, and if omitted defaults to [`List`](#list-monad), effectively the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? But it's even more unusual, in that this is a **type** for the *range* rather than a concrete value. Hang with me.
 
-More importantly, notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is: pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
+Notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is: pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
 
 *THAT* you should recognize as a comprehension. Moreover, the second `def y:: ys` is pulling out each value from `y` one at a time, and assigning it to `y`. Again: comprehension.
 
@@ -1875,32 +1875,7 @@ Here's the tricky part: the second comprehension is happening **for each iterati
 
 When each *iteration*'s `x + y` operation is performed, the result is automatically wrapped in **the same type as** the *range* context -- remember: if omitted, an empty `<>` tuple is assumed for the *range*. Finally, that result is *flat-map*ped into the overall result.
 
-There's also a variety of syntactic variations available here. All the following snippets are equivalent to the previous snippet's `~~` *do comprehension* form:
-
-```java
-~~ {
-    def x;
-    def y;
-
-    x ::= xs;
-    y ::= ys;
-    x + y;
-};
-// < 9, 10, 11, 12 >
-```
-
-Notice the `::=` form of assignment (as compared to typical `:=`).
-
-```java
-~~ (x,y) {
-    x ::= xs;
-    y ::= ys;
-    x + y;
-};
-// < 9, 10, 11, 12 >
-```
-
-Notice we can declare the `x` and `y` in a [block-definitions clause](#block-definitions-clause) attached to the loop, and then use the special `::=` assignment form.
+We can also just include the special iterative assignments in in a [block-definitions clause](#block-definitions-clause):
 
 ```java
 ~~ (x:: xs, y:: ys) {
@@ -1909,7 +1884,7 @@ Notice we can declare the `x` and `y` in a [block-definitions clause](#block-def
 // < 9, 10, 11, 12 >
 ```
 
-Notice we can also just include the special iterative assignments in the block-definitions clause. As each form is equivalent, readability and other code maintenance concerns dictate the appropriate style to choose.
+As both forms are equivalent, readability and other code maintenance concerns dictate the appropriate style to choose.
 
 ----
 
@@ -1931,7 +1906,7 @@ xs ~map (x) {
 
 The `~map` form is clearer here -- seems a bit more obvious and less magical -- and should probably be preferred in the specific case of having a single comprehension.
 
-By contrast, the *do comprehension* form really shines when there are multiple comprehensions composed together, especially computations need to access values from each of them need, in a single scope. That's precisely what the magical *do comprehension* is all about.
+By contrast, the *do comprehension* form really shines when there are multiple comprehensions composed together, especially if computations need to access values from each of them, in a single scope. That's precisely what the magical *do comprehension* is all about.
 
 #### Fold Comprehensions (List)
 
