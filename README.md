@@ -1888,16 +1888,93 @@ As both forms are equivalent, readability and other code maintenance concerns di
 
 ----
 
+Remember, the final value produced in the iteration block is automatically *wrapped* in the comprehension *range* type (list/Tuple here). That means a *double-wrapping* effect would occur if the value produced is already a list (Tuple); this might be desired but often is a mistake.
+
+Consider the non-*do comprehension* form:
+
+```java
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+xs ~. (x) {
+    ys ~map (y) {
+        < x + y >;   // <-- notice the tuple and ~map
+    };
+};
+// < < 9 >, < 10 >, < 11 >, < 12 > >     <-- oops!
+```
+
+When it's a literal value like this, you can omit the `<    >`.
+
+But when that "final" value comes from an outside computation, we can't just omit the `<    >`. So we're forced to use `~.` instead of `~map`:
+
+```java
+defn tup(x,y) ^(< x + y >);
+
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+xs ~. (x) {
+    ys ~. (y) {      // <-- notice ~. instead of ~map
+        tup(x,y);
+    };
+};
+// < 9, 10, 11, 12 >
+```
+
+But for the *do comprehension* form, we ostensibly cannot control the final step's behavior:
+
+```java
+~~ (x:: xs, y:: ys) {
+    tup(x,y);
+};
+// < < 9 >, < 10 >, < 11 >, < 12 > >     <-- oops!
+```
+
+So here's some workarounds:
+
+```java
+~~ (x:: xs, y:: ys) {
+    tup(x,y).0;         // ugh!
+};
+// < 9, 10, 11, 12 >
+
+
+~~ (x:: xs, y:: ys) {
+    def v:: tup(x,y);   // meh
+    v;
+};
+// < 9, 10, 11, 12 >
+```
+
+But these are a bit annoying, right?!
+
+When you need to *unwrap* the final value, there's a special syntactic shortcut, a prefix of `::` on the final expression:
+
+```java
+~~ (x:: xs, y:: ys) {
+    ::tup(x,y);         // <-- notice the ::
+};
+// < 9, 10, 11, 12 >
+```
+
+This special `::` usage (without a `def`) may only prefix the **final expression** in the *iteration* block of the *do comprehension*.
+
+You can think about this `::` as instructing the *do comprehension* to perform a final `~.` (instead of `~map`). Or you can think about it as skipping the automatic value wrapping that would otherwise occur.
+
+----
+
 You may have noticed that a single list (Tuple) in this `~~` *do comprehension* form is equivalent to the `~map` comprehension on a single list:
 
 ```java
+def xs: < 2, 4 >;
+
 ~~ (x:: xs) {
     x * 10;
 }
 // < 20, 40 >
-```
 
-```java
+
 xs ~map (x) {
     x * 10;
 }
@@ -2123,25 +2200,15 @@ incM(1) ~. (x) {
 
 To have access to both `x` and `y` in the final *chain* step, we used a nested scope. Alternatively, you could pack both values into a Record/Tuple to pass into the final step, but that's even uglier.
 
-Here's the more ergonomic `~~` *do comprehension* form (in several variations):
+Here's the more ergonomic `~~` *do comprehension* form:
 
 ```java
 Id ~~ (x:: incM(1), y:: doubleM(x)) {
     (3 * x) + y;
 };
 // Id{10}
-```
 
-```java
-Id ~~ (x,y) {
-    x ::= incM(1);
-    y ::= doubleM(x);
-    (3 * x) + y;
-};
-// Id{10}
-```
 
-```java
 Id ~~ {
     def x:: incM(1);
     def y:: doubleM(x);
@@ -2150,9 +2217,29 @@ Id ~~ {
 // Id{10}
 ```
 
-**Note:** These snippets should look familiar to the various styles presented in the [Do Comprehension (List)](#do-comprehension-list) section earlier.
+**Note:** These should look familiar to the various styles presented in the [Do Comprehension (List)](#do-comprehension-list) section earlier.
 
 In these snippets, the only substantive difference from the list comprehension form is the `Id` (monad type) being passed as the first (*range*) operand to `~~`. This provides the *type* of monad to wrap (via its `@` unit constructor) around the final computed value. Remember: if omitted, a general list (Tuple) type is assumed, which is *not* desired here.
+
+Don't forget the special `::` prefix on the final expression, in case you need to omit the automatic monadic type wrapping:
+
+```java
+defn compute(x,y) ^Id@ ((3 * x) + y);
+
+Id ~~ {
+    def x:: incM(1);
+    def y:: doubleM(x);
+    compute(x,y);
+};
+// Id{Id{10}}            <-- oops!
+
+Id ~~ {
+    def x:: incM(1);
+    def y:: doubleM(x);
+    ::compute(x,y);   // <-- notice ::
+};
+// Id{10}
+```
 
 #### Monadic Function Returns
 
