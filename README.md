@@ -1855,7 +1855,7 @@ Consider:
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-~~ {
+List ~~ {
     def x:: xs;
     def y:: ys;
     x + y;
@@ -1865,9 +1865,9 @@ def ys: < 7, 8 >;
 
 There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~.` version) at the top of this section.
 
-First off, the `~~` operator's "range" operand is optional, and if omitted defaults to [`List`](#list-monad), effectively the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? But it's even more unusual, in that this is a **type** for the *range* rather than a concrete value. Hang with me.
+First off, the `~~` operator's "range" operand is [`List`](#list-monad), the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? But it's even more unusual, in that this is a **type** for the *range* rather than a concrete value. Just hang with me.
 
-Notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is: pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
+Notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is, pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
 
 *THAT* you should recognize as a comprehension. Moreover, the second `def y:: ys` is pulling out each value from `y` one at a time, and assigning it to `y`. Again: comprehension.
 
