@@ -901,6 +901,18 @@ size(< "O", "K" >);         // 2
 size(< a: 1 >);             // 1
 ```
 
+If the desired index or field name is held in a variable, you can use it in the Record/Tuple literal definition by prefixing the variable name with the `%` sigil:
+
+```java
+def idx: 3;
+def nums: < 5, 10, 15, %idx: 20, 25 >;
+// < 5, 10, 15, 20, 25 >
+
+def field: "first";
+def person: < %field: "Kyle", last: "Simpson" >;
+// < first: "Kyle", last: "Simpson" >
+```
+
 When defining a Record and the field name matches the variable holding the value, a concise syntax is allowed:
 
 ```java
