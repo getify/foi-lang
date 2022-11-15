@@ -78,6 +78,9 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Function Currying](#function-currying)
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
+* [Base Unit Functions](#base-unit-functions)
+    - [Identity Function](#identity-function)
+    - [Null-Application Function](#null-application-function)
 * [Loops](#loops)
 * [List Comprehensions](#list-comprehensions)
     - [Filter Comphrension (List)](#filter-comprehension-list)
@@ -1615,6 +1618,113 @@ compute(11);    // 18
 
 The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
 
+### Base Unit Functions
+
+A unit function, also known as a unit constructor, is a utility for "constructing" a value. There are two helpful utility unit functions that are nearly ubiquitous in FP programs.
+
+**Foi** provides both of these unit function utilities built-in.
+
+#### Value Identity Function
+
+The first is often referred to as "identity". It's a function that takes a single input and simply returns it untouched. You could define your own like this:
+
+```java
+defn identity(v) ^v;
+
+identity(42);       // 42
+```
+
+However, this utility is so commonly needed that **Foi** provides it built-in, as well as its shorthand:
+
+```java
+Value@42;           // 42
+Value@ 42;          // 42
+Value@(42);         // 42
+
+@42;                // 42
+@ 42;               // 42
+@(42);              // 42
+
+| @ 42 |;           // 42
+```
+
+Both `Value@` and the abbreviated `@` are defined as the identity function. They are interchangeable, so the choice between them is primarily a readability/style preference.
+
+Additionally, as shown, **Foi** provides a shorthand when a single-argument function name ends in `@`; its argument can be applied without surrounding `(    )`, with or without whitespace between `@` and the argument, saving 1-2 characters.
+
+**Note:** For readability/operator-precedence sake, you may still optionally use the `(    )` around the argument; it's technically treated as an expression grouping rather than part of the required infix function invocation syntax.
+
+Here's an example of how you might use the identity unit function:
+
+```java
+defn formatRecord(record,formatFn: @) {
+    // ..
+    ^formatFn(record);
+};
+```
+
+The `@` serves as a default pass-through function here.
+
+#### Null-Application Function
+
+It's also very common to need a function which takes no argument, but returns some fixed value. There are places where a function is expected -- for example, operators like `~cata` or `~map` -- and yet we want to provide a placeholder function that returns a fixed value.
+
+In **Foi** this is called "null application".
+
+We can define either dedicated functions or inline functions for this purpose. For example:
+
+```java
+defn fortyTwo() ^42;
+
+fortyTwo();             // 42
+```
+
+But since that may happen a lot, we might want a utility for constructing such functions:
+
+```java
+defn constant(v)() ^v;
+
+def fortyTwo: constant(42);
+
+fortyTwo();             // 42
+```
+
+**Note:** Notice the `()` in the `constant()` function definition, which matches with the `()` at the `fortyTwo()` call-site. That's where the label "null application" comes from.
+
+Since this is so common in FP programs, **Foi** provides a null-application unit function:
+
+```java
+def fortyTwo: Function@42;
+def hello: Function@ "Hello!";
+def yes: Function@(true);
+
+fortyTwo();             // 42
+hello();                // "Hello!"
+yes();                  // true
+```
+
+The name of this utility (`Function@`) is a nod to the fact that it's a unit constructor for a function, specifically a null-application function. But `Function@` is a little verbose, so there's also a shorthand: `@@`.
+
+```java
+def fortyTwo: @@42;
+def hello: @@ "Hello!";
+def yes: @@(true);
+
+fortyTwo();             // 42
+hello();                // "Hello!"
+yes();                  // true
+```
+
+Here's an example of how you might use this utility:
+
+```java
+defn getName(record,getLabel: @@"Default") {
+    ^(getLabel(record) + ": " + record.name);
+};
+```
+
+The `@@` here constructs a default `getLabel` function that just returns the value `"Default"`.
+
 ### Loops
 
 Perhaps some of the most distinctive features in various programming languages (FP-oriented versus more general) is the mechanics of looping/iteration. Imperative languages tend to have a variety of loop types (`for`, `while`, `do..while`, etc), whereas FP languages favor iterations/comprehensions (`map`, `filter`, `reduce` / `fold`, etc).
@@ -1710,7 +1820,7 @@ In general, the result of the `~each` operation is another *range* (e.g., Record
 
 ### List Comprehensions
 
-However, moving beyond imperative `~each` looping of Records/Tuples, **Foi** provides a variety of comprehensions, including: `~map`, `~flatMap`, `~filter`, `~fold`, and `~foldR`.
+However, moving beyond imperative `~each` looping of Records/Tuples, **Foi** provides a variety of list comprehensions, including: `~map`, `~flatMap`, `~filter`, `~fold`, and `~foldR`.
 
 These must all have a non-conditional *range* operand; when the *range* is a list (Tuple), they act as *list comprehensions*.
 
@@ -2136,11 +2246,11 @@ Comprehension operations for `None` are all no-ops, meaning they do nothing but 
 ```java
 defn double(v) ^v * 2;
 
-Id@ 21 ~map double ~fold log;   // 42
-None@ ~map double ~fold log;    // None
+Id@ 21 ~map double;     // 42
+None@ ~map double;      // None
 ```
 
-**Note:** Neither the `double()` invocation nor the `log()` invocation will happen for the `None@`-constructed monadic value.
+**Note:** The `double()` invocation won't happen for the `None@`-constructed monadic value.
 
 #### Monadic Bind
 
@@ -2418,37 +2528,37 @@ order
 
 #### Foldable / Catamorphism
 
-We briefly mentioned Foldable earlier, with the `~fold` comprehension and lists (Tuples). We'll revisit the generalized Foldable (more broadly, Catamorphism) behavior now, in the context of monads.
+We briefly mentioned Foldable earlier, with the `~fold` comprehension on lists (Tuples). We'll revisit the generalized Foldable (more broadly, Catamorphism) behavior now, in the context of monads.
 
-Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` / `~cata` (catamorphism) comprehensions. For a monadic value *range*, the `~fold` / `~cata` comprehensions require multiple *iteration* expressions, one for each component of the Sum type; again, because this is 3 or more operands, the evaluation-expression form is required.
+Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` / `~cata` (catamorphism) comprehensions.
 
-The difference between monadic `~fold` and `~cata` is with the *default iteration* operand. For `~fold`, this operand is an already computed *default-value*, whereas for `~cata` it's a function that computes the *default-value*. In either case, this operand is evaluated/used when the first/left-most component of the Sum type is encountered.
+For a monadic value *range*, the `~fold` / `~cata` comprehensions require multiple *iteration* expressions, one for each component of the Sum type; again, because this means 3 or more operands, the evaluation-expression form is required.
 
-Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"defaultMsg`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `id`s below) is invoked.
+The difference between monadic `~fold` and `~cata` is with the *default iteration* operand. For `~fold`, this operand is an already computed *default-value*, whereas for `~cata` it's a function that computes a value. In either case, this operand is evaluated/used when the first/left-most component of the Sum type is encountered.
+
+Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"defaultMsg`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `@`s below) is invoked.
 
 For example:
 
 ```java
-defn id(v) ^v;
-defn defaultMsg() ^"default!";
+def defaultMsg: @@"default!";
 
-def m: Maybe._ @ 42;                // Id{42}
-def g: Maybe._ @ empty;             // None
+def m: Maybe._@ 42;                 // Id{42}
+def g: Maybe._@ empty;              // None
 
-| ~fold m, defaultMsg(), id |;      // 42
-| ~cata g, defaultMsg,   id |;      // default!
+| ~fold m, defaultMsg(), @ |;       // 42
+| ~cata g, defaultMsg,   @ |;       // default!
 ```
 
-As shown, for the `~fold` comprehension, we provide the already-computed result of the `defaultMsg()` function for the *default iteration* operand. With `~cata`, we provide that `defaultMsg` function reference, for it to be invoked if needed.
+As shown, for the `~fold` comprehension, we provide the already-computed result of the `defaultMsg()` function for the *default iteration* operand. With `~cata`, we provide that `defaultMsg` function reference, for it to be invoked only if needed.
 
-**Note:** Folding (Catamorphism) of a monadic value *often* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting a value (via `id()` as shown) is a much less typical usage; that's merely convenient for illustration purposes here.
+**Note:** Folding (Catamorphism) of a monadic value *often* performs a *natural transformation* to another monadic type (via its unit constructor). Extracting a value (via identity `@` as shown) is a much less typical usage; that's merely convenient for illustration purposes here.
 
 ----
 
 There's some useful conceptual symmetry to recognize, specifically between `~fold`ing a list (Tuple) with an *initial-value*, versus `~fold`ing a binary Sum type:
 
 ```java
-defn id(v) ^v;
 defn two() ^2;
 defn mult(x,y) ^x * y;
 
@@ -2457,13 +2567,13 @@ def m: Maybe._ @ 42;
 
 | ~fold list,  two(), mult |;    // 42
 
-| ~fold m,     two(), id   |;    // Id{42}
-| ~fold None@, two(), id   |;    // 2
+| ~fold m,     two(), @    |;    // 42
+| ~fold None@, two(), @    |;    // 2
 ```
 
 For the list (Tuple) `~fold`, the `two()` function is eagerly invoked to provide the *initial-value* operand for the folding.
 
-For the monadic `~fold`, the `two()` instead provides the *default-value* operand to use in the case of a `None` instance.
+For the monadic `~fold`, the `two()` instead provides the *default-value* operand (used in the case of a `None` instance).
 
 #### `Either` Monad
 
@@ -2492,7 +2602,6 @@ e2 ~map print;      // Value: 2
 Both `Maybe` and `Either` are foldable, so we can define *natural transformations* between them:
 
 ```java
-defn id(v) ^v;
 defn halve(v)
     ![v ?> 1]: Left@ "Value must be greater than 1"
     ![mod(v,2) ?= 0]: Right@ (v + 1) / 2
@@ -2500,15 +2609,15 @@ defn halve(v)
 
 // natural transformation utilities
 defn maybeFromEither(e)
-    ^| ~fold e, None@, Id@ |;
+    ^| ~cata e, None@, Id@ |;
 defn eitherFromMaybe(m)
-    ^| ~fold m, Left@ "Missing!", Right@ |;
+    ^| ~cata m, Left@ "Missing!", Right@ |;
 
-def m1: halve(0) #> maybeFromEither;            // None
-def m2: halve(4) #> maybeFromEither;            // Id{2}
+def m1: halve(0) #> maybeFromEither;    // None
+def m2: halve(4) #> maybeFromEither;    // Id{2}
 
-| ~fold eitherFromMaybe(m1), id, id |;          // "Missing!"
-| ~fold eitherFromMaybe(m2), id, id |;          // 2
+| ~cata eitherFromMaybe(m1), @, @ |;    // "Missing!"
+| ~cata eitherFromMaybe(m2), @, @ |;    // 2
 ```
 
 Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right{2}`, which is transformed to `Id{2}`.
@@ -2517,7 +2626,7 @@ Then, for `m1` and `m2` instances, we perform a *natural* transformation back to
 
 ### Broader Category Theory Capabilities
 
-So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` comprehension).
+So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` / `~cata` comprehension).
 
 But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, these are separate topics.
 
@@ -2626,7 +2735,9 @@ We can do the same with a list (Tuple) of monadic (monoidal) values:
 // Id{"Hello world"}
 ```
 
-It can be useful to perform a mapping on each of a list's values as they're being folded/concatenated, especially when that mapping is to lift non-monadic-but-monoidal values into monads. The `~foldMap` comprehension does so, while applying the `+` concatenation as its *fold*:
+It can be useful to perform a mapping on each of a list's values as they're being folded/concatenated, especially when that mapping is to lift non-monadic-but-monoidal values into monads.
+
+The `~foldMap` comprehension does so, while applying the `+` concatenation as its *fold*:
 
 ```java
 < "Hello", " ", "world" > ~foldMap Id@;
