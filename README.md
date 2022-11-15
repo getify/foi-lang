@@ -1296,7 +1296,7 @@ A predicate is a boolean-returning function. For example:
 defn isOdd(v) ^mod(v,2) ?= 0;
 ```
 
-It can be quite useful to negate a predicate, which is easily done with the unary `!` and a function value:
+It can be quite useful to negate a predicate; this can be expressed with the unary `!` prefixing a function value:
 
 ```java
 def isEven: !isOdd;
@@ -1415,6 +1415,16 @@ defn add(x: 0, y) ^x + y;
 | add y:5 |;                    // 5
 ```
 
+**Warning:** Be careful in relying on this capability, as it creates an additional refactoring dependency burden between the function definition and its call-sites. If you change the name of a parameter in a function definition, any named-argument references at call-sites must be updated.
+
+This code style means that function parameter naming has readability implications at call-sites. If you are using this code style at call-sites, consider "standardizing" certain generic variable naming conventions in your function definitions, to make using such functions predictable.
+
+For example:
+
+* a general value parameter might always be named `v` or `val`
+* a function parameter might always be named `cb` or `fn`
+* a list/array parameter might always be named `list`, `arr`, or even `vs` (i.e., the plural of `v`)
+
 #### Function Recursion
 
 Function recursion is supported:
@@ -1448,35 +1458,32 @@ def add6: add(6);
 
 add6(12);                           // 18
 add(6)(12);                         // 18
+
+// loose currying:
+add(6,12);                          // 18
 ```
 
-Note that `add(6,12)` (aka, loose currying) would not work, but the evaluation-expression form of the function call supports loose-applying arguments across currying boundaries:
+#### Function Overs
 
-```java
-defn add(x)(y) ^x + y;
-
-| add 6, 12 |;                     // 18
-```
-
-Function definitions must declare side-effects (reassignment of free/outer variables) using the `over` keyword:
+Function definitions must declare side-effects (reassignment of free/outer variables) using the `:over` keyword:
 
 ```java
 def customerCache: empty;
 def count: 0;
 
-defn lookupCustomer(id) over (customerCache) {
+defn lookupCustomer(id) :over (customerCache) {
     // ..
 
     // this reassignment side-effect allowed:
     customerCache := cacheAppend(customerCache,customer);
 
     // but this is disallowed because `count`
-    // isn't listed in the `over` clause:
+    // isn't listed in the `:over` clause:
     count := count + 1;
 }
 ```
 
-**Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `over` clause. The `over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
+**Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `:over` clause. The `:over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
 
 #### Function Composition
 
