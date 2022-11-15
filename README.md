@@ -80,7 +80,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
 * [Base Unit Functions](#base-unit-functions)
-    - [Identity Function](#identity-function)
+    - [Value Identity Function](#value-identity-function)
     - [Null-Application Function](#null-application-function)
 * [Loops](#loops)
 * [List Comprehensions](#list-comprehensions)
@@ -104,6 +104,16 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Applicative](#applicative)
     - [Concatable / Semigroup](#concatable--semigroup)
     - [Monoid](#monoid)
+* [Concurrency / Asynchrony](#concurrency--asynchrony)
+    - [Promise Monad](#promise-monad)
+    - [Channel](#channel)
+    - [PushStream Monad](#pushstream-monad)
+    - [PullStream Monad](#pullstream-monad)
+* [IO monad](#io-monad)
+    - [Task](#task)
+    - [Reader](#reader)
+    - [Transforming Over Concurrency](#transforming-over-concurrency)
+* [Generator Monad](#generator-monad)
 * [Type Annotations](#type-annotations)
 
 ## Imports And Exports
@@ -2535,8 +2545,7 @@ As with other monad kinds, `Maybe` has a `~~` *do comprehension* form:
 Maybe ~~ {
     def shipAddr:: prop("shippingAddress",order);
     def street:: prop("street",shipAddr);
-    Id ~~ {
-        def streetV:: street;
+    Id ~~ (streetV:: street) {
         log("Street: " + streetV);
     };
 };
@@ -2546,8 +2555,7 @@ Maybe ~~ {
 Maybe ~~ {
     def billAddr:: prop("billingAddress",order);
     def street:: prop("street",billAddr);
-    Id ~~ {
-        def streetV:: street;
+    Id ~~ (streetV:: street) {
         log("Street: " + streetV);
     };
 };
@@ -2854,6 +2862,1246 @@ any(b);     // Id{true}
 ```
 
 `~fold` is more flexible in letting you specify custom *fold*ing (concatenation) logic for values. By contrast, `~foldMap` assumes/relies on the built-in `+` operation for values being *fold*ed (and recursively, concatenating underlying values).
+
+## Concurrency / Asynchrony
+
+**Foi** does not have any concurrency or asynchrony built natively into it. However, programs absolutely perform and respond to external operations that are inherently concurrent/asynchronous -- network calls, file system, timers, etc.
+
+As such, there are a variety of language features for *managing* concurrency. These features are oriented around data transmission, but they can also be used more generally for asynchronous flow control.
+
+**Note:** all of these features inherently operate synchronously in the language. Only external mechanisms outside the program can influence a non-synchronous delay into the program.
+
+### `Promise` Monad
+
+The most basic component of **Foi** concurrency/asynchrony is `Promise`. It resembles promises in other languages (JS, etc), but has some important differences.
+
+Most importantly, `Promise` is a monad. It's kind of like the `Id` monad (it just holds a single value), except it starts out in a *pending* state where it doesn't yet hold any value. Any operations (`~map`, `~.`) are deferred while a promise is pending.
+
+Once the promise is resolved, any deferred operations are immediately (synchronously) performed. From then onward, the promise remains permanently in the *resolved* state, and any operations against it are evaluated synchronously.
+
+You *can* construct a `Promise` instance that's already resolved with the unit constructor:
+
+```java
+def pr: Promise@ 21;
+// Promise{21}
+
+pr.resolved();
+// true
+
+pr ~map (v) {
+    v * 2;
+};
+// Promise{42}
+```
+
+If you're constructing a promise that will be resolved later, you actually need to construct a *subject*.
+
+A subject is a record that contains a `pr` holding the promise, and a `resolve()` function for resolving the associated promise:
+
+```java
+def subj: PromiseSubject@;
+
+subj.pr.resolved();
+// false
+
+def pr2: subj.pr ~map (v) {
+    v * 2;
+};
+// Promise{..pending..}
+
+pr2 ~map (v) {
+    log("v: " + v);
+};
+// Promise{..pending..}
+
+subj.resolve(21);
+// Right{21}
+// v: 42
+```
+
+Promises in **Foi** only have a single resolved state, unlike in JS where they can be fulfilled or rejected. To communicate something like "success" or "failure", the most appropriate (FP) way is to resolve the promise with an `Either`. This can then be folded into one promise or another, to fork different code paths.
+
+Consider:
+
+```java
+defn fetchCustomers() { /* ..returns promise.. */ };
+
+defn getCacheData(key)
+    ![cache ?has key]: Promise@ (Left@ "Not in cache")
+    ^Promise@ (Right@ cache[key]);
+
+
+getCacheData("customers")
+~. (res) {
+    (| ~cata res, fetchCustomers, Promise@ |);
+}
+~map printRecords;
+// Promise{..pending..}
+```
+
+The `getCacheData()` function produces a `Promise{Either}` value, which resolves to a `Left` on failure or `Right` on success.
+
+We use the `Left` to fetch the customers remotely, or the `Right` to simply pass-through to the next step, which invokes `printRecords()`.
+
+----
+
+Instead of constructing multi-step `~.` / `~map` chains, `Promise` also supports the helpful [`~~` *do comprehension*](#monadic-do-comprehension). The promise chain from the above snippet could instead be expressed as:
+
+```java
+Promise ~~ {
+    def res:: getCacheData("customers");
+    def customers:: (| ~cata
+        res, fetchCustomers, Promise@
+    |);
+    printRecords(customers);
+};
+// Promise{..pending..}
+```
+
+If the promises returned from `getCacheData()` or the `~cata` operation are pending when encountered, the rest of the *do comprehension* block is suspended until the promise resolves.
+
+**Note:** This kind of code may be familiar/recongizable as "async..await" style in JS.
+
+----
+
+One question that may now come to mind: how can you perform *asynchronous comprehensions* (looping), where a pending promise suspends the iteration/looping until it's resolved?
+
+Here's one way:
+
+```java
+defn fetch(url) { /* ..returns promise.. */ };
+
+defn printResponses(prs)
+    ![size(prs) ?> 0]: Promise@ "Complete."
+{
+    ^prs.0 ~. (resp) {
+        log("resp: " + resp);
+        printResponses(prs.[1..]);
+    };
+};
+
+def urls: <
+    "https://some.url/1",
+    "https://some.url/2",
+    "https://some.url/3",
+>;
+
+printResponses(urls ~map fetch)
+~map log;
+// Promise{..pending..}
+//
+// .. eventually ..
+//
+// resp: response 1
+// resp: response 2
+// resp: response 3
+// Complete.
+```
+
+The `printResponses()` function "asynchronously loops" through the `prs` list of promises, with the recursive call to `printResponses()` chained off each promise.
+
+That approach works OK, but it's unfortunately a bit convoluted.
+
+The `~~*` operator extends `Promise` *do comprehension*, to loop asynchronously over (a list of) `Promise` instances. The above `printResponses()` function can thus be expressed as:
+
+```java
+defn printResponses(prs) {
+    ^prs ~~* (resp) {
+        log("resp: " + resp);
+    }
+    ~map { "Complete."; };
+};
+```
+
+If (as above) the provided *range* operand is a list of promises, iterating will proceed (synchronously or asynchronously) as each next promise resolves. The result of the comprehension is a pending promise that resolves once the iterating has completed.
+
+This form can be thought of as like an asynchronous `~each` comprehension. That's a fair bit cleaner than the async-recursion approach, right!?
+
+**Note:** Any non-promise values in the *range* list will be "lifted" to a resolved promise for the purposes of the iteration handling.
+
+Moreover, as the `~~` in the `~~*` operator suggests, the *iteration* clause is also a *do comprehension* block over promises (i.e., `Promise ~~ {    }`):
+
+```java
+urls ~map fetch
+~~* (resp) {
+    def v:: processResp(resp);
+    def success:: storeVal(v);
+    ?[success]: log("Stored: " + v);
+};
+// Promise{..pending..}
+```
+
+**Note:** Any value unwrapped via `def ::` in a `~~*` comprehension must be a Promise.
+
+----
+
+If the *range* operand provided to `~~*` is not a concrete value but instead a type (like `Promise`) -- as *range* always is with regular `~~` do comprehensions -- the iteration looping will continue until a `Left` is produced as the **final result** of an iteration:
+
+```java
+defn printResp(v) { log("Resp: " + v); };
+defn fetchMoreData() { /* .. Promise<Either> .. */ };
+
+Promise ~~* {
+    def respE:: fetchMoreData();
+    Either ~~ (resp:: respE) {
+        printResp(resp);
+    };
+};
+// Promise{..pending..}
+```
+
+The outer `~~*` *looping do comprehension* above pauses each iteration while the promise returned from `fetchMoreData()` is waiting to resolve.
+
+Once it does, the inner `Either ~~ {    }` *do comprehension* attempts to unwrap the `respE` Either value. If a `Left` is encountered, this inner *do comprehension* short-circuits out, and its resultant `Left` value terminates the loop. Otherwise, `printResp(resp)` is called, and the outer looping is allowed to keep going.
+
+----
+
+It's common to want to perform operations across multiple promises. Two such promise combinators come built into **Foi**.
+
+`race()` creates a promise that will resolve as soon as the first promise in the provided list resolves (left-to-right ordering):
+
+```java
+def subj1: PromiseSubject@;
+def subj2: PromiseSubject@;
+
+race(< subj1.pr, subj2.pr >)
+~map (v) {
+    log("Value: " + v);
+};
+// Promise{..pending..}
+
+subj2.resolve(42);
+// Right{true}
+// Value: 42
+
+subj1.resolve(10);
+// Right{true}
+```
+
+`all()` creates a promise that will resolve once all promises in the provided list have resolved; the resolved value will be a list of those source promise resolutions in the same order as the list provided to `all()`, regardless of the order of resolution operations:
+
+```java
+def subj1: PromiseSubject@;
+def subj2: PromiseSubject@;
+
+all(< subj1.pr, subj2.pr >)
+~map (vals) {
+    log("Values: " + vals);
+};
+// Promise{..pending..}
+
+subj2.resolve(42);
+// Right{true}
+
+subj1.resolve(10);
+// Right{true}
+// Values: < 10, 42 >
+```
+
+### `Channel`
+
+CSP (Communicating Sequential Processes) is a classic pattern for coordinating data transmission. It's primarily used in languages like Go and Clojure, though it's been implemented in many others (including JS).
+
+CSP Channels are a mechanism primarily useful for coordinating communication of values between separate (independent) aspects of a program, without these aspects needing to *know* about each other explicitly; the only thing they *share* is the *channel* communication conduit.
+
+One such common coordination pattern is referred to as "back pressure", in that the producer(s) of a value into a channel is throttled to produce no faster than the consumer(s) of that channel are willing to take these values out.
+
+----
+
+**Foi** defines CSP as a first class feature, via the `Channel` type.
+
+It's important to distinguish: a `Channel` instance is not *itself* monadic -- it has no `~.` / `~map` defined. However, all the operations on `Channel` instances produce `Promise` monad instances, so you still interact with `Channel` in a monadic-oriented way.
+
+A channel is a container (by default, with no internal buffer) where both the putting-in of a value (`put()`) and reading-out of a value (`take()`) are *coordinated*. Both operations produce a `Promise` instance, and these promises won't resolve until both operations have occurred (regardless of ordering).
+
+Both operations' promises resolve with `Either` values, indicating (eventual) success/failure of the operation.
+
+Consider these illustrative helpers, which we'll use throughout the rest of our CSP examples:
+
+```java
+defn putVal(ch,v) ^(
+    ch.push(v)
+    ~map (ev) {
+        Either ~~ (v:: ev) {
+            log("Value put: " + v);
+        };
+    }
+);
+
+defn takeVal(ch) ^(
+    ch.take()
+    ~map (ev) {
+        Either ~~ (v:: ev) {
+            log("Value taken: " + v);
+        };
+    }
+);
+```
+
+**Note:** Notice the `Either ~~ {    }` *do comprehensions* again neatly and conditionally handle the `Either` instance, either invoking `log()` or short-circuiting out of the block with a `Left`.
+
+Now, let's create a channel and use those helpers:
+
+```java
+def ch: Channel@;
+
+putVal(ch,42);
+// Promise{..pending..}
+
+takeVal(ch);
+// Promise{}
+// Value put: 42
+// Value taken: 42
+```
+
+As you can see, the initial `put()` is pending until the corresponding `take()` occurs.
+
+Multiple `put()` operations can be queued up, and each subsequent `take()` will pull the next value in order off the "queue".
+
+```java
+def ch: Channel@;
+
+putVal(ch,42);
+// Promise{..pending..}
+
+putVal(ch,100);
+// Promise{..pending..}
+
+takeVal(ch);
+// Promise{}
+// Value put: 42
+// Value taken: 42
+
+takeVal(ch);
+// Promise{}
+// Value put: 100
+// Value taken: 100
+```
+
+**Note:** Don't think of queued `put()` operations as a *buffer*. Regardless of implementation details, the best way to think of these queued `put()`s, are as values that are waiting to go into the channel, rather than values that are already in the channel. That's why we don't see the `"Value put: 100"` confirmation above until the `100` is being taken from the channel. In other words, channel is creating an implicit *dependent relationship* between each attempted `put()` and its corresponding `take()`. Channel buffering is a separate concept we'll cover in a bit.
+
+We can also attempt a `take()` before a corresponding `put()`:
+
+```java
+def ch: Channel@;
+
+takeVal(ch);
+// Promise{..pending..}
+
+putVal(ch,42);
+// Promise{}
+// Value taken: 42
+// Value put: 42
+```
+
+And of course, multiple `take()` operations can be queued, satisfied sequentially by subsequent `put()` operations:
+
+```java
+def ch: Channel@;
+
+takeVal(ch);
+// Promise{..pending..}
+
+takeVal(ch);
+// Promise{..pending..}
+
+putVal(ch,42);
+// Promise{}
+// Value taken: 42
+// Value put: 42
+
+putVal(ch,100);
+// Promise{}
+// Value taken: 100
+// Value put: 100
+```
+
+**Note:** Again, don't think of multiple pending `take()`s as *buffered*, but rather as externally pending operations, until satisfied by corresponding `put()`s.
+
+----
+
+Recall the `~~*` async-comprehension discussed in the `Promise` section. It's quite useful for explicitly coordinating a queue of `put()`s and/or `take()`s:
+
+```java
+def ch: Channel@;
+
+1..3 ~~* (v) {
+    ::putVal(ch,v);
+};
+// Promise{..pending..}
+
+// elsewhere:
+Promise ~~* {
+    ::takeVal(ch);
+};
+// Value put: 1
+// Value taken: 1
+// Value put: 2
+// Value taken: 2
+// Value put: 3
+// Value taken: 3
+```
+
+The `putVal()` loop above terminates once the `1..3` *range* is eventually completed. However, the `Promise ~~* {    }` loop will remain in a paused state, waiting for the next value to come into the channel.
+
+You may recall that `~~*` terminates only when the **final expression** resolves to a `Left`. The only way a `Channel` instance's `take()` can resolve to a `Left` is when the channel itself is closed.
+
+So, if we issued `ch.close()` in the above program:
+
+```java
+ch.close();
+// Right{true}
+// Error: Channel already closed
+```
+
+**Note:** Subsequent `close()` calls on an already closed channel will return `Left{"Channel already closed"}`.
+
+The `close()` above returns `Right{true}` indicating it was successful in closing the channel.
+
+But then the pending `take()` (from inside `takeVal()`) is resolved with a `Left{"Channel already closed"}`; that short-circuits out of the `Either` *do comprehension*..
+
+Finally, the paused `~~*` loop will terminate, when encountering that `Left{"Channel already closed"}` value.
+
+----
+
+As illustrated so far, channels by default have no internal buffering.
+
+But you can override this when you construct a channel; if you set a positive integer for a buffer size, that many values may be accepted into the channel (immediately resolving the `put()`s) even before the corresponding `take()`s are received.
+
+Buffering a channel is useful for allowing the producer side of a channel to be less back-pressure bounded to the consumer.
+
+**Warning:** A very high value of buffer size effectively eliminates back pressure from the channel. However, you should reconsider doing so; this coordination between producer and consumer is the main point and spirit of CSP. If you really need unbounded producer-side messaging without such coordination, a `PushStream` (covered later) is a better fit.
+
+Consider:
+
+```java
+def ch: Channel@ 3;
+
+1..3 ~each (v) { putVal(ch,v); };
+// Value put: 1
+// Value put: 2
+// Value put: 3
+
+putVal(ch,4);
+// Promise{..pending..}
+
+Promise ~~* {
+    ::takeVal(ch);
+};
+// Value put: 4
+// Value taken: 1
+// Value taken: 2
+// Value taken: 3
+// Value taken: 4
+
+ch.close();
+// Right{true}
+// Error: Channel already closed
+```
+
+Any `put()` that occurs while a buffer has capacity produces an immediately resolved promise, as shown by the messages printed during the `~each` loop.
+
+But as shown by `putVal(ch,4)` above, any `put()` that occurs while a buffer is at capacity (and no `take()`s are pending) produces a pending promise. In other words, it behaves exactly the same as on a channel with buffer size of `0` (as default).
+
+If a `put()` is pending when a `take()` frees up capacity in the buffer, that pending `put()` is immediately resolved and its value is treated as being placed into the internal buffer. That's illustrated by the timing of the `"Value put: 4"` message above.
+
+----
+
+Aside from `take()`, it can also be useful to `peek()` at a channel, and *see* a value that's `put()` into it, even if there's no `take()` yet to actually retrieve it.
+
+A `peek()` operation also produces a pending promise (until any attempted `put()`), but all *peeks* will see the same value once the next `put()` is queued and until that value is `take()`n out of the channel. In other words, `peek()` operations don't *queue* (stack on each other sequentially) the way `puts()` and `takes()` do.
+
+Consider:
+
+```java
+defn peekAt(ch,idx) ^(
+    ch.peek()
+    ~map (v) {
+        log("(" + idx + ") Peeking at value: " + v);
+        v;
+    }
+);
+
+def ch: Channel@;
+
+1..3 ~each (idx) {
+    peekAt(idx,ch);
+};
+
+putVal(ch,42);
+// Promise{..pending..}
+// (1) Peeking at value: 42
+// (2) Peeking at value: 42
+// (3) Peeking at value: 42
+
+peekAt(ch,4);
+// Promise{42}
+// (4) Peeking at value: 42
+
+takeVal(ch);
+// Promise{}
+// Value put: 42
+// Value taken: 42
+
+peekAt(ch,5);
+// Promise{..pending..}
+```
+
+The spirit of CSP channels is that the primary *read* operation should be `take()`, not `peek()`.
+
+But peeking is especially useful when coordinating (without side effects) `take()`s from multiple channels. For example: a merge operation (i.e., first-come-first-served race), or a zip operation (i.e., wait for all channels to have a value before taking them).
+
+The merge/race operation can be performed with the `alts()` utility:
+
+```java
+def nextVal: alts(< ch1, ch2, ch3, ch4 >);
+// Promise{..pending..}
+```
+
+The first channel (left to right) that has a value available (via a `put()`) will resolve the pending promise, with a record that has a `value` property with the value, and a `channel` property holding the channel the value came from.
+
+Races like this are often used for "timeouts", where you wait for a value from a channel for only a certain amount of time, and if the timeout expires, a value comes in on a second channel, thereby short-circuiting the waiting for a value from the first channel.
+
+**Warning:** This ordered behavior means that if `ch1` always has values available, it can *starve out* any attempt for `ch2`, `ch3`, and `ch4` channels to transmit their values. To guard against such starvation, programs should be careful to perform some shuffling of the list order provided to `alts()`, perhaps just a simple round-robin strategy.
+
+The zip/all operation can be performed with `every()`:
+
+```java
+def nextVal: every(< ch1, ch2, ch3, ch4 >);
+// Promise{..pending..}
+```
+
+The promise from `every()` will resolve once a value is available from all channels, and will contain a list of these values in the same order as provided to `every()`, regardless of what order the arrive in.
+
+### `PushStream` Monad
+
+If you need a producer side to be unrestrained from the consumer side, the data transmission mechanism best suited is the `PushStream` monad.
+
+The most trivial example is a single-value stream, via the unit constructor:
+
+```java
+def s: PushStream@ 21;
+
+s ~. (v) {
+    PushStream@ (v * 2);
+}
+~map (v) {
+    log("Value: " + v);
+};
+// Value: 42
+```
+
+**Note:** A single-value stream (as above) seems similar conceptually to an already resolved Promise. One specific difference is that streams don't hold onto their values like promises do. So once a value is *observed* (another stream "subscribing" to it via `~.` or `~map`), that value is no longer in the original stream. Moreover, streams are either *open* or *closed* (`close()` and `closed()`), whereas promises are either *pending* or *resolved* (`resolve()` and `resolved()`).
+
+Like promises, you typically construct a `PushSubject` to control the stream:
+
+```java
+def subj: PushSubject@;
+
+def s2:
+    subj.stream ~. (v) {
+        PushStream@ (v * 2);
+    }
+    ~map (v) {
+        log("(1) Value: " + v);
+        v + 1;
+    };
+// PushStream{}
+
+1..3 ~each subj.push;
+// (1) Value: 1
+// (1) Value: 2
+// (1) Value: 3
+
+s2 ~map (v) {
+    log("(2) Value: " + v);
+};
+// PushStream{}
+// (2) Value: 2
+// (2) Value: 3
+// (2) Value: 4
+```
+
+As shown, the `~.` / `~map` comprehensions remain active on an open stream, and are repeated for each new value pushed through the stream.
+
+`push()` returns a `Right` with the pushed value, if successful; `Left` is returned if pushing failed (i.e., the stream has been closed).
+
+A stream remains open and active until `close()` is called on it, or is called upstream; close signals actively propagate downstream, since no more values ever propagate through closed streams.
+
+Consider:
+
+```java
+def subj: PushStream@;
+
+1..3 ~each subj.push;
+
+def another: subj.stream ~map (v) {
+    log("Value: " + v);
+};
+// Value: 1
+// Value: 2
+// Value: 3
+
+subj.push(4);
+// Right{true}
+// Value: 4
+
+subj.stream.closed();
+// true
+
+another.closed();
+// true
+
+// ------------
+
+subj.stream.close();
+// Right{true}
+
+subj.stream.closed();
+// true
+
+another.closed();
+// true
+
+subj.push(10);
+// Left{"Stream already closed"}
+```
+
+**Note:** Closing a stream not only shuts down any further value propagations, but also cleans up memory used by the stream (and any downstream instances). As such, streams should always be closed when no longer needed.
+
+----
+
+`PushStream` supports the `~~` *do comprehension* form:
+
+```java
+def subj: PushStream@;
+
+1..3 ~each subj.push;
+
+def s: PushStream ~~ (v:: subj.stream) {
+    log("(1) Value: " + v);
+    v * 2;
+};
+// PushStream{}
+// (1) Value: 1
+// (1) Value: 2
+// (1) Value: 3
+
+subj.push(4);
+// Right{true}
+// (1) Value: 4
+
+s ~map (v) {
+    log("(2) Value: " + v);
+};
+// PushStream{}
+// (2) Value: 2
+// (2) Value: 4
+// (2) Value: 6
+// (2) Value: 8
+
+5..6 ~each subj.push;
+// (1) Value: 5
+// (2) Value: 10
+// (1) Value: 6
+// (2) Value: 12
+```
+
+As you can see, just like `~.` / `~map`, this form automatically *repeats* -- not really looping! -- each time a new value is pushed into the stream.
+
+**Note:** As stream inherently repeats operations for each value, there is no corresponding `~~*` *looping do comprehension* form for streams; that's only for `Promise`.
+
+### `PullStream` Monad
+
+Where a `PushStream` is controlled by the producer, a `PullStream` is more like a CSP `Channel` where control is shared by producer and consumer.
+
+However, unlike `Channel`, a `PullStream` offers no *back pressure*, in that it does not block the producer *pushing* on the consumer *pulling* the value. That is, a `push()` does not wait for a corresponding `pullInto()`.
+
+We can again create a single-value stream instance, via the unit constructor:
+
+```java
+def s: PullStream@ 21;
+
+s ~. (v) {
+    PullStream@ (v * 2);
+}
+~map (v) {
+    log("Value: " + v);
+};
+// PullStream{}
+```
+
+As shown, the `21` (and subsequent `42`) values don't actively propagate through the `PullStream` instances, which is why nothing is logged.
+
+To trigger the propagation, use `pullInto()`:
+
+```java
+def s: PullStream@ 21;
+
+def t:
+    s ~. (v) {
+        PullStream@ (v * 2);
+    }
+    ~map (v) {
+        log("Value: " + v);
+    };
+// PullStream{}
+
+t.pullInto(1);
+// Right{1}
+// Value: 42
+```
+
+The `pullInto()` function takes an optional integer argument for the count of how many values to attempt to pull down the stream. If the attempt is successful (as above), the result will be a `Right` holding the same numeric value.
+
+Otherwise, if insufficient pending values are found anywhere upstream, the return will be a `Left` holding the count of values *not* able to be pulled. Those pending requests remain active upstream, and will be fulfilled as any new values are pushed in.
+
+You will typically construct a `PullSubject` to control the stream:
+
+```java
+def subj: PullSubject@;
+
+def s2: subj.stream
+    ~map (v) {
+        log("(1) Value: " + v);
+        v * 2;
+    };
+// PullStream{}
+
+1..3 ~each subj.push;
+// (nothing)
+
+s2 ~map (v) {
+    log("(2) Value: " + v);
+};
+// PullStream{}
+
+s2.pullInto(2);
+// Right{2}
+// (1) Value: 1
+// (2) Value: 2
+// (1) Value: 2
+// (2) Value: 4
+
+s2.pullInto(3);
+// Left{1}
+// (1) Value: 3
+// (2) Value: 6
+// (1) Value: 4
+// (2) Value: 8
+
+5..6 ~each subj.push;
+// (1) Value: 5
+// (2) Value: 10
+
+s2.pullInto(1);
+// Right{1}
+// (1) Value: 6
+// (2) Value: 12
+```
+
+----
+
+`PullStream` also supports the `~~` *do comprehension* form:
+
+```java
+def subj: PushStream@;
+
+1..3 ~each subj.push;
+
+PullStream ~~ (v:: subj.stream) {
+    log("Value: " + v);
+};
+// PullStream{}
+
+s.pullInto(3);
+// Right{3}
+// Value: 1
+// Value: 2
+// Value: 3
+```
+
+**Note:** Since the `~~` block automatically repeats as each value is pulled through, there's no need for a separate `~~*` *looping do comprehension* form for `PullStream`.
+
+## `IO` Monad
+
+The first and most important *rule* of FP is that you have to be very careful to minimize and control side-effects whenever and wherever possible. Mismanaged side effects are the single greatest source of bug infection in our code.
+
+One powerful tool for managing side effects in a mathematical, predictable way is the `IO` monad.
+
+In **Foi**, the `IO` monad is special, in that it composes behaviors of multiple monad types together: IO, Task, and Reader.
+
+Let's explore each of these capabilities separately.
+
+### Task
+
+Task is a pattern for lazily defining a set of actions, usually performing side-effects outside the program -- printing to the console, performing network requests, reading or writing to a file system, waiting on external async operations, generating random numbers, etc.
+
+The key is, `IO` instances are lazy; these actions **do not run automatically**. Moreover, multiple `IO` monads are chained together to compose separate units of action into a single lazy action.
+
+To construct an `IO` instance, we give it an *executor* function that will perform the action(s) (side effects):
+
+```java
+def task = IO@ (defn someTask(){
+    log("Log messages are a side effect!");
+});
+// (nothing)
+```
+
+Notice that the log message didn't actually happen. `IO` instances are lazy. An `IO` instance (which may be a composed chain of many `IO`s) is run on-demand (one or more times), using the `run()` method on the instance:
+
+```java
+def task = IO@ (defn someTask(){
+    log("Log messages are a side effect!");
+});
+
+task.run();
+// Log messages are a side effect!
+```
+
+When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
+
+```java
+def specialNumber = IOof@ 42;
+
+specialNumber.run();   // 42
+```
+
+As with all monads, we can compose instances together via comprehensions like `~map` and `~.` (chain):
+
+```java
+defn doubleIO(v) ^IO@ (v * 2);
+defn incIO(v) ^ IO@ (v + 1);
+defn finish(v) {
+    log("v: " + v);
+    ^incIO(v);
+};
+
+def num = IOof@ 21;
+
+def task = num
+    ~map doubleIO
+    ~. finish;
+
+task.run();   // 43
+// v: 42
+```
+
+----
+
+Recall the [`~~` do-comprehension](#monadic-do-comprehension) (for monads), which gives a special syntax for chaining monadic values together a more familiar imperative-style. It's especially convenient when you might otherwise need to nest `~.` chain steps to create a shared scope for accessing values from each step together.
+
+Because this is so common with `IO`, the *do comprehension* form is most common. The previous snippet could be done like this:
+
+```java
+(IO ~~ (v:: num) {
+    def x:: doubleIO(v);
+    ::finish(x);
+}).run();   // 43
+// v: 42
+```
+
+As you can see, the `v:: num` statement unwraps the `IO` instance `num`, and assigns its value to `v`. Likewise, the `def x:: doubleIO(v)` unwraps the `IO` instance that comes back from the function call, and assigns the result to `x`.
+
+Finally, the `IO` instance from `finish(x)` is returned (without wrapping, due to the `::` prefix).
+
+You can interleave `def ::` and `def :` style definitions:
+
+```java
+defn readFile(filename) {
+    // ..
+    ^IO@ fileContents;
+};
+defn writeFile(filename,contents) {
+    // ..
+    ^IO@ res;
+};
+defn processFile(filename) ^IO ~~ {
+    def text:: readFile(filename);
+    def uptext: uppercase(text);
+    def res:: writeFile("upper.txt",uptext);
+    < :res, :text >;
+};
+
+processFile("my-file.txt")
+.run();
+// < res: .., text: .. >
+```
+
+### Reader
+
+Reader is a pattern for carrying a value across monadic operations, without needing a shared outer scope to access it. We typically treat the Reader value as an *environment* context that is parameterized for the IO to run against. This enables a *pure* IO that doesn't need to access anything from its outer context.
+
+`IO` implements Reader by allowing a single argument (optional) to the `run()` function. If a Reader value is provided, it's automatically passed as the first argument to the *executor* function:
+
+```java
+def task: IO@ (defn(readerEnv){
+    log("X: " + readerEnv.x);
+});
+
+task.run(< x: 42 >);
+// X: 42
+```
+
+**Note:** The Reader value can be anything, but it's most commonly a Record (or Tuple).
+
+Inside a `~.` chain step, the carried Reader value can be *accessed* as so:
+
+```java
+def task:
+    IOof@ 42
+    .~ (v) {
+        IO@ (defn(env){
+            log("Value: " + v, "Env.x: " + env.x);
+        });
+    };
+
+task.run(< x: 3 >);
+// Value: 42, Env.x: 3
+```
+
+This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extract* the Reader value:
+
+```java
+defn getEnv() ^IO @(defn(env) ^env);
+
+def fortyTwo: IOof@ 42;
+
+def task: IO ~~ {
+    def v:: fortyTwo;
+    def env:: getEnv();
+    log("Value: " + v, "Env.x: " + env.x);
+};
+
+task.run(< x: 3 >);
+// Value: 42, Env.x: 3
+```
+
+In fact, this is even cleaner:
+
+```java
+def fortyTwo: IOof@ 42;
+
+def task: IO ~~ (env, v:: fortyTwo) {
+    log("Value: " + v, "Env.x: " + env.x);
+};
+
+task.run(< x: 3 >);
+// Value: 42, Env.x: 3
+```
+
+As shown, the Reader value is automatically provided to the *do comprehension* block, as exposed by a block definitions clause.
+
+### Transforming Over Concurrency
+
+The final super power of `IO` is that it automatically acts as a transformer over each of the previous concurrency/asynchrony mechanisms: `Promise`, `Channel`, `PushStream`, and `PullStream`. That means that if an `IO` operation encounters an instance of any of these, it will automatically *lift* to that space, thereby acting to *unwrap* such values.
+
+Consider:
+
+```java
+defn getValue() ^Promise@ 42;
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def v:: getValue();
+    ::printValue(v);
+};
+
+task.run();
+// Promise{}
+// Value: 42
+```
+
+As illustrated, when the promise instance from `getValue()` was encountered, the rest of the IO evaluation -- in other words, what's returned from the `run()` call -- was *lifted* to a promise. Subsequent steps in the IO chain wait for a previous promise to resolve before proceeding.
+
+That's basically the `Promise ~~ {    }` behavior combined automatically into `IO`'s `~~` *do comprehension*.
+
+If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
+
+```java
+defn readValue() ^IOof@ (Promise@ 42);
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def v:: readValue();
+    ::printValue(v);
+};
+
+task.run();
+// Promise{}
+// Value: 42
+```
+
+Even in the inverse scenario -- where a `Promise` instance holds an `IO` instance -- the transformation still occurs:
+
+```java
+defn readValue() ^Promise@ (IOof@ 42);
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def v:: readValue();
+    ::printValue(v);
+};
+
+task.run();
+// Promise{}
+// Value: 42
+```
+
+----
+
+Here's `IO` transforming over a `Channel`:
+
+```java
+defn getValue() ^Channel@ 42;
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def ev:: getValue();
+    ::(| ~cata ev, IOof@, printValue |);
+};
+
+task.run();
+// Promise{}
+// Value: 42
+```
+
+The `def ev:: getValue()` unwrapping automatically calls `take()` on the channel, which produces a `Promise` instance; that *lifts* the `IO` evaluation into the promise space.
+
+----
+
+Transformation is not limited to promises. It also applies to streams. For example, here's an `IO` *do comprehension* transforming over a `PushStream`:
+
+```java
+defn getValues() {
+    def subj: PushSubject@;
+    1..3 ~each subj.push;
+    ^subj.stream;
+};
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def v:: getValues();
+    ::printValue(v);
+};
+
+task.run();
+// PushStream{}
+// Value: 1
+// Value: 2
+// Value: 3
+```
+
+Notice how `run()` this time returned a `PushStream` instance instead of a `Promise`, since the `IO` was *lifted* into that space for its evaluation.
+
+Here's the same, but with a `PullStream`:
+
+```java
+defn getValues() {
+    def subj: PullSubject@;
+    1..3 ~each subj.push;
+    ^subj.stream;
+};
+defn printValue(v) ^IO@ (defn(){
+    log("Value: " + v);
+});
+
+def task: IO ~~ {
+    def v:: getValues();
+    ::printValue(v);
+};
+
+def s: task.run();
+// PullStream{}
+
+s.pullInto(3);
+// Right{3}
+// Value: 1
+// Value: 2
+// Value: 3
+```
+
+Since we're using a `PullStream`, we have to call `pullInto(3)` to actually pull those values into the `IO` evaluation.
+
+**Note:** With `IO`, typically `PushStream` will be preferred over `PullStream`, given this extra step of needing to call the `pullInto()` on the returned stream.
+
+----
+
+Be aware that the order of transformation in an IO `~~` *do comprehension* matters, with respect to what kinds of *lifting* is supported:
+
+* A concrete/synchronous IO can be lifted to a promise IO evaluation (as shown earlier). This includes a channel transformation, since the `take()` produces a promise.
+
+* A stream IO evaluation can lift concrete/synchronous values, or promises.
+
+* A `PullStream` can be lifted to a `PushStream`, or vice versa.
+
+But importantly, a stream cannot be lifted to a promise evaluation (only vice versa). Perhaps counterintuitively, that means the following is invalid:
+
+```java
+def getValue() ^Promise@ 42;
+def getValues() ^PushStream@ 10;
+
+IO ~~ {
+    def v:: getValue();
+    def x:: getValues();
+    log("v: " + v + ", x: " + x);
+}.run();
+// (error)
+```
+
+The `getValue()` lifts the `IO` evaluation into a promise, but then a subsequent `PushStream` instance from `getValues()` cannot be lifted into this promise evaluation.
+
+But the reverse order *is* supported, so this is valid:
+
+```java
+def getValue() ^Promise@ 42;
+def getValues() ^PushStream@ 10;
+
+IO ~~ {
+    def x:: getValues();
+    def v:: getValue();
+    log("v: " + v + ", x: " + x);
+}.run();
+// v: 42, x: 10
+```
+
+In other words, we can resolve a singular-value promise from `getValue()` for each time we get a value from the stream returned by `getValues()`. But we cannot do the reverse: pushing each value from the `getValues()` stream into a single promise from `getValue()`.
+
+It's not common that you'll want to mix/compose promises and streams in the same `IO` *do comprehension* -- usually just one or the other -- so this kind of confusing nuance won't be encountered very often.
+
+## Generator Monad
+
+Generators are a specialization of `IO`, which behaves somewhat like a CSP `Channel`.
+
+Generators are useful for expressing "lazy" computations, meaning that they step through producing a single value at a time, and only compute the next value after the previous value has been requested.
+
+The `Gen@` unit constructor expects a single argument: a function that will receive the Reader value (`env` below), and a function (`yield` below) to produce values from the generator. Calling `yield()` queues up a value to send through the iterator, and produces a `Promise` instance that will resolve once the value has been taken from the iterator. If successful, the resolved value with be a `Right`, and `Left` otherwise.
+
+```java
+def genIO: Gen@ (defn(env,yield){
+    def pr: yield(42);
+    // ..
+});
+```
+
+Calling the unit constructor produces an `IO` instance (`genIO` above); when `run()` is invoked on the `IO`, the generator function starts running, and an iterator is returned to retrieve the generator instance's value(s).
+
+The iterator holds two functions: `next()` for retrieving values, and `close()` for closing the iterator (and thus stopping the `IO` instance of the generator).
+
+The most classic example of a generator is computing the Fibonacci sequence:
+
+```java
+def fib: Gen@ (defn(env,yield){
+    def a: 0;
+    def b: 1;
+    ^Promise ~~* {
+        def cur: a;
+        def res:: yield(cur);
+        a := b;
+        b := cur + a;
+    };
+});
+
+def it: fib.run();
+
+
+// print the first 10 Fibonacci numbers
+0..9 ~~* {
+    def ev:: it.next();
+    (| ~cata ev, Left@, log |);
+};
+// 0
+// 1
+// 1
+// 2
+// 3
+// 5
+// 8
+// 13
+// 21
+// 34
+```
+
+**Warning:** The above generator is designed to run perpetually (doesn't stop itself), and without any delay, so be careful about using an unbounded looping to consume values from it; such a loop will also run synchronously, forever. The `0..9 ~~* {    }` approach above limits how many values to *take* from the iterator.
+
+Even though the iterator interface (`yield()` and `next()`, above) responds with Promises, this Fibonacci generator is fully synchronous; remember that **Foi** `Promise` instances are not inherently asynchronous (as in some other languages).
+
+Here's another example, of a generator that only produces a fixed number of values through its iterator (and then closes it):
+
+```java
+def someNums: Gen@ (defn(env,yield){
+    ^((env.start..env.end) ~~* yield)
+        ~map { "Complete." };
+});
+
+def it: someNums.run(< start: 4, end: 7 >);
+
+
+// consume all the values from this
+// iterator
+def pr: it ~~* (ev) {
+    (| ~cata ev, Left@, log |);
+};
+// Promise{..pending..}
+// 4
+// 5
+// 6
+// 7
+
+pr ~map log;
+// Left{"Complete."}
+```
+
+**Note:** The `~~*` knows how to consume an iterator. It calls `next()` under the covers, which produces a promise. When unwrapped, this value is a `Right` or `Left`; if it's a `Left`, the looping will terminate. Above, we unwrap the `Right` with `~cata`, but in the next snippet, we'll use an `Either` *do comprehension* to process `ev`.
+
+You can also manually terminate an iteration early by closing the iterator:
+
+```java
+def someNums: Gen@ (defn(env,yield){
+    ^((env.start..env.end) ~~* yield)
+        ~map { "Complete." };
+});
+
+def it: someNums.run(< start: 1, end: 10 >);
+
+
+// consume all the values from this
+// iterator
+def pr: it ~~* (ev) {
+    Either ~~ (v:: ev) {
+        log(v);
+
+        // shall we terminate early?
+        ::?[v ?= 3]: {
+            it.close();
+            Left@ "Terminated.";
+        };
+    };
+};
+// Promise{..pending..}
+// 1
+// 2
+// 3
+
+pr ~map log;
+// Left{"Terminated."}
+```
+
+**Note:** The `Either ~~ {    }` *do comprehension* block is nested inside the outer `Promise ~~* {    }` *looping do comprehension* block. This allows us to ergonomically unwrap the Either value (`ev`) that came back from `next()`. If the `v:: ev` unwrapping encounters a `Left`, it short-circuits to skip the `Either` comprehension block.
+
+The manually produced `Left@ "Terminated."` value forcibly terminates first the inner `Either ~~ {    }` block, and then the outer `Promise ~~* {    }` loop.
+
+However, if that value were omitted (but the iterator was still closed), the loop would normally start a next (final) iteration, yet the `next()` call would immediately fail with a `Left@ "Complete."` -- from the final `"Complete."` return value of the generator -- and that would terminate the loop.
 
 ## Type Annotations
 
