@@ -76,6 +76,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Named Arguments](#named-arguments)
     - [Function Recursion](#function-recursion)
     - [Function Currying](#function-currying)
+    - [Function Overs](#function-overs)
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
 * [Base Unit Functions](#base-unit-functions)
@@ -2525,6 +2526,35 @@ order
 ~. prop("street");
 // None
 ```
+
+----
+
+As with other monad kinds, `Maybe` has a `~~` *do comprehension* form:
+
+```java
+Maybe ~~ {
+    def shipAddr:: prop("shippingAddress",order);
+    def street:: prop("street",shipAddr);
+    Id ~~ {
+        def streetV:: street;
+        log("Street: " + streetV);
+    };
+};
+// Street: 123 Easy St
+
+
+Maybe ~~ {
+    def billAddr:: prop("billingAddress",order);
+    def street:: prop("street",billAddr);
+    Id ~~ {
+        def streetV:: street;
+        log("Street: " + streetV);
+    };
+};
+// None
+```
+
+Since the `prop("billingAddress",order)` returns a `None`, the rest of that second `Maybe ~~ {    }` *do comprehension* will short-circuit exit.
 
 #### Foldable / Catamorphism
 
