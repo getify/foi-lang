@@ -106,7 +106,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Monoid](#monoid)
 * [Type Annotations](#type-annotations)
 
-### Imports And Exports
+## Imports And Exports
 
 To import named dependencies (including "globals" from the built-in `#Std`), use the `import` keyword:
 
@@ -150,7 +150,7 @@ When exporting, keep in mind that `defn` function definitions *do* hoist -- so t
 
 However, `def` variable definitions (even if they hold functions) do not hoist. Those must always appear at the top of a scope, thus before any `export` statements. Those variables must be assigned an intended value to *export* before an `export` statement; subsequent variable assignments are not retroactively exported.
 
-### Function Calls
+## Function Calls
 
 The traditional function call-form (e.g., `log("Hello")`) always requires `(    )` around the argument list, and must immediately follow the function name (no whitespace). If there are no arguments to pass, the call looks like `someFn()`.
 
@@ -168,7 +168,7 @@ myFn(1,empty,3,empty,empty,6);
 
 **Note:** Trailing comma(s) are allowed (and ignored).
 
-### Evaluation-Expression Form
+## Evaluation-Expression Form
 
 All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (aka [S-expressions](https://en.wikipedia.org/wiki/S-expression)), with `| |` delimiters, instead of the canonical `( )` Lisp parentheses:
 
@@ -199,7 +199,7 @@ In the above snippet, it doesn't seem like the special case `| defn    |` form o
 
 It can be helpful for readability sake, when visually delimiting an inline function definition (aka, a "lambda") inside another evaluation-expression. In fairness, perhaps a wrapping `(    )` would be better here than a wrapping `|    |`. More on this in the following sections.
 
-#### Expression Readability
+### Expression Readability
 
 It's clearly an idiosyncratic choice for **Foi** to use `|    |` [for its S-expressions](https://en.wikipedia.org/wiki/S-expression), instead of the nearly-universal `(    )` Lisp form.
 
@@ -297,7 +297,7 @@ You could even just think of `(|` as the opening tag and `|)` as the closing tag
 
 That's probably what I will do, personally. Given the above analysis and constraints, I think this is a reasonable compromise for **Foi** to make.
 
-#### Motivations
+### Motivations
 
 So... why does **Foi** even include this optional Lisp-like form? It adds complexity to the language -- for implementers, authors, and readers! -- but for what purpose?
 
@@ -305,7 +305,7 @@ The primary reason for the `|    |` evaluation-expression form in **Foi** is tha
 
 We'll cover many of those capabilities over several following sub-sections.
 
-#### Reversing Argument Order
+### Reversing Argument Order
 
 One such flexibility is that we can control the treatment of input arguments in various ways.
 
@@ -329,7 +329,7 @@ Since this operation will be extremely common, a special sugar short-hand is ava
 
 This short-hand form of `'` should be preferred for readability sake wherever practical.
 
-#### Partial Application
+### Partial Application
 
 It's common in functional programming to produce more specialized functions by applying only some inputs to a more generalized (higher-arity) function; the result is a another function that expects the subsequent arguments.
 
@@ -359,7 +359,7 @@ The `| '- 1 |` evaluation-expression applies `1` as the right-most argument to `
 
 *That* function -- which is back to regular left-to-right ordering, by the way -- is then expecting its final argument, which is then provided by the outer `|    6 |` evaluation-expression.
 
-#### N-Ary Operators
+### N-Ary Operators
 
 Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
 
@@ -401,7 +401,7 @@ But since the `?=` operator is n-ary, we can provide it 3 or more arguments usin
 
 It should be clear how much more preferable n-ary operator evaluation can be!
 
-#### Apply (aka Spread)
+### Apply (aka Spread)
 
 Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator (only available in the evaluation-expression form):
 
@@ -422,7 +422,7 @@ Since `...` is an operator, when applied against an operator/function like `+`, 
 
 As you can see from the last several sections, there's lots of additional power in the evaluation-expression form, but there are yet still other capabilities that we'll encounter later in this guide.
 
-### Defining Variables
+## Defining Variables
 
 To define variables, use the `def` keyword (not an operator/function).
 
@@ -471,7 +471,7 @@ def (tmp: 42) {
 
 Moreover, this definitions-block form is allowed anywhere in its enclosing scope, so it's more flexible than a non-block `def` declaration.
 
-#### Block-Definitions Clause
+### Block-Definitions Clause
 
 In addition to the definitions-block form just shown, several other expressions in **Foi** allow a `{    }` block to be declared as part of the larger expression. For syntactic convenience, many of these expressions' blocks can be prefaced by the optional `(   )` block-definitions clause:
 
@@ -518,7 +518,7 @@ In addition to the definitions-block form just shown, several other expressions 
 
 **Note:** While function body definitions, and the Record/Tuple *def*-block, both have `{    }` blocks, these *cannot* be prefaced by a block definitions clause.
 
-### Boolean Logic
+## Boolean Logic
 
 The `true` and `false` boolean values are used primarily for decision making. Accordingly, non-negated, boolean-returning operators, aka logical operators, begin with the `?` character (to signal asking a question to make a decision).
 
@@ -585,7 +585,7 @@ true !or false;                 // false
 
 We'll see more `?`-prefixed, boolean-returning operators in the next section, all of which can also be negated by swapping `?` for `!`.
 
-### Equality And Comparison
+## Equality And Comparison
 
 The `?=` operator checks for equality:
 
@@ -692,7 +692,7 @@ x !<= y;                // false
 | !<>= 100, y, 100 |;   // false
 ```
 
-### Pattern Matching
+## Pattern Matching
 
 To make decisions (with booleans!), use pattern matching. There are two forms:
 
@@ -812,7 +812,7 @@ greeting;               // "Hello!"
 
 **Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Moreover, `?:` is also equivalent to `?[true]`, which clearly would *always match*. Readability preferences may dictate any of those style options, depending on the circumstances, but generally the shorter `?:` form is most idiomatic.
 
-#### Guard Expressions
+### Guard Expressions
 
 When an independent pattern matching expression would only have one clause, the clause can be specified standalone, as a *guard* expression.
 
@@ -833,7 +833,7 @@ def myName: "Kyle";
 ![?empty myName]: printGreeting(myName);
 ```
 
-### Records And Tuples
+## Records And Tuples
 
 Records are immutable collections of values, delimited by `<    >`.
 
@@ -953,7 +953,7 @@ As shown, the `<{    }>` *def-block* can contain any arbitrary logic for determi
 
 Inside a `<{    }>` *def-block*, the `#` sigil indicates a self-reference to the current Record/Tuple context that's being defined, and can be used either in l-value (assignment target) or r-value (value expression) positions. However, these special self-references cannot cross inner-function boundaries.
 
-#### Equality Comparison
+### Equality Comparison
 
 Since Records/Tuples are primitive (and immutable) value types in **Foi**, equality comparison is structural (meaning deep contents comparison rather than reference identity).
 
@@ -977,7 +977,7 @@ b ?= c;         // true
 c ?= a;         // true
 ```
 
-#### Inspecting
+### Inspecting
 
 You can determine if a value is *in* a Tuple with the `?in` / `!in` operator:
 
@@ -1004,7 +1004,7 @@ person ?has "middle";           // false
 person !has "nickname";         // true
 ```
 
-#### Generating Sequences (Ranges)
+### Generating Sequences (Ranges)
 
 If you want to generate a list (Tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or evaluation-expression form).
 
@@ -1034,7 +1034,7 @@ def alphabet: a..z;
 
 The start/end values must be of the same data type; `3.."g"` will not work.
 
-#### Deriving Instead Of Mutating
+### Deriving Instead Of Mutating
 
 Since Records/Tuples are immutable, to "change" their contents requires you to derive a new Record/Tuple.
 
@@ -1179,7 +1179,7 @@ def entry: < &person, nickname: empty >;
 
 As shown, `empty` means the *absence of a value*, and thus cannot actually be held in a Record/Tuple.
 
-#### Maps
+### Maps
 
 A Record can also act as a *map*, in that you can use another Record/Tuple *as a field* (not just as a value), using the `%` sigil to start the field name:
 
@@ -1192,7 +1192,7 @@ dataMap[numbers];           // "my favorites"
 
 **Note:** Like `&`, the `%` (map-field) sigil is not an operator, and can only be used inside a `<    >` Record definition.
 
-#### Sets
+### Sets
 
 A Set is a Tuple that only has unique values. An alternate Tuple definition form, delimited with `<[    ]>` instead, is provided for convenience, to ensure each unique value is only stored once:
 
@@ -1234,7 +1234,7 @@ set1 !$= set3;                  // true
 
 **Note:** Unordered (Set equality) comparison is slower than ordered comparison (Tuple equality). This cost is worth paying if you really need to compare two Sets, but it may be worth examining if a different approach is feasible.
 
-### Functions
+## Functions
 
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
@@ -1282,7 +1282,7 @@ def myFn: defn(x,y) ^x + y;
 |;                                  // 18
 ```
 
-#### Default Parameter Values
+### Default Parameter Values
 
 To default a function parameter value:
 
@@ -1292,7 +1292,7 @@ defn add(x: 0, y: 0) ^x + y;
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
 
-#### Negating A Predicate
+### Negating A Predicate
 
 A predicate is a boolean-returning function. For example:
 
@@ -1311,7 +1311,7 @@ def isEven: | ! isOdd |;
 
 **Note:** `!` is overloaded to produce a negated (aka, complement) function if used against a function value. Otherwise, it acts to flip/negate a boolean value.
 
-#### Function Pre-conditions
+### Function Pre-conditions
 
 It's common that we write function logic while making certain assumptions (aka: expectations, requirements, pre-requisites) for the parameter inputs.
 
@@ -1408,7 +1408,7 @@ result1;            // 3
 result2;            // 0
 ```
 
-#### Named Arguments
+### Named Arguments
 
 To override positional argument-parameter binding at a function call-site, the evaluation-expression form can specify which parameter name each argument corresponds to (in any order):
 
@@ -1429,7 +1429,7 @@ For example:
 * a function parameter might always be named `cb` or `fn`
 * a list/array parameter might always be named `list`, `arr`, or even `vs` (i.e., the plural of `v`)
 
-#### Function Recursion
+### Function Recursion
 
 Function recursion is supported:
 
@@ -1451,7 +1451,7 @@ defn factorial(v,tot: 1) ![v ?> 1]: tot {
 factorial(5);                   // 120
 ```
 
-#### Function Currying
+### Function Currying
 
 Function definitions can optionally be curried:
 
@@ -1467,7 +1467,7 @@ add(6)(12);                         // 18
 add(6,12);                          // 18
 ```
 
-#### Function Overs
+### Function Overs
 
 Function definitions must declare side-effects (reassignment of free/outer variables) using the `:over` keyword:
 
@@ -1489,7 +1489,7 @@ defn lookupCustomer(id) :over (customerCache) {
 
 **Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `:over` clause. The `:over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
 
-#### Function Composition
+### Function Composition
 
 Function composition can be defined in left-to-right style, with the `+>` flow operator:
 
@@ -1523,7 +1523,7 @@ compute1(11);           // 18
 compute2(11);           // 18
 ```
 
-#### Function Pipelines
+### Function Pipelines
 
 By contrast, the `#>` pipeline operator (F#-style) operates left-to-right like this:
 
@@ -1619,13 +1619,13 @@ compute(11);    // 18
 
 The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
 
-### Base Unit Functions
+## Base Unit Functions
 
 A unit function, also known as a unit constructor, is a utility for "constructing" a value. There are two helpful utility unit functions that are nearly ubiquitous in FP programs.
 
 **Foi** provides both of these unit function utilities built-in.
 
-#### Value Identity Function
+### Value Identity Function
 
 The first is often referred to as "identity". It's a function that takes a single input and simply returns it untouched. You could define your own like this:
 
@@ -1666,7 +1666,7 @@ defn formatRecord(record,formatFn: @) {
 
 The `@` serves as a default pass-through function here.
 
-#### Null-Application Function
+### Null-Application Function
 
 It's also very common to need a function which takes no argument, but returns some fixed value. There are places where a function is expected -- for example, operators like `~cata` or `~map` -- and yet we want to provide a placeholder function that returns a fixed value.
 
@@ -1726,7 +1726,7 @@ defn getName(record,getLabel: @@"Default") {
 
 The `@@` here constructs a default `getLabel` function that just returns the value `"Default"`.
 
-### Loops
+## Loops
 
 Perhaps some of the most distinctive features in various programming languages (FP-oriented versus more general) is the mechanics of looping/iteration. Imperative languages tend to have a variety of loop types (`for`, `while`, `do..while`, etc), whereas FP languages favor iterations/comprehensions (`map`, `filter`, `reduce` / `fold`, etc).
 
@@ -1819,13 +1819,13 @@ In general, the result of the `~each` operation is another *range* (e.g., Record
 
 **Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be the final boolean `false` that terminated the *range*.
 
-### List Comprehensions
+## List Comprehensions
 
 However, moving beyond imperative `~each` looping of Records/Tuples, **Foi** provides a variety of list comprehensions, including: `~map`, `~flatMap`, `~filter`, `~fold`, and `~foldR`.
 
 These must all have a non-conditional *range* operand; when the *range* is a list (Tuple), they act as *list comprehensions*.
 
-#### Filter Comprehension (List)
+### Filter Comprehension (List)
 
 The *iteration* operand for the `~filter` comprehension is a *predicate*, meaning for each value in the list (Tuple), it must compute a `true` to keep (aka, "filter in") the value, or `false` to discard (aka, "filter out") the value:
 
@@ -1845,7 +1845,7 @@ The `~filter` comprehension requires a list (Tuple) *range*, and its final resul
 
 **Note:** Just like with loops, all these comprehensions support the *iteration* operand being a function, an inline function definition, or an inline-block.
 
-#### Map Comprehension (List)
+### Map Comprehension (List)
 
 Perhaps one of the most common/recognizable list comprehensions is *map*:
 
@@ -1918,7 +1918,7 @@ zip(< 1, 2, 3 >,< 4, 5, 6 >);
 
 As shown, returning a list (Tuple) from the *map iteration* ends up with a list of sub-lists. When a *zip* is called for, this is the approach.
 
-#### FlatMap Comprehension (List)
+### FlatMap Comprehension (List)
 
 When *mapping* two or more lists (Tuples) together, sometimes what we want is a single-level list, with all the sub-lists flattened out. This operation can be referred to as a *merge*.
 
@@ -1933,7 +1933,7 @@ merge(< 1, 2, 3 >,< 4, 5, 6 >);
 
 **Note:** You may recognize that "flatMap" often goes by alternate names in other contexts/languages: "bind", "chain", etc. As we'll see later with [Monadic Bind](#monadic-bind), `~flatMap` has various aliases: `~bind`, `~chain`, and the shorter/generally more preferred `~.`. They all work identically, so readability preferences dictate which to use.
 
-#### Do Comprehension (List)
+### Do Comprehension (List)
 
 It may not seem obvious yet, but `~.` (aka, `~flatMap`, `~bind`, or `~chain`) is likely to be a fairly common list (Tuple) comprehension operation in your programs.
 
@@ -2115,7 +2115,7 @@ The `~map` form is clearer here -- seems a bit more obvious and less magical -- 
 
 By contrast, the *do comprehension* form really shines when there are multiple comprehensions composed together, especially if computations need to access values from each of them, in a single scope. That's precisely what the magical *do comprehension* is all about.
 
-#### Fold Comprehensions (List)
+### Fold Comprehensions (List)
 
 The `~fold` comprehension (left-to-right), often referred to as *reduce*, works like this with lists (Tuples):
 
@@ -2191,7 +2191,7 @@ defn sub(x,y) ^x - y;
 // -13   (1 - 2 - 3 - 4 - 5)
 ```
 
-### Monads (And Friends)
+## Monads (And Friends)
 
 The identity monad in **Foi** is called `Id`, and the empty monad is called `None`. These two are actually paired in the [`Maybe` monad type](#maybe-monad), as discussed later.
 
@@ -2224,7 +2224,7 @@ ofId(42);               // Id{42}
 
 A monadic value is a valid *range* for certain comprehensions, as we'll now explore.
 
-#### Monadic Map
+### Monadic Map
 
 Since [broader Category Theory](#broader-category-theory-capabilities) shows that Monads are Functors/Mappables, monadic values can also be used as the *range* for a `~map` comprehension:
 
@@ -2253,7 +2253,7 @@ None@ ~map double;      // None
 
 **Note:** The `double()` invocation won't happen for the `None@`-constructed monadic value.
 
-#### Monadic Bind
+### Monadic Bind
 
 Monadic values also (obviously!) support the `~bind` comprehension:
 
@@ -2270,7 +2270,7 @@ m ~. (double +> Id@);           // Id{42}
 
 **Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~.` are all aliases for the `~bind` comprehension. All 4 are interchangable, but for brevity sake, `~.` is generally most preferable.
 
-#### The Monad Laws
+### The Monad Laws
 
 For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad (via its `@` unit-constructor) and the `~.` *bind* operator:
 
@@ -2305,7 +2305,7 @@ For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad
     // Id{42}
     ```
 
-#### Monadic Do Comprehension
+### Monadic Do Comprehension
 
 Recall the [*do comprehension* for lists](#do-comprehension-list) with the `~~` operator.
 
@@ -2371,7 +2371,7 @@ Id ~~ {
 // Id{10}
 ```
 
-#### Monadic Function Returns
+### Monadic Function Returns
 
 A function's return value can be explicitly expressed monadically:
 
@@ -2403,7 +2403,7 @@ defn factorialM(v,tot: Id@ 1) ![v ?> 1]: tot {
 factorialM(5);                   // Id{120}
 ```
 
-#### Pattern Matching Monads
+### Pattern Matching Monads
 
 You can use [pattern matching](#pattern-matching) to determine which type of monad instance is being dealt with:
 
@@ -2420,7 +2420,7 @@ def m: getSomeMonad(42);
 
 **Note:** More on [types and the `?as` operator](#type-annotations) later.
 
-#### `List` Monad
+### `List` Monad
 
 For something to be a monad, we need it to be able to satisfy [the 3 monadic laws](#the-monad-laws). In particular, it needs a *bind* operation and it needs a unit constructor.
 
@@ -2454,7 +2454,7 @@ List@ 20 ~. (v) {
 
 So, there you go: the `List` monad.
 
-#### `Maybe` Monad
+### `Maybe` Monad
 
 The `Id` and `None` monads are paired in the `Maybe` Sum type monad. For readability preferences, `Maybe.None` is an alias for `None`, and `Maybe.Id` is an alias for `Id`. Moreover, to adhere to the monadic laws, `Maybe@` is the same as `Id@`:
 
@@ -2556,7 +2556,7 @@ Maybe ~~ {
 
 Since the `prop("billingAddress",order)` returns a `None`, the rest of that second `Maybe ~~ {    }` *do comprehension* will short-circuit exit.
 
-#### Foldable / Catamorphism
+### Foldable / Catamorphism
 
 We briefly mentioned Foldable earlier, with the `~fold` comprehension on lists (Tuples). We'll revisit the generalized Foldable (more broadly, Catamorphism) behavior now, in the context of monads.
 
@@ -2605,7 +2605,7 @@ For the list (Tuple) `~fold`, the `two()` function is eagerly invoked to provide
 
 For the monadic `~fold`, the `two()` instead provides the *default-value* operand (used in the case of a `None` instance).
 
-#### `Either` Monad
+### `Either` Monad
 
 The `Either` monad is another binary Sum type, pairing `Left` and `Right`. For readability preferences, `Either.Left` is an alias for `Left`, and `Either.Right` is an alias for `Right`. Also, the `Either@` unit constructor is an alias for `Right@`.
 
@@ -2654,13 +2654,13 @@ Above, `halve(0)` returns a `Left` holding the error message, which we then tran
 
 Then, for `m1` and `m2` instances, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. We fold the resulting `Either` instances, extracting the values `"Missing!"` and `2`, respectively.
 
-### Broader Category Theory Capabilities
+## Broader Category Theory Capabilities
 
 So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` / `~cata` comprehension).
 
 But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, these are separate topics.
 
-#### Applicative
+### Applicative
 
 Applicative is a pattern for holding a function in a monadic instance, then "applying" the underlying value from another monadic instance as an input to this function, returning the result back as another monadic value.
 
@@ -2719,7 +2719,7 @@ def four: Id@ 4;
 // Id{7}
 ```
 
-#### Concatable / Semigroup
+### Concatable / Semigroup
 
 Concatable (formally, Semigroup) defines the ability for values to be "concatenated" (combined with each other).
 
@@ -2743,7 +2743,7 @@ Most monadic values in **Foi** also implement Concatable, meaning that if used w
 // Id{"Hello world"}
 ```
 
-#### Monoid
+### Monoid
 
 Monoid is a Semigroup plus an "empty value" -- such that when concatenated with, the original value is unchanged. For example, these are all monoids:
 
@@ -2855,7 +2855,7 @@ any(b);     // Id{true}
 
 `~fold` is more flexible in letting you specify custom *fold*ing (concatenation) logic for values. By contrast, `~foldMap` assumes/relies on the built-in `+` operation for values being *fold*ed (and recursively, concatenating underlying values).
 
-### Type Annotations
+## Type Annotations
 
 Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce.
 
