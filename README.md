@@ -9,7 +9,7 @@ I'm jotting down some very early thoughts on what I think I want to design for t
 It should feel intuitive when doing the *right*&trade; things, appear obvious when doing the *risky* things, and discourage doing the *dangerous* things.
 
 <details>
-    <summary>Aspirational Design Ideas for Foi</summary>
+    <summary>Inspirational/Aspirational Design Ideas for Foi</summary>
     <p></p>
     <ul>
         <li>versioned, with no backwards-compat guarantee</li>
@@ -47,6 +47,12 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
 
 The following is a partial exploration of what I've been imagining for awhile. There's a lot still to work out.
 
+* [Primitive Values](#primitive-values)
+    - [Empty](#empty)
+    - [Numbers](#numbers)
+    - [Booleans](#booleans)
+    - [Strings](#strings)
+* [Identifiers](#identifiers)
 * [Code Comments](#code-comments)
 * [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
@@ -119,23 +125,171 @@ The following is a partial exploration of what I've been imagining for awhile. T
 * [Generator Monad](#generator-monad)
 * [Type Annotations](#type-annotations)
 
-## Code Comments
+## Primitive Values
 
-Adding comments to **Foi** code takes the same form as in JS:
+**Foi** comes with the following built-in primitive value types:
+
+* Empty: `empty`
+* Numbers: `42`, `-3.14`
+* Booleans: `true`, `false`
+* Strings: `"Hello, world!"`
+* [Records, Tuples](#records-and-tuples): `< id: 123 >`, `< 1, 2, 3 >`
+* [Monadic instances](#monads-and-friends): `Id`, `Left`
+
+### Empty
+
+The `empty` value signifies the absence of any other affirmative value.
+
+### Numbers
+
+Numbers in **Foi** are by default specified in base-10 literals (digits `0-9`), including negative values (with `-`) and decimals (with `.`).
+
+`4.0` is a floating point value, whereas `4` is an integer value. These are sometimes interchangeable, and sometimes not.
+
+There are no special numbers (e.g. `NaN`, `Infinity`) in **Foi**. If a value literal, or operation, produces a number value that does not fit validly into one of the number sub-types (floats, integers, etc), the result is a `Left` (monad instance) holding a message indicating the nature of the failure.
 
 ```java
+6 / 0;                  // Left{"Divide by zero is infinite"}
+
+6 / "a";                // Left{"Non-numeric operand"}
+
+0.0000000000000001;     // Left{"Number precision underflow"}
+
+9999999999999999.9;     // Left{"Number precision overflow"}
+```
+
+**Foi** does however have a "negative zero" value, consistent with IEEE-754, which is distinct from *regular* zero:
+
+```java
+0 / 3;                  // 0
+0 / -3;                 // -0
+
+0 ?= -0;                // false
+```
+
+To specify a *more readable* numeric literal, using `_` as an arbitrary separator (in any position), prefix the number literal with a `\`:
+
+```java
+\100_000_003.25;        // 100000003.25
+```
+
+Hexadecimal, Octal, and Binary integers can be specified with respective prefixes (lowercase):
+
+```java
+\h603A;                 // 24634
+\o60072;                // 24634
+\b110000000111010;      // 24634
+```
+
+You can also specify an arbitrarily large (or small) precision value by prefixing with `\@`:
+
+```java
+\@9999999999999999.9;   // Number{9999999999999999.9}
+```
+
+Such values are held in a `Number` [monadic instance](#monads-and-friends). To perform mathematical operations with such values, an arbitrary-precision library must be used.
+
+**Note:** One special numeric prefix is `\u`, which actually produces a character/string from the numeric hexadecimal representation of its code-point. So the numeric literal `\u263A` actually produces the single-character string `"☺"`.
+
+### Booleans
+
+There are two boolean values: `true` and `false`; there are no "truthy" or "falsy" values in **Foi**.
+
+However, some non-boolean values can be explicitly converted to a `true` or `false` equivalent via a [value-type annotation](#type-annotations). This is never done implicitly, though.
+
+### Strings
+
+Strings are always delimited with `"    "` (double-quotes).
+
+To include a `"` character inside a string literal, it must be escaped with a second `"`, like this: `"Hello, ""friend""!"`; when printed, that value would look like `Hello, "friend"!`.
+
+Other than the `""` escaping, the contents of strings are not, by default, parsed/processed in any way.
+
+That is, if you spread a string across multiple lines, those new lines (and any leading whitespace) are included in the string's contents:
+
+```java
+"This is line one,
+   and this is line two.";
+// This is line one,
+//    and this is line two.
+```
+
+If you want to collapse these new lines (and line-leading whitespace) into a single whitespace character, prefix the string literal with a `\`, like this:
+
+```java
+\"This is all on
+   the same
+ line.";
+// This is all on the same line.
+```
+
+To interpolate expressions inside of a string, immediately prefix the string literal with a `` ` `` back-tick, and then also delimit each expression inside the string inside `` ` `` back-ticks:
+
+```java
+`"My name is `name`.";
+// My name is Kyle.
+```
+
+The interpolated expression can be any valid **Foi** expression.
+
+Interpolation is the best way to include a unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
+
+```java
+`"I was happy `\u263A` to see you!";
+// I was happy ☺ to see you!
+```
+
+To include a literal `` ` `` back-tick by itself (not as an interpolation delimiter) in an interpolation-parsed string, escape it with a second `` ` ``, like this:
+
+```java
+`"Here is a single `` back-tick, `name`.";
+// Here is a single ` back-tick, Kyle.
+```
+
+To both collapse new-line/leading whitespace, as well as allow interpolation, combine the `` ` `` and `\` prefixes, in order, like this:
+
+```java
+`\"This is
+   one line, written
+ by `uppercase(name)`.";
+// This is one line, written by KYLE.
+```
+
+## Identifiers
+
+In **Foi**, identifiers are case-sensitive, and can be comprised of any of these characters (with no whitespace):
+
+* `A` - `Z`, `a` - `Z`
+* `0` - `9`
+* `_`
+* `~`
+
+**Note:** There is no restriction on the first character of identifiers, as in some languages.
+
+Identifiers can be any length.
+
+Identifiers cannot conflict with keywords: `def`, `defn`, `deft`, `import`, `export`, etc. They also cannot conflict with named operators: `~each`, `~chain`, `~fold`, etc.
+
+## Code Comments
+
+Adding comments to **Foi** code takes two forms, single-line and multi-line:
+
+````java
 // this is a single line comment
 
 whatever;   // so is this one
 
-/* But...
+```
+But...
    this is a block comment, and
    can span as many lines
-   as needed.
-*/
+     as needed.
 ```
+````
 
-Syntactically, comments count as whitespace, and can thus appear anywhere that whitespace is valid (or required).
+Like markdown, the triple back-tick `` ``` `` fence block for multi-line comments must have both the start and end markers appear on their own line, with nothing preceeding except optional whitespace.
+
+There is no inline code-block as in some languages (like `/*   */`).
 
 ## Imports And Exports
 
@@ -238,7 +392,7 @@ I wanted to take a moment to explain my justification for this choice.
 
 Unlike all those other Lisp languages, **Foi** takes the very unusual step of combining a prefix-Lisp form in the same language as an infix function call form.
 
-And because of the strong familiarity (from non-Lisp) languages of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in infix language form) for expression grouping, providing yet another complication.
+And because of the strong familiarity (from non-Lisp languages) of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in infix language form) for expression grouping, providing yet another complication.
 
 Syntactically/grammatically, it's thus challenging to support variations like `whatever(42)` (infix function call form), `(whatever 42)` (prefix Lisp form), and `(42 + whatever())` (infix expression grouping)... all in the same language, especially as these expressions nest inside each other in complicated ways.
 
@@ -562,8 +716,8 @@ def <
 >: getOrder(123);
 
 price;          // 29.97
-firstItem;      // < price: 29.97, label: .. >
-order;          // < id: 123, items: < < price: 29.97, .. >
+firstItem;      // < price: 29.97, label: ... >
+order;          // < id: 123, items: < < price: 29.97, ... >
 ```
 
 The `:items.0.price` syntax form implicitly assumes a target variable name from the final source property name (`price`) above; for this syntax to be valid, the source property name must be fixed (cannot be a dynamic expression) and a valid identifier (cannot be a number like `0`).
@@ -2992,7 +3146,7 @@ Promises in **Foi** only have a single resolved state, unlike in JS where they c
 Consider:
 
 ```java
-defn fetchCustomers() { /* ..returns promise.. */ };
+defn fetchCustomers() { ..returns promise.. };
 
 defn getCacheData(key)
     ![cache ?has key]: Promise@ (Left@ "Not in cache")
@@ -3037,7 +3191,7 @@ One question that may now come to mind: how can you perform *asynchronous compre
 Here's one way:
 
 ```java
-defn fetch(url) { /* ..returns promise.. */ };
+defn fetch(url) { ..returns promise.. };
 
 defn printResponses(prs)
     ![size(prs) ?> 0]: Promise@ "Complete."
@@ -3058,7 +3212,7 @@ printResponses(urls ~map fetch)
 ~map log;
 // Promise{..pending..}
 //
-// .. eventually ..
+// ... eventually ...
 //
 // resp: response 1
 // resp: response 2
@@ -3107,7 +3261,7 @@ If the *range* operand provided to `~~*` is not a concrete value but instead a t
 
 ```java
 defn printResp(v) { log("Resp: " + v); };
-defn fetchMoreData() { /* .. Promise<Either> .. */ };
+defn fetchMoreData() { ... Promise<Either> ... };
 
 Promise ~~* {
     def respE:: fetchMoreData();
@@ -3793,7 +3947,7 @@ defn processFile(filename) ^IO ~~ {
 
 processFile("my-file.txt")
 .run();
-// < res: .., text: .. >
+// < res: .., text: ... >
 ```
 
 ### Reader
