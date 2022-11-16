@@ -71,6 +71,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Sets](#sets)
 * [Functions](#functions)
     - [Default Parameter Values](#default-parameter-values)
+    - [Gathering Arguments](#gathering-arguments)
     - [Negating a Predicate](#negating-a-predicate)
     - [Function Pre-conditions](#function-pre-conditions)
     - [Named Arguments](#named-arguments)
@@ -1301,6 +1302,18 @@ defn add(x: 0, y: 0) ^x + y;
 ```
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
+
+### Gathering Arguments
+
+To specify a function that collects all individual/positional arguments into a single list (Tuple):
+
+```java
+defn add(*nums) ^| + ...nums |;
+```
+
+The `*` must immediately preceed a single identifier (with no default value), and must be the only listed parameter in the function definition. All arguments passed to this function will be gathered in a single `nums` value.
+
+**Note:** Functions with this variadic parameter gathering in the signature cannot be partially applied.
 
 ### Negating A Predicate
 
