@@ -58,6 +58,7 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Apply (aka Spread)](#apply-aka-spread)
 * [Defining Variables](#defining-variables)
     - [Block-Definitions Clause](#block-definitions-clause)
+    - [Destructured Definitions](#destructured-definitions)
 * [Boolean Logic](#boolean-logic)
 * [Equality and Comparison](#equality-and-comparison)
 * [Pattern Matching](#pattern-matching)
@@ -129,10 +130,10 @@ Std.log("Hello");               // "Hello"
 Std.log(6 + 12);                // 18
 ```
 
-Or import specific members `from` dependencies:
+Or import specific members from a dependency:
 
 ```java
-def log: import from "#Std";
+def < :log >: import "#Std";
 
 log("Hello");                   // "Hello"
 ```
@@ -140,7 +141,7 @@ log("Hello");                   // "Hello"
 The project manifest maps dependency files to identifiers, which can then be imported by name:
 
 ```java
-def myHelper: import from "Utils";
+def < :myHelper >: import "Utils";
 ```
 
 ----
@@ -184,7 +185,7 @@ myFn(1,empty,3,empty,empty,6);
 All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (aka [S-expressions](https://en.wikipedia.org/wiki/S-expression)), with `| |` delimiters, instead of the canonical `( )` Lisp parentheses:
 
 ```java
-import log from "#Std";
+def < :log >: import "#Std";
 
 | log "Hello" |;               // "Hello"
 
@@ -448,8 +449,9 @@ All definitions need a value initialization, but you can use the `empty` value i
 To reassign a variable:
 
 ```java
-def age: empty;
+def age: 41;
 
+// later
 age := 42;
 ```
 
@@ -477,7 +479,7 @@ However, since `def` definitions must appear at the top of their respective scop
 ```java
 def (tmp: 42) {
     tmp := 43;
-}
+};
 ```
 
 Moreover, this definitions-block form is allowed anywhere in its enclosing scope, so it's more flexible than a non-block `def` declaration.
@@ -494,7 +496,7 @@ In addition to the definitions-block form just shown, several other expressions 
     ?[x ?> y]: (tmp: x) {
         x := y;
         y := tmp;
-    }
+    };
     ```
 
 * A [pattern matching clause block](#pattern-matching) with block-definitions clause:
@@ -516,18 +518,52 @@ In addition to the definitions-block form just shown, several other expressions 
         // so skip calling function and
         // default to fixed value 1
         ?: 1
-    }
+    };
     ```
 
 * A [loop iteration block](#loops-and-comprehensions) with block-definitions clause:
 
     ```java
     0..3 ~each (v, idx) {
-        log(v + ": " + idx)
-    }
+        log(v + ": " + idx);
+    };
     ```
 
 **Note:** While function body definitions, and the Record/Tuple *def*-block, both have `{    }` blocks, these *cannot* be prefaced by a block definitions clause.
+
+### Destructured Definitions
+
+When defining a variable where the assignment is intended to step into (aka, "destructure") a [Record/Tuple value](#records-and-tuples)'s contents, we can use a dedicated destructuring form:
+
+```java
+def <
+    :items.0.price,
+    firstItem: items.0,
+    #order
+>: getOrder(123);
+
+price;          // 29.97
+firstItem;      // < price: 29.97, label: .. >
+order;          // < id: 123, items: < < price: 29.97, .. >
+```
+
+The `:items.0.price` syntax form implicitly assumes a target variable name from the final source property name (`price`) above; for this syntax to be valid, the source property name must be fixed (cannot be a dynamic expression) and a valid identifier (cannot be a number like `0`).
+
+If you need to "rename" the target variable -- for example, if the source property name isn't fixed or a suitable identifier -- the target name (`firstItem` above) may be specified before the `:`.
+
+Finally, to capture the entire value being destructured, use `#` prefixing a target variable name.
+
+This destructuring form is also allowed in a block-definitions clause:
+
+```java
+def (< :items.0.price >: getOrder(123)) {
+    price;          // 29.97
+};
+
+order.items ~each (< itemPrice: price >) {
+    itemPrice;      // 29.97
+};
+```
 
 ## Boolean Logic
 
@@ -885,7 +921,7 @@ def person: < first: "Kyle", last: "Simpson" >;
 To define Records/Tuples using arbitrary expressions (other than simple identifiers) for the values, use the evaluation-expression form:
 
 ```java
-import uppercase from "#Std.String";
+def < :String.uppercase >: import "#Std";
 
 def five: 5;
 def numbers: < 4, five, 6 >;
@@ -909,7 +945,7 @@ str.1;                      // "e"
 To determine the length of a string (or a Tuple), or the count of fields in a Record, use the `size()` function:
 
 ```java
-import size from "#Std";
+def < :size >: import "#Std";
 
 size("Hello");              // 5
 size(< "O", "K" >);         // 2
