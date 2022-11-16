@@ -47,6 +47,7 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
 
 The following is a partial exploration of what I've been imagining for awhile. There's a lot still to work out.
 
+* [Code Comments](#code-comments)
 * [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
 * [Evaluation-Expression Form](#evaluation-expression-form) (optional lisp-like function call form)
@@ -117,6 +118,24 @@ The following is a partial exploration of what I've been imagining for awhile. T
     - [Transforming Over Concurrency](#transforming-over-concurrency)
 * [Generator Monad](#generator-monad)
 * [Type Annotations](#type-annotations)
+
+## Code Comments
+
+Adding comments to **Foi** code takes the same form as in JS:
+
+```java
+// this is a single line comment
+
+whatever;   // so is this one
+
+/* But...
+   this is a block comment, and
+   can span as many lines
+   as needed.
+*/
+```
+
+Syntactically, comments count as whitespace, and can thus appear anywhere that whitespace is valid (or required).
 
 ## Imports And Exports
 
