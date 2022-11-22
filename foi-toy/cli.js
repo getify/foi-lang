@@ -402,7 +402,10 @@ function *tokenize(str) {
 				) {
 					escapeToken.value += char;
 					escapeToken.end++;
-					return [ escapeToken, null ];
+					return [
+						escapeToken,
+						{ type: "escapedNumber", context: escapeToken, }
+					];
 				}
 				else {
 					escapeToken = null;
@@ -620,7 +623,10 @@ function *tokenize(str) {
 				// otherwise, no longer in a valid
 				// escaped number literal
 				else {
-					return [ TOKEN("GENERAL",char,position), POP_STATE ];
+					return [
+						TOKEN("GENERAL",char,position),
+						POP_STATE
+					];
 				}
 			}
 
@@ -653,7 +659,7 @@ function *tokenize(str) {
 			}
 
 			case "-": {
-				// is hyphen starting the negative-
+				// is hyphen starting a negative-
 				// compatible number literal (non-
 				// unicode)
 				if (
@@ -673,6 +679,30 @@ function *tokenize(str) {
 				else {
 					return [
 						TOKEN("HYPHEN",char,position),
+						POP_STATE
+					];
+				}
+			}
+
+			case "_": {
+				// separator in valid position in
+				// escaped number literal?
+				if (
+					[ "regular", "monad" ].includes(escapeType) &&
+					pendingToken != null &&
+					pendingToken.type == "NUMBER" &&
+					(
+						[ "0","1","2","3","4","5","6","7","8","9"]
+						.includes(pendingToken.value[pendingToken.value.length-1])
+					)
+				) {
+					return [ TOKEN("NUMBER",char,position), null ];
+				}
+				// otherwise, must exit from the
+				// number literal
+				else {
+					return [
+						TOKEN("UNDERSCORE",char,position),
 						POP_STATE
 					];
 				}
