@@ -1,9 +1,9 @@
 // number literals
 
-```
-this tests various kinds of number
+///
+this tests various kinds of number/unicode
 literals
-```
+///
 
 def a: 42;
 
@@ -13,7 +13,7 @@ def c: \42_000;
 
 def d: \h42a;
 
-def e: \b10011101;
+def /// inline comment ///e: \b10011101;
 
 def f: \o427;
 

@@ -26,3 +26,5 @@ great!
 
 def f: \`"Here is the `best(\`"label: `label`") #> uppercase`
    part!";
+
+def g: \`"A string with `some + /// inline comment in interpolated expr /// 42`!";

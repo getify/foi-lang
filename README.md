@@ -268,7 +268,7 @@ In **Foi**, identifiers are case-sensitive, and can be comprised of any of these
 * `_`
 * `~`
 
-**Note:** There is no restriction on the first character of identifiers, as in some languages.
+**Note:** There is no restriction on the first character of identifiers, as in some languages; so `3stars` is a valid identifier name. However, an identifier must have at least one non-numeric (`0` - `9`, `-`, and `.`) character somewhere in it. Otherwise, it's just a number.
 
 Identifiers can be any length.
 
@@ -283,17 +283,14 @@ Adding comments to **Foi** code takes two forms, single-line and multi-line:
 
 whatever;   // so is this one
 
-```
-But...
+another; /// But...
    this is a block comment, and
    can span as many lines
      as needed.
-```
+///
 ````
 
-Like markdown, the triple back-tick `` ``` `` fence block for multi-line comments must have both the start and end markers appear on their own line, with nothing preceeding except optional whitespace.
-
-There is no inline code-block as in some languages (like `/*   */`).
+The triple-slash `///` comment block can start anywhere on a line, span as many lines as needed (including just a single line), and must end with another triple-slash `///`.
 
 ## Imports And Exports
 

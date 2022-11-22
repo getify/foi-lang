@@ -1,5 +1,6 @@
 "use strict";
 
+var util = require("util");
 var path = require("path");
 var fs = require("fs");
 var args = require("minimist")(process.argv.slice(2));
@@ -15,6 +16,9 @@ function main() {
 		console.error("Missing --file=.. parameter.");
 		return;
 	}
+
+	// allow Node to print out the entire array
+	util.inspect.defaultOptions.maxArrayLength = null;
 
 	var fileContents = fs.readFileSync(path.resolve(process.cwd(),args.file),"utf-8");
 
@@ -36,6 +40,7 @@ function *tokenize(str) {
 		escapedString,
 		escapedNumber,
 		interpolatedBase,
+		comment,
 	};
 
 	for (let [idx,char] of Object.entries(str)) {
@@ -61,7 +66,11 @@ function *tokenize(str) {
 
 					// should we defer this token?
 					if (
-						[ "DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE", "GENERAL", "STRING", "NUMBER" ]
+						[
+							"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
+							"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
+							"COMMENT"
+						]
 						.includes(nextToken.type)
 					) {
 						pendingToken = nextToken;
@@ -126,9 +135,25 @@ function *tokenize(str) {
 			pendingToken.end++;
 			return pendingToken;
 		}
+		// starting a comment?
+		else if (
+			pendingToken != null &&
+			pendingToken.type == "FORWARD_SLASH" &&
+			type == "FORWARD_SLASH"
+		) {
+			pendingToken.type = "COMMENT";
+			pendingToken.value += value;
+			pendingToken.end += value.length;
+			return pendingToken;
+		}
 		// appending to pending token?
 		else if (
-			[ "WHITESPACE", "GENERAL", "STRING", "NUMBER" ].includes(type) &&
+			(
+				[
+					"WHITESPACE", "GENERAL", "STRING", "NUMBER",
+					"COMMENT"
+				].includes(type)
+			) &&
 			pendingToken != null &&
 			pendingToken.type == type
 		) {
@@ -253,12 +278,26 @@ function *tokenize(str) {
 				escapeToken = null;
 				return [ TOKEN("QMARK",char,position), null ];
 			}
+
 			case "/": {
 				escapeToken = null;
-				return [ TOKEN("FORWARD_SLASH",char,position), null ];
+				let nextToken = TOKEN("FORWARD_SLASH",char,position);
+
+				// started a comment?
+				if (nextToken.type == "COMMENT") {
+					return [
+						nextToken,
+						{ type: "comment", context: nextToken.value, }
+					];
+				}
+				else {
+					return [ nextToken, null ];
+				}
 			}
 
 			// whitespace?
+			// TODO: handle more kinds of whitespace,
+			// like unicode characters
 			case " ":
 			case "\t":
 			case "\r":
@@ -443,6 +482,8 @@ function *tokenize(str) {
 
 		switch (char) {
 			// whitespace?
+			// TODO: handle more kinds of whitespace,
+			// like unicode characters
 			case " ":
 			case "\t":
 			case "\r":
@@ -643,6 +684,54 @@ function *tokenize(str) {
 				let [ nextToken ] = base(char,position);
 				return [ nextToken, POP_STATE ];
 			}
+		}
+	}
+
+	function comment(char,position) {
+		var state = currentState[currentState.length-1];
+		var commentType = (
+			state.context == "//" ? "line" : "block"
+		);
+		escapeToken = null;
+
+		switch (char) {
+			case "/": {
+				let nextToken = TOKEN("COMMENT",char,position);
+
+				// started a comment-block with
+				// triple-slash (///)?
+				if (pendingToken.value == "///") {
+					state.context = "///";
+				}
+
+				// ending a block-comment?
+				if (
+					commentType == "block" &&
+					pendingToken.value.length >= 6 &&
+					pendingToken.value.slice(-3) == "///"
+				) {
+					return [ nextToken, POP_STATE ];
+				}
+				// otherwise, just part of the comment
+				else {
+					return [ nextToken, null ];
+				}
+			}
+
+			case "\n": {
+				// ending a line-comment?
+				if (commentType == "line") {
+					return [
+						TOKEN("WHITESPACE",char,position),
+						POP_STATE
+					];
+				}
+				else {
+					return [ TOKEN("COMMENT",char,position), null ];
+				}
+			}
+
+			default: return [ TOKEN("COMMENT",char,position), null ];
 		}
 	}
 }
