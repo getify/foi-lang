@@ -43,6 +43,10 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
     </p>
 </details>
 
+## Foi-Toy
+
+See [Foi-Toy](/foi-toy/#readme), an experimental tool for playing around with **Foi** code.
+
 ## Table of Contents
 
 The following is a partial exploration of what I've been imagining for awhile. There's a lot still to work out.
@@ -223,10 +227,10 @@ If you want to collapse these new lines (and line-leading whitespace) into a sin
 // This is all on the same line.
 ```
 
-To interpolate expressions inside of a string, immediately prefix the string literal with a `` ` `` back-tick, and then also delimit each expression inside the string inside `` ` `` back-ticks:
+To interpolate expressions inside of a string, immediately prefix the string literal with a `` \` `` (backslash + back-tick), and then also delimit each expression inside the string with `` ` `` back-ticks:
 
 ```java
-`"My name is `name`.";
+\`"My name is `name`.";
 // My name is Kyle.
 ```
 
@@ -235,21 +239,21 @@ The interpolated expression can be any valid **Foi** expression.
 Interpolation is the best way to include a unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
 
 ```java
-`"I was happy `\u263A` to see you!";
+\`"I was happy `\u263A` to see you!";
 // I was happy ☺ to see you!
 ```
 
 To include a literal `` ` `` back-tick by itself (not as an interpolation delimiter) in an interpolation-parsed string, escape it with a second `` ` ``, like this:
 
 ```java
-`"Here is a single `` back-tick, `name`.";
+\`"Here is a single `` back-tick, `name`.";
 // Here is a single ` back-tick, Kyle.
 ```
 
-To both collapse new-line/leading whitespace, as well as allow interpolation, combine the `` ` `` and `\` prefixes, in order, like this:
+To both collapse new-line/leading whitespace, as well as allow interpolation, combine the `\` and  `` \` ``, in order, like this:
 
 ```java
-`\"This is
+\\`"This is
    one line, written
  by `uppercase(name)`.";
 // This is one line, written by KYLE.

@@ -1,0 +1,22 @@
+// number literals
+
+```
+this tests various kinds of number
+literals
+```
+
+def a: 42;
+
+def b: -42.135;
+
+def c: \42_000;
+
+def d: \h42a;
+
+def e: \b10011101;
+
+def f: \o427;
+
+def g: \@123456789012345678901234567890;
+
+def h: \uA327;

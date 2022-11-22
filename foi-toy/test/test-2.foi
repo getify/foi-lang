@@ -1,0 +1,28 @@
+// string literals
+
+```
+this tests various kinds of string
+literals
+```
+
+def a: "hello, world!";
+
+def b: "this ""really"" is
+  very
+cool!";
+
+def c: \"What do you
+    think
+   of
+  this?";
+
+def d: \`"My name is: `name`, and here is a `` back-tick character.";
+
+def e: \\`"You must go
+
+	see the `showName` show, it's
+great!
+";
+
+def f: \`"Here is the `best(\`"label: `label`") #> uppercase`
+   part!";
