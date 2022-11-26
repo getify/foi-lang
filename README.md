@@ -909,8 +909,8 @@ x !<= y;                // false
 
 | ?<>  40,  x, 50  |;   // true
 | !<>  40,  x, 50  |;   // false
-| ?<>= 100, y, 100 |;   // true
-| !<>= 100, y, 100 |;   // false
+| ?<=> 100, y, 100 |;   // true
+| !<=> 100, y, 100 |;   // false
 ```
 
 ## Pattern Matching
@@ -2164,11 +2164,11 @@ merge(< 1, 2, 3 >,< 4, 5, 6 >);
 // < 1, 4, 2, 5, 3, 6 >
 ```
 
-**Note:** You may recognize that "flatMap" often goes by alternate names in other contexts/languages: "bind", "chain", etc. As we'll see later with [Monadic Bind](#monadic-bind), `~flatMap` has various aliases: `~bind`, `~chain`, and the shorter/generally more preferred `~.`. They all work identically, so readability preferences dictate which to use.
+**Note:** You may recognize that "flatMap" often goes by alternate names in other contexts/languages: "bind", "chain", etc. As we'll see later with [Monadic Bind](#monadic-bind), `~flatMap` has various aliases: `~bind`, `~chain`, and the shorter/generally more preferred `~<`. They all work identically, so readability preferences dictate which to use.
 
 ### Do Comprehension (List)
 
-It may not seem obvious yet, but `~.` (aka, `~flatMap`, `~bind`, or `~chain`) is likely to be a fairly common list (Tuple) comprehension operation in your programs.
+It may not seem obvious yet, but `~<` (aka, `~flatMap`, `~bind`, or `~chain`) is likely to be a fairly common list (Tuple) comprehension operation in your programs.
 
 For example, it's common to *flat-map* with multiple lists, and need access to a value from each list to perform the mapping:
 
@@ -2176,25 +2176,25 @@ For example, it's common to *flat-map* with multiple lists, and need access to a
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-xs ~. (x) {
-    ys ~. (y) {
+xs ~< (x) {
+    ys ~< (y) {
         < x + y >;
     };
 };
 // < 9, 10, 11, 12 >
 ```
 
-Notice that to pull this off -- accessing both `x` and `y` in the same scope! -- we had to nest the second `~.` operation inside the *iteration* scope of the first `~.` operation. That works, but it should *smell* a little bit.
+Notice that to pull this off -- accessing both `x` and `y` in the same scope! -- we had to nest the second `~<` operation inside the *iteration* scope of the first `~<` operation. That works, but it should *smell* a little bit.
 
 ----
 
-By the way, we illustrated the above with two `~.` *flat-map*s, but there's an alternate way to think about it:
+By the way, we illustrated the above with two `~<` *flat-map*s, but there's an alternate way to think about it:
 
 ```java
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-xs ~. (x) {
+xs ~< (x) {
     ys ~map (y) {
         x + y;
     };
@@ -2202,13 +2202,13 @@ xs ~. (x) {
 // < 9, 10, 11, 12 >
 ```
 
-Notice that here, I replaced the innermost `~.` with a `~map`, and then omitted the `<    >` Tuple wrapped around the `x + y` computation.
+Notice that here, I replaced the innermost `~<` with a `~map`, and then omitted the `<    >` Tuple wrapped around the `x + y` computation.
 
-The end result is equivalent. Generally, it doesn't really matter which way makes most sense to you; pick one and go with it. But for this guide, I'll stick with the former double `~.` processing model.
+The end result is equivalent. Generally, it doesn't really matter which way makes most sense to you; pick one and go with it. But for this guide, I'll stick with the former double `~<` processing model.
 
 ----
 
-Whichever way we mentally model this task, we'll likely encounter it rather often. And as ugly as multiple nested scopes can get (especially if there's 3 or more of these steps/nestings involved), **Foi** provides a special comprehension: `~~`, called the *do comprehension*.
+Whichever way we mentally model this task, we'll likely encounter it rather often. And as ugly as multiple nested scopes can get (especially if there's 3 or more of these steps/nestings involved), **Foi** provides a special comprehension: `~<<`, called the *do comprehension*.
 
 **Note:** In other languages (e.g., Haskell, Scala, etc), you may see something similar referred to as the "do syntax", most commonly in a monadic context. However, here we're broadening/generalizing the concept to include lists (Tuples).
 
@@ -2218,7 +2218,7 @@ Consider:
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-List ~~ {
+List ~<< {
     def x:: xs;
     def y:: ys;
     x + y;
@@ -2226,22 +2226,22 @@ List ~~ {
 // < 9, 10, 11, 12 >
 ```
 
-There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~.` version) at the top of this section.
+There are several *special* things going on here. But hopefully once I describe the processing steps, you'll recognize it as the same as the first snippet (double `~<` version) at the top of this section.
 
-First off, the `~~` operator's "range" operand is [`List`](#list-monad), the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? But it's even more unusual, in that this is a **type** for the *range* rather than a concrete value. Just hang with me.
+First off, the `~<<` operator's "range" operand is [`List`](#list-monad), the formal type for a Tuple. That should seem a bit strange, since nothing should really happen if you perform a comprehension/iteration across an empty list... right? But it's even more unusual, in that this is a **type** for the *range* rather than a concrete value. Just hang with me.
 
 Notice the `::` instead of the typical `:` in the `def` statement. What `def x:: xs` is saying is, pull out each value from `xs`, one at a time, and assign each value to `x`, on successive iterations of the block.
 
 *THAT* you should recognize as a comprehension. Moreover, the second `def y:: ys` is pulling out each value from `y` one at a time, and assigning it to `y`. Again: comprehension.
 
-Here's the tricky part: the second comprehension is happening **for each iteration of the first comprehension**. In other words, the second is *nested in* the first. Just like the earlier double `~.` snippet, right?
+Here's the tricky part: the second comprehension is happening **for each iteration of the first comprehension**. In other words, the second is *nested in* the first. Just like the earlier double `~<` snippet, right?
 
 When each *iteration*'s `x + y` operation is performed, the result is automatically wrapped in **the same type as** the *range* context -- remember: if omitted, an empty `<>` tuple is assumed for the *range*. Finally, that result is *flat-map*ped into the overall result.
 
 We can also just include the special iterative assignments in in a [block-definitions clause](#block-definitions-clause):
 
 ```java
-~~ (x:: xs, y:: ys) {
+~<< (x:: xs, y:: ys) {
     x + y;
 };
 // < 9, 10, 11, 12 >
@@ -2259,7 +2259,7 @@ Consider the non-*do comprehension* form:
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-xs ~. (x) {
+xs ~< (x) {
     ys ~map (y) {
         < x + y >;   // <-- notice the tuple and ~map
     };
@@ -2269,7 +2269,7 @@ xs ~. (x) {
 
 When it's a literal value like this, you can omit the `<    >`.
 
-But when that "final" value comes from an outside computation, we can't just omit the `<    >`. So we're forced to use `~.` instead of `~map`:
+But when that "final" value comes from an outside computation, we can't just omit the `<    >`. So we're forced to use `~<` instead of `~map`:
 
 ```java
 defn tup(x,y) ^(< x + y >);
@@ -2277,8 +2277,8 @@ defn tup(x,y) ^(< x + y >);
 def xs: < 2, 4 >;
 def ys: < 7, 8 >;
 
-xs ~. (x) {
-    ys ~. (y) {      // <-- notice ~. instead of ~map
+xs ~< (x) {
+    ys ~< (y) {      // <-- notice ~< instead of ~map
         tup(x,y);
     };
 };
@@ -2288,7 +2288,7 @@ xs ~. (x) {
 But for the *do comprehension* form, we ostensibly cannot control the final step's behavior:
 
 ```java
-~~ (x:: xs, y:: ys) {
+~<< (x:: xs, y:: ys) {
     tup(x,y);
 };
 // < < 9 >, < 10 >, < 11 >, < 12 > >     <-- oops!
@@ -2297,13 +2297,13 @@ But for the *do comprehension* form, we ostensibly cannot control the final step
 So here's some workarounds:
 
 ```java
-~~ (x:: xs, y:: ys) {
+~<< (x:: xs, y:: ys) {
     tup(x,y).0;         // ugh!
 };
 // < 9, 10, 11, 12 >
 
 
-~~ (x:: xs, y:: ys) {
+~<< (x:: xs, y:: ys) {
     def v:: tup(x,y);   // meh
     v;
 };
@@ -2315,7 +2315,7 @@ But these are a bit annoying, right?!
 When you need to *unwrap* the final value, there's a special syntactic shortcut, a prefix of `::` on the final expression:
 
 ```java
-~~ (x:: xs, y:: ys) {
+~<< (x:: xs, y:: ys) {
     ::tup(x,y);         // <-- notice the ::
 };
 // < 9, 10, 11, 12 >
@@ -2323,16 +2323,16 @@ When you need to *unwrap* the final value, there's a special syntactic shortcut,
 
 This special `::` usage (without a `def`) may only prefix the **final expression** in the *iteration* block of the *do comprehension*.
 
-You can think about this `::` as instructing the *do comprehension* to perform a final `~.` (instead of `~map`). Or you can think about it as skipping the automatic value wrapping that would otherwise occur.
+You can think about this `::` as instructing the *do comprehension* to perform a final `~<` (instead of `~map`). Or you can think about it as skipping the automatic value wrapping that would otherwise occur.
 
 ----
 
-You may have noticed that a single list (Tuple) in this `~~` *do comprehension* form is equivalent to the `~map` comprehension on a single list:
+You may have noticed that a single list (Tuple) in this `~<<` *do comprehension* form is equivalent to the `~map` comprehension on a single list:
 
 ```java
 def xs: < 2, 4 >;
 
-~~ (x:: xs) {
+~<< (x:: xs) {
     x * 10;
 }
 // < 20, 40 >
@@ -2498,28 +2498,28 @@ def m: Id@ 21;
 m ~bind (double +> Id@);        // Id{42}
 m ~flatMap (double +> Id@);     // Id{42}
 m ~chain (double +> Id@);       // Id{42}
-m ~. (double +> Id@);           // Id{42}
+m ~< (double +> Id@);           // Id{42}
 ```
 
-**Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~.` are all aliases for the `~bind` comprehension. All 4 are interchangable, but for brevity sake, `~.` is generally most preferable.
+**Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~<` are all aliases for the `~bind` comprehension. All 4 are interchangable, but for brevity sake, `~<` is generally most preferable.
 
 ### The Monad Laws
 
-For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad (via its `@` unit-constructor) and the `~.` *bind* operator:
+For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad (via its `@` unit-constructor) and the `~<` *bind* operator:
 
 1. **Left Identity:**
 
     ```java
     defn incM(v) ^(Id@ v + 1);
 
-    Id@ 41 ~. incM;
+    Id@ 41 ~< incM;
     // Id{42}
     ```
 
 2. **Right Identity:**
 
     ```java
-    Id@ 42 ~. Id@;
+    Id@ 42 ~< Id@;
     // Id{42}
     ```
 
@@ -2529,22 +2529,22 @@ For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad
     defn incM(v) ^(Id@ v + 1);
     defn doubleM(v) ^(Id@ v * 2);
 
-    Id@ 20 ~. incM ~. doubleM;
+    Id@ 20 ~< incM ~< doubleM;
     // Id{42}
 
-    Id@ 20 ~. (v) {
-        incM(v) ~. doubleM;
+    Id@ 20 ~< (v) {
+        incM(v) ~< doubleM;
     };
     // Id{42}
     ```
 
 ### Monadic Do Comprehension
 
-Recall the [*do comprehension* for lists](#do-comprehension-list) with the `~~` operator.
+Recall the [*do comprehension* for lists](#do-comprehension-list) with the `~<<` operator.
 
-In the same way that `~~` makes it convenient to compose multiple list comprehensions (via `~.` *chain*ing) while accessing values from each within a single scope, the same is possible and useful for monadic comprehensions.
+In the same way that `~<<` makes it convenient to compose multiple list comprehensions (via `~<` *chain*ing) while accessing values from each within a single scope, the same is possible and useful for monadic comprehensions.
 
-Here's the nested `~.` form:
+Here's the nested `~<` form:
 
 ```java
 defn inc(v) ^v + 1;
@@ -2553,8 +2553,8 @@ defn double(v) ^v * 2;
 def incM: inc +> Id@;
 def doubleM: double +> Id@;
 
-incM(1) ~. (x) {
-    doubleM(x) ~. (y) {
+incM(1) ~< (x) {
+    doubleM(x) ~< (y) {
         Id@ (3 * x) + y;
     }
 };
@@ -2563,16 +2563,16 @@ incM(1) ~. (x) {
 
 To have access to both `x` and `y` in the final *chain* step, we used a nested scope. Alternatively, you could pack both values into a Record/Tuple to pass into the final step, but that's even uglier.
 
-Here's the more ergonomic `~~` *do comprehension* form:
+Here's the more ergonomic `~<<` *do comprehension* form:
 
 ```java
-Id ~~ (x:: incM(1), y:: doubleM(x)) {
+Id ~<< (x:: incM(1), y:: doubleM(x)) {
     (3 * x) + y;
 };
 // Id{10}
 
 
-Id ~~ {
+Id ~<< {
     def x:: incM(1);
     def y:: doubleM(x);
     (3 * x) + y;
@@ -2582,21 +2582,21 @@ Id ~~ {
 
 **Note:** These should look familiar to the various styles presented in the [Do Comprehension (List)](#do-comprehension-list) section earlier.
 
-In these snippets, the only substantive difference from the list comprehension form is the `Id` (monad type) being passed as the first (*range*) operand to `~~`. This provides the *type* of monad to wrap (via its `@` unit constructor) around the final computed value. Remember: if omitted, a general list (Tuple) type is assumed, which is *not* desired here.
+In these snippets, the only substantive difference from the list comprehension form is the `Id` (monad type) being passed as the first (*range*) operand to `~<<`. This provides the *type* of monad to wrap (via its `@` unit constructor) around the final computed value. Remember: if omitted, a general list (Tuple) type is assumed, which is *not* desired here.
 
 Don't forget the special `::` prefix on the final expression, in case you need to omit the automatic monadic type wrapping:
 
 ```java
 defn compute(x,y) ^Id@ ((3 * x) + y);
 
-Id ~~ {
+Id ~<< {
     def x:: incM(1);
     def y:: doubleM(x);
     compute(x,y);
 };
 // Id{Id{10}}            <-- oops!
 
-Id ~~ {
+Id ~<< {
     def x:: incM(1);
     def y:: doubleM(x);
     ::compute(x,y);   // <-- notice ::
@@ -2657,7 +2657,7 @@ def m: getSomeMonad(42);
 
 For something to be a monad, we need it to be able to satisfy [the 3 monadic laws](#the-monad-laws). In particular, it needs a *bind* operation and it needs a unit constructor.
 
-Well... we've already seen that lists (Tuples) have the `~.` (aka `~flatMap`, `~bind`, or `~chain`) operator defined. So, all we're missing is a unit constructor for a list (Tuple).
+Well... we've already seen that lists (Tuples) have the `~<` (aka `~flatMap`, `~bind`, or `~chain`) operator defined. So, all we're missing is a unit constructor for a list (Tuple).
 
 Thankfully, **Foi** provides `List`, such that `List@` produces `<>` and `List @ 42` produces `< 42 >`.
 
@@ -2668,19 +2668,19 @@ defn incM(v) ^(List@ v + 1);
 defn doubleM(v) ^(List@ v * 2);
 
 // (1) Left Identity:
-List@ 41 ~. incM;
+List@ 41 ~< incM;
 // < 42 >
 
 // (2) Right Identity:
-List@ 42 ~. List@;
+List@ 42 ~< List@;
 // < 42 >
 
 // (3) Associativity:
-List@ 20 ~. incM ~. doubleM;
+List@ 20 ~< incM ~< doubleM;
 // < 42 >
 
-List@ 20 ~. (v) {
-    incM(v) ~. doubleM;
+List@ 20 ~< (v) {
+    incM(v) ~< doubleM;
 };
 // < 42 >
 ```
@@ -2750,42 +2750,42 @@ def order: Id@ <
 >;
 
 order
-~. prop("shippingAddress")
-~. prop("street");
+~< prop("shippingAddress")
+~< prop("street");
 // Id{"123 Easy St"}
 
 order
-~. prop("billingAddress")
-~. prop("street");
+~< prop("billingAddress")
+~< prop("street");
 // None
 ```
 
 ----
 
-As with other monad kinds, `Maybe` has a `~~` *do comprehension* form:
+As with other monad kinds, `Maybe` has a `~<<` *do comprehension* form:
 
 ```java
-Maybe ~~ {
+Maybe ~<< {
     def shipAddr:: prop("shippingAddress",order);
     def street:: prop("street",shipAddr);
-    Id ~~ (streetV:: street) {
+    Id ~<< (streetV:: street) {
         log("Street: " + streetV);
     };
 };
 // Street: 123 Easy St
 
 
-Maybe ~~ {
+Maybe ~<< {
     def billAddr:: prop("billingAddress",order);
     def street:: prop("street",billAddr);
-    Id ~~ (streetV:: street) {
+    Id ~<< (streetV:: street) {
         log("Street: " + streetV);
     };
 };
 // None
 ```
 
-Since the `prop("billingAddress",order)` returns a `None`, the rest of that second `Maybe ~~ {    }` *do comprehension* will short-circuit exit.
+Since the `prop("billingAddress",order)` returns a `None`, the rest of that second `Maybe ~<< {    }` *do comprehension* will short-circuit exit.
 
 ### Foldable / Catamorphism
 
@@ -2887,7 +2887,7 @@ Then, for `m1` and `m2` instances, we perform a *natural* transformation back to
 
 ## Broader Category Theory Capabilities
 
-So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~.` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` / `~cata` comprehension).
+So far, we've seen several behaviors/capabilities that are organized within broader Category Theory, such as Functor/Mappable (with `~map` comprehension), [Monad](#monads-and-friends) (with `~<` bind/chain comprehension), and [Foldable](#foldable--catamorphism) (with `~fold` / `~cata` comprehension).
 
 But there are certainly other capabilities/behaviors to consider. While they may often show up adjacent to monads, these are separate topics.
 
@@ -2897,7 +2897,7 @@ Applicative is a pattern for holding a function in a monadic instance, then "app
 
 If the function requires multiple inputs, this "application" can be performed multiple times, providing one input at a time.
 
-Here's how we can perform *Applicative* with `~.` and `~map`:
+Here's how we can perform *Applicative* with `~<` and `~map`:
 
 ```java
 defn add(x)(y) ^x + y;
@@ -2906,18 +2906,18 @@ def three: Id@ 3;
 def four: Id@ 4;
 
 (Id@ add)
-    ~. (fn) {
+    ~< (fn) {
         three ~map fn
     }
-    ~. (fn) {
+    ~< (fn) {
         four ~map fn
     };
 // Id{7}
 ```
 
-In this snippet, the `add()` function is wrapped in an `Id`, and then `~.` chained to access the `fn` it holds. That function is used to *map* the `three` monad, which calls `add(3)` and wraps the curried function back in another `Id`.
+In this snippet, the `add()` function is wrapped in an `Id`, and then `~<` chained to access the `fn` it holds. That function is used to *map* the `three` monad, which calls `add(3)` and wraps the curried function back in another `Id`.
 
-*That* `Id` is then `~.` chained again to access the curried function `fn`, and *that* function is used to *map* the `four` monad. This invokes `add(3)(4)` producing `7`, and then wraps that in yet another `Id`.
+*That* `Id` is then `~<` chained again to access the curried function `fn`, and *that* function is used to *map* the `four` monad. This invokes `add(3)(4)` producing `7`, and then wraps that in yet another `Id`.
 
 Restating: *Applicative* is pattern to *apply* the value(s) held in one or more monads, one at a time, as the inputs to a curried function (also held in a monad).
 
@@ -2925,7 +2925,7 @@ Of course, we could define a function helper to make this process a little clean
 
 ```java
 defn add(x)(y) ^x + y;
-defn ap(m2)(m1) ^m1 ~. (fn) { m2 ~map fn; };
+defn ap(m2)(m1) ^m1 ~< (fn) { m2 ~map fn; };
 
 def three: Id@ 3;
 def four: Id@ 4;
@@ -3098,7 +3098,7 @@ As such, there are a variety of language features for *managing* concurrency. Th
 
 The most basic component of **Foi** concurrency/asynchrony is `Promise`. It resembles promises in other languages (JS, etc), but has some important differences.
 
-Most importantly, `Promise` is a monad. It's kind of like the `Id` monad (it just holds a single value), except it starts out in a *pending* state where it doesn't yet hold any value. Any operations (`~map`, `~.`) are deferred while a promise is pending.
+Most importantly, `Promise` is a monad. It's kind of like the `Id` monad (it just holds a single value), except it starts out in a *pending* state where it doesn't yet hold any value. Any operations (`~map`, `~<`) are deferred while a promise is pending.
 
 Once the promise is resolved, any deferred operations are immediately (synchronously) performed. From then onward, the promise remains permanently in the *resolved* state, and any operations against it are evaluated synchronously.
 
@@ -3155,8 +3155,8 @@ defn getCacheData(key)
 
 
 getCacheData("customers")
-~. (res) {
-    (| ~cata res, fetchCustomers, Promise@ |);
+~< (resE) {
+    (| ~cata resE, fetchCustomers, Promise@ |);
 }
 ~map printRecords;
 // Promise{..pending..}
@@ -3168,13 +3168,13 @@ We use the `Left` to fetch the customers remotely, or the `Right` to simply pass
 
 ----
 
-Instead of constructing multi-step `~.` / `~map` chains, `Promise` also supports the helpful [`~~` *do comprehension*](#monadic-do-comprehension). The promise chain from the above snippet could instead be expressed as:
+Instead of constructing multi-step `~<` / `~map` chains, `Promise` also supports the helpful [`~<<` *do comprehension*](#monadic-do-comprehension). The promise chain from the above snippet could instead be expressed as:
 
 ```java
-Promise ~~ {
-    def res:: getCacheData("customers");
+Promise ~<< {
+    def resE:: getCacheData("customers");
     def customers:: (| ~cata
-        res, fetchCustomers, Promise@
+        resE, fetchCustomers, Promise@
     |);
     printRecords(customers);
 };
@@ -3197,7 +3197,7 @@ defn fetch(url) { ..returns promise.. };
 defn printResponses(prs)
     ![size(prs) ?> 0]: Promise@ "Complete."
 {
-    ^prs.0 ~. (resp) {
+    ^prs.0 ~< (resp) {
         log("resp: " + resp);
         printResponses(prs.[1..]);
     };
@@ -3225,11 +3225,11 @@ The `printResponses()` function "asynchronously loops" through the `prs` list of
 
 That approach works OK, but it's unfortunately a bit convoluted.
 
-The `~~*` operator extends `Promise` *do comprehension*, to loop asynchronously over (a list of) `Promise` instances. The above `printResponses()` function can thus be expressed as:
+The `~<*` operator extends `Promise` *do comprehension*, to loop asynchronously over (a list of) `Promise` instances. The above `printResponses()` function can thus be expressed as:
 
 ```java
 defn printResponses(prs) {
-    ^prs ~~* (resp) {
+    ^prs ~<* (resp) {
         log("resp: " + resp);
     }
     ~map { "Complete."; };
@@ -3242,11 +3242,11 @@ This form can be thought of as like an asynchronous `~each` comprehension. That'
 
 **Note:** Any non-promise values in the *range* list will be "lifted" to a resolved promise for the purposes of the iteration handling.
 
-Moreover, as the `~~` in the `~~*` operator suggests, the *iteration* clause is also a *do comprehension* block over promises (i.e., `Promise ~~ {    }`):
+Moreover, as the `~<` part of the `~<*` operator suggests, the *iteration* clause is also a *do comprehension* block over promises (i.e., `Promise ~<< {    }`):
 
 ```java
 urls ~map fetch
-~~* (resp) {
+~<* (resp) {
     def v:: processResp(resp);
     def success:: storeVal(v);
     ?[success]: log("Stored: " + v);
@@ -3254,28 +3254,28 @@ urls ~map fetch
 // Promise{..pending..}
 ```
 
-**Note:** Any value unwrapped via `def ::` in a `~~*` comprehension must be a Promise.
+**Note:** Any value unwrapped via `def ::` in a `~<*` comprehension must be a Promise.
 
 ----
 
-If the *range* operand provided to `~~*` is not a concrete value but instead a type (like `Promise`) -- as *range* always is with regular `~~` do comprehensions -- the iteration looping will continue until a `Left` is produced as the **final result** of an iteration:
+If the *range* operand provided to `~<*` is not a concrete value but instead a type (like `Promise`) -- as *range* always is with regular `~<<` do comprehensions -- the iteration looping will continue until a `Left` is produced as the **final result** of an iteration:
 
 ```java
 defn printResp(v) { log("Resp: " + v); };
 defn fetchMoreData() { ... Promise<Either> ... };
 
-Promise ~~* {
+Promise ~<* {
     def respE:: fetchMoreData();
-    Either ~~ (resp:: respE) {
+    Either ~<< (resp:: respE) {
         printResp(resp);
     };
 };
 // Promise{..pending..}
 ```
 
-The outer `~~*` *looping do comprehension* above pauses each iteration while the promise returned from `fetchMoreData()` is waiting to resolve.
+The outer `~<*` *looping do comprehension* above pauses each iteration while the promise returned from `fetchMoreData()` is waiting to resolve.
 
-Once it does, the inner `Either ~~ {    }` *do comprehension* attempts to unwrap the `respE` Either value. If a `Left` is encountered, this inner *do comprehension* short-circuits out, and its resultant `Left` value terminates the loop. Otherwise, `printResp(resp)` is called, and the outer looping is allowed to keep going.
+Once it does, the inner `Either ~<< {    }` *do comprehension* attempts to unwrap the `respE` Either value. If a `Left` is encountered, this inner *do comprehension* short-circuits out, and its resultant `Left` value terminates the loop. Otherwise, `printResp(resp)` is called, and the outer looping is allowed to keep going.
 
 ----
 
@@ -3333,7 +3333,7 @@ One such common coordination pattern is referred to as "back pressure", in that 
 
 **Foi** defines CSP as a first class feature, via the `Channel` type.
 
-It's important to distinguish: a `Channel` instance is not *itself* monadic -- it has no `~.` / `~map` defined. However, all the operations on `Channel` instances produce `Promise` monad instances, so you still interact with `Channel` in a monadic-oriented way.
+It's important to distinguish: a `Channel` instance is not *itself* monadic -- it has no `~<` / `~map` defined. However, all the operations on `Channel` instances produce `Promise` monad instances, so you still interact with `Channel` in a monadic-oriented way.
 
 A channel is a container (by default, with no internal buffer) where both the putting-in of a value (`put()`) and reading-out of a value (`take()`) are *coordinated*. Both operations produce a `Promise` instance, and these promises won't resolve until both operations have occurred (regardless of ordering).
 
@@ -3345,7 +3345,7 @@ Consider these illustrative helpers, which we'll use throughout the rest of our 
 defn putVal(ch,v) ^(
     ch.push(v)
     ~map (ev) {
-        Either ~~ (v:: ev) {
+        Either ~<< (v:: ev) {
             log("Value put: " + v);
         };
     }
@@ -3354,14 +3354,14 @@ defn putVal(ch,v) ^(
 defn takeVal(ch) ^(
     ch.take()
     ~map (ev) {
-        Either ~~ (v:: ev) {
+        Either ~<< (v:: ev) {
             log("Value taken: " + v);
         };
     }
 );
 ```
 
-**Note:** Notice the `Either ~~ {    }` *do comprehensions* again neatly and conditionally handle the `Either` instance, either invoking `log()` or short-circuiting out of the block with a `Left`.
+**Note:** Notice the `Either ~<< {    }` *do comprehensions* again neatly and conditionally handle the `Either` instance, either invoking `log()` or short-circuiting out of the block with a `Left`.
 
 Now, let's create a channel and use those helpers:
 
@@ -3443,18 +3443,18 @@ putVal(ch,100);
 
 ----
 
-Recall the `~~*` async-comprehension discussed in the `Promise` section. It's quite useful for explicitly coordinating a queue of `put()`s and/or `take()`s:
+Recall the `~<*` async-comprehension discussed in the `Promise` section. It's quite useful for explicitly coordinating a queue of `put()`s and/or `take()`s:
 
 ```java
 def ch: Channel@;
 
-1..3 ~~* (v) {
+1..3 ~<* (v) {
     ::putVal(ch,v);
 };
 // Promise{..pending..}
 
 // elsewhere:
-Promise ~~* {
+Promise ~<* {
     ::takeVal(ch);
 };
 // Value put: 1
@@ -3465,9 +3465,9 @@ Promise ~~* {
 // Value taken: 3
 ```
 
-The `putVal()` loop above terminates once the `1..3` *range* is eventually completed. However, the `Promise ~~* {    }` loop will remain in a paused state, waiting for the next value to come into the channel.
+The `putVal()` loop above terminates once the `1..3` *range* is eventually completed. However, the `Promise ~<* {    }` loop will remain in a paused state, waiting for the next value to come into the channel.
 
-You may recall that `~~*` terminates only when the **final expression** resolves to a `Left`. The only way a `Channel` instance's `take()` can resolve to a `Left` is when the channel itself is closed.
+You may recall that `~<*` terminates only when the **final expression** resolves to a `Left`. The only way a `Channel` instance's `take()` can resolve to a `Left` is when the channel itself is closed.
 
 So, if we issued `ch.close()` in the above program:
 
@@ -3477,13 +3477,13 @@ ch.close();
 // Error: Channel already closed
 ```
 
-**Note:** Subsequent `close()` calls on an already closed channel will return `Left{"Channel already closed"}`.
-
 The `close()` above returns `Right{true}` indicating it was successful in closing the channel.
 
-But then the pending `take()` (from inside `takeVal()`) is resolved with a `Left{"Channel already closed"}`; that short-circuits out of the `Either` *do comprehension*..
+**Note:** Subsequent `close()` calls on an already closed channel will return `Left{"Channel already closed"}`.
 
-Finally, the paused `~~*` loop will terminate, when encountering that `Left{"Channel already closed"}` value.
+After closing, the pending `take()` (from inside `takeVal()`) is resolved with a `Left{"Channel already closed"}`; that short-circuits out of the `Either` *do comprehension*..
+
+Finally, the paused `~<*` loop will terminate, when encountering that `Left{"Channel already closed"}` value.
 
 ----
 
@@ -3508,7 +3508,7 @@ def ch: Channel@ 3;
 putVal(ch,4);
 // Promise{..pending..}
 
-Promise ~~* {
+Promise ~<* {
     ::takeVal(ch);
 };
 // Value put: 4
@@ -3605,7 +3605,7 @@ The most trivial example is a single-value stream, via the unit constructor:
 ```java
 def s: PushStream@ 21;
 
-s ~. (v) {
+s ~< (v) {
     PushStream@ (v * 2);
 }
 ~map (v) {
@@ -3614,7 +3614,7 @@ s ~. (v) {
 // Value: 42
 ```
 
-**Note:** A single-value stream (as above) seems similar conceptually to an already resolved Promise. One specific difference is that streams don't hold onto their values like promises do. So once a value is *observed* (another stream "subscribing" to it via `~.` or `~map`), that value is no longer in the original stream. Moreover, streams are either *open* or *closed* (`close()` and `closed()`), whereas promises are either *pending* or *resolved* (`resolve()` and `resolved()`).
+**Note:** A single-value stream (as above) seems similar conceptually to an already resolved Promise. One specific difference is that streams don't hold onto their values like promises do. So once a value is *observed* (another stream "subscribing" to it via `~<` or `~map`), that value is no longer in the original stream. Moreover, streams are either *open* or *closed* (`close()` and `closed()`), whereas promises are either *pending* or *resolved* (`resolve()` and `resolved()`).
 
 Like promises, you typically construct a `PushSubject` to control the stream:
 
@@ -3622,7 +3622,7 @@ Like promises, you typically construct a `PushSubject` to control the stream:
 def subj: PushSubject@;
 
 def s2:
-    subj.stream ~. (v) {
+    subj.stream ~< (v) {
         PushStream@ (v * 2);
     }
     ~map (v) {
@@ -3645,7 +3645,7 @@ s2 ~map (v) {
 // (2) Value: 4
 ```
 
-As shown, the `~.` / `~map` comprehensions remain active on an open stream, and are repeated for each new value pushed through the stream.
+As shown, the `~<` / `~map` comprehensions remain active on an open stream, and are repeated for each new value pushed through the stream.
 
 `push()` returns a `Right` with the pushed value, if successful; `Left` is returned if pushing failed (i.e., the stream has been closed).
 
@@ -3694,14 +3694,14 @@ subj.push(10);
 
 ----
 
-`PushStream` supports the `~~` *do comprehension* form:
+`PushStream` supports the `~<<` *do comprehension* form:
 
 ```java
 def subj: PushStream@;
 
 1..3 ~each subj.push;
 
-def s: PushStream ~~ (v:: subj.stream) {
+def s: PushStream ~<< (v:: subj.stream) {
     log("(1) Value: " + v);
     v * 2;
 };
@@ -3730,9 +3730,9 @@ s ~map (v) {
 // (2) Value: 12
 ```
 
-As you can see, just like `~.` / `~map`, this form automatically *repeats* -- not really looping! -- each time a new value is pushed into the stream.
+As you can see, just like `~<` / `~map`, this form automatically *repeats* -- not really looping! -- each time a new value is pushed into the stream.
 
-**Note:** As stream inherently repeats operations for each value, there is no corresponding `~~*` *looping do comprehension* form for streams; that's only for `Promise`.
+**Note:** As stream inherently repeats operations for each value, there is no corresponding `~<*` *looping do comprehension* form for streams; that's only for `Promise`.
 
 ### `PullStream` Monad
 
@@ -3745,7 +3745,7 @@ We can again create a single-value stream instance, via the unit constructor:
 ```java
 def s: PullStream@ 21;
 
-s ~. (v) {
+s ~< (v) {
     PullStream@ (v * 2);
 }
 ~map (v) {
@@ -3762,7 +3762,7 @@ To trigger the propagation, use `pullInto()`:
 def s: PullStream@ 21;
 
 def t:
-    s ~. (v) {
+    s ~< (v) {
         PullStream@ (v * 2);
     }
     ~map (v) {
@@ -3825,14 +3825,14 @@ s2.pullInto(1);
 
 ----
 
-`PullStream` also supports the `~~` *do comprehension* form:
+`PullStream` also supports the `~<<` *do comprehension* form:
 
 ```java
 def subj: PushStream@;
 
 1..3 ~each subj.push;
 
-PullStream ~~ (v:: subj.stream) {
+PullStream ~<< (v:: subj.stream) {
     log("Value: " + v);
 };
 // PullStream{}
@@ -3844,7 +3844,7 @@ s.pullInto(3);
 // Value: 3
 ```
 
-**Note:** Since the `~~` block automatically repeats as each value is pulled through, there's no need for a separate `~~*` *looping do comprehension* form for `PullStream`.
+**Note:** Since the `~<<` block automatically repeats as each value is pulled through, there's no need for a separate `~<*` *looping do comprehension* form for `PullStream`.
 
 ## `IO` Monad
 
@@ -3890,7 +3890,7 @@ def specialNumber = IOof@ 42;
 specialNumber.run();   // 42
 ```
 
-As with all monads, we can compose instances together via comprehensions like `~map` and `~.` (chain):
+As with all monads, we can compose instances together via comprehensions like `~map` and `~<` (chain):
 
 ```java
 defn doubleIO(v) ^IO@ (v * 2);
@@ -3904,7 +3904,7 @@ def num = IOof@ 21;
 
 def task = num
     ~map doubleIO
-    ~. finish;
+    ~< finish;
 
 task.run();   // 43
 // v: 42
@@ -3912,12 +3912,12 @@ task.run();   // 43
 
 ----
 
-Recall the [`~~` do-comprehension](#monadic-do-comprehension) (for monads), which gives a special syntax for chaining monadic values together a more familiar imperative-style. It's especially convenient when you might otherwise need to nest `~.` chain steps to create a shared scope for accessing values from each step together.
+Recall the [`~<<` do-comprehension](#monadic-do-comprehension) (for monads), which gives a special syntax for chaining monadic values together a more familiar imperative-style. It's especially convenient when you might otherwise need to nest `~<` chain steps to create a shared scope for accessing values from each step together.
 
 Because this is so common with `IO`, the *do comprehension* form is most common. The previous snippet could be done like this:
 
 ```java
-(IO ~~ (v:: num) {
+(IO ~<< (v:: num) {
     def x:: doubleIO(v);
     ::finish(x);
 }).run();   // 43
@@ -3939,7 +3939,7 @@ defn writeFile(filename,contents) {
     // ..
     ^IO@ res;
 };
-defn processFile(filename) ^IO ~~ {
+defn processFile(filename) ^IO ~<< {
     def text:: readFile(filename);
     def uptext: uppercase(text);
     def res:: writeFile("upper.txt",uptext);
@@ -3968,12 +3968,12 @@ task.run(< x: 42 >);
 
 **Note:** The Reader value can be anything, but it's most commonly a Record (or Tuple).
 
-Inside a `~.` chain step, the carried Reader value can be *accessed* as so:
+Inside a `~<` chain step, the carried Reader value can be *accessed* as so:
 
 ```java
 def task:
     IOof@ 42
-    .~ (v) {
+    ~< (v) {
         IO@ (defn(env){
             log("Value: " + v, "Env.x: " + env.x);
         });
@@ -3990,7 +3990,7 @@ defn getEnv() ^IO @(defn(env) ^env);
 
 def fortyTwo: IOof@ 42;
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: fortyTwo;
     def env:: getEnv();
     log("Value: " + v, "Env.x: " + env.x);
@@ -4005,7 +4005,7 @@ In fact, this is even cleaner:
 ```java
 def fortyTwo: IOof@ 42;
 
-def task: IO ~~ (env, v:: fortyTwo) {
+def task: IO ~<< (env, v:: fortyTwo) {
     log("Value: " + v, "Env.x: " + env.x);
 };
 
@@ -4027,7 +4027,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: getValue();
     ::printValue(v);
 };
@@ -4039,7 +4039,7 @@ task.run();
 
 As illustrated, when the promise instance from `getValue()` was encountered, the rest of the IO evaluation -- in other words, what's returned from the `run()` call -- was *lifted* to a promise. Subsequent steps in the IO chain wait for a previous promise to resolve before proceeding.
 
-That's basically the `Promise ~~ {    }` behavior combined automatically into `IO`'s `~~` *do comprehension*.
+That's basically the `Promise ~<< {    }` behavior combined automatically into `IO`'s `~<<` *do comprehension*.
 
 If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
 
@@ -4049,7 +4049,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: readValue();
     ::printValue(v);
 };
@@ -4067,7 +4067,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: readValue();
     ::printValue(v);
 };
@@ -4087,7 +4087,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def ev:: getValue();
     ::(| ~cata ev, IOof@, printValue |);
 };
@@ -4113,7 +4113,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: getValues();
     ::printValue(v);
 };
@@ -4139,7 +4139,7 @@ defn printValue(v) ^IO@ (defn(){
     log("Value: " + v);
 });
 
-def task: IO ~~ {
+def task: IO ~<< {
     def v:: getValues();
     ::printValue(v);
 };
@@ -4160,7 +4160,7 @@ Since we're using a `PullStream`, we have to call `pullInto(3)` to actually pull
 
 ----
 
-Be aware that the order of transformation in an IO `~~` *do comprehension* matters, with respect to what kinds of *lifting* is supported:
+Be aware that the order of transformation in an IO `~<<` *do comprehension* matters, with respect to what kinds of *lifting* is supported:
 
 * A concrete/synchronous IO can be lifted to a promise IO evaluation (as shown earlier). This includes a channel transformation, since the `take()` produces a promise.
 
@@ -4174,7 +4174,7 @@ But importantly, a stream cannot be lifted to a promise evaluation (only vice ve
 def getValue() ^Promise@ 42;
 def getValues() ^PushStream@ 10;
 
-IO ~~ {
+IO ~<< {
     def v:: getValue();
     def x:: getValues();
     log("v: " + v + ", x: " + x);
@@ -4190,7 +4190,7 @@ But the reverse order *is* supported, so this is valid:
 def getValue() ^Promise@ 42;
 def getValues() ^PushStream@ 10;
 
-IO ~~ {
+IO ~<< {
     def x:: getValues();
     def v:: getValue();
     log("v: " + v + ", x: " + x);
@@ -4227,7 +4227,7 @@ The most classic example of a generator is computing the Fibonacci sequence:
 def fib: Gen@ (defn(env,yield){
     def a: 0;
     def b: 1;
-    ^Promise ~~* {
+    ^Promise ~<* {
         def cur: a;
         def res:: yield(cur);
         a := b;
@@ -4239,7 +4239,7 @@ def it: fib.run();
 
 
 // print the first 10 Fibonacci numbers
-0..9 ~~* {
+0..9 ~<* {
     def ev:: it.next();
     (| ~cata ev, Left@, log |);
 };
@@ -4255,7 +4255,7 @@ def it: fib.run();
 // 34
 ```
 
-**Warning:** The above generator is designed to run perpetually (doesn't stop itself), and without any delay, so be careful about using an unbounded looping to consume values from it; such a loop will also run synchronously, forever. The `0..9 ~~* {    }` approach above limits how many values to *take* from the iterator.
+**Warning:** The above generator is designed to run perpetually (doesn't stop itself), and without any delay, so be careful about using an unbounded looping to consume values from it; such a loop will also run synchronously, forever. The `0..9 ~<* {    }` approach above limits how many values to *take* from the iterator.
 
 Even though the iterator interface (`yield()` and `next()`, above) responds with Promises, this Fibonacci generator is fully synchronous; remember that **Foi** `Promise` instances are not inherently asynchronous (as in some other languages).
 
@@ -4263,7 +4263,7 @@ Here's another example, of a generator that only produces a fixed number of valu
 
 ```java
 def someNums: Gen@ (defn(env,yield){
-    ^((env.start..env.end) ~~* yield)
+    ^((env.start..env.end) ~<* yield)
         ~map { "Complete." };
 });
 
@@ -4272,7 +4272,7 @@ def it: someNums.run(< start: 4, end: 7 >);
 
 // consume all the values from this
 // iterator
-def pr: it ~~* (ev) {
+def pr: it ~<* (ev) {
     (| ~cata ev, Left@, log |);
 };
 // Promise{..pending..}
@@ -4285,13 +4285,13 @@ pr ~map log;
 // Left{"Complete."}
 ```
 
-**Note:** The `~~*` knows how to consume an iterator. It calls `next()` under the covers, which produces a promise. When unwrapped, this value is a `Right` or `Left`; if it's a `Left`, the looping will terminate. Above, we unwrap the `Right` with `~cata`, but in the next snippet, we'll use an `Either` *do comprehension* to process `ev`.
+**Note:** The `~<*` knows how to consume an iterator. It calls `next()` under the covers, which produces a promise. When unwrapped, this value is a `Right` or `Left`; if it's a `Left`, the looping will terminate. Above, we unwrap the `Right` with `~cata`, but in the next snippet, we'll use an `Either` *do comprehension* to process `ev`.
 
 You can also manually terminate an iteration early by closing the iterator:
 
 ```java
 def someNums: Gen@ (defn(env,yield){
-    ^((env.start..env.end) ~~* yield)
+    ^((env.start..env.end) ~<* yield)
         ~map { "Complete." };
 });
 
@@ -4300,8 +4300,8 @@ def it: someNums.run(< start: 1, end: 10 >);
 
 // consume all the values from this
 // iterator
-def pr: it ~~* (ev) {
-    Either ~~ (v:: ev) {
+def pr: it ~<* (ev) {
+    Either ~<< (v:: ev) {
         log(v);
 
         // shall we terminate early?
@@ -4320,9 +4320,9 @@ pr ~map log;
 // Left{"Terminated."}
 ```
 
-**Note:** The `Either ~~ {    }` *do comprehension* block is nested inside the outer `Promise ~~* {    }` *looping do comprehension* block. This allows us to ergonomically unwrap the Either value (`ev`) that came back from `next()`. If the `v:: ev` unwrapping encounters a `Left`, it short-circuits to skip the `Either` comprehension block.
+**Note:** The `Either ~<< {    }` *do comprehension* block is nested inside the outer `Promise ~<* {    }` *looping do comprehension* block. This allows us to ergonomically unwrap the Either value (`ev`) that came back from `next()`. If the `v:: ev` unwrapping encounters a `Left`, it short-circuits to skip the `Either` comprehension block.
 
-The manually produced `Left@ "Terminated."` value forcibly terminates first the inner `Either ~~ {    }` block, and then the outer `Promise ~~* {    }` loop.
+The manually produced `Left@ "Terminated."` value forcibly terminates first the inner `Either ~<< {    }` block, and then the outer `Promise ~<* {    }` loop.
 
 However, if that value were omitted (but the iterator was still closed), the loop would normally start a next (final) iteration, yet the `next()` call would immediately fail with a `Left@ "Complete."` -- from the final `"Complete."` return value of the generator -- and that would terminate the loop.
 
