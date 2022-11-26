@@ -5,6 +5,21 @@ var path = require("path");
 var fs = require("fs");
 var args = require("minimist")(process.argv.slice(2));
 
+const NATIVES = [ "empty", "true", "false", ];
+const KEYWORDS = [
+	"def", "defn", "deft", "import", "export", "as", "over", "int",
+	"integer", "float", "bool", "boolean", "string",
+];
+const BUILTINS = [
+	"Id", "None", "Maybe", "Left", "Right", "Either", "Promise",
+	"PromiseSubject", "PushStream", "PushSubject", "PullStream",
+	"PullSubject", "Channel", "Gen", "IO", "Value", "Number",
+];
+const COMPREHENSIONS = [
+	"~each", "~map", "~filter", "~fold", "~foldR", "~cata",
+	"~chain", "~bind", "~flatMap",
+];
+
 main();
 
 
@@ -34,6 +49,7 @@ function *tokenize(str) {
 	var prevState = null;
 	var escapeToken = null;
 	var pendingToken = null;
+	var pendingToken2 = null;
 	var stateHandlers = {
 		base,
 		string,
@@ -52,46 +68,71 @@ function *tokenize(str) {
 			let [ nextToken, nextState ] =
 				stateHandlers[state.type](char,idx) || [];
 
+			// token to handle?
 			if (nextToken != null) {
 				charTokenized = true;
 
 				// new token to emit?
-				if (nextToken != pendingToken) {
-					// new token not combined with pending
-					// token?
-					if (pendingToken) {
-						yield pendingToken;
-						pendingToken = null;
-					}
-
-					// should we defer this token?
+				if (![ pendingToken, pendingToken2 ].includes(nextToken)) {
+					// need to defer a second token?
 					if (
-						[
-							"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
-							"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
-							"COMMENT"
-						]
-						.includes(nextToken.type)
+						pendingToken != null &&
+						pendingToken.type == "NUMBER" &&
+						pendingToken2 == null &&
+						nextToken.type == "PERIOD"
 					) {
-						pendingToken = nextToken;
-
-						// remember previous escape token?
-						if (nextToken.type == "ESCAPE") {
-							escapeToken = pendingToken;
-						}
+						pendingToken2 = nextToken;
 					}
-					// might be starting an interpolated
-					// expression?
-					else if (
-						state.type == "escapedString" &&
-						nextToken.type == "BACKTICK"
-					) {
-						pendingToken = nextToken;
-					}
-					// otherwise this token is ready to
-					// emit now!
 					else {
-						yield nextToken;
+						// already two pending tokens, both
+						// ready to emit?
+						if (pendingToken2 != null) {
+							yield pendingToken;
+							yield pendingToken2;
+							pendingToken = pendingToken2 = null;
+						}
+						// otherwise, single pending token
+						// ready to emit?
+						else if (pendingToken != null) {
+							// need to specialize a "GENERAL"
+							// token type?
+							if (pendingToken.type == "GENERAL") {
+								pendingToken = specializeGeneralToken(pendingToken);
+							}
+
+							yield pendingToken;
+							pendingToken = null;
+						}
+
+						// should we defer this next token?
+						if (
+							[
+								"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
+								"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
+								"COMMENT", "PERIOD", "TILDE"
+							]
+							.includes(nextToken.type)
+						) {
+							pendingToken = nextToken;
+
+							// remember previous escape token?
+							if (nextToken.type == "ESCAPE") {
+								escapeToken = pendingToken;
+							}
+						}
+						// might be starting an interpolated
+						// expression, so defer?
+						else if (
+							state.type == "escapedString" &&
+							nextToken.type == "BACKTICK"
+						) {
+							pendingToken = nextToken;
+						}
+						// otherwise this token is ready to
+						// emit now!
+						else {
+							yield nextToken;
+						}
 					}
 				}
 			}
@@ -112,6 +153,25 @@ function *tokenize(str) {
 		}
 	}
 
+
+	// ***************************************
+
+	function specializeGeneralToken(token) {
+		if (NATIVES.includes(token.value)) {
+			token.type = "NATIVE";
+		}
+		else if (KEYWORDS.includes(token.value)) {
+			token.type = "KEYWORD";
+		}
+		else if (BUILTINS.includes(token.value)) {
+			token.type = "BUILTIN";
+		}
+		else if (COMPREHENSIONS.includes(token.value)) {
+			token.type = "COMPREHENSION";
+		}
+		return token;
+	}
+
 	function TOKEN(type,value,start) {
 		// negative number literal?
 		if (
@@ -124,15 +184,127 @@ function *tokenize(str) {
 			pendingToken.end += value.length;
 			return pendingToken;
 		}
-		// decimal in number literal?
+		else if (type == "PERIOD") {
+			// could be decimal in number literal?
+			if (
+				pendingToken != null &&
+				pendingToken.type == "NUMBER" &&
+				!pendingToken.value.includes(".")
+			) {
+				// double period ("..") adjacent to
+				// number?
+				if (
+					pendingToken2 != null &&
+					pendingToken2.type == "PERIOD" &&
+					pendingToken2.value == "."
+				) {
+					pendingToken2.type = "DOUBLE_PERIOD";
+					pendingToken2.value += value;
+					pendingToken2.end++;
+					return pendingToken2;
+				}
+				// otherwise, period will be held as
+				// pending alongside previous pending
+				// number
+				else {
+					return {
+						type,
+						value,
+						start,
+						end: (start + value.length - 1),
+					};
+				}
+			}
+			// double-period ("..") or triple-period
+			// ("..") by itself (not adjacent to number)?
+			else if (
+				pendingToken != null &&
+				[ "PERIOD", "DOUBLE_PERIOD" ].includes(pendingToken.type)
+			) {
+				pendingToken.value += value;
+				pendingToken.end++;
+				if (pendingToken.value == "...") {
+					pendingToken.type = "TRIPLE_PERIOD";
+				}
+				else {
+					pendingToken.type = "DOUBLE_PERIOD";
+				}
+				return pendingToken;
+			}
+			// otherwise, period will be held as
+			// pending alongside previous pending
+			// number
+			else {
+				return {
+					type,
+					value,
+					start,
+					end: (start + value.length - 1),
+				};
+			}
+		}
+		// append number to pending number?
 		else if (
 			pendingToken != null &&
 			pendingToken.type == "NUMBER" &&
-			!pendingToken.value.includes(".") &&
-			type == "PERIOD"
+			type == pendingToken.type
 		) {
+			// is there an intervening "." or ".."
+			// between current number and pending
+			// number token?
+			if (pendingToken2 != null) {
+				// was there only a single "."
+				// between?
+				if (pendingToken2.type == "PERIOD") {
+					pendingToken.value += pendingToken2.value + value;
+					pendingToken.end = start + value.length - 1;
+					pendingToken2 = null;
+					return pendingToken;
+				}
+				else {
+					return {
+						type,
+						value,
+						start,
+						end: (start + value.length - 1),
+					};
+				}
+			}
+			// otherwise, just append the adjacent
+			// numbers
+			else {
+				pendingToken.value += value;
+				pendingToken.end += value.length;
+				return pendingToken;
+			}
+		}
+		else if (type == "TILDE") {
+			// appending to a "GENERAL" token?
+			if (
+				pendingToken != null &&
+				pendingToken.type == "GENERAL"
+			) {
+				pendingToken.value += value;
+				pendingToken.end += value.length;
+				return pendingToken;
+			}
+			else {
+				return {
+					type,
+					value,
+					start,
+					end: (start + value.length - 1),
+				};
+			}
+		}
+		else if (
+			pendingToken != null &&
+			pendingToken.type == "TILDE" &&
+			type == "GENERAL"
+		) {
+			pendingToken.type = "GENERAL";
 			pendingToken.value += value;
-			pendingToken.end++;
+			pendingToken.end += value.length;
 			return pendingToken;
 		}
 		// starting a comment?
@@ -146,16 +318,14 @@ function *tokenize(str) {
 			pendingToken.end += value.length;
 			return pendingToken;
 		}
-		// appending to pending token?
+		// append to other pending token?
 		else if (
-			(
-				[
-					"WHITESPACE", "GENERAL", "STRING", "NUMBER",
-					"COMMENT"
-				].includes(type)
-			) &&
 			pendingToken != null &&
-			pendingToken.type == type
+			(
+				[ "WHITESPACE", "GENERAL", "STRING", "COMMENT" ]
+				.includes(pendingToken.type)
+			) &&
+			type == pendingToken.type
 		) {
 			pendingToken.value += value;
 			pendingToken.end += value.length;
@@ -640,7 +810,13 @@ function *tokenize(str) {
 					!pendingToken.value.includes(".") &&
 					[ "regular", "monad" ].includes(escapeType)
 				) {
-					return [ TOKEN("PERIOD",char,position), null ];
+					let nextToken = TOKEN("PERIOD",char,position);
+					if (nextToken.type == "DOUBLE_PERIOD") {
+						return [ nextToken, POP_STATE ];
+					}
+					else {
+						return [ nextToken, null ];
+					}
 				}
 				else {
 					return [
@@ -653,7 +829,7 @@ function *tokenize(str) {
 							start: position,
 							end: position
 						},
-						null
+						POP_STATE
 					];
 				}
 			}
