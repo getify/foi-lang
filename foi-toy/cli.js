@@ -5,6 +5,14 @@ var path = require("path");
 var fs = require("fs");
 var args = require("minimist")(process.argv.slice(2));
 
+const OPERATORS = [
+	"BACKTICK", "TILDE", "EXMARK", "HASH", "DOLLAR", "PERCENT",
+	"CARET", "AMPERSAND", "STAR", "UNDERSCORE", "PLUS", "EQUAL",
+	"OPEN_BRACKET", "CLOSE_BRACKET", "PIPE", "COLON", "SEMICOLON",
+	"SINGLE_QUOTE", "OPEN_ANGLE", "CLOSE_ANGLE", "COMMA", "PERIOD",
+	"DOUBLE_PERIOD", "TRIPLE_PERIOD", "QMARK", "FORWARD_SLASH",
+	"AT", "HYPHEN",
+];
 const NATIVES = [ "empty", "true", "false", ];
 const KEYWORDS = [
 	"def", "defn", "deft", "import", "export", "as", "over", "int",
@@ -13,7 +21,7 @@ const KEYWORDS = [
 const BUILTINS = [
 	"Id", "None", "Maybe", "Left", "Right", "Either", "Promise",
 	"PromiseSubject", "PushStream", "PushSubject", "PullStream",
-	"PullSubject", "Channel", "Gen", "IO", "Value", "Number",
+	"PullSubject", "Channel", "Gen", "IO", "Value", "Number", "List",
 ];
 const COMPREHENSIONS = [
 	"~each", "~map", "~filter", "~fold", "~foldR", "~cata",
@@ -36,10 +44,15 @@ function main() {
 	util.inspect.defaultOptions.maxArrayLength = null;
 
 	var fileContents = fs.readFileSync(path.resolve(process.cwd(),args.file),"utf-8");
+	var tokens = [ ...tokenize(fileContents) ];
 
-	console.log(
-		[ ...tokenize(fileContents) ]
-	);
+	if (args.color) {
+		let html = highlight(tokens);
+		console.log(html);
+	}
+	else {
+		console.log(tokens);
+	}
 }
 
 function *tokenize(str) {
@@ -134,6 +147,16 @@ function *tokenize(str) {
 							yield nextToken;
 						}
 					}
+				}
+				// a pending string with only an
+				// escaped " or ` in it?
+				else if (
+					pendingToken != null &&
+					[ '""', "``" ].includes(pendingToken.value)
+				) {
+					pendingToken.type = "STRING_ESCAPED_CHAR";
+					yield pendingToken;
+					pendingToken = null;
 				}
 			}
 
@@ -388,6 +411,10 @@ function *tokenize(str) {
 				escapeToken = null;
 				return [ TOKEN("UNDERSCORE",char,position), null ];
 			}
+			case "-": {
+				escapeToken = null;
+				return [ TOKEN("HYPHEN",char,position), null ];
+			}
 			case "+": {
 				escapeToken = null;
 				return [ TOKEN("PLUS",char,position), null ];
@@ -605,6 +632,7 @@ function *tokenize(str) {
 				) {
 					escapeToken = null;
 					pendingToken.type = "STRING";
+					pendingToken.value += char;
 					pendingToken.end++;
 					// go right back into previous
 					// string-tokenizing state
@@ -618,11 +646,6 @@ function *tokenize(str) {
 						{ type: "string", context: null }
 					];
 				}
-			}
-
-			case "-": {
-				escapeToken = null;
-				return [ TOKEN("HYPHEN",char,position), null ];
 			}
 
 			// general text
@@ -700,6 +723,7 @@ function *tokenize(str) {
 					pendingToken.type == "BACKTICK"
 				) {
 					pendingToken.type = "STRING";
+					pendingToken.value += char;
 					pendingToken.end++;
 					// go right back into previous
 					// string-tokenizing state
@@ -940,4 +964,50 @@ function *tokenize(str) {
 			default: return [ TOKEN("COMMENT",char,position), null ];
 		}
 	}
+}
+
+function highlight(tokens) {
+	var html = "";
+	for (let token of tokens) {
+		if (token.type == "WHITESPACE") {
+			html += token.value;
+		}
+		else {
+			let className = (
+				(
+					[
+						"COMMENT", "DOUBLE_QUOTE", "OPEN_PAREN",
+						"CLOSE_PAREN",
+					].includes(token.type)
+				) ? "t0" :
+				(token.type == "GENERAL") ? "t1" :
+				(
+					[ "STRING", "STRING_ESCAPED_CHAR" ]
+						.includes(token.type)
+				) ? "t2" :
+				(
+					[ "ESCAPE", "OPEN_BRACE", "CLOSE_BRACE" ]
+						.includes(token.type)
+				) ? "t3" :
+				(
+					[ "COMPREHENSION", "BUILTIN" ]
+						.includes(token.type)
+				) ? "t4" :
+				(token.type == "NATIVE") ? "t5" :
+				(
+					token.type == "KEYWORD" ||
+					[ "COLON", "SEMICOLON" ]
+						.includes(token.type)
+				) ? "t6" :
+				(token.type == "NUMBER") ? "t7" :
+				(OPERATORS.includes(token.type)) ? "t8" :
+				"t9" // unassigned default, shouldn't happen
+			);
+			let value = token.value.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+			html += `<i class="${className}">${value}</i>`;
+		}
+	}
+
+	var tmpl = fs.readFileSync(path.join(__dirname,"src","tmpl.html"),"utf-8");
+	return tmpl.replace("<pre></pre>",`<pre>${html}</pre>`);
 }

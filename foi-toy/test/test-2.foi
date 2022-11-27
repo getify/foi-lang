@@ -1,9 +1,9 @@
 // string literals
 
-```
+///
 this tests various kinds of string
 literals
-```
+///
 
 def a: "hello, world!";
 

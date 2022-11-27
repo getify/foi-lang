@@ -7,7 +7,7 @@ built-ins, natives, and comprehensions
 
 defn myFN(x,y,z) ^x + y + z;
 
-def a: 3..4 ~map (v) { v + 1; } ~< { Id@ true };
+def a: 3..4 ~map (v) { v + 1; } ~< { Id@ true; };
 
 def b: \400_000..\hfffe3;
 
@@ -16,3 +16,7 @@ def c: | ... myFN |;
 def d: empty;
 
 def ~e~: true;
+
+def f: "Hello world";
+
+def g: \`"Hello, `name`!";
