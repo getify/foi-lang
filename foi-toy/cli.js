@@ -27,6 +27,9 @@ const COMPREHENSIONS = [
 	"~each", "~map", "~filter", "~fold", "~foldR", "~cata",
 	"~chain", "~bind", "~flatMap",
 ];
+const BOOLEAN_NAMED_OPERATORS = [
+	"and", "or", "as", "in", "has", "empty",
+];
 
 main();
 
@@ -90,9 +93,17 @@ function *tokenize(str) {
 					// need to defer a second token?
 					if (
 						pendingToken != null &&
-						pendingToken.type == "NUMBER" &&
 						pendingToken2 == null &&
-						nextToken.type == "PERIOD"
+						(
+							(
+								pendingToken.type == "NUMBER" &&
+								nextToken.type == "PERIOD"
+							) ||
+							(
+								[ "QMARK", "EXMARK" ].includes(pendingToken.type) &&
+								nextToken.type == "GENERAL"
+							)
+						)
 					) {
 						pendingToken2 = nextToken;
 					}
@@ -100,9 +111,28 @@ function *tokenize(str) {
 						// already two pending tokens, both
 						// ready to emit?
 						if (pendingToken2 != null) {
-							yield pendingToken;
-							yield pendingToken2;
-							pendingToken = pendingToken2 = null;
+							// a named boolean operator?
+							if (
+								[ "QMARK", "EXMARK" ].includes(pendingToken.type) &&
+								pendingToken2.type == "GENERAL" &&
+								BOOLEAN_NAMED_OPERATORS.includes(pendingToken2.value)
+							) {
+								// ex: BOOLEAN_IS, BOOLEAN_NOT_AND, etc
+								pendingToken.type = `BOOLEAN${
+									pendingToken.type == "EXMARK" ? "_NOT" : ""
+								}_${pendingToken2.value.toUpperCase()}`;
+								pendingToken.value += pendingToken2.value;
+								pendingToken.end = pendingToken2.end;
+								yield pendingToken;
+								pendingToken = pendingToken2 = null;
+							}
+							// otherwise, just emit both
+							// pending tokens
+							else {
+								yield pendingToken;
+								yield pendingToken2;
+								pendingToken = pendingToken2 = null;
+							}
 						}
 						// otherwise, single pending token
 						// ready to emit?
@@ -122,7 +152,7 @@ function *tokenize(str) {
 							[
 								"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
 								"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
-								"COMMENT", "PERIOD", "TILDE"
+								"COMMENT", "PERIOD", "TILDE", "QMARK", "EXMARK",
 							]
 							.includes(nextToken.type)
 						) {
@@ -218,15 +248,14 @@ function *tokenize(str) {
 				// number?
 				if (
 					pendingToken2 != null &&
-					pendingToken2.type == "PERIOD" &&
-					pendingToken2.value == "."
+					pendingToken2.type == "PERIOD"
 				) {
 					pendingToken2.type = "DOUBLE_PERIOD";
 					pendingToken2.value += value;
 					pendingToken2.end++;
 					return pendingToken2;
 				}
-				// otherwise, period will be held as
+				// otherwise, period should be held as
 				// pending alongside previous pending
 				// number
 				else {
@@ -275,10 +304,16 @@ function *tokenize(str) {
 			// is there an intervening "." or ".."
 			// between current number and pending
 			// number token?
-			if (pendingToken2 != null) {
+			if (
+				pendingToken2 != null &&
+				[ "PERIOD", "DOUBLE_PERIOD" ].includes(pendingToken2.type)
+			) {
 				// was there only a single "."
 				// between?
 				if (pendingToken2.type == "PERIOD") {
+					// combine the period into the
+					// pending number token, as well
+					// as the next next number
 					pendingToken.value += pendingToken2.value + value;
 					pendingToken.end = start + value.length - 1;
 					pendingToken2 = null;
@@ -341,7 +376,7 @@ function *tokenize(str) {
 			pendingToken.end += value.length;
 			return pendingToken;
 		}
-		// append to other pending token?
+		// append to pending token?
 		else if (
 			pendingToken != null &&
 			(
@@ -353,6 +388,19 @@ function *tokenize(str) {
 			pendingToken.value += value;
 			pendingToken.end += value.length;
 			return pendingToken;
+		}
+		// append to second pending token?
+		else if (
+			pendingToken2 != null &&
+			(
+				[ "WHITESPACE", "GENERAL", "STRING", "COMMENT" ]
+				.includes(pendingToken2.type)
+			) &&
+			type == pendingToken2.type
+		) {
+			pendingToken2.value += value;
+			pendingToken2.end += value.length;
+			return pendingToken2;
 		}
 		else {
 			return {

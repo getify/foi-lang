@@ -20,3 +20,5 @@ def ~e~: true;
 def f: "Hello world";
 
 def g: \`"Hello, `name`!";
+
+?[b ?and c ?or !empty d]: c(...f);
