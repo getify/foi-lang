@@ -7,11 +7,10 @@ var args = require("minimist")(process.argv.slice(2));
 
 const OPERATORS = [
 	"BACKTICK", "TILDE", "EXMARK", "HASH", "DOLLAR", "PERCENT",
-	"CARET", "AMPERSAND", "STAR", "UNDERSCORE", "PLUS", "EQUAL",
+	"CARET", "AMPERSAND", "STAR", "PLUS", "EQUAL", "AT", "HYPHEN",
 	"OPEN_BRACKET", "CLOSE_BRACKET", "PIPE", "COLON", "SEMICOLON",
 	"SINGLE_QUOTE", "OPEN_ANGLE", "CLOSE_ANGLE", "COMMA", "PERIOD",
 	"DOUBLE_PERIOD", "TRIPLE_PERIOD", "QMARK", "FORWARD_SLASH",
-	"AT", "HYPHEN",
 ];
 const NATIVES = [ "empty", "true", "false", ];
 const KEYWORDS = [
@@ -226,8 +225,22 @@ function *tokenize(str) {
 	}
 
 	function TOKEN(type,value,start) {
-		// negative number literal?
+		// digit(s) followed by a general letter?
 		if (
+			pendingToken != null &&
+			pendingToken.type == "NUMBER" &&
+			!pendingToken.value.includes("-") &&
+			!pendingToken.value.includes(".") &&
+			escapeToken == null &&
+			type == "GENERAL"
+		) {
+			pendingToken.type = "GENERAL";
+			pendingToken.value += value;
+			pendingToken.end += value.length;
+			return pendingToken;
+		}
+		// negative number literal?
+		else if (
 			pendingToken != null &&
 			pendingToken.type == "HYPHEN" &&
 			type == "NUMBER"
@@ -454,10 +467,6 @@ function *tokenize(str) {
 			case ")": {
 				escapeToken = null;
 				return [ TOKEN("CLOSE_PAREN",char,position), null ];
-			}
-			case "_": {
-				escapeToken = null;
-				return [ TOKEN("UNDERSCORE",char,position), null ];
 			}
 			case "-": {
 				escapeToken = null;
@@ -950,7 +959,7 @@ function *tokenize(str) {
 				// number literal
 				else {
 					return [
-						TOKEN("UNDERSCORE",char,position),
+						TOKEN("GENERAL",char,position),
 						POP_STATE
 					];
 				}

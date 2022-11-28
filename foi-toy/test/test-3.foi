@@ -21,4 +21,6 @@ def f: "Hello world";
 
 def g: \`"Hello, `name`!";
 
+def _h_var: 32a + \h32a + \3_200;
+
 ?[b ?and c ?or !empty d]: c(...f);
