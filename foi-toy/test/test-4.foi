@@ -1,0 +1,154 @@
+///
+NOTE: this is a sketch of how Promise/PromiseSubject,
+and some associated utilities (all, race) can be
+written in Foi. It's included here because it
+demonstrates a broad cross-section of Foi's various
+features/syntax.
+///
+
+
+// type definitions
+deft PromiseConstructor(?Init) -> Promise;
+deft Init(Resolve) -> empty;
+deft Resolve(any) -> Either;
+deft Promise <
+	chain: Chain,
+	map: Map,
+	resolved: Resolved,
+>;
+deft Chain(ChainCB) -> Promise;
+deft ChainCB(any) -> Promise;
+deft Map(MapCB) -> Promise;
+deft MapCB(any) -> any;
+deft Resolved() -> bool;
+deft Race(List@Promise) -> Promise;
+deft All(List@Promise) -> Promise;
+deft PromiseSubjectUnitConstructor() -> PromiseSubject;
+deft PromiseSubject <
+	pr: Promise,
+	resolve: Resolve,
+>;
+deft PromiseUnitConstructor(any) -> Promise;
+
+
+// module-local variables
+def subscribers: <>;
+
+
+// module-local functions
+defn subscribe(pr,cb) :over (subscribers) {
+	?{
+		?[subscribers ?has pr]: {
+			def cbs: subscribers[pr] $+ < cb >;
+			subscribers := < &subscribers, %from: cbs >;
+		}
+		?: {
+			subscribers := < &subscribers, %pr: < cb > >;
+		}
+	};
+};
+
+defn notifyValue(pr,v)
+	![subscribers ?has pr]: Left@ "No subscribers"
+{
+	subscribers[stream] ~each (cb) {
+		cb(v);
+	};
+	^Right@ true;
+};
+
+defn race(prs)
+	![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
+	:as Race
+{
+	def subj: PromiseSubject@;
+	prs ~each (pr) {
+		pr ~map subj.resolve;
+	};
+	^subj.pr;
+};
+
+defn all(prs)
+	![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
+	:as All
+{
+	def subj: PromiseSubject@;
+	def resCount: 0;
+	def res: <>;
+	prs ~each (pr,idx) {
+		pr ~map (v) {
+			resCount := resCount + 1;
+			res := < &res, %idx: v >;
+			?[resCount ?= size(prs) ?and !subj.pr.resolved()]: {
+				subj.resolve(res);
+			};
+		};
+	};
+	^subj.pr;
+};
+
+defn PromiseSubject@()
+	:as PromiseSubjectUnitConstructor
+{
+	def resolve;
+	def pr: Promise(
+		defn(res) :over (resolve) { resolve := res; }
+	);
+	^< :pr, :resolve >;
+};
+
+defn Promise@(v)
+	?[?empty v]: Promise()
+	:as PromiseUnitConstructor
+{
+	def subj: PromiseSubject@;
+	subj.resolve(v);
+	^subj.pr;
+};
+
+defn Promise(initFn)
+	:as PromiseConstructor
+{
+	def value: empty;
+	def pending: true;
+	def publicAPI: <
+		:chain,
+		:map,
+		:resolved,
+	>;
+	?[initFn ?as Init]: initFn(resolve);
+	^publicAPI;
+	
+	// **************************
+	
+	defn resolve(v)
+		![pending]: Left@ "Promise already resolved"
+		:over (value,pending)
+		:as Resolve
+	{
+		value := v;
+		pending := false;
+		notifyValue(publicAPI,value);
+		^Right@ v;
+	};
+	
+	defn chain(fn)
+		![pending]: fn(value)
+		:as Chain
+	{
+		def subj: PromiseSubject@;
+		subscribe(publicAPI,fn +> (~map subj.resolve));
+		^subj.pr;
+	};
+	
+	defn map(fn)
+		![pending]: Promise@ fn(value)
+		:as Map
+	{
+		def subj: PromiseSubject@;
+		subscribe(publicAPI,fn +> subj.resolve);
+		^subj.pr;
+	};
+	
+	defn resolved() :as Resolved ^!pending;
+};

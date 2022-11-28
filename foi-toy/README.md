@@ -4,7 +4,7 @@ This is an experimental tool for toying around with **Foi** code. It is **not** 
 
 ## Status
 
-Right now, all Foi-Toy does is tokenize a **Foi** file. All of this is subject to change at any time.
+Right now, all Foi-Toy does is tokenize a **Foi** file (and optionally output syntax-highlighted HTML/CSS, with `--color` CLI parameter). All of this is subject to change at any time.
 
 Example:
 
@@ -71,6 +71,25 @@ And that currently tokenizes as:
   { type: 'DOUBLE_QUOTE', value: '"', start: 167, end: 167 },
   { type: 'SEMICOLON', value: ';', start: 168, end: 168 }
 ]
+```
+
+If you include the `--color` parameter on the CLI command, the output will be the syntax-highlighted HTML/CSS, which (for the above code) looks like:
+
+```html
+<!-- ... -->
+
+<i class="t0">///
+this is an example of tokenizing a few
+different literals (numbers/strings)
+///</i>
+
+<i class="t6">def</i> <i class="t1">a</i><i class="t6">:</i> <i class="t7">-42.135</i><i class="t6">;</i>
+
+<i class="t6">def</i> <i class="t1">b</i><i class="t6">:</i> <i class="t3">\h</i><i class="t7">42a</i><i class="t6">;</i>  <i class="t0">// this is a hex number</i>
+
+<i class="t6">def</i> <i class="t1">c</i><i class="t6">:</i> <i class="t0">"</i><i class="t2">Hello, </i><i class="t2">""</i><i class="t2">folks</i><i class="t2">""</i><i class="t2">!</i><i class="t0">"</i><i class="t6">;</i>
+
+<!-- ... -->
 ```
 
 ## To Use

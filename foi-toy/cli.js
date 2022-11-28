@@ -117,7 +117,7 @@ function *tokenize(str) {
 								BOOLEAN_NAMED_OPERATORS.includes(pendingToken2.value)
 							) {
 								// ex: BOOLEAN_IS, BOOLEAN_NOT_AND, etc
-								pendingToken.type = `BOOLEAN${
+								pendingToken.type = `BOOLEAN_OP${
 									pendingToken.type == "EXMARK" ? "_NOT" : ""
 								}_${pendingToken2.value.toUpperCase()}`;
 								pendingToken.value += pendingToken2.value;
@@ -1030,6 +1030,14 @@ function highlight(tokens) {
 			html += token.value;
 		}
 		else {
+			// make the code HTML safe
+			let value = token.value
+				.replace(/&/g,"&amp;")
+				.replace(/</g,"&lt;")
+				.replace(/>/g,"&gt;");
+
+			// determine CSS class to use for
+			// highlighting each token type
 			let className = (
 				(
 					[
@@ -1037,30 +1045,38 @@ function highlight(tokens) {
 						"CLOSE_PAREN",
 					].includes(token.type)
 				) ? "t0" :
+
 				(token.type == "GENERAL") ? "t1" :
+
 				(
 					[ "STRING", "STRING_ESCAPED_CHAR" ]
 						.includes(token.type)
 				) ? "t2" :
+
 				(
 					[ "ESCAPE", "OPEN_BRACE", "CLOSE_BRACE" ]
 						.includes(token.type)
 				) ? "t3" :
-				(
-					[ "COMPREHENSION", "BUILTIN" ]
-						.includes(token.type)
-				) ? "t4" :
+
+				(token.type == "BUILTIN") ? "t4" :
+
 				(token.type == "NATIVE") ? "t5" :
+
 				(
 					token.type == "KEYWORD" ||
-					[ "COLON", "SEMICOLON" ]
-						.includes(token.type)
+					[ "COLON", "SEMICOLON", "COMPREHENSION" ]
+						.includes(token.type) ||
+					token.type.startsWith("BOOLEAN_OP_")
 				) ? "t6" :
+
 				(token.type == "NUMBER") ? "t7" :
+
 				(OPERATORS.includes(token.type)) ? "t8" :
-				"t9" // unassigned default, shouldn't happen
+
+				// unassigned default, shouldn't happen
+				"oops"
 			);
-			let value = token.value.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
 			html += `<i class="${className}">${value}</i>`;
 		}
 	}
