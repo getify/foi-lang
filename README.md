@@ -197,9 +197,27 @@ Such values are held in a `Number` [monadic instance](#monads-and-friends). To p
 
 ### Booleans
 
-There are two boolean values: `true` and `false`; there are no "truthy" or "falsy" values in **Foi**.
+There are two boolean values: `true` and `false`; there are no implicitly "truthy" or "falsy" values in **Foi** -- coercion to boolean is never done implicitly.
 
-However, some non-boolean values can be explicitly converted to a `true` or `false` equivalent via a [value-type annotation](#type-annotations). This is never done implicitly, though.
+However, most non-boolean values can be explicitly converted to a `true` or `false` equivalent, via the unary `?` operator. And the `!` unary operator does the same as `?`, but also negates, from `true` to a `false` or vice versa:
+
+```java
+?0;             // false
+!0;             // true
+
+? 1;            // true
+! 1;            // false
+
+?(empty);       // false
+!(empty);       // true
+
+? "hello";      // true
+! "hello";      // false
+```
+
+It's much more common/advisable to use `?` / `!` operators with a variable (e.g., `?customerOrder`, `!qty`, etc) than with a literal value.
+
+**Note:** Whitespace is optional between `?` and the value/variable, as shown above. However, since `?empty` / `!empty` (with no whitespace) are actual operators, either whitespace (`! empty`) or parentheses (`?(empty)`, as above) are necessary to distinguish the intended expression from the operators. That said, `?(empty)` / `!(empty)` are pretty uncommon/unnecessary expressions in programs; `true` and `false` are shorter, respectively, *and* more semantic.
 
 ### Strings
 
@@ -770,19 +788,7 @@ isValid ?or isComplete ?or isSuccess;       // true
 
 **Note:** As you can see, the `?and` and `?or` operators are n-ary, meaning they can take 2 or more arguments -- but only in the evaluation-expression form.
 
-To negate a boolean value, use the unary `!` operator:
-
-```java
-def isValid: true;
-
-def isInvalid: !isValid;
-def isNotValid: | ! valid |;
-
-isInvalid;              // false
-isNotValid;             // false
-```
-
-Also, any `?`-prefixed logical boolean operator can be flipped/negated by swapping the `?` with the `!` operator. For example, `!and` is *NAND* (not-and) and `!or` is *NOR* (not-or):
+Any `?`-prefixed logical boolean operator can be flipped/negated by swapping the `?` character with `!` in the operator. For example, `!and` is *NAND* (not-and) and `!or` is *NOR* (not-or):
 
 ```java
 // instead of these:
