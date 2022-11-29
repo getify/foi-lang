@@ -232,6 +232,7 @@ function *tokenize(str) {
 			!pendingToken.value.includes("-") &&
 			!pendingToken.value.includes(".") &&
 			escapeToken == null &&
+			pendingToken2 == null &&
 			type == "GENERAL"
 		) {
 			pendingToken.type = "GENERAL";
