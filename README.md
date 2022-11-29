@@ -43,13 +43,27 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
     </p>
 </details>
 
+## Comparision Examples (JS vs Foi)
+
+Here are some screenshots showing JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
+
+<p>
+<a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a>
+</p>
+
+<p>
+<a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a>
+</p>
+
+The syntax highlighting of the **Foi** code in these screenshots is produces by the [Foi-Toy tool](#foy-toy) included in this repository.
+
 ----
 
 ## Foi-Toy
 
-See [Foi-Toy](/foi-toy/#readme), an experimental tool for playing around with **Foi** code.
+[Foi-Toy](/foi-toy/#readme) is an experimental tool for playing around with **Foi** code, prior to there being an official compiler.
 
-Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS).
+Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots.
 
 ----
 
