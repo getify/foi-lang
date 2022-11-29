@@ -43,9 +43,15 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
     </p>
 </details>
 
+----
+
 ## Foi-Toy
 
 See [Foi-Toy](/foi-toy/#readme), an experimental tool for playing around with **Foi** code.
+
+Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS).
+
+----
 
 ## Table of Contents
 
