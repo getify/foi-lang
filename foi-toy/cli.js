@@ -24,7 +24,7 @@ const BUILTINS = [
 ];
 const COMPREHENSIONS = [
 	"~each", "~map", "~filter", "~fold", "~foldR", "~cata",
-	"~chain", "~bind", "~flatMap",
+	"~chain", "~bind", "~flatMap", "~ap", "~foldMap",
 ];
 const BOOLEAN_NAMED_OPERATORS = [
 	"and", "or", "as", "in", "has", "empty",
