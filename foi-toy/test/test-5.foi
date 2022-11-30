@@ -1,0 +1,32 @@
+///
+NOTE: This code looks like the typical "async-await"
+style of code in JS, ported to Foi. In particular,
+this example shows off the ~<< do-comprehension
+syntax. The :: below are kind of like "await".
+///
+
+
+defn renderLargeOrders() ^Promise ~<< {
+	def orders:: fetch("/all-orders");
+	def largeOrders: orders ~filter (order) { order.total ?>= 100; };
+	def customers:: all(
+		largeOrders ~map (order) {
+			fetch(\`"/customer/id/`order.custId`");
+		}
+	);
+	def records: largeOrders ~map (order,idx) {
+		< &order, customer: customers[idx] >;
+	};
+	\`"<ul>`
+		(| ~fold records, "", (html,record) { html + \`"
+			<li id=""order-`record.orderId`"">
+				<span>Order #`record.orderId`</span>
+				<span>Total: $`format(record.total)`</span>
+				<span>Customer: `record.customer.name` (`record.custId`)</span>
+			</li>
+		"; } |)
+	`</ul>";
+};
+
+renderLargeOrders()
+~map (html) { document.body.innerHTML := html; };

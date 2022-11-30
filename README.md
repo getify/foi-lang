@@ -61,6 +61,8 @@ Here are some screenshots showing typical JS code (on top, in each image) to the
 
 The syntax highlighting of the **Foi** code in these screenshots is produced by the [Foi-Toy tool](#foi-toy) included in this repository.
 
+You can find some [more examples of **Foi** code here](foi-toy/test).
+
 ----
 
 ## Foi-Toy
