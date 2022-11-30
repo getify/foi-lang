@@ -45,7 +45,7 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
 
 ## Comparision Examples (JS vs Foi)
 
-Here are some screenshots showing JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
+Here are some screenshots showing typical JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
 
 <p>
 <a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a>
@@ -55,7 +55,11 @@ Here are some screenshots showing JS code (on top, in each image) to the equival
 <a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a>
 </p>
 
-The syntax highlighting of the **Foi** code in these screenshots is produces by the [Foi-Toy tool](#foy-toy) included in this repository.
+<p>
+<a href="foi-js-comparison-3.png"><img src="foi-js-comparison-3.png" width=300 alt="Comparison: async..await fetch + rendering html"></a>
+</p>
+
+The syntax highlighting of the **Foi** code in these screenshots is produced by the [Foi-Toy tool](#foy-toy) included in this repository.
 
 ----
 
