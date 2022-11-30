@@ -96,7 +96,13 @@ different literals (numbers/strings)
 <!-- ... -->
 ```
 
-The syntax highlighting currently only uses the [Monokai Pro](https://monokai.pro/) dark theme (with "Spectrum" filter).
+That HTML/CSS looks like this when rendered in a browser:
+
+<p>
+<a href="foi-toy-highlighting.png" target="_blank"><img src="foi-toy-highlighting.png" width="500"></a>
+</p>
+
+As shown, the syntax highlighting currently only uses the [Monokai Pro](https://monokai.pro/) dark theme (with "Spectrum" filter) colors.
 
 ## To Use
 
