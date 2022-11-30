@@ -2896,9 +2896,9 @@ defn halve(v)
 
 // natural transformation utilities
 defn maybeFromEither(e)
-    ^| ~cata e, None@, Id@ |;
+    ^| ~fold e, None@, Id@ |;
 defn eitherFromMaybe(m)
-    ^| ~cata m, Left@ "Missing!", Right@ |;
+    ^| ~fold m, Left@ "Missing!", Right@ |;
 
 def m1: halve(0) #> maybeFromEither;    // None
 def m2: halve(4) #> maybeFromEither;    // Id{2}
