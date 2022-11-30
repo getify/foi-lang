@@ -8,6 +8,8 @@ I'm jotting down some very early thoughts on what I think I want to design for t
 
 It should feel intuitive when doing the *right*&trade; things, appear obvious when doing the *risky* things, and discourage doing the *dangerous* things.
 
+**Foi** is a language you write for other humans to read first. It's only a secondary benefit that the computer can understand the code and execute the desired operations.
+
 <details>
     <summary>Inspirational/Aspirational Design Ideas for Foi</summary>
     <p></p>
@@ -47,25 +49,23 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
 
 Here are some screenshots showing typical JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
 
-<p>
-<a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a>
-</p>
+<table>
+<tr>
+    <td valign="top"><a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a></td>
+    <td rowspan="2" valign="top"><a href="foi-js-comparison-3.png"><img src="foi-js-comparison-3.png" width=300 alt="Comparison: async..await fetch + rendering html"></a></td>
+</tr>
+<tr>
+    <td><a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a></td>
+</tr>
+</table>
 
-<p>
-<a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a>
-</p>
-
-<p>
-<a href="foi-js-comparison-3.png"><img src="foi-js-comparison-3.png" width=300 alt="Comparison: async..await fetch + rendering html"></a>
-</p>
-
-The syntax highlighting of the **Foi** code in these screenshots is produced by the [Foi-Toy tool](#foy-toy) included in this repository.
+The syntax highlighting of the **Foi** code in these screenshots is produced by the [Foi-Toy tool](#foi-toy) included in this repository.
 
 ----
 
 ## Foi-Toy
 
-[Foi-Toy](/foi-toy/#readme) is an experimental tool for playing around with **Foi** code, prior to there being an official compiler.
+[Foi-Toy](foi-toy/README.md) is an experimental tool for playing around with **Foi** code, prior to there being an official compiler.
 
 Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots.
 
