@@ -65,10 +65,18 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>123456789123456789n</code></td><td><code>\@123456789123456789</code></td><td>Big Integer Literal</td></tr>
     <tr><td><code>".."</code>, <code>'..'</code>, <code>`..`</code></td><td><code>".."</code></td><td>String Literal</td></tr>
     <tr><td><code>`string ${interpolation}`</code></td><td><code>\`"string `interpolation`"</code></td><td>Interpolated String Literal</td></tr>
-    <tr><td><code>{ .. }</code></td><td><code>&lt; .. &gt;</code></td><td>Object (Foi Record)</td></tr>
-    <tr><td><code>[ .. ]</code></td><td><code>&lt; .. &gt;</code></td><td>Array (Foi Tuple)</td></tr>
+    <tr><td><code>{ x: 2 }</code></td><td><code>&lt; x: 2 &gt;</code></td><td>Object (Foi Record)</td></tr>
+    <tr><td><code>{ [propName]: 2 }</code></td><td><code>&lt; %propName: 2 &gt;</code></td><td>Computed Property Name</td></tr>
+    <tr><td><code>[ 2, 3 ]</code></td><td><code>&lt; 2, 3 &gt;</code></td><td>Array (Foi Tuple)</td></tr>
+    <tr><td><code>{ ...obj }</code></td><td><code>&lt; &obj &gt;</code></td><td>Object Spread (Foi Record Pick)</td></tr>
+    <tr><td><code>{ prop: obj.prop }</code></td><td><code>&lt; &obj.prop &gt;</code></td><td>Object Pick</td></tr>
+    <tr><td><code>[ ...arr ]</code></td><td><code>&lt; &arr &gt;</code></td><td>Array Spread (Foi Tuple Pick)</td></tr>
+    <tr><td><code>{ x }</code></td><td><code>&lt; :x &gt;</code></td><td>Concise Property</td></tr>
+    <tr><td><code>obj.prop</code> <code>obj[propName]</code></td><td><code>obj.prop</code> <code>obj[propName]</code></td><td>Object Property Access</td></tr>
+    <tr><td><code>arr[3]</code></td><td><code>arr.3</code> <code>arr[3]</code></td><td>Array Index Access</td></tr>
+    <tr><td><code>arr.slice(2,5)</code></td><td><code>arr.[2..5]</code></td><td>Array Range Access</td></tr>
     <tr><td><code>=</code></td><td><code>:=</code></td><td>Assignment</td></tr>
-    <tr><td><code>var { .. } = ..</code><br><code>var [ .. ] = ..</code></td><td><code>def &lt; .. &gt;: ..</code></td><td>Destructuring</td></tr>
+    <tr><td><code>var { x } = ..</code><br><code>var [ x ] = ..</code></td><td><code>def &lt; x &gt;: ..</code></td><td>Destructuring</td></tr>
     <tr><td><code>!</code></td><td><code>!</code></td><td>Boolean NOT</td></tr>
     <tr><td><code>&amp;&amp;</code></td><td><code>?and</code></td><td>Boolean AND</td></tr>
     <tr><td><code>||</code></td><td><code>?or</code></td><td>Boolean OR</td></tr>
@@ -98,8 +106,12 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>export ..</code><br><code>export { .. }</code></td><td><code>export { .. }</code></td><td>Module Export</td></tr>
     <tr><td><code>function</code>, <code>=></code></td><td><code>defn</code></td><td>Function Definition</td></tr>
     <tr><td><code>return</code>, <code>=> ..</code></td><td><code>^</code></td><td>Function Return</td></tr>
+    <tr><td><code>function myFunc(x = 0) ..</code></td><td><code>defn myFunc(x: 0) ..</code></td><td>Function Parameter Default</td></tr>
+    <tr><td><code>function myFunc(...params) ..</code></td><td><code>defn myFunc(*params) ..</code></td><td>Function Rest Parameter</td></tr>
     <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
+    <tr><td><code>myFunc(...args)</code></td><td><code>myFunc(...args)</code></td><td>Function Call Argument Spread</td></tr>
     <tr><td><code>? :</code>, <code>if</code>, <code>if .. else if .. else</code><br><code>switch .. case .. default</code></td><td><code>?{ ?[..]: .. ?: .. }</code><br><code>?(..){ ?[..]: .. ?: .. }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
+    <tr><td><code>if (x > 0) myFunc(x)</code></td><td><code>?[x ?> 0]: myFunc(x)</code></td><td>Statement Guard Clause</td></tr>
     <tr><td><code>for (..)</code>, <code>while (..)</code>, <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
     <tr><td><code>.map(..)</code></td><td><code>~map</code></td><td>Map (Foi Comprehension)</td></tr>
     <tr><td><code>.flatMap(..)</code></td><td><code>~flatMap</code>, <code>~bind</code>, <code>~chain</code>, <code>~&lt;</code></td><td>Flat-Map (Foi Comprehension)</td></tr>
@@ -111,6 +123,7 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>new Promise(res => { .. })</code></td><td><code>Promise(defn(res){ .. })</code></td><td>Promise Constructor</td></tr>
     <tr><td><code>const subj = {}; subj.pr = new Promise(res => { subj.resolve = res; })</code></td><td><code>def subj: PromiseSubject@;</code></td><td>Promise Subject</td></tr>
     <tr><td><code>function*</code>, <code>async function*</code></td><td><code>Gen@ ..</code></td><td>Generator</td></tr>
+    <tr><td><code>for (let x of it) { .. }</code><br><code>for await (let x of it) { .. }</code></td><td><code>it ~&lt;* (x) { .. }</code></td><td>Iterator/Async Iterator Consumption (Foi Promise Do Loop Comprehension)</td></tr>
     <tr><td><code>Observable</code>, <code>Stream</code></td><td><code>PushStream</code>, <code>PullStream</code></td><td>Lazy/Concurrent Data</td></tr>
     <tr><td><code>var x: int = 42</code></td><td><code>def x: 42 :as int</code></td><td>TypeScript Static Annotation (Foi Value-Type Annotation)</td></tr>
     <tr><td><code>type MyType = ..</code></td><td><code>deft MyType ..</code></td><td>Custom Type Definition</td></tr>
@@ -118,11 +131,12 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>class ..</code></td><td></td><td>(not in Foi)</td></tr>
     <tr><td><code>this.</code></td><td></td><td>(not in Foi)</td></tr>
     <tr><td><code>try .. catch</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x??y</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td></td><td>(not in Foi)</td></tr>
     <tr><td></td><td><code>|myFunc 1,2,3|</code>, <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation (not in JS)</td></tr>
     <tr><td></td><td><code>:over (..)</code></td><td>Closure Side Effect (not in JS)</td></tr>
     <tr><td></td><td><code>defn myFunc() ?[ .. ]: ..</code></td><td>Function Precondition (not in JS)</td></tr>
-    <tr><td></td><td><code>Id</code>, <code>Value</code>, <code>Number</code>, <code>None</code>, <code>Maybe</code>, <code>Either</code>, <code>Left</code>, <code>Right</code>, <code>List</code>, <code>IO</code>, <code>Gen</code>, <code>PushStream</code>, <code>PullStream</code>, <code>Channel</code> (CSP)</td><td>Monads (not in JS)</td></tr>
+    <tr><td></td><td><code><code>Promise ~&lt;* { .. }</code></code></td><td>Promise Looping (not in JS)</td></tr>
+    <tr><td></td><td><code>Id</code>, <code>Value</code>, <code>Number</code>, <code>None</code>, <code>Maybe</code>, <code>Either</code>, <code>Left</code>, <code>Right</code>, <code>List</code>, <code>IO</code>, <code>Gen</code>, <code>PushStream</code>, <code>PullStream</code>, <code>Channel</code> (CSP) <code>~ap</code> <code>~foldMap</code> <code>~cata</code> <code>~&lt;&lt;</td><td>Monads (not in JS)</td></tr>
   </tbody>
 </table>
 </details>
