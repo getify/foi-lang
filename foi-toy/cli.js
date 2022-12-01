@@ -8,13 +8,14 @@ var args = require("minimist")(process.argv.slice(2));
 const OPERATORS = [
 	"BACKTICK", "TILDE", "EXMARK", "HASH", "DOLLAR", "PERCENT",
 	"CARET", "AMPERSAND", "STAR", "PLUS", "EQUAL", "AT", "HYPHEN",
-	"OPEN_BRACKET", "CLOSE_BRACKET", "PIPE", "COLON", "SEMICOLON",
+	"OPEN_BRACKET", "CLOSE_BRACKET", "PIPE", "QMARK", "SEMICOLON",
 	"SINGLE_QUOTE", "OPEN_ANGLE", "CLOSE_ANGLE", "COMMA", "PERIOD",
-	"DOUBLE_PERIOD", "TRIPLE_PERIOD", "QMARK", "FORWARD_SLASH",
+	"DOUBLE_PERIOD", "TRIPLE_PERIOD", "COLON", "DOUBLE_COLON",
+	"FORWARD_SLASH",
 ];
 const NATIVES = [ "empty", "true", "false", ];
 const KEYWORDS = [
-	"def", "defn", "deft", "import", "export", "as", "over", "int",
+	"def", "defn", "deft", "import", "export", ":as", ":over", "int",
 	"integer", "float", "bool", "boolean", "string",
 ];
 const BUILTINS = [
@@ -87,106 +88,8 @@ function *tokenize(str) {
 			if (nextToken != null) {
 				charTokenized = true;
 
-				// new token to emit?
-				if (![ pendingToken, pendingToken2 ].includes(nextToken)) {
-					// need to defer a second token?
-					if (
-						pendingToken != null &&
-						pendingToken2 == null &&
-						(
-							(
-								pendingToken.type == "NUMBER" &&
-								nextToken.type == "PERIOD"
-							) ||
-							(
-								[ "QMARK", "EXMARK" ].includes(pendingToken.type) &&
-								nextToken.type == "GENERAL"
-							)
-						)
-					) {
-						pendingToken2 = nextToken;
-					}
-					else {
-						// already two pending tokens, both
-						// ready to emit?
-						if (pendingToken2 != null) {
-							// a named boolean operator?
-							if (
-								[ "QMARK", "EXMARK" ].includes(pendingToken.type) &&
-								pendingToken2.type == "GENERAL" &&
-								BOOLEAN_NAMED_OPERATORS.includes(pendingToken2.value)
-							) {
-								// ex: BOOLEAN_IS, BOOLEAN_NOT_AND, etc
-								pendingToken.type = `BOOLEAN_OP${
-									pendingToken.type == "EXMARK" ? "_NOT" : ""
-								}_${pendingToken2.value.toUpperCase()}`;
-								pendingToken.value += pendingToken2.value;
-								pendingToken.end = pendingToken2.end;
-								yield pendingToken;
-								pendingToken = pendingToken2 = null;
-							}
-							// otherwise, just emit both
-							// pending tokens
-							else {
-								yield pendingToken;
-								yield pendingToken2;
-								pendingToken = pendingToken2 = null;
-							}
-						}
-						// otherwise, single pending token
-						// ready to emit?
-						else if (pendingToken != null) {
-							// need to specialize a "GENERAL"
-							// token type?
-							if (pendingToken.type == "GENERAL") {
-								pendingToken = specializeGeneralToken(pendingToken);
-							}
-
-							yield pendingToken;
-							pendingToken = null;
-						}
-
-						// should we defer this next token?
-						if (
-							[
-								"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
-								"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
-								"COMMENT", "PERIOD", "TILDE", "QMARK", "EXMARK",
-							]
-							.includes(nextToken.type)
-						) {
-							pendingToken = nextToken;
-
-							// remember previous escape token?
-							if (nextToken.type == "ESCAPE") {
-								escapeToken = pendingToken;
-							}
-						}
-						// might be starting an interpolated
-						// expression, so defer?
-						else if (
-							state.type == "escapedString" &&
-							nextToken.type == "BACKTICK"
-						) {
-							pendingToken = nextToken;
-						}
-						// otherwise this token is ready to
-						// emit now!
-						else {
-							yield nextToken;
-						}
-					}
-				}
-				// a pending string with only an
-				// escaped " or ` in it?
-				else if (
-					pendingToken != null &&
-					[ '""', "``" ].includes(pendingToken.value)
-				) {
-					pendingToken.type = "STRING_ESCAPED_CHAR";
-					yield pendingToken;
-					pendingToken = null;
-				}
+				// process and emit any ready tokens
+				yield* emitTokens(state,nextToken,/*flushAll=*/false);
 			}
 
 			// (possibly) need a state transition?
@@ -205,10 +108,155 @@ function *tokenize(str) {
 		}
 	}
 
+	// flush any pending tokens now that
+	// tokenization is complete
+	yield* emitTokens(
+		currentState[currentState.length-1],
+		/*curToken=*/null,
+		/*flushAll=*/true
+	);
+
 
 	// ***************************************
 
-	function specializeGeneralToken(token) {
+	function *emitTokens(state,curToken,flushAll = false) {
+		var tokenReady = (
+			curToken != null &&
+			curToken != pendingToken &&
+			curToken != pendingToken2
+		);
+		var flushPending = tokenReady || flushAll;
+
+		// already two pending tokens (both
+		// need to be emitted)?
+		if (
+			pendingToken != null &&
+			pendingToken2 != null &&
+			flushPending
+		) {
+			// a named boolean operator?
+			if (
+				[ "QMARK", "EXMARK" ].includes(pendingToken.type) &&
+				pendingToken2.type == "GENERAL" &&
+				BOOLEAN_NAMED_OPERATORS.includes(pendingToken2.value)
+			) {
+				pendingToken.type = "BOOLEAN_OPER";
+				pendingToken.value += pendingToken2.value;
+				pendingToken.end = pendingToken2.end;
+
+				// pending token ready to emit
+				let tok = pendingToken;
+				pendingToken = pendingToken2 = null;
+				yield tok;
+			}
+			// :keyword?
+			else if (
+				pendingToken.type == "COLON" &&
+				pendingToken2.type == "GENERAL" &&
+				KEYWORDS.includes(pendingToken.value + pendingToken2.value)
+			) {
+				pendingToken.type = "KEYWORD";
+				pendingToken.value += pendingToken2.value;
+				pendingToken.end = pendingToken2.end;
+
+				// pending token ready to emit
+				let tok = pendingToken;
+				pendingToken = pendingToken2 = null;
+				yield tok;
+			}
+			// otherwise, neither pending token
+			// needs additional processing
+			else {
+				let tokens = [ pendingToken, pendingToken2 ];
+				pendingToken = pendingToken2 = null;
+
+				// emit both pending tokens
+				for (let tok of tokens) {
+					// need to specialize token type?
+					yield specializeTokenType(tok);
+				}
+			}
+		}
+		// just one pending token?
+		else if (
+			pendingToken != null &&
+			pendingToken2 == null
+		) {
+			// need to defer *second* token?
+			if (
+				!flushAll &&
+				(
+					(
+						pendingToken.type == "NUMBER" &&
+						curToken.type == "PERIOD"
+					) ||
+					(
+						[ "QMARK", "EXMARK", "COLON", ]
+							.includes(pendingToken.type) &&
+						curToken.type == "GENERAL"
+					)
+				)
+			) {
+				pendingToken2 = curToken;
+
+				// no further token processing
+				// needed for now
+				return;
+			}
+			// a pending string with only an
+			// escaped " or ` in it?
+			else if (
+				pendingToken.type == "STRING" &&
+				[ '""', "``" ].includes(pendingToken.value)
+			) {
+				pendingToken.type = "STRING_ESCAPED_CHAR";
+				let tok = pendingToken;
+				pendingToken = null;
+				yield tok;
+			}
+			// need to emit pending token now?
+			else if (flushPending) {
+				// need to specialize a token type?
+				let tok = specializeTokenType(pendingToken);
+				pendingToken = null;
+				yield tok;
+			}
+		}
+
+		// current token to process/emit?
+		if (tokenReady) {
+			// need to defer the current token?
+			if (
+				!flushAll &&
+				(
+					[
+						"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
+						"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
+						"COMMENT", "PERIOD", "TILDE", "QMARK", "EXMARK",
+						"COLON",
+					]
+						.includes(curToken.type) ||
+					(
+						state.type == "escapedString" &&
+						curToken.type == "BACKTICK"
+					)
+				)
+			) {
+				pendingToken = curToken;
+
+				// remember previous escape token?
+				if (curToken.type == "ESCAPE") {
+					escapeToken = pendingToken;
+				}
+			}
+			else {
+				// need to specialize token type?
+				yield specializeTokenType(curToken);
+			}
+		}
+	}
+
+	function specializeTokenType(token) {
 		if (NATIVES.includes(token.value)) {
 			token.type = "NATIVE";
 		}
@@ -221,6 +269,7 @@ function *tokenize(str) {
 		else if (COMPREHENSIONS.includes(token.value)) {
 			token.type = "COMPREHENSION";
 		}
+
 		return token;
 	}
 
@@ -273,12 +322,7 @@ function *tokenize(str) {
 				// pending alongside previous pending
 				// number
 				else {
-					return {
-						type,
-						value,
-						start,
-						end: (start + value.length - 1),
-					};
+					return { type, value, start, end: start, };
 				}
 			}
 			// double-period ("..") or triple-period
@@ -351,7 +395,7 @@ function *tokenize(str) {
 			}
 		}
 		else if (type == "TILDE") {
-			// appending to a "GENERAL" token?
+			// appending to an identifier?
 			if (
 				pendingToken != null &&
 				pendingToken.type == "GENERAL"
@@ -360,15 +404,15 @@ function *tokenize(str) {
 				pendingToken.end += value.length;
 				return pendingToken;
 			}
+			// otherwise, tilde should be held as
+			// pending, in case it's starting an
+			// identifier or named comprehension
 			else {
-				return {
-					type,
-					value,
-					start,
-					end: (start + value.length - 1),
-				};
+				return { type, value, start, end: start, };
 			}
 		}
+		// tilde beginning an identifier or a
+		// named comprehension?
 		else if (
 			pendingToken != null &&
 			pendingToken.type == "TILDE" &&
@@ -387,8 +431,26 @@ function *tokenize(str) {
 		) {
 			pendingToken.type = "COMMENT";
 			pendingToken.value += value;
-			pendingToken.end += value.length;
+			pendingToken.end++;
 			return pendingToken;
+		}
+		else if (type == "COLON") {
+			// double colon?
+			if (
+				pendingToken != null &&
+				pendingToken.type == "COLON"
+			) {
+				pendingToken.type = "DOUBLE_COLON";
+				pendingToken.value += value;
+				pendingToken.end++;
+				return pendingToken;
+			}
+			// otherwise, colon should be held as
+			// pending, in case it's starting a
+			// keyword
+			else {
+				return { type, value, start, end: start, };
+			}
 		}
 		// append to pending token?
 		else if (
@@ -1065,9 +1127,11 @@ function highlight(tokens) {
 
 				(
 					token.type == "KEYWORD" ||
-					[ "COLON", "SEMICOLON", "COMPREHENSION" ]
-						.includes(token.type) ||
-					token.type.startsWith("BOOLEAN_OP_")
+					[
+						"COLON", "DOUBLE_COLON", "SEMICOLON", "COMPREHENSION",
+						"BOOLEAN_OPER",
+					]
+						.includes(token.type)
 				) ? "t6" :
 
 				(token.type == "NUMBER") ? "t7" :

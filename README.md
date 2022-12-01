@@ -4362,12 +4362,12 @@ However, if that value were omitted (but the iterator was still closed), the loo
 
 Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce.
 
-A type annotation always begins with the `as` keyword:
+A type annotation always begins with the `:as` keyword:
 
 ```java
-def age: 42 as int;
+def age: 42 :as int;
 
-def cost: | * getQty(order,item), getPrice(item) | as float;
+def cost: | * getQty(order,item), getPrice(item) | :as float;
 ```
 
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
@@ -4388,14 +4388,14 @@ defn whatever(id,name) :as InterestingFunc {
 }
 ```
 
-The `?as` operator corresponds to the `as` type annotation keyword; it's a boolean operator that returns `true` if a value/expression matches the indicated type, `false` otherwise:
+The `?as` operator corresponds to the `:as` type annotation keyword; it's a boolean operator that returns `true` if a value/expression matches the indicated type, `false` otherwise:
 
 ```java
 def age: 42;
 
 age ?as int;                // true
 
-(age as bool) ?as int;      // false
+(age :as bool) ?as int;     // false
 ```
 
 This operator is useful in pattern matching:
