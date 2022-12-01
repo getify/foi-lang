@@ -1,6 +1,6 @@
 {
 	"name": "foi-lang",
-	"version": "0.0.1-preE",
+	"version": "0.0.1-preF",
 	"description": "Foi: a different kind of functional programming language",
 	"repository": "getify/foi-lang",
 	"devDependencies": {

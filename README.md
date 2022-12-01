@@ -45,7 +45,89 @@ It should feel intuitive when doing the *right*&trade; things, appear obvious wh
     </p>
 </details>
 
-## Comparision Examples (JS vs Foi)
+## Foi-JS Cheatsheet
+
+The following (incomplete) is a **Foi** cheatsheet: a list of comparisons between JS operators/keywords/features and the somewhat-equivalents in **Foi**.
+
+<details>
+<summary>Click To Expand Cheatsheet</summary>
+<table>
+  <thead>
+    <tr><th>JS</th><th>Foi</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>//line-comment</code>, <code>/*block-comment*/</code></td><td><code>//line-comment</code>, <code>///block-comment///</code></td><td>Code Comment</td></tr>
+    <tr><td><code>var .. =</code>, <code>let .. =</code>, <code>const .. =</code></td><td><code>def .. :</code></td><td>Variable Definition</td></tr>
+    <tr><td><code>null</code>, <code>undefined</code></td><td><code>empty</code></td><td>Empty Value Literal</td></tr>
+    <tr><td><code>true</code>, <code>false</code></td><td><code>true</code>, <code>false</code></td><td>Boolean Literal</td></tr>
+    <tr><td><code>123</code>, <code>3.14</code>, <code>-42</code></td><td><code>123</code>, <code>3.14</code>, <code>-42</code></td><td>Number Literal</td></tr>
+    <tr><td><code>0o127</code>, <code>0h3a6</code>, <code>0b10110</code></td><td><code>\o127</code>, <code>\h3a6</code>, <code>\b10110</code></td><td>Octal/Hex/Binary Literal</td></tr>
+    <tr><td><code>123456789123456789n</code></td><td><code>\@123456789123456789</code></td><td>Big Integer Literal</td></tr>
+    <tr><td><code>".."</code>, <code>'..'</code>, <code>`..`</code></td><td><code>".."</code></td><td>String Literal</td></tr>
+    <tr><td><code>`string ${interpolation}`</code></td><td><code>\`"string `interpolation`"</code></td><td>Interpolated String Literal</td></tr>
+    <tr><td><code>{ .. }</code></td><td><code>&lt; .. &gt;</code></td><td>Object (Foi Record)</td></tr>
+    <tr><td><code>[ .. ]</code></td><td><code>&lt; .. &gt;</code></td><td>Array (Foi Tuple)</td></tr>
+    <tr><td><code>=</code></td><td><code>:=</code></td><td>Assignment</td></tr>
+    <tr><td><code>var { .. } = ..</code><br><code>var [ .. ] = ..</code></td><td><code>def &lt; .. &gt;: ..</code></td><td>Destructuring</td></tr>
+    <tr><td><code>!</code></td><td><code>!</code></td><td>Boolean NOT</td></tr>
+    <tr><td><code>&amp;&amp;</code></td><td><code>?and</code></td><td>Boolean AND</td></tr>
+    <tr><td><code>||</code></td><td><code>?or</code></td><td>Boolean OR</td></tr>
+    <tr><td><code>!( &amp;&amp; )</code></td><td><code>!and</code></td><td>Boolean NOT AND (Foi NAND)</td></tr>
+    <tr><td><code>!( || )</code></td><td><code>!or</code></td><td>Boolean NOT OR (Foi NOR)</td></tr>
+    <tr><td><code>==</code></td><td><code>?=</code></td><td>Equality</td></tr>
+    <tr><td><code>!=</code></td><td><code>!=</code></td><td>Inequality</td></tr>
+    <tr><td><code>== null</code></td><td><code>?empty</code></td><td>Is <code>null</code> (Foi <code>empty</code>)</td></tr>
+    <tr><td><code>!= null</code></td><td><code>!empty</code></td><td>Is Not <code>null</code> (Foi <code>! empty</code>)</td></tr>
+    <tr><td><code>&gt;</code></td><td><code>?&gt;</code></td><td>Greater Than</td></tr>
+    <tr><td><code>&gt;=</code></td><td><code>?&gt;=</code></td><td>Greater Than / Equal</td></tr>
+    <tr><td><code>&lt;</code></td><td><code>?&lt;</code></td><td>Less Than</td></tr>
+    <tr><td><code>&lt;=</code></td><td><code>?&lt;=</code></td><td>Less Than / Equal</td></tr>
+    <tr><td><code>!( &gt )</code></td><td><code>!&gt;</code></td><td>Not Greater Than</td></tr>
+    <tr><td><code>!( &gt;= )</code></td><td><code>!&gt;=</code></td><td>Not Greater Than / Equal</td></tr>
+    <tr><td><code>!( &lt; )</code></td><td><code>!&lt;</code></td><td>Not Less Than</td></tr>
+    <tr><td><code>!( &lt;= )</code></td><td><code>!&lt;=</code></td><td>Not Less Than / Equal</td></tr>
+    <tr><td><code>&gt; &amp;&amp; &lt;</code></td><td><code>?&lt;&gt;</code></td><td>In Between, Not Inclusive </td></tr>
+    <tr><td><code>&gt;= &amp;&amp; &lt;=</code></td><td><code>?&lt;=&gt;</code></td><td>In Between, Inclusive</td></tr>
+    <tr><td><code>&lt; || &gt;</code></td><td><code>!&lt;&gt;</code></td><td>Not In Between, Not Inclusive </td></tr>
+    <tr><td><code>&lt;= || &gt;=</code></td><td><code>!&lt;=&gt;</code></td><td>Not In Between, Inclusive</td></tr>
+    <tr><td><code>+</code></td><td><code>+</code></td><td>Plus</td></tr>
+    <tr><td><code>-</code></td><td><code>-</code></td><td>Minus</td></tr>
+    <tr><td><code>*</code></td><td><code>*</code></td><td>Multiply</td></tr>
+    <tr><td><code>/</code></td><td><code>/</code></td><td>Divide</td></tr>
+    <tr><td><code>import .. from ..</code><br><code>import { .. } from ..</code></td><td><code>def .. : import from ..</code><br><code>def &lt; .. &gt;: import from ..</code></td><td>Module Import</td></tr>
+    <tr><td><code>export ..</code><br><code>export { .. }</code></td><td><code>export { .. }</code></td><td>Module Export</td></tr>
+    <tr><td><code>function</code>, <code>=></code></td><td><code>defn</code></td><td>Function Definition</td></tr>
+    <tr><td><code>return</code>, <code>=> ..</code></td><td><code>^</code></td><td>Function Return</td></tr>
+    <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
+    <tr><td><code>? :</code>, <code>if</code>, <code>if .. else if .. else</code><br><code>switch .. case .. default</code></td><td><code>?{ ?[..]: .. ?: .. }</code><br><code>?(..){ ?[..]: .. ?: .. }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
+    <tr><td><code>for (..)</code>, <code>while (..)</code>, <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
+    <tr><td><code>.map(..)</code></td><td><code>~map</code></td><td>Map (Foi Comprehension)</td></tr>
+    <tr><td><code>.flatMap(..)</code></td><td><code>~flatMap</code>, <code>~bind</code>, <code>~chain</code>, <code>~&lt;</code></td><td>Flat-Map (Foi Comprehension)</td></tr>
+    <tr><td><code>.filter(..)</code></td><td><code>~filter</code></td><td>Filter (Foi Comprehension)</td></tr>
+    <tr><td><code>.reduce(..)</code>, <code>reduceRight(..)</code></td><td><code>~fold</code>, <code>~foldR</code></td><td>Reduce (Foi Fold)</td></tr>
+    <tr><td><code>[...new Array(4)].map((v,i)=>i)</code></td><td><code>0..3</code></td><td>Integer Range List: 0,1,2,3</td></tr>
+    <tr><td><code>(async function(){ var x = await y; .. })()</code></td><td><code>Promise ~&lt;&lt; (x:: y) { .. }</code></td><td>Async..Await (Foi Promise Do Comprehension)</td></tr>
+    <tr><td><code>Promise.resolve(42)</code></td><td><code>Promise@42</code></td><td>Resolved Promise</td></tr>
+    <tr><td><code>new Promise(res => { .. })</code></td><td><code>Promise(defn(res){ .. })</code></td><td>Promise Constructor</td></tr>
+    <tr><td><code>const subj = {}; subj.pr = new Promise(res => { subj.resolve = res; })</code></td><td><code>def subj: PromiseSubject@;</code></td><td>Promise Subject</td></tr>
+    <tr><td><code>function*</code>, <code>async function*</code></td><td><code>Gen@ ..</code></td><td>Generator</td></tr>
+    <tr><td><code>Observable</code>, <code>Stream</code></td><td><code>PushStream</code>, <code>PullStream</code></td><td>Lazy/Concurrent Data</td></tr>
+    <tr><td><code>var x: int = 42</code></td><td><code>def x: 42 :as int</code></td><td>TypeScript Static Annotation (Foi Value-Type Annotation)</td></tr>
+    <tr><td><code>type MyType = ..</code></td><td><code>deft MyType ..</code></td><td>Custom Type Definition</td></tr>
+    <tr><td><code>NaN</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td><code>class ..</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td><code>this.</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td><code>try .. catch</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x??y</code></td><td></td><td>(not in Foi)</td></tr>
+    <tr><td></td><td><code>|myFunc 1,2,3|</code>, <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation (not in JS)</td></tr>
+    <tr><td></td><td><code>:over (..)</code></td><td>Closure Side Effect (not in JS)</td></tr>
+    <tr><td></td><td><code>defn myFunc() ?[ .. ]: ..</code></td><td>Function Precondition (not in JS)</td></tr>
+    <tr><td></td><td><code>Id</code>, <code>Value</code>, <code>Number</code>, <code>None</code>, <code>Maybe</code>, <code>Either</code>, <code>Left</code>, <code>Right</code>, <code>List</code>, <code>IO</code>, <code>Gen</code>, <code>PushStream</code>, <code>PullStream</code>, <code>Channel</code> (CSP)</td><td>Monads (not in JS)</td></tr>
+  </tbody>
+</table>
+</details>
+
+## Comparision Examples (Foi vs JS)
 
 Here are some screenshots showing typical JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
 
