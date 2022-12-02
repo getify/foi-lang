@@ -77,10 +77,11 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>arr[3]</code></td><td><code>arr.3</code> <code>arr[3]</code></td><td>Array Index Access</td></tr>
     <tr><td><code>arr.slice(2,5)</code></td><td><code>arr.[2..5]</code></td><td>Array Range Access</td></tr>
     <tr><td><code>new Map([[ obj, 42 ]])</code></td><td><code>&lt; %obj: 42 &gt;</code></td><td>Map (Foi Record)</td></tr>
-    <tr><td><code>new Set([ 1, 1, 2, 2 ])</code></td><td><code>&lt;[ 1, 1, 2, 2 ]&gt;</code></td><td>Set (Foi Tuple -- with dupliacate filtering)</td></tr>
+    <tr><td><code>new Set([ 1, 1, 2, 2 ])</code></td><td><code>&lt;[ 1, 1, 2, 2 ]&gt;</code></td><td>Set (Foi Tuple -- with duplicate filtering)</td></tr>
     <tr><td><code>=</code></td><td><code>:=</code></td><td>Assignment</td></tr>
     <tr><td><code>var { x } = ..</code><br><code>var [ x ] = ..</code></td><td><code>def &lt; x &gt;: ..</code></td><td>Destructuring</td></tr>
-    <tr><td><code>!</code></td><td><code>!</code></td><td>Boolean NOT</td></tr>
+    <tr><td><code>!x</code></td><td><code>!x</code></td><td>Boolean Negate</td></tr>
+    <tr><td><code>!!x</code> <code>Boolean(x)</code></td><td><code>?x</code></td><td>Boolean Coerce</td></tr>
     <tr><td><code>&amp;&amp;</code></td><td><code>?and</code></td><td>Boolean AND</td></tr>
     <tr><td><code>||</code></td><td><code>?or</code></td><td>Boolean OR</td></tr>
     <tr><td><code>!( &amp;&amp; )</code></td><td><code>!and</code></td><td>Boolean NOT AND (Foi NAND)</td></tr>
@@ -370,7 +371,7 @@ That is, if you spread a string across multiple lines, those new lines (and any 
 //    and this is line two.
 ```
 
-If you want to collapse these new lines (and line-leading whitespace) into a single whitespace character, prefix the string literal with a `\`, like this:
+If you want to collapse new lines (and line trailing/leading whitespace) into a single whitespace character, prefix the string literal with a `\`, like this:
 
 ```java
 \"This is all on
@@ -402,7 +403,7 @@ To include a literal `` ` `` back-tick by itself (not as an interpolation delimi
 // Here is a single ` back-tick, Kyle.
 ```
 
-To both collapse new-line/leading whitespace, as well as allow interpolation, combine the `\` and  `` \` ``, in order, like this:
+To both collapse whitespace, as well as allow interpolation, combine the `\` and  `` \` ``, in order, like this:
 
 ```java
 \\`"This is
@@ -420,7 +421,7 @@ In **Foi**, identifiers are case-sensitive, and can be comprised of any of these
 * `_`
 * `~`
 
-**Note:** There is no restriction on the first character of identifiers, as in some languages; so `3stars` is a valid identifier name. However, an identifier must have at least one non-numeric (`0` - `9`, `-`, and `.`) character somewhere in it. Otherwise, it's just a number.
+**Note:** There is no restriction on the first character of identifiers, as in some languages; so `3stars` is a valid identifier name. However, an identifier must have at least one non-digit (`0` - `9`) character somewhere in it. Otherwise, it's just a number.
 
 Identifiers can be any length.
 
