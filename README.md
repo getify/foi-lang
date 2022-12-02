@@ -56,14 +56,15 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><th>JS</th><th>Foi</th><th>Notes</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>//line-comment</code>, <code>/*block-comment*/</code></td><td><code>//line-comment</code>, <code>///block-comment///</code></td><td>Code Comment</td></tr>
-    <tr><td><code>var .. =</code>, <code>let .. =</code>, <code>const .. =</code></td><td><code>def .. :</code></td><td>Variable Definition</td></tr>
-    <tr><td><code>null</code>, <code>undefined</code></td><td><code>empty</code></td><td>Empty Value Literal</td></tr>
-    <tr><td><code>true</code>, <code>false</code></td><td><code>true</code>, <code>false</code></td><td>Boolean Literal</td></tr>
-    <tr><td><code>123</code>, <code>3.14</code>, <code>-42</code></td><td><code>123</code>, <code>3.14</code>, <code>-42</code></td><td>Number Literal</td></tr>
-    <tr><td><code>0o127</code>, <code>0h3a6</code>, <code>0b10110</code></td><td><code>\o127</code>, <code>\h3a6</code>, <code>\b10110</code></td><td>Octal/Hex/Binary Literal</td></tr>
-    <tr><td><code>123456789123456789n</code></td><td><code>\@123456789123456789</code></td><td>Big Integer Literal</td></tr>
-    <tr><td><code>".."</code>, <code>'..'</code>, <code>`..`</code></td><td><code>".."</code></td><td>String Literal</td></tr>
+    <tr><td><code>//line-comment</code> <code>/*block-comment*/</code></td><td><code>//line-comment</code> <code>///block-comment///</code></td><td>Code Comment</td></tr>
+    <tr><td><code>var .. =</code> <code>let .. =</code> <code>const .. =</code></td><td><code>def .. :</code></td><td>Variable Definition</td></tr>
+    <tr><td><code>null</code> <code>undefined</code></td><td><code>empty</code></td><td>Empty Value Literal</td></tr>
+    <tr><td><code>true</code><code>false</code></td><td><code>true</code> <code>false</code></td><td>Boolean Literal</td></tr>
+    <tr><td><code>123</code> <code>3.14</code> <code>-42</code></td><td><code>123</code> <code>3.14</code> <code>-42</code></td><td>Number Literal</td></tr>
+    <tr><td><code>0o127</code> <code>0h3a6</code> <code>0b10110</code></td><td><code>\o127</code> <code>\h3a6</code> <code>\b10110</code></td><td>Octal/Hex/Binary Literal</td></tr>
+    <tr><td><code>1_234_567_890.600_399</code></td><td><code>\1_234_567_890.600_399</code></td><td>Readable Number Literal</td></tr>
+    <tr><td><code>12345678901234567890n</code></td><td><code>\@12345678901234567890</code></td><td>Big Integer Literal</td></tr>
+    <tr><td><code>".."</code> <code>'..'</code> <code>`..`</code></td><td><code>".."</code></td><td>String Literal</td></tr>
     <tr><td><code>`string ${interpolation}`</code></td><td><code>\`"string `interpolation`"</code></td><td>Interpolated String Literal</td></tr>
     <tr><td><code>{ x: 2 }</code></td><td><code>&lt; x: 2 &gt;</code></td><td>Object (Foi Record)</td></tr>
     <tr><td><code>{ [propName]: 2 }</code></td><td><code>&lt; %propName: 2 &gt;</code></td><td>Computed Property Name</td></tr>
@@ -75,6 +76,8 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>obj.prop</code> <code>obj[propName]</code></td><td><code>obj.prop</code> <code>obj[propName]</code></td><td>Object Property Access</td></tr>
     <tr><td><code>arr[3]</code></td><td><code>arr.3</code> <code>arr[3]</code></td><td>Array Index Access</td></tr>
     <tr><td><code>arr.slice(2,5)</code></td><td><code>arr.[2..5]</code></td><td>Array Range Access</td></tr>
+    <tr><td><code>new Map([[ obj, 42 ]])</code></td><td><code>&lt; %obj: 42 &gt;</code></td><td>Map (Foi Record)</td></tr>
+    <tr><td><code>new Set([ 1, 1, 2, 2 ])</code></td><td><code>&lt;[ 1, 1, 2, 2 ]&gt;</code></td><td>Set (Foi Tuple -- with dupliacate filtering)</td></tr>
     <tr><td><code>=</code></td><td><code>:=</code></td><td>Assignment</td></tr>
     <tr><td><code>var { x } = ..</code><br><code>var [ x ] = ..</code></td><td><code>def &lt; x &gt;: ..</code></td><td>Destructuring</td></tr>
     <tr><td><code>!</code></td><td><code>!</code></td><td>Boolean NOT</td></tr>
@@ -104,39 +107,48 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>/</code></td><td><code>/</code></td><td>Divide</td></tr>
     <tr><td><code>import .. from ..</code><br><code>import { .. } from ..</code></td><td><code>def .. : import from ..</code><br><code>def &lt; .. &gt;: import from ..</code></td><td>Module Import</td></tr>
     <tr><td><code>export ..</code><br><code>export { .. }</code></td><td><code>export { .. }</code></td><td>Module Export</td></tr>
-    <tr><td><code>function</code>, <code>=></code></td><td><code>defn</code></td><td>Function Definition</td></tr>
-    <tr><td><code>return</code>, <code>=> ..</code></td><td><code>^</code></td><td>Function Return</td></tr>
+    <tr><td><code>function</code> <code>=></code></td><td><code>defn</code></td><td>Function Definition</td></tr>
+    <tr><td><code>return</code> <code>=> ..</code></td><td><code>^</code></td><td>Function Return</td></tr>
     <tr><td><code>function myFunc(x = 0) ..</code></td><td><code>defn myFunc(x: 0) ..</code></td><td>Function Parameter Default</td></tr>
     <tr><td><code>function myFunc(...params) ..</code></td><td><code>defn myFunc(*params) ..</code></td><td>Function Rest Parameter</td></tr>
     <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
     <tr><td><code>myFunc(...args)</code></td><td><code>myFunc(...args)</code></td><td>Function Call Argument Spread</td></tr>
-    <tr><td><code>? :</code>, <code>if</code>, <code>if .. else if .. else</code><br><code>switch .. case .. default</code></td><td><code>?{ ?[..]: .. ?: .. }</code><br><code>?(..){ ?[..]: .. ?: .. }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
+    <tr><td><code>.. ? .. : ..</code> <code>if</code> <code>if .. else if .. else</code><br><code>switch .. case .. default</code></td><td><code>?{ ?[..]: .. ?: .. }</code><br><code>?(..){ ?[..]: .. ?: .. }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
     <tr><td><code>if (x > 0) myFunc(x)</code></td><td><code>?[x ?> 0]: myFunc(x)</code></td><td>Statement Guard Clause</td></tr>
-    <tr><td><code>for (..)</code>, <code>while (..)</code>, <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
+    <tr><td><code>for (..)</code> <code>while (..)</code> <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
     <tr><td><code>.map(..)</code></td><td><code>~map</code></td><td>Map (Foi Comprehension)</td></tr>
-    <tr><td><code>.flatMap(..)</code></td><td><code>~flatMap</code>, <code>~bind</code>, <code>~chain</code>, <code>~&lt;</code></td><td>Flat-Map (Foi Comprehension)</td></tr>
+    <tr><td><code>.flatMap(..)</code></td><td><code>~flatMap</code> <code>~bind</code> <code>~chain</code> <code>~&lt;</code></td><td>Flat-Map (Foi Comprehension)</td></tr>
     <tr><td><code>.filter(..)</code></td><td><code>~filter</code></td><td>Filter (Foi Comprehension)</td></tr>
-    <tr><td><code>.reduce(..)</code>, <code>reduceRight(..)</code></td><td><code>~fold</code>, <code>~foldR</code></td><td>Reduce (Foi Fold)</td></tr>
+    <tr><td><code>.reduce(..)</code> <code>.reduceRight(..)</code></td><td><code>~fold</code> <code>~foldR</code></td><td>Reduce (Foi Fold)</td></tr>
     <tr><td><code>[...new Array(4)].map((v,i)=>i)</code></td><td><code>0..3</code></td><td>Integer Range List: 0,1,2,3</td></tr>
     <tr><td><code>(async function(){ var x = await y; .. })()</code></td><td><code>Promise ~&lt;&lt; (x:: y) { .. }</code></td><td>Async..Await (Foi Promise Do Comprehension)</td></tr>
     <tr><td><code>Promise.resolve(42)</code></td><td><code>Promise@42</code></td><td>Resolved Promise</td></tr>
     <tr><td><code>new Promise(res => { .. })</code></td><td><code>Promise(defn(res){ .. })</code></td><td>Promise Constructor</td></tr>
     <tr><td><code>const subj = {}; subj.pr = new Promise(res => { subj.resolve = res; })</code></td><td><code>def subj: PromiseSubject@;</code></td><td>Promise Subject</td></tr>
-    <tr><td><code>function*</code>, <code>async function*</code></td><td><code>Gen@ ..</code></td><td>Generator</td></tr>
+    <tr><td><code>function*</code> <code>async function*</code></td><td><code>Gen@ ..</code></td><td>Generator</td></tr>
     <tr><td><code>for (let x of it) { .. }</code><br><code>for await (let x of it) { .. }</code></td><td><code>it ~&lt;* (x) { .. }</code></td><td>Iterator/Async Iterator Consumption (Foi Promise Do Loop Comprehension)</td></tr>
-    <tr><td><code>Observable</code>, <code>Stream</code></td><td><code>PushStream</code>, <code>PullStream</code></td><td>Lazy/Concurrent Data</td></tr>
+    <tr><td><code>Observable</code> <code>Stream</code></td><td><code>PushStream</code> <code>PullStream</code></td><td>Lazy/Concurrent Data</td></tr>
+    <tr><td><code>42 |&gt; myFunc(#) |&gt; anotherFunc(#,2)</code></td><td><code>42 #&gt; myFunc #&gt; anotherFunc(#,2)</code></td><td>Pipeline (proposed for JS)</td></tr>
     <tr><td><code>var x: int = 42</code></td><td><code>def x: 42 :as int</code></td><td>TypeScript Static Annotation (Foi Value-Type Annotation)</td></tr>
     <tr><td><code>type MyType = ..</code></td><td><code>deft MyType ..</code></td><td>Custom Type Definition</td></tr>
-    <tr><td><code>NaN</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td><code>class ..</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td><code>this.</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td><code>try .. catch</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td></td><td>(not in Foi)</td></tr>
-    <tr><td></td><td><code>|myFunc 1,2,3|</code>, <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation (not in JS)</td></tr>
-    <tr><td></td><td><code>:over (..)</code></td><td>Closure Side Effect (not in JS)</td></tr>
-    <tr><td></td><td><code>defn myFunc() ?[ .. ]: ..</code></td><td>Function Precondition (not in JS)</td></tr>
-    <tr><td></td><td><code><code>Promise ~&lt;* { .. }</code></code></td><td>Promise Looping (not in JS)</td></tr>
-    <tr><td></td><td><code>Id</code>, <code>Value</code>, <code>Number</code>, <code>None</code>, <code>Maybe</code>, <code>Either</code>, <code>Left</code>, <code>Right</code>, <code>List</code>, <code>IO</code>, <code>Gen</code>, <code>PushStream</code>, <code>PullStream</code>, <code>Channel</code> (CSP) <code>~ap</code> <code>~foldMap</code> <code>~cata</code> <code>~&lt;&lt;</td><td>Monads (not in JS)</td></tr>
+    <tr><td>----------------</td><td>--------------------</td><td>--------------------</td></tr>
+    <tr><td><code>NaN</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>class ..</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>this.</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>try .. catch</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td>----------------</td><td>--------------------</td><td>--------------------</td></tr>
+    <tr><td>(not in JS)</td><td><code>|myFunc 1,2,3|</code> <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation</td></tr>
+    <tr><td>(proposed for JS)</td><td><code>|myFn 1,,|</code> <code>|myFn 1,,3|</code></td><td>Function Partial Application</td></tr>
+    <tr><td>(not in JS)</td><td><code>|'myFn 3,2,1|</code></td><td>Function Reverse Application</td></tr>
+    <tr><td>(not in JS)</td><td><code>|#&gt; 42,...fns|</code></td><td>Dynamic Pipeline</td></tr>
+    <tr><td>(not in JS)</td><td><code>:over (..)</code></td><td>Closure Side Effect Declaration</td></tr>
+    <tr><td>(not in JS)</td><td><code>defn myFunc() ?[ .. ]: ..</code></td><td>Function Precondition</td></tr>
+    <tr><td>(not in JS)</td><td><code><code>Promise ~&lt;* { .. }</code></code></td><td>Promise Looping</td></tr>
+    <tr><td>(not in JS)</td><td><code>def myFunc: incVal +&gt; doubleVal +&gt; formatNum</code></td><td>Function Composition</td></tr>
+    <tr><td>(not in JS)</td><td><code>defn myFunc(v) #&gt; incVal #&gt; doubleVal #&gt; formatNum</code></td><td>Pipeline Function</td></tr>
+    <tr><td>(not in JS)</td><td><code>defn add(x)(y) ^x + y</code></td><td>Curried Function Declaration</td></tr>
+    <tr><td>(not in JS)</td><td><code>Id</code> <code>Value</code> <code>Number</code> <code>None</code> <code>Maybe</code> <code>Either</code> <code>Left</code> <code>Right</code> <code>List</code> <code>IO</code> <code>Gen</code> <code>PushStream</code> <code>PullStream</code> <code>Channel</code> (CSP) <code>~ap</code> <code>~foldMap</code> <code>~cata</code> <code>~&lt;&lt;</td><td>Monads, Monadic Comprehensions</td></tr>
   </tbody>
 </table>
 </details>
