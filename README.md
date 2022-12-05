@@ -24,9 +24,9 @@ A programming language design is a delicate balance, and inevitably will be judg
 
 That said, here are a few explanations to help bring some clarity to **Foi**'s particular design decisions:
 
-* **Words vs Symbols** I don't think a language should be all symbols. I struggle to memorize arbitrary symbol combinations just as much as anyone. But I similarly feel over burdended when a language is full of long lists of reserved keywords.
+* **Words vs Symbols** I don't think a language should be all symbols. I struggle to memorize arbitrary symbol combinations just as much as anyone. But I similarly feel overburdened when a language is full of long lists of reserved keywords.
 
-    I dislike how these reserved keywords can visually appear indistinct from our our variables/identifiers (save for syntax highlighting). I also dislike how keywords can conflict with very useful variable names in certain contexts.
+    I dislike how these reserved keywords can visually appear indistinct from our variables/identifiers (save for syntax highlighting). I also dislike how keywords can conflict with very useful variable names in certain contexts.
 
     **Foi** has a pretty short list of bare keywords, most of which are actually part of the type annotation system (`int`, `bool`, etc). **Foi** has a variety of purely symbolic operators, like `+` (addition, concatenation) and `+>` (compose-left).
 
@@ -34,7 +34,7 @@ That said, here are a few explanations to help bring some clarity to **Foi**'s p
 
     Another example: `^` replaces the `return` keyword. This is designed to be a single "return" signifier that stands out (it's vertically top-aligned), has a semantic signal (sending a value "up and out" from a function), but is short enough to not burden even the most concise of inline function expressions.
 
-* **Consistency** Building on the last point, all boolean operators begin with the `?` symbol (or `!` for the negated form), so they should be easily recongizable as such. This includes pure symbolic operators, like `?=` (equality) / `!=` (inequality) or `?>` (greater-than), as well as named operators, like `?and` (boolean-AND) and `!or` (boolean-NOR) and `?in` (included-in).
+* **Consistency** Building on the last point, all boolean operators begin with the `?` symbol (or `!` for the negated form), so they should be easily recognizable as such. This includes pure symbolic operators, like `?=` (equality) / `!=` (inequality) or `?>` (greater-than), as well as named operators, like `?and` (boolean-AND) and `!or` (boolean-NOR) and `?in` (included-in).
 
     The `?` and `!` symbols can also serve as unary prefix operators on any identifier (or value), to cast the value to a boolean (and negate it, for `!`). Again, these symbols always indicate boolean purposes. Consistency.
 

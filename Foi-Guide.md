@@ -52,7 +52,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Null-Application Function](#null-application-function)
 * [Loops](#loops)
 * [List Comprehensions](#list-comprehensions)
-    - [Filter Comphrension (List)](#filter-comprehension-list)
+    - [Filter Comprehension (List)](#filter-comprehension-list)
     - [Map Comprehension (List)](#map-comprehension-list)
     - [FlatMap Comprehension (List)](#flatmap-comprehension-list)
     - [Do Comprehension (List)](#do-comprehension-list)
@@ -478,7 +478,7 @@ To reverse the order of applied arguments of the operator-function in question, 
 
 Yes, with `| ' - |`, we just applied one operator against another operator!
 
-**Note:** The `'` prime operator has no prefix-operator form (like `'something(42)` or `1 '- 6`); that sort of syntax could cause chaos for readbility. Thus, it can only be used inside an evaluation-expression form, as shown above.
+**Note:** The `'` prime operator has no prefix-operator form (like `'something(42)` or `1 '- 6`); that sort of syntax could cause chaos for readability. Thus, it can only be used inside an evaluation-expression form, as shown above.
 
 Since this operation will be extremely common, a special sugar short-hand is available. The `'` prime operator may appear immediately preceding (no whitespace) the operator/function (or expression) it's modifying:
 
@@ -1482,7 +1482,7 @@ To specify a function that collects all individual/positional arguments into a s
 defn add(*nums) ^| + ...nums |;
 ```
 
-The `*` must immediately preceed a single identifier (with no default value), and must be the only listed parameter in the function definition. All arguments passed to this function will be gathered in a single `nums` value.
+The `*` must immediately precede a single identifier (with no default value), and must be the only listed parameter in the function definition. All arguments passed to this function will be gathered in a single `nums` value.
 
 **Note:** Functions with this variadic parameter gathering in the signature cannot be partially applied.
 
@@ -1558,7 +1558,7 @@ Pre-conditions are evaluated -- hoisted to the call-site -- before actual functi
 
 ----
 
-Just like with pattern matching expressions, a preceeding `!` (in place of the `?`) negates the pre-condition. By using this form of a pre-condition, you somewhat conform it to the typical mental model of pre-conditions (as discussed earlier).
+Just like with pattern matching expressions, a preceding `!` (in place of the `?`) negates the pre-condition. By using this form of a pre-condition, you somewhat conform it to the typical mental model of pre-conditions (as discussed earlier).
 
 For example, if you want to define a function that only computes its result when the input is greater than `10`:
 
@@ -2432,7 +2432,7 @@ m ~map double;                  // Id{42}
 m ~map (v) { v * 2; };          // Id{42}
 ```
 
-**Note:** Unless the *range* is a [`List` monad](#list-monad), the *iteration* for monadic `~map` will always be provided the instance's single held value as argument; for list (Tuple) and the `List` monad, the *interation* is provided both value and index arguments.
+**Note:** Unless the *range* is a [`List` monad](#list-monad), the *iteration* for monadic `~map` will always be provided the instance's single held value as argument; for list (Tuple) and the `List` monad, the *iteration* is provided both value and index arguments.
 
 ----
 
@@ -2462,7 +2462,7 @@ m ~chain (double +> Id@);       // Id{42}
 m ~< (double +> Id@);           // Id{42}
 ```
 
-**Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~<` are all aliases for the `~bind` comprehension. All 4 are interchangable, but for brevity sake, `~<` is generally most preferable.
+**Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~<` are all aliases for the `~bind` comprehension. All 4 are interchangeable, but for brevity sake, `~<` is generally most preferable.
 
 ### The Monad Laws
 
@@ -3144,7 +3144,7 @@ Promise ~<< {
 
 If the promises returned from `getCacheData()` or the `~cata` operation are pending when encountered, the rest of the *do comprehension* block is suspended until the promise resolves.
 
-**Note:** This kind of code may be familiar/recongizable as "async..await" style in JS.
+**Note:** This kind of code may be familiar/recognizable as "async..await" style in JS.
 
 ----
 
