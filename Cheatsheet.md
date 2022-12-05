@@ -125,9 +125,11 @@ The syntax highlighting of the **Foi** code in these screenshots is produced by 
 
 You can find some [more examples of **Foi** code here](foi-toy/test).
 
-## Guide
+## Further Details
 
-From here, you can proceed to the [Foi Guide](Foi-Guide.md) for a detailed exploration of the **Foi** language.
+Now check out the [Foi Guide](Foi-Guide.md) for a detailed exploration of the language.
+
+For implementers or language design enthusiasts, a [formal grammar specification](Grammar.md) is in progress.
 
 ## License
 

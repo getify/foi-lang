@@ -133,6 +133,8 @@ If you have experience or familiarity with JS, check out the [Foi vs JS Cheatshe
 
 Additionally, [Foi Guide](Foi-Guide.md) is a detailed exploration of the language.
 
+For implementers or language design enthusiasts, a [formal grammar specification](Grammar.md) is in progress.
+
 ## Tools
 
 **Foi** is still being designed. As such, there's no official compiler/interpreter yet.

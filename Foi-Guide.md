@@ -2,6 +2,8 @@
 
 This stuff is pretty much all subject to change. Consider everything experimental R&D for the foreseeable future.
 
+If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, it's in progress.
+
 ## Table of Contents
 
 * [Primitive Values](#primitive-values)
