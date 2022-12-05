@@ -26,7 +26,7 @@ That said, here are a few explanations to help bring some clarity to **Foi**'s p
 
 * **Words vs Symbols** I don't think a language should be all symbols. I struggle to memorize arbitrary symbol combinations just as much as anyone. But I similarly feel overburdened when a language is full of long lists of reserved keywords.
 
-    I dislike how these reserved keywords can visually appear indistinct from our our variables/identifiers (save for syntax highlighting). I also dislike how keywords can conflict with very useful variable names in certain contexts.
+    I dislike how these reserved keywords can visually appear indistinct from our variables/identifiers (save for syntax highlighting). I also dislike how keywords can conflict with very useful variable names in certain contexts.
 
     **Foi** has a pretty short list of bare keywords, most of which are actually part of the type annotation system (`int`, `bool`, etc). **Foi** has a variety of purely symbolic operators, like `+` (addition, concatenation) and `+>` (compose-left).
 
