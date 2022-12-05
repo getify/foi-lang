@@ -107,7 +107,7 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
   </tbody>
 </table>
 
-## Comparision Examples
+## Comparison Examples
 
 Here are some screenshots showing typical JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
 
