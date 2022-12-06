@@ -124,7 +124,14 @@ InterpolatedLiteral         := '"' (#'[^"`]' | '""' | "`" Whitespace* Expression
 
 (*************** Data Structures ***************)
 
-DataStructLiteral           := "<" Whitespace* ">";    (* TOOD *)
+DataStructLiteral           := RecordTupleLiteral | SetLiteral;
+RecordTupleLiteral          := "<" Whitespace* ("," Whitespace*)* (DataStructEntry (Whitespace* "," Whitespace* DataStructEntry?)*)? Whitespace* ">";
+DataStructEntry             := DataStructValue | PickValue | RecordProperty;
+DataStructValue             := Empty | Boolean | NumberLiteral | StringLiteral | DataStructLiteral | IdentifierExpression | LispExpression | ("(" Whitespace* LispExpression Whitespace* ")");
+PickValue                   := "&" IdentifierExpression;
+RecordProperty              := (":" Identifier) | ("%"? Identifier Whitespace* ":" Whitespace* DataStructValue);
+SetLiteral                  := "<[" Whitespace* ("," Whitespace*)* (SetEntry (Whitespace* "," Whitespace* SetEntry?)*)? Whitespace* "]>";
+SetEntry                    := DataStructValue | PickValue;
 
 
 (*************** Functions ***************)
@@ -210,6 +217,22 @@ def /// e: 3;///  f: 4;
    Reaction: `\"Yay!"`
    Reply: `"Ok."`
 !";
+```
+
+```java
+<>;
+<  >;
+<true>;
+<1,2,3>;
+<a:1>;
+< a: 1, b: "ok" >;
+<
+    ,,&v.x.[3..].<a,b> , "Hello" , 3,,4, :foo,
+    yes: empty, (|fn 1|),
+    %bar:<1>,,
+>;
+<[]>;
+<[ 1, 2, 2 ]>;
 ```
 
 ```java
