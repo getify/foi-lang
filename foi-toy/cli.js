@@ -31,6 +31,23 @@ const BOOLEAN_NAMED_OPERATORS = [
 	"and", "or", "as", "in", "has", "empty",
 ];
 
+// References:
+//    https://jkorpela.fi/chars/spaces.html
+//    https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions/Character_Classes
+//    https://unicode-table.com/en/0085/
+//    https://coolsymbol.com/zero-width-space-joiner-non-joiner-ltr-rtl-lrm-rlm-characters-symbols.html
+//
+// \u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680\u180e\u2000\u2001
+// \u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d
+// \u200e\u200f\u2028\u2029\u202f\u205f\u3000\ufeff
+const WHITESPACE = [
+	"\u0009", "\u000a", "\u000b", "\u000c", "\u000d", "\u0020", "\u0085",
+	"\u00a0", "\u1680", "\u180e", "\u2000", "\u2001", "\u2002", "\u2003",
+	"\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009", "\u200a",
+	"\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\u2028", "\u2029",
+	"\u202f", "\u205f", "\u3000", "\ufeff",
+];
+
 main();
 
 
@@ -612,17 +629,6 @@ function *tokenize(str) {
 				}
 			}
 
-			// whitespace?
-			// TODO: handle more kinds of whitespace,
-			// like unicode characters
-			case " ":
-			case "\t":
-			case "\r":
-			case "\n": {
-				escapeToken = null;
-				return [ TOKEN("WHITESPACE",char,position), null ];
-			}
-
 			// digits?
 			case "0":
 			case "1":
@@ -768,10 +774,17 @@ function *tokenize(str) {
 				}
 			}
 
-			// general text
 			default: {
-				escapeToken = null;
-				return [ TOKEN("GENERAL",char,position), null ];
+				// whitespace?
+				if (WHITESPACE.includes(char)) {
+					escapeToken = null;
+					return [ TOKEN("WHITESPACE",char,position), null ];
+				}
+				// otherwise, general text
+				else {
+					escapeToken = null;
+					return [ TOKEN("GENERAL",char,position), null ];
+				}
 			}
 		};
 	}
@@ -797,21 +810,6 @@ function *tokenize(str) {
 		);
 
 		switch (char) {
-			// whitespace?
-			// TODO: handle more kinds of whitespace,
-			// like unicode characters
-			case " ":
-			case "\t":
-			case "\r":
-			case "\n": {
-				if ([ "regular", "interpolatedSpacing" ].includes(escapeType)) {
-					return [ TOKEN("WHITESPACE",char,position), null ];
-				}
-				else {
-					return string(char,position);
-				}
-			}
-
 			case "`": {
 				// possibly starting an interpolated
 				// expression?
@@ -828,8 +826,22 @@ function *tokenize(str) {
 				}
 			}
 
-			// general text
-			default: return string(char,position);
+			default: {
+				// whitespace?
+				if (WHITESPACE.includes(char)) {
+					// in an escaped string that collapses certain whitespace?
+					if ([ "regular", "interpolatedSpacing" ].includes(escapeType)) {
+						return [ TOKEN("WHITESPACE",char,position), null ];
+					}
+					else {
+						return string(char,position);
+					}
+				}
+				// otherwise, general string text
+				else {
+					return string(char,position);
+				}
+			}
 		}
 	}
 

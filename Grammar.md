@@ -68,7 +68,7 @@ DepPatternStatement         := ("?" | "!") "[" Whitespace* ExpressionList Whites
 AssignmentExpression        := AssignmentTarget Whitespace* ":=" Whitespace* (Expression | BlockExpression);
 AssignmentTarget            := Identifier (Whitespace* (("." Whitespace* Identifier) | ("[" Whitespace* ExpressionNoBlock Whitespace* "]")))*;
 
-Whitespace                  := #"[\s\t\r\n]"+ | Comment;        (* TODO *)
+Whitespace                  := #"[\s]+" | (*u0085*) "" | (*u180e*) "᠎" | (*u200b*) "​" | (*u200c*) "‍" | (*u200d*) "‌" | (*u200e*) "‎" | (*u200f*) "‏" | Comment;
 Comment                     := LineComment | BlockComment;
 LineComment                 := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
 BlockComment                := "///" #"[^]*?///";
@@ -129,7 +129,7 @@ DataStructLiteral           := "<" Whitespace* ">";    (* TOOD *)
 
 (*************** Functions ***************)
 
-DefFunctionExpression       := "defn" (Whitespace+ Identifier)? ("(" Whitespace* ParameterList? Whitespace* ")")+ FunctionMeta? Whitespace* FunctionBody;
+DefFunctionExpression       := "defn" (Whitespace+ Identifier)? Whitespace* ("(" Whitespace* ParameterList? Whitespace* ")")+ FunctionMeta? Whitespace* FunctionBody;
 Parameter                   := Identifier (Whitespace* ":" Whitespace* ExpressionNoBlock)?;
 ParameterList               := Parameter (Whitespace* "," Whitespace* Parameter)*;
 FunctionMeta                := (Whitespace* FunctionPreconditionList (Whitespace+ FunctionOverClause)? (Whitespace+ FunctionAsClause)?) | (Whitespace* FunctionOverClause Whitespace+ FunctionAsClause) | (Whitespace* FunctionPreconditionList) | (Whitespace+ FunctionOverClause) | (Whitespace+ FunctionAsClause);
@@ -149,6 +149,21 @@ DefTypeStatement            := "deft" Whitespace+ Identifier Whitespace+ #"[^;]+
 ## Grammar Test Snippets
 
 Here are some examples of **Foi** code to test various aspects of this grammar:
+
+----
+
+(recognized whitespace characters)
+
+> \u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u200e\u200f\u2028\u2029\u202f\u205f\u3000\ufeff
+
+```java
+
+
+
+   ᠎           ​‌‍‎‏    　﻿
+```
+
+-----
 
 ```java
 def a: 1;
