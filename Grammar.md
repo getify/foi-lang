@@ -3,81 +3,147 @@
 The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form), as [verified here](https://mdkrajnak.github.io/ebnftest/):
 
 ```ebnf
-Program := (Whitespace* Stmt Whitespace*)+;
+Program                     := Whitespace* (StatementSemi Whitespace*)*;
 
-Stmt := ((Expression | DefVar) Whitespace*)? ";";
+Statement                   := DefVarStatement | DefBlockStatement | DefFunctionExpression | DefTypeStatement | ExpressionList | FunctionReturnStatement;
+StatementSemi               := Statement? (Whitespace* ";")+;
 
-Expression := Empty | Boolean | NumberLiteral | StringLiteral | Identifier;
+Expression                  := BareBlockExpression | ExpressionNoBlock;
+ExpressionNoBlock           := Empty | Boolean | NumberLiteral | StringLiteral | DataStructLiteral | IdentifierExpression | RangeExpression | GroupedExpression | BracketAccessExpression | InfixCallExpression | LispExpression | GuardedExpression | MatchExpression | DefFunctionExpression | AssignmentExpression;
+GroupedExpression           := "(" Whitespace* ExpressionList Whitespace* ")";
+BracketExpression           := "[" Whitespace* ExpressionNoBlock Whitespace* "]";
+BracketAccessExpression     := Expression BracketExpression;
+ExpressionList              := ExpressionNoBlock ((Whitespace* ",")+ Whitespace* ExpressionNoBlock)*;
 
-Operator := NamedComprehension | BooleanOperator | TripleOperator | DoubleOperator | SingleOperator;
-NamedComprehension := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-BooleanOperator := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
-TripleOperator := "~<<" | "~<*" | "...";
-DoubleOperator := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "::" | "$+";
-SingleOperator := #"[+\-*/(){}<>\[\]\.\\'\":;,?!@`#$%^&|]";
+InfixCallExpression         := ExpressionNoBlock Whitespace* "(" Whitespace* ("," Whitespace*)* ExpressionList? Whitespace* ("," Whitespace*)* ")";
+LispExpression              := "|" Whitespace* (ExpressionNoBlock | Operator) (Whitespace+ ("," Whitespace*)* ExpressionList?)? ("," Whitespace*)* Whitespace* "|";
 
-Empty := "empty";
-Boolean := "true" | "false";
-Keyword := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | "int" | "integer" | "float" | "bool" | "boolean" | "string";
-BuiltIn := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
+Operator                    := NamedComprehension | BooleanOperator | TripleOperator | DoubleOperator | SingleOperator;
+NamedComprehension          := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
+BooleanOperator             := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
+TripleOperator              := "~<<" | "~<*" | "...";
+DoubleOperator              := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "$+";
+SingleOperator              := #"[+\-*/<>\.\\':,?!@`#$%^&|]";
 
-Identifier := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|string|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
+IdentifierExpression        := Identifier (IdentifierDot | BracketExpression | DotAngleExpression | DotBracketExpression)*;
+Identifier                  := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|string|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
+IdentifierDot               := "." IdentifierExpression;
 
-DefVar := "def" Whitespace+ Identifier Whitespace* ":" Whitespace* Expression;
+BlockExpressionVarDef       := BlockDefinitionsClause Whitespace* BareBlockExpression;
+BlockExpression             := BlockDefinitionsClause? Whitespace* BareBlockExpression;
+BareBlockExpression         := "{" Whitespace* (StatementSemi Whitespace*)* ((Statement | Expression) Whitespace* ";"?)? Whitespace* "}";
+BlockDefinitionsClause      := "(" Whitespace* VarDefinitionList Whitespace* ")";
 
-Whitespace := #"[\s\u0085\p{Z}]"+ | Comment;
+DefBlockStatement           := "def" Whitespace* BlockExpressionVarDef;
 
-Comment := LineComment | BlockComment;
-LineComment := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
-BlockComment := "///" #"[^]*?///";
+VarDefinitionInitOptional   := Identifier (Whitespace* ("::" | ":") Whitespace* ExpressionNoBlock)?;
+VarDefinitionList           := VarDefinitionInitOptional (Whitespace* "," Whitespace* VarDefinitionInitOptional)*;
+
+DefVarStatement             := "def" Whitespace+ Identifier Whitespace* ("::" | ":") Whitespace* ExpressionNoBlock;
+
+RangeExpression             := (ClosedRangeExpression | LeadingRangeExpression | TrailingRangeExpression);
+ClosedRangeExpression       := Expression ".." Expression;
+LeadingRangeExpression      := Expression "..";
+TrailingRangeExpression     := ".." Expression;
+DotBracketExpression        := ".[" Whitespace* RangeExpression Whitespace* "]";
+
+DotAngleExpression          := ".<" Whitespace* ExpressionList Whitespace* ">";
+
+Empty                       := "empty";
+Boolean                     := "true" | "false";
+Keyword                     := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | "int" | "integer" | "float" | "bool" | "boolean" | "string";
+BuiltIn                     := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
+
+ConditionalClause           := ("?" | "!") "[" Whitespace* ExpressionNoBlock Whitespace* "]";
+GuardedExpression           := ConditionalClause ":" Whitespace* (Expression | BlockExpression);
+
+MatchExpression             := IndMatchExpression | DepMatchExpression;
+IndMatchExpression          := "?{" Whitespace* (IndPatternStatement Whitespace*)+ ElseStatement? Whitespace* "}";
+MatchConsequent             := ":" Whitespace* ((Expression ";"+) | BlockExpression);
+IndPatternStatement         := ConditionalClause MatchConsequent;
+ElseStatement               := "?" MatchConsequent;
+DepMatchExpression          := "?(" Whitespace* ExpressionNoBlock Whitespace* ")" Whitespace* "{" Whitespace* (DepPatternStatement Whitespace*)+ ElseStatement? Whitespace* "}";
+DepPatternStatement         := ("?" | "!") "[" Whitespace* ExpressionList Whitespace* "]" MatchConsequent;
+
+AssignmentExpression        := AssignmentTarget Whitespace* ":=" Whitespace* (Expression | BlockExpression);
+AssignmentTarget            := Identifier (Whitespace* (("." Whitespace* Identifier) | ("[" Whitespace* ExpressionNoBlock Whitespace* "]")))*;
+
+Whitespace                  := #"[\s\t\r\n]"+ | Comment;        (* TODO *)
+Comment                     := LineComment | BlockComment;
+LineComment                 := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
+BlockComment                := "///" #"[^]*?///";
 
 
 (*************** Number Literals ***************)
 
-NumberLiteral := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
+NumberLiteral               := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
 
-Escape := "\\";
-BinaryEscape := Escape "b";
-HexEscape := Escape "h";
-OctalEscape := Escape "o";
-UnicodeEscape := Escape "u";
-MonadicEscape := Escape "@";
+Escape                      := "\\";
+BinaryEscape                := Escape "b";
+HexEscape                   := Escape "h";
+OctalEscape                 := Escape "o";
+UnicodeEscape               := Escape "u";
+MonadicEscape               := Escape "@";
 
-Base10Number := "-"? Base10Digit+ ("." Base10Digit+)?;
-Base10Digit := OctalDigit | #"[89]";
+Base10Number                := "-"? Base10Digit+ ("." Base10Digit+)?;
+Base10Digit                 := OctalDigit | #"[89]";
 
-EscBase10 := Escape EscNum;
-EscNum := "-"? EscNumDigits ("." EscNumDigits+)?;
-EscNumDigits := Base10Digit+ ("_" EscNumDigits)?;
+EscBase10                   := Escape EscNum;
+EscNum                      := "-"? EscNumDigits ("." EscNumDigits+)?;
+EscNumDigits                := Base10Digit+ ("_" EscNumDigits)?;
 
-BinaryInteger := BinaryEscape "-"? BinaryDigit+;
-BinaryDigit := #"[01]";
+BinaryInteger               := BinaryEscape "-"? BinaryDigit+;
+BinaryDigit                 := #"[01]";
 
-HexInteger := HexEscape HexNum;
-HexNum := "-"? HexDigit+;
-HexDigit := Base10Digit | #"[a-fA-F]";
+HexInteger                  := HexEscape HexNum;
+HexNum                      := "-"? HexDigit+;
+HexDigit                    := Base10Digit | #"[a-fA-F]";
 
-OctalInteger := OctalEscape "-"? OctalDigit+;
-OctalDigit := BinaryDigit | #"[2-7]";
+OctalInteger                := OctalEscape "-"? OctalDigit+;
+OctalDigit                  := BinaryDigit | #"[2-7]";
 
-UnicodeChar := UnicodeEscape HexDigit+;
+UnicodeChar                 := UnicodeEscape HexDigit+;
 
-MonadicNumber := MonadicEscape (EscNum | HexNum);
+MonadicNumber               := MonadicEscape (EscNum | HexNum);
 
 
 (*************** String Literals ***************)
 
-StringLiteral := PlainString | SpacingString | InterpolatedString | InterpolatedSpacingString;
+StringLiteral               := PlainString | SpacingString | InterpolatedString | InterpolatedSpacingString;
 
-Escape := "\\";
-InterpolatedEsc := Escape "`";
-InterpolatedSpacingEsc := Escape InterpolatedEsc;
+Escape                      := "\\";
+InterpolatedEsc             := Escape "`";
+InterpolatedSpacingEsc      := Escape InterpolatedEsc;
 
-PlainString := '"' (#'[^"]' | '""')* '"';
-SpacingString := Escape PlainString;
-InterpolatedString := InterpolatedEsc InterpolatedLiteral;
-InterpolatedSpacingString := InterpolatedSpacingEsc InterpolatedLiteral;
-InterpolatedLiteral := '"' (#'[^"`]' | '""' | "`" Whitespace* Expression* Whitespace* "`")* '"';
+PlainString                 := '"' (#'[^"]' | '""')* '"';
+SpacingString               := Escape PlainString;
+InterpolatedString          := InterpolatedEsc InterpolatedLiteral;
+InterpolatedSpacingString   := InterpolatedSpacingEsc InterpolatedLiteral;
+InterpolatedLiteral         := '"' (#'[^"`]' | '""' | "`" Whitespace* Expression* Whitespace* "`")* '"';
+
+
+(*************** Data Structures ***************)
+
+DataStructLiteral           := "<" Whitespace* ">";    (* TOOD *)
+
+
+(*************** Functions ***************)
+
+DefFunctionExpression       := "defn" (Whitespace+ Identifier)? ("(" Whitespace* ParameterList? Whitespace* ")")+ FunctionMeta? Whitespace* FunctionBody;
+Parameter                   := Identifier (Whitespace* ":" Whitespace* ExpressionNoBlock)?;
+ParameterList               := Parameter (Whitespace* "," Whitespace* Parameter)*;
+FunctionMeta                := (Whitespace* FunctionPreconditionList (Whitespace+ FunctionOverClause)? (Whitespace+ FunctionAsClause)?) | (Whitespace* FunctionOverClause Whitespace+ FunctionAsClause) | (Whitespace* FunctionPreconditionList) | (Whitespace+ FunctionOverClause) | (Whitespace+ FunctionAsClause);
+FunctionPrecondition        := ConditionalClause ":" Whitespace* ExpressionNoBlock;
+FunctionPreconditionList    := FunctionPrecondition (Whitespace+ FunctionPrecondition)*;
+FunctionOverClause          := ":over" Whitespace* "(" Whitespace* Identifier (Whitespace* "," Whitespace* Identifier)* Whitespace* ")";
+FunctionAsClause            := ":as" Whitespace+ Identifier;
+FunctionBody                := ("^" Whitespace* ExpressionNoBlock) | BareBlockExpression;
+FunctionReturnStatement     := "^" Whitespace* (Expression | BlockExpression);
+
+
+(*************** Types ***************)
+
+DefTypeStatement            := "deft" Whitespace+ Identifier Whitespace+ #"[^;]+" Whitespace*;    (* TOOD *)
 ```
 
 ## Grammar Test Snippets
@@ -129,6 +195,26 @@ def /// e: 3;///  f: 4;
    Reaction: `\"Yay!"`
    Reply: `"Ok."`
 !";
+```
+
+```java
+deft Whatever int | bool;
+
+def cb: defn(x)^x;
+
+defn add(x)(y)
+    ?[x.y]: y(z[2])
+    ![x]: z(3)
+    :over(z, w)
+    :as Whatever
+{
+    z := 2;
+    ?[z]: (g: z) { fn(g) };
+    x.[y..z];
+    y.<first,last>;
+    |+ 1,2,3|;
+    ^42
+};
 ```
 
 ## License
