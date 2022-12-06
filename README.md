@@ -123,7 +123,7 @@ Click to expand the following list of ideals that initially inspired the design 
         <li>type awareness: weakly typed (small, limited set of type coercions), with dynamic type inferencing as well as optional type annotations on values/expressions</li>
     </ul>
     <p>
-        In addition to the above, I may pull parts of a long-ago description of [earlier ideas for this language (then called "FoilScript")](https://github.com/getify/FoilScript#whats-in).
+        In addition to the above, I may pull parts of a long-ago description of <a href="https://github.com/getify/FoilScript#whats-in">earlier ideas for this language (then called "FoilScript")</a>.
     </p>
 </details>
 
