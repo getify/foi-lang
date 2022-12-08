@@ -3,154 +3,167 @@
 The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form), as [verified here](https://mdkrajnak.github.io/ebnftest/):
 
 ```ebnf
-Program                     := Whitespace* (StatementSemi Whitespace*)*;
+Program                 := WhSp* (StmtSemi WhSp*)*;
 
-Statement                   := DefVarStatement | DefBlockStatement | DefFunctionExpression | DefTypeStatement | ExpressionList | FunctionReturnStatement;
-StatementSemi               := Statement? (Whitespace* ";")+;
+Stmt                    := DefVarStmt | DefBlockStmt | DefFuncExpr | DefTypeStmt | ExprListNoSkip | FuncReturnStmt;
+StmtSemi                := Stmt? (WhSp* ";")+;
 
-Expression                  := BareBlockExpression | ExpressionNoBlock;
-ExpressionNoBlock           := Empty | Boolean | NumberLiteral | StringLiteral | DataStructLiteral | IdentifierExpression | RangeExpression | GroupedExpression | BracketAccessExpression | InfixCallExpression | LispExpression | GuardedExpression | MatchExpression | DefFunctionExpression | AssignmentExpression;
-GroupedExpression           := "(" Whitespace* ExpressionList Whitespace* ")";
-BracketExpression           := "[" Whitespace* ExpressionNoBlock Whitespace* "]";
-BracketAccessExpression     := Expression BracketExpression;
-ExpressionList              := ExpressionNoBlock ((Whitespace* ",")+ Whitespace* ExpressionNoBlock)*;
+Expr                    := BareBlockExpr | ExprNoBlock;
+ExprNoBlock             := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | RangeExpr | GroupedExpr | BracketAccessExpr | InfixCallExpr | LispExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr;
+GroupedExpr             := "(" WhSp* ExprListNoSkip WhSp* ")";
+BracketExpr             := "[" WhSp* ExprNoBlock WhSp* "]";
+BracketAccessExpr       := Expr BracketExpr;
 
-InfixCallExpression         := ExpressionNoBlock Whitespace* "(" Whitespace* ("," Whitespace*)* ExpressionList? Whitespace* ("," Whitespace*)* ")";
-LispExpression              := "|" Whitespace* (ExpressionNoBlock | Operator) (Whitespace+ ("," Whitespace*)* ExpressionList?)? ("," Whitespace*)* Whitespace* "|";
+ExprList                := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
+ExprListNoSkip          := ExprNoBlock (WhSp* "," WhSp* ExprNoBlock)*;
 
-Operator                    := NamedComprehension | BooleanOperator | TripleOperator | DoubleOperator | SingleOperator;
-NamedComprehension          := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-BooleanOperator             := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
-TripleOperator              := "~<<" | "~<*" | "...";
-DoubleOperator              := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "$+";
-SingleOperator              := #"[+\-*/<>\.\\':,?!@`#$%^&|]";
+InfixCallExpr           := ExprNoBlock WhSp* "(" WhSp* ExprList? WhSp* ")";
+LispExpr                := "|" WhSp* (ExprNoBlock | Op) (WhSp+ ExprList)? WhSp* "|";
 
-IdentifierExpression        := Identifier (IdentifierDot | BracketExpression | DotAngleExpression | DotBracketExpression)*;
-Identifier                  := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|string|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
-IdentifierDot               := "." IdentifierExpression;
+Op                      := NamedComprehension | BooleanOp | TripleOp | DoubleOp | SingleOp;
+NamedComprehension      := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
+BooleanOp               := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
+TripleOp                := "~<<" | "~<*" | "...";
+DoubleOp                := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "$+";
+SingleOp                := #"[+\-*/<>\.\\':,?!@`#$%^&|]";
 
-BlockExpressionVarDef       := BlockDefinitionsClause Whitespace* BareBlockExpression;
-BlockExpression             := BlockDefinitionsClause? Whitespace* BareBlockExpression;
-BareBlockExpression         := "{" Whitespace* (StatementSemi Whitespace*)* ((Statement | Expression) Whitespace* ";"?)? Whitespace* "}";
-BlockDefinitionsClause      := "(" Whitespace* VarDefinitionList Whitespace* ")";
+IdentifierExpr          := Identifier (WhSp* (DotidentifIer | BracketExpr | DotAngleExpr | DotBracketExpr))*;
+Identifier              := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
+DotidentifIer           := "." WhSp* IdentifierExpr;
 
-DefBlockStatement           := "def" Whitespace* BlockExpressionVarDef;
+DefVarStmt              := "def" WhSp+ Identifier WhSp* ("::" | ":") WhSp* ExprNoBlock;
 
-VarDefinitionInitOptional   := Identifier (Whitespace* ("::" | ":") Whitespace* ExpressionNoBlock)?;
-VarDefinitionList           := VarDefinitionInitOptional (Whitespace* "," Whitespace* VarDefinitionInitOptional)*;
+BlockExprVarDef         := BlockDefsClause WhSp* BareBlockExpr;
+BlockExpr               := BlockDefsClause? WhSp* BareBlockExpr;
+BareBlockExpr           := "{" WhSp* (StmtSemi WhSp*)* ((Stmt | Expr) WhSp* ";"?)? WhSp* "}";
+BlockDefsClause         := "(" WhSp* VarDefList WhSp* ")";
 
-DefVarStatement             := "def" Whitespace+ Identifier Whitespace* ("::" | ":") Whitespace* ExpressionNoBlock;
+DefBlockStmt            := "def" WhSp* BlockExprVarDef;
 
-RangeExpression             := (ClosedRangeExpression | LeadingRangeExpression | TrailingRangeExpression);
-ClosedRangeExpression       := Expression ".." Expression;
-LeadingRangeExpression      := Expression "..";
-TrailingRangeExpression     := ".." Expression;
-DotBracketExpression        := ".[" Whitespace* RangeExpression Whitespace* "]";
+VarDefInitOpt           := Identifier (WhSp* ("::" | ":") WhSp* ExprNoBlock)?;
+VarDefList              := ("," WhSp*)* (VarDefInitOpt (WhSp* "," WhSp* VarDefInitOpt?)*)?;
 
-DotAngleExpression          := ".<" Whitespace* ExpressionList Whitespace* ">";
+RangeExpr               := (ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr);
+ClosedRangeExpr         := Expr ".." Expr;
+LeadingRangeExpr        := Expr "..";
+TrailingRangeExpr       := ".." Expr;
+DotBracketExpr          := ".[" WhSp* RangeExpr WhSp* "]";
 
-Empty                       := "empty";
-Boolean                     := "true" | "false";
-Keyword                     := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | "int" | "integer" | "float" | "bool" | "boolean" | "string";
-BuiltIn                     := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
+DotAngleExpr            := ".<" WhSp* ExprListNoSkip WhSp* ">";
 
-ConditionalClause           := ("?" | "!") "[" Whitespace* ExpressionNoBlock Whitespace* "]";
-GuardedExpression           := ConditionalClause ":" Whitespace* (Expression | BlockExpression);
+Empty                   := "empty";
+Boolean                 := "true" | "false";
+Keyword                 := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | "int" | "integer" | "float" | "bool" | "boolean" | "str";
+BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
 
-MatchExpression             := IndMatchExpression | DepMatchExpression;
-IndMatchExpression          := "?{" Whitespace* (IndPatternStatement Whitespace*)+ ElseStatement? Whitespace* "}";
-MatchConsequent             := ":" Whitespace* ((Expression ";"+) | BlockExpression);
-IndPatternStatement         := ConditionalClause MatchConsequent;
-ElseStatement               := "?" MatchConsequent;
-DepMatchExpression          := "?(" Whitespace* ExpressionNoBlock Whitespace* ")" Whitespace* "{" Whitespace* (DepPatternStatement Whitespace*)+ ElseStatement? Whitespace* "}";
-DepPatternStatement         := ("?" | "!") "[" Whitespace* ExpressionList Whitespace* "]" MatchConsequent;
+AssignmentExpr          := AssignmentTarget WhSp* ":=" WhSp* (Expr | BlockExpr);
+AssignmentTarget        := Identifier (WhSp* (("." WhSp* Identifier) | ("[" WhSp* ExprNoBlock WhSp* "]")))*;
 
-AssignmentExpression        := AssignmentTarget Whitespace* ":=" Whitespace* (Expression | BlockExpression);
-AssignmentTarget            := Identifier (Whitespace* (("." Whitespace* Identifier) | ("[" Whitespace* ExpressionNoBlock Whitespace* "]")))*;
 
-Whitespace                  := #"[\s]+" | (*u0085*) "" | (*u180e*) "᠎" | (*u200b*) "​" | (*u200c*) "‍" | (*u200d*) "‌" | (*u200e*) "‎" | (*u200f*) "‏" | Comment;
-Comment                     := LineComment | BlockComment;
-LineComment                 := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
-BlockComment                := "///" #"[^]*?///";
+(*************** Decision Making (Guard, Pattern Matching) ***************)
+
+CondClause              := ("?" | "!") BracketExpr;
+GuardedExpr             := CondClause ":" WhSp* (Expr | BlockExpr);
+
+MatchExpr               := IndepMatchExpr | DepMatchExpr;
+IndepMatchExpr          := "?{" WhSp* IndepPatternStmts WhSp* "}";
+IndepPatternStmts       := ((IndepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+IndepPatternStmt        := CondClause MatchConsequent (WhSp* ";")*;
+MatchConsequent         := ":" WhSp* ((Expr WhSp* ";") | BlockExpr);
+ElseStmt                := "?:" WhSp* (Expr | BlockExpr) (WhSp* ";")*;
+DepMatchExpr            := "?(" WhSp* ExprNoBlock WhSp* "){" WhSp* DepPatternStmts WhSp* "}";
+DepPatternStmts         := ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
+DepCondClause           := ("?" | "!") "[" WhSp* ExprListNoSkip WhSp* "]";
 
 
 (*************** Number Literals ***************)
 
-NumberLiteral               := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
+NumberLit               := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
 
-Escape                      := "\\";
-BinaryEscape                := Escape "b";
-HexEscape                   := Escape "h";
-OctalEscape                 := Escape "o";
-UnicodeEscape               := Escape "u";
-MonadicEscape               := Escape "@";
+Esc                     := "\\";
+BinaryEsc               := Esc "b";
+HexEsc                  := Esc "h";
+OctalEsc                := Esc "o";
+UnicodeEsc              := Esc "u";
+MonadicEsc              := Esc "@";
 
-Base10Number                := "-"? Base10Digit+ ("." Base10Digit+)?;
-Base10Digit                 := OctalDigit | #"[89]";
+Base10Number            := "-"? Base10Digit+ ("." Base10Digit+)?;
+Base10Digit             := OctalDigit | "8" | "9";
 
-EscBase10                   := Escape EscNum;
-EscNum                      := "-"? EscNumDigits ("." EscNumDigits+)?;
-EscNumDigits                := Base10Digit+ ("_" EscNumDigits)?;
+EscBase10               := Esc EscNum;
+EscNum                  := "-"? EscNumDigits ("." EscNumDigits+)?;
+EscNumDigits            := Base10Digit+ ("_" EscNumDigits)?;
 
-BinaryInteger               := BinaryEscape "-"? BinaryDigit+;
-BinaryDigit                 := #"[01]";
+BinaryInteger           := BinaryEsc "-"? BinaryDigit+;
+BinaryDigit             := "0" | "1";
 
-HexInteger                  := HexEscape HexNum;
-HexNum                      := "-"? HexDigit+;
-HexDigit                    := Base10Digit | #"[a-fA-F]";
+HexInteger              := HexEsc HexNum;
+HexNum                  := "-"? HexDigit+;
+HexDigit                := Base10Digit | #"[a-fA-F]";
 
-OctalInteger                := OctalEscape "-"? OctalDigit+;
-OctalDigit                  := BinaryDigit | #"[2-7]";
+OctalInteger            := OctalEsc "-"? OctalDigit+;
+OctalDigit              := BinaryDigit | #"[2-7]";
 
-UnicodeChar                 := UnicodeEscape HexDigit+;
+UnicodeChar             := UnicodeEsc HexDigit+;
 
-MonadicNumber               := MonadicEscape (EscNum | HexNum);
+MonadicNumber           := MonadicEsc (EscNum | HexNum);
 
 
 (*************** String Literals ***************)
 
-StringLiteral               := PlainString | SpacingString | InterpolatedString | InterpolatedSpacingString;
+StrLit                  := PlainStr | SpacingStr | InterpStr | InterpSpacingStr;
 
-Escape                      := "\\";
-InterpolatedEsc             := Escape "`";
-InterpolatedSpacingEsc      := Escape InterpolatedEsc;
+InterpEsc               := Esc "`";
+InterpSpacingEsc        := Esc InterpEsc;
 
-PlainString                 := '"' (#'[^"]' | '""')* '"';
-SpacingString               := Escape PlainString;
-InterpolatedString          := InterpolatedEsc InterpolatedLiteral;
-InterpolatedSpacingString   := InterpolatedSpacingEsc InterpolatedLiteral;
-InterpolatedLiteral         := '"' (#'[^"`]' | '""' | "`" Whitespace* Expression* Whitespace* "`")* '"';
+PlainStr                := '"' (#'[^"]' | '""')* '"';
+SpacingStr              := Esc PlainStr;
+InterpStr               := InterpEsc InterpLit;
+InterpSpacingStr        := InterpSpacingEsc InterpLit;
+InterpLit               := '"' (#'[^"`]' | '""' | "`" WhSp* Expr* WhSp* "`")* '"';
 
 
 (*************** Data Structures ***************)
 
-DataStructLiteral           := RecordTupleLiteral | SetLiteral;
-RecordTupleLiteral          := "<" Whitespace* ("," Whitespace*)* (DataStructEntry (Whitespace* "," Whitespace* DataStructEntry?)*)? Whitespace* ">";
-DataStructEntry             := DataStructValue | PickValue | RecordProperty;
-DataStructValue             := Empty | Boolean | NumberLiteral | StringLiteral | DataStructLiteral | IdentifierExpression | LispExpression | ("(" Whitespace* LispExpression Whitespace* ")");
-PickValue                   := "&" IdentifierExpression;
-RecordProperty              := (":" Identifier) | ("%"? Identifier Whitespace* ":" Whitespace* DataStructValue);
-SetLiteral                  := "<[" Whitespace* ("," Whitespace*)* (SetEntry (Whitespace* "," Whitespace* SetEntry?)*)? Whitespace* "]>";
-SetEntry                    := DataStructValue | PickValue;
+DataStructLit           := RecordTupleLit | SetLit;
+RecordTupleLit          := "<" WhSp* RecordTupleEntryList WhSp* ">";
+RecordTupleEntryList    := ("," WhSp*)* (RecordTupleEntry (WhSp* "," WhSp* RecordTupleEntry?)*)?;
+RecordTupleEntry        := RecordTupleValue | PickValue | RecordProperty;
+RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | LispExpr | ("(" WhSp* LispExpr WhSp* ")");
+PickValue               := "&" IdentifierExpr;
+RecordProperty          := (":" Identifier) | ("%"? Identifier WhSp* ":" WhSp* RecordTupleValue);
+SetLit                  := "<[" WhSp* SetEntryList WhSp* "]>";
+SetEntryList            := ("," WhSp*)* (SetEntry (WhSp* "," WhSp* SetEntry?)*)?;
+SetEntry                := RecordTupleValue | PickValue;
 
 
 (*************** Functions ***************)
 
-DefFunctionExpression       := "defn" (Whitespace+ Identifier)? Whitespace* ("(" Whitespace* ParameterList? Whitespace* ")")+ FunctionMeta? Whitespace* FunctionBody;
-Parameter                   := Identifier (Whitespace* ":" Whitespace* ExpressionNoBlock)?;
-ParameterList               := Parameter (Whitespace* "," Whitespace* Parameter)*;
-FunctionMeta                := (Whitespace* FunctionPreconditionList (Whitespace+ FunctionOverClause)? (Whitespace+ FunctionAsClause)?) | (Whitespace* FunctionOverClause Whitespace+ FunctionAsClause) | (Whitespace* FunctionPreconditionList) | (Whitespace+ FunctionOverClause) | (Whitespace+ FunctionAsClause);
-FunctionPrecondition        := ConditionalClause ":" Whitespace* ExpressionNoBlock;
-FunctionPreconditionList    := FunctionPrecondition (Whitespace+ FunctionPrecondition)*;
-FunctionOverClause          := ":over" Whitespace* "(" Whitespace* Identifier (Whitespace* "," Whitespace* Identifier)* Whitespace* ")";
-FunctionAsClause            := ":as" Whitespace+ Identifier;
-FunctionBody                := ("^" Whitespace* ExpressionNoBlock) | BareBlockExpression;
-FunctionReturnStatement     := "^" Whitespace* (Expression | BlockExpression);
+DefFuncExpr             := "defn" (WhSp+ Identifier)? WhSp* ("(" WhSp* ParameterList? WhSp* ")")+ FuncMeta? WhSp* FuncBody;
+Parameter               := Identifier (WhSp* ":" WhSp* ExprNoBlock)?;
+ParameterList           := Parameter (WhSp* "," WhSp* Parameter)*;
+FuncMeta                := (WhSp* FuncPrecondList (WhSp+ FuncOverClause)? (WhSp+ FuncAsClause)?) | (WhSp* FuncOverClause WhSp+ FuncAsClause) | (WhSp* FuncPrecondList) | (WhSp+ FuncOverClause) | (WhSp+ FuncAsClause);
+FuncPrecond             := CondClause ":" WhSp* ExprNoBlock;
+FuncPrecondList         := FuncPrecond (WhSp+ FuncPrecond)*;
+FuncOverClause          := ":over" WhSp* "(" WhSp* Identifier (WhSp* "," WhSp* Identifier)* WhSp* ")";
+FuncAsClause            := ":as" WhSp+ Identifier;
+FuncBody                := ("^" WhSp* ExprNoBlock) | BareBlockExpr;
+FuncReturnStmt          := "^" WhSp* (Expr | BlockExpr);
 
 
 (*************** Types ***************)
 
-DefTypeStatement            := "deft" Whitespace+ Identifier Whitespace+ #"[^;]+" Whitespace*;    (* TOOD *)
+DefTypeStmt             := "deft" WhSp+ Identifier WhSp+ #"[^;]+" WhSp*;    (* TODO *)
+
+
+(*************** Whitespace ***************)
+
+WhSp                    := Whitespace | Comment;
+Whitespace              := #"[\s]+" | (*u0085*) "" | (*u180e*) "᠎" | (*u200b*) "​" | (*u200c*) "‍" | (*u200d*) "‌" | (*u200e*) "‎" | (*u200f*) "‏";
+Comment                 := LineComment | BlockComment;
+LineComment             := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
+BlockComment            := "///" #"[^]*?///";
 ```
 
 ## Grammar Test Snippets
@@ -247,6 +260,16 @@ defn add(x)(y)
     :as Whatever
 {
     z := 2;
+    ?{?: 42;};
+    ?{
+        ?[z]: fn(g);
+        ![x]: { fn(g) };
+        ?[y]: (v) { fn(g); }
+        ?: 42
+    };
+    ?( fn(g) ){
+        ?[ x, z . y [3] ]: g;
+    };
     ?[z]: (g: z) { fn(g) };
     x.[y..z];
     y.<first,last>;
