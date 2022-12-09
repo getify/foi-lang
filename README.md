@@ -82,6 +82,55 @@ That said, here are a few explanations to help bring some clarity to **Foi**'s p
 
     All these capabilities thus work identically for Records, Maps, Tuples, and Sets. That means you really just need to learn one data structure form: `< .. >`.
 
+* **Side Effects** Since there are no mutable values in **Foi**, the most common type of (in-program) side effect (bug!) in programming is completely impossible.
+
+    The only possible in-program *side effect* is re-assignment of a variable (which is actually rarely the source of bugs, despite the a popular claims to the contrary). **Foi** allows such re-assignments, unlike many languages (especially FP languages) that have forms like `const` to disallow re-assignment.
+
+    However, these re-assignment side effects must be declared if they cross a function boundary (via closure). You do so in the function signature, via the `:over` clause:
+
+    ```java
+    defn myFn(x) :over(y) {
+        y := x + z;
+        // ..
+    };
+    ```
+
+    The compiler enforces this requirement: any lexical variable outside a function's scope (aka, "free variable") that appears as an assignment target must be added to the function's `:over` clause. **Note:** in the above snippet, `z` is also an outer variable, but since it's only read (not assigned to), it does not need to be declared in the `:over` clause.
+
+    Moreover, **Foi** provides a very powerful mechanism for managing all side effects (in program and externally), called the `IO` monad.
+
+    One key (external) side effect is asynchrony/concurrency. **Foi** additionally provides several in-language mechanisms for expressing and managing asynchrony, including `Promise`, `PullStream` / `PushStream`, and CSP `Channel`. These are all monadic constructs, which allows strong mathematical guarantees about how you compose such behaviors.
+
+* **Errors** Errors/exceptions are a complicated (and complicating!) topic in programming language design. Especially in FP, runtime exceptions are typically seen as side effects, and are thus usually de-emphasized or avoided altogether.
+
+    **Foi**'s position is clear and firm: there are no runtime exceptions, and thus no need for `try..catch` style programming.
+
+    Runtime errors *can* happen, but **Foi** always represents these as the monadic `Left` value. Thus, to program effectively in **Foi**, you will have to at least get familiar with handling `Left` values (via `~fold` / `~cata`).
+
+* **Idiom Opinions** There are a number of (hotly contested) idioms across programming languages that various developers either favor or shun. Often, general programming languages don't take strong positions on such subjective debates. **Foi** however does enforce a stance on some of them.
+
+    One key idiom is "early return", meaning that a function may conditionally return before the end of the function. In **Foi**, there can only be one `^` return statement, and it must be at the top level of a function's body (not inside some block or expression).
+
+    This means, for example, there's no such thing as a `return` statement from inside a loop, or from inside a conditional (guarded expression or pattern match expression).
+
+    However, **Foi** does recognize a valid subset of conditional "early return" use-cases. In fact, **Foi** insists that they should be elevated to be visible and obvious in the function declaration header, rather than buried
+
+    These are basically conditions that can be checked before the function has even been fully invoked (but its arguments are computed and known); they do not require any internal function state to evaluate. In other words, these are "preconditions" that, if not met, obviate the need to run the the function; its result (fixed or error) can be statically determined.
+
+    For example, a function may return an error (via `Left` monadic value) if the arguments passed in are invalid/insufficient for the function's expectations. **Note:** This is a runtime scenario, orthogonal to a static type mismatch the compiler could have discovered and failed a build. Another example is a "base condition" in a recursive function.
+
+    **Foi** "preconditions" appear *in the function signature* to express these "early return preconditions", like this:
+
+    ```java
+    defn myFn(x) ?[x ?< 0]: 0 { .. };
+
+    // or:
+
+    defn myFn(x) ![x ?>= 0]: 0 { .. };
+    ```
+
+    In this function signature, the `x` parameter is checked, and if it's less than `0`, the fixed `0` value is substituted ("early returned") in place of the function being invoked.
+
 * **Types** In the **Foi** language, you don't annotate "container types" -- types on variables, properties, etc. Instead, you annotate "value types" -- types on values, and on expressions.
 
     I believe we'll get most of the benefits of "typing" with much less syntactic and mental overhead compared to traditional language static types.
