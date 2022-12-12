@@ -44,15 +44,15 @@ ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAcc
 
 Identifier              := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
 
-IdentifierExpr          := "#" | Identifier | IdentifierSingleExpr | IdentifierMultiExpr;
-IdentifierSingleExpr    := ("#" | Identifier) SingleAccessExpr;
-IdentifierMultiExpr     := ("#" | Identifier) MultiAccessExpr;
+IdentifierExpr          := "#" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr;
+IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
+IdentifierMultiExpr     := ("#" | Identifier | BuiltIn) MultiAccessExpr;
 
 SingleAccessExpr        := (WhSp* (DotSingleIdentifier | BracketExpr))+;
 MultiAccessExpr         := (WhSp* (DotMultiIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr))+;
 
-DotSingleIdentifier     := "." WhSp* (Identifier | IdentifierSingleExpr);
-DotMultiIdentifier      := "." WhSp* (Identifier | IdentifierMultiExpr);
+DotSingleIdentifier     := "." WhSp* (Identifier | BuiltIn | IdentifierSingleExpr);
+DotMultiIdentifier      := "." WhSp* (Identifier | BuiltIn | IdentifierMultiExpr);
 BracketExpr             := "[" WhSp* ExprNoBlock WhSp* "]";
 
 DotBracketExpr          := ".[" WhSp* RangeExpr WhSp* "]";
