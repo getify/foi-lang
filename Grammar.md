@@ -32,7 +32,7 @@ PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 
 (*************** General Expressions ***************)
 
-Expr                    := BlockExpr | ExprNoBlock | ComprExpr | ("(" WhSp* Expr WhSp* ")");
+Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | ("(" WhSp* Expr WhSp* ")");
 ExprNoBlock             := Empty | Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | PipelineExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
 ExprTrailingWhSp        := Expr WhSp+;
 ExprLeadingWhSp         := WhSp+ Expr;
@@ -67,7 +67,7 @@ AnglePropertyList       := PropertyExpr (WhSp* "," WhSp* PropertyExpr)* (WhSp* "
 
 (*************** Variable Definitions / Destructuring / Blocks ***************)
 
-DefVarStmt              := "def" WhSp+ (Identifier | DestructureTarget) WhSp* ("::" | ":") WhSp* Expr;
+DefVarStmt              := "def" WhSp+ (Identifier | DestructureTarget) WhSp* ":" WhSp* Expr;
 
 DestructureTarget       := "<" WhSp* DestructureDefList WhSp* ">";
 DestructureDefList      := DestructureDef (WhSp* "," WhSp* DestructureDef)* (WhSp* ",")?
@@ -83,10 +83,10 @@ BlockExpr               := BlockDefsInitOpt? WhSp* BareBlockExpr;
 BareBlockExpr           := "{" WhSp* (StmtSemi WhSp*)* StmtSemiOpt? WhSp* "}";
 BlockDefsInit           := "(" WhSp* VarDefInitList WhSp* ")";
 VarDefInitList          := VarDefInit (WhSp* "," WhSp* VarDefInit)* (WhSp* ",")?;
-VarDefInit              := Identifier WhSp* ("::" | ":") WhSp* ExprNoBlock;
+VarDefInit              := Identifier WhSp* ":" WhSp* ExprNoBlock;
 BlockDefsInitOpt        := "(" WhSp* VarDefInitOptList WhSp* ")";
 VarDefInitOptList       := ("," WhSp*)* (VarDefInitOpt (WhSp* "," WhSp* VarDefInitOpt?)*)?;
-VarDefInitOpt           := (Identifier (WhSp* ("::" | ":") WhSp* ExprNoBlock)?) | DestructureTarget;
+VarDefInitOpt           := (Identifier (WhSp* ":" WhSp* ExprNoBlock)?) | DestructureTarget;
 
 
 (*************** Decision Making -- Guard, Pattern Matching ***************)
@@ -117,6 +117,18 @@ ComprOpEach             := "~each";
 ComprOpNoEach           := "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap" | "~<";
 ComprIterationExpr      := BlockExpr | ComprIterNoBlockExpr;
 ComprIterNoBlockExpr    := ComprExpr | IdentifierExpr | CallExpr | ExprAccessExpr |("(" WhSp* ComprIterNoBlockExpr WhSp* ")");
+
+DoComprExpr             := (Identifier | BuiltIn) WhSp+ "~<<" WhSp* DoBlockExpr;
+DoBlockExpr             := DoBlockDefsInitOpt? WhSp* DoBareBlockExpr;
+DoBareBlockExpr         := "{" WhSp* (DoStmtSemi WhSp*)* (DoStmtSemiOpt | DoFinalUnwrapExpr)? WhSp* "}";
+DoBlockDefsInitOpt      := "(" WhSp* DoVarDefInitOptList WhSp* ")";
+DoVarDefInitOptList     := ("," WhSp*)* (DoVarDefInitOpt (WhSp* "," WhSp* DoVarDefInitOpt?)*)?;
+DoVarDefInitOpt         := (Identifier (WhSp* ("::" | ":") WhSp* ExprNoBlock)?) | DestructureTarget;
+DoDefVarStmt            := "def" WhSp+ (Identifier | DestructureTarget) WhSp* "::" WhSp* Expr;
+DoStmtSemi              := DoStmt? (WhSp* ";")+;
+DoStmt                  := Stmt | DoDefVarStmt;
+DoStmtSemiOpt           := DoStmt? (WhSp* ";")*;
+DoFinalUnwrapExpr       := "::" ExprNoBlock (WhSp* ";")*;
 
 
 (*************** Number Literals ***************)
@@ -353,6 +365,19 @@ x #> (y(#.y,2) #> z);
 defn myFn(x) #> f(#..3);
 
 2..4 #> { f(#.0) };
+
+List ~<< {
+    def x:: getSomething();
+    def y: uppercase(x);
+    def z:: another(y);
+    z.0
+};
+
+IO ~<< (x:: getSomething()) {
+    def y: uppercase(x);
+    def z:: another(y);
+    ::prepareValue(z);
+};
 ```
 
 ## License

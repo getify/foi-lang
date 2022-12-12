@@ -2199,10 +2199,10 @@ Here's the tricky part: the second comprehension is happening **for each iterati
 
 When each *iteration*'s `x + y` operation is performed, the result is automatically wrapped in **the same type as** the *range* context -- remember: if omitted, an empty `<>` tuple is assumed for the *range*. Finally, that result is *flat-map*ped into the overall result.
 
-We can also just include the special iterative assignments in in a [block-definitions clause](#block-definitions-clause):
+We can also just include the special iterative assignments in a [block-definitions clause](#block-definitions-clause):
 
 ```java
-~<< (x:: xs, y:: ys) {
+List ~<< (x:: xs, y:: ys) {
     x + y;
 };
 // < 9, 10, 11, 12 >
@@ -2249,7 +2249,7 @@ xs ~< (x) {
 But for the *do comprehension* form, we ostensibly cannot control the final step's behavior:
 
 ```java
-~<< (x:: xs, y:: ys) {
+List ~<< (x:: xs, y:: ys) {
     tup(x,y);
 };
 // < < 9 >, < 10 >, < 11 >, < 12 > >     <-- oops!
@@ -2258,13 +2258,13 @@ But for the *do comprehension* form, we ostensibly cannot control the final step
 So here's some workarounds:
 
 ```java
-~<< (x:: xs, y:: ys) {
+List ~<< (x:: xs, y:: ys) {
     tup(x,y).0;         // ugh!
 };
 // < 9, 10, 11, 12 >
 
 
-~<< (x:: xs, y:: ys) {
+List ~<< (x:: xs, y:: ys) {
     def v:: tup(x,y);   // meh
     v;
 };
@@ -2276,7 +2276,7 @@ But these are a bit annoying, right?!
 When you need to *unwrap* the final value, there's a special syntactic shortcut, a prefix of `::` on the final expression:
 
 ```java
-~<< (x:: xs, y:: ys) {
+List ~<< (x:: xs, y:: ys) {
     ::tup(x,y);         // <-- notice the ::
 };
 // < 9, 10, 11, 12 >
@@ -2293,7 +2293,7 @@ You may have noticed that a single list (Tuple) in this `~<<` *do comprehension*
 ```java
 def xs: < 2, 4 >;
 
-~<< (x:: xs) {
+List ~<< (x:: xs) {
     x * 10;
 }
 // < 20, 40 >
@@ -3902,7 +3902,7 @@ defn writeFile(filename,contents) {
 };
 defn processFile(filename) ^IO ~<< {
     def text:: readFile(filename);
-    def uptext: uppercase(text);
+    def uptext: uppercase(text);            // <-- : instead of ::
     def res:: writeFile("upper.txt",uptext);
     < :res, :text >;
 };
@@ -3947,7 +3947,8 @@ task.run(< x: 3 >);
 This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extract* the Reader value:
 
 ```java
-defn getEnv() ^IO @(defn(env) ^env);
+// Recall: Value@ and @ are the identity function
+defn getEnv() ^IO @(Value@);
 
 def fortyTwo: IOof@ 42;
 
