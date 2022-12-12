@@ -32,7 +32,7 @@ PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 
 (*************** General Expressions ***************)
 
-Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | ("(" WhSp* Expr WhSp* ")");
+Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* Expr WhSp* ")");
 ExprNoBlock             := Empty | Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | PipelineExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
 ExprTrailingWhSp        := Expr WhSp+;
 ExprLeadingWhSp         := WhSp+ Expr;
@@ -129,6 +129,9 @@ DoStmtSemi              := DoStmt? (WhSp* ";")+;
 DoStmt                  := Stmt | DoDefVarStmt;
 DoStmtSemiOpt           := DoStmt? (WhSp* ";")*;
 DoFinalUnwrapExpr       := "::" ExprNoBlock (WhSp* ";")*;
+
+DoLoopComprExpr         := ((DoLoopComprRangeExpr WhSp+) | ("(" WhSp* DoLoopComprRangeExpr WhSp* ")")) "~<*" WhSp DoBlockExpr;
+DoLoopComprRangeExpr    := ComprRangeNoEachExpr | ComprExpr;
 
 
 (*************** Number Literals ***************)
@@ -377,6 +380,19 @@ IO ~<< (x:: getSomething()) {
     def y: uppercase(x);
     def z:: another(y);
     ::prepareValue(z);
+};
+
+Promise ~<* {
+    def respE:: getSomething();
+    Either ~<< (resp:: respE) {
+        printResp(resp);
+    };
+};
+
+urls ~map fetch ~<* (resp) {
+    def v:: processResp(resp);
+    def success:: storeVal(v);
+    ?[success]: log(v);
 };
 ```
 
