@@ -44,9 +44,10 @@ ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAcc
 
 Identifier              := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
 
-IdentifierExpr          := "#" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr;
+IdentifierExpr          := "#" | "@" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr | AtExpr;
 IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
 IdentifierMultiExpr     := ("#" | Identifier | BuiltIn) MultiAccessExpr;
+AtExpr                  := ("@" | Identifier | BuiltIn | IdentifierSingleExpr) "@";
 
 SingleAccessExpr        := (WhSp* (DotSingleIdentifier | BracketExpr))+;
 MultiAccessExpr         := (WhSp* (DotMultiIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr))+;
@@ -189,7 +190,7 @@ DataStructLit           := RecordTupleLit | SetLit;
 RecordTupleLit          := "<" WhSp* RecordTupleEntryList WhSp* ">";
 RecordTupleEntryList    := ("," WhSp*)* (RecordTupleEntry (WhSp* "," WhSp* RecordTupleEntry?)*)?;
 RecordTupleEntry        := RecordTupleValue | PickValue | RecordProperty;
-RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | LispCallExpr | ("(" WhSp* RecordTupleValue WhSp* ")");
+RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | LispCallExpr | AtCallExpr | ("(" WhSp* RecordTupleValue WhSp* ")");
 PickValue               := "&" IdentifierExpr;
 RecordProperty          := (":" PropertyExpr) | ((("%" ("#" | Identifier)) | PropertyExpr) WhSp* ":" WhSp* RecordTupleValue);
 PropertyExpr            := Identifier | PositiveIntLit;
@@ -217,13 +218,14 @@ FuncBodyStmt            := Stmt | ("^" WhSp* Expr);
 
 (*************** Function Calls ***************)
 
-CallExpr                := InfixCallExpr | LispCallExpr | ("(" WhSp* CallExpr WhSp* ")");
+CallExpr                := InfixCallExpr | LispCallExpr | AtCallExpr | ("(" WhSp* CallExpr WhSp* ")");
 InfixCallExpr           := ExprNoBlock WhSp* "(" WhSp* InfixArgList? WhSp* ")";
 InfixArgList            := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
 LispCallExpr            := "|" WhSp* (("'"? ExprNoBlock (WhSp+ LispArgList)?) | ((("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispArgList) WhSp* "|";
 LispArgList             := ("," WhSp*)* (LispArgExpr (WhSp* "," WhSp* LispArgExpr?)*)?;
 LispArgExpr             := ExprNoBlock | NamedArgExpr;
 NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprNoBlock)) | ("(" WhSp* NamedArgExpr WhSp* ")");
+AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | IdentifierSingleExpr) WhSp+ "@")) WhSp* ExprNoBlock);
 
 
 (*************** Types ***************)
@@ -375,7 +377,6 @@ List ~<< {
     def z:: another(y);
     z.0
 };
-
 IO ~<< (x:: getSomething()) {
     def y: uppercase(x);
     def z:: another(y);
@@ -388,12 +389,43 @@ Promise ~<* {
         printResp(resp);
     };
 };
-
 urls ~map fetch ~<* (resp) {
     def v:: processResp(resp);
     def success:: storeVal(v);
     ?[success]: log(v);
 };
+```
+
+```java
+f(@);
+f(@2);
+f(@ 2);
+f(@(2));
+f(@ (2));
+
+f(@@);
+f(@@2);
+f(@@ 2);
+f(@@(2));
+f(@@ (2));
+
+f(Id@);
+f(Id@2);
+f(Id @2);
+f(Id@ 2);
+f(Id @ 2);
+f(Id@(2));
+f(Id@ (2));
+f(Id @ (2));
+
+f(Either.Right@);
+f(Either.Right@2);
+f(Either.Right @2);
+f(Either.Right@ 2);
+f(Either.Right @ 2);
+f(Either.Right@(2));
+f(Either.Right@ (2));
+f(Either.Right @ (2));
 ```
 
 ## License
