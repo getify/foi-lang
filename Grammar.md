@@ -14,7 +14,7 @@ NamedComprOp            := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "
 BooleanOp               := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
 TripleOp                := "~<<" | "~<*" | "...";
 DoubleOp                := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "$+";
-SingleOp                := #"[+\-*/<>\.\\':,?!@`#$%^&|]";
+SingleOp                := #"[+\-*/?!]";
 
 Empty                   := "empty";
 Boolean                 := "true" | "false";
@@ -33,11 +33,18 @@ PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 (*************** General Expressions ***************)
 
 Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* Expr WhSp* ")");
-ExprNoBlock             := Empty | Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | PipelineExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
+ExprNoBlock             := Empty | BareOperandExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | PipelineExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
+BareOperandExpr         := Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | UnaryExpr | BinaryExpr;
 ExprTrailingWhSp        := Expr WhSp+;
 ExprLeadingWhSp         := WhSp+ Expr;
 ExprWhSp                := ExprLeadingWhSp WhSp+;
 ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAccessExpr | MultiAccessExpr);
+
+UnaryExpr               := UnaryOper WhSp* OperandExpr;
+UnaryOper               := "?" | "!";
+OperandExpr             := BareOperandExpr | ("(" WhSp* Expr WhSp* ")");
+BinaryExpr              := OperandExpr WhSp* BinaryOper WhSp* OperandExpr;
+BinaryOper              := BooleanOp | #"[+\-*/]";
 
 
 (*************** Identifier / Access / Range Expressions ***************)
@@ -323,6 +330,20 @@ def /// e: 3;///  f: 4;
 >;
 <[]>;
 <[ 1, 2, 2 ]>;
+```
+
+```java
+2+3+4;
+2 + 3 + 4;
+(2 + 3) + 4;
+2 + (3 + 4);
+x + y + true;
+?2;
+!2;
+? x;
+! x;
+(x ?and !y) !or (z + 2);
+(x?and!y)!or(z+2);
 ```
 
 ```java
