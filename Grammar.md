@@ -23,28 +23,32 @@ BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either"
 
 AssignmentExpr          := Identifier WhSp* ":=" WhSp* Expr;
 
-PipelineExpr            := (PipelineSourceExpr PipelineTargetExpr) | ("(" WhSp* PipelineExpr WhSp* ")");
-PipelineSourceExpr      := ExprTrailingWhSp | PipelineNoWhSpExpr;
-PipelineTargetExpr      := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
-PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineTargetExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
-PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
-
 
 (*************** General Expressions ***************)
 
 Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* Expr WhSp* ")");
-ExprNoBlock             := Empty | BareOperandExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | PipelineExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
+ExprNoBlock             := Empty | BareOperandExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | BinaryChainExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
 BareOperandExpr         := Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | UnaryExpr | BinaryExpr;
 ExprTrailingWhSp        := Expr WhSp+;
 ExprLeadingWhSp         := WhSp+ Expr;
 ExprWhSp                := ExprLeadingWhSp WhSp+;
 ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAccessExpr | MultiAccessExpr);
 
-UnaryExpr               := UnaryOper WhSp* OperandExpr;
-UnaryOper               := "?" | "!";
+UnaryExpr               := UnaryOp WhSp* OperandExpr;
+UnaryOp                 := "?" | "!" | "?empty" | "!empty";
 OperandExpr             := BareOperandExpr | ("(" WhSp* Expr WhSp* ")");
-BinaryExpr              := OperandExpr WhSp* BinaryOper WhSp* OperandExpr;
-BinaryOper              := BooleanOp | #"[+\-*/]";
+BinaryExpr              := OperandExpr WhSp* BinaryOp WhSp* OperandExpr;
+BinaryOp                := BooleanOp | "$+" | #"[+\-*/]";
+
+BinaryChainExpr         := (BinaryChainLeftExpr (BinaryChainTargetExpr | PipelineTargetExpr)) | ("(" WhSp* BinaryChainExpr WhSp* ")")
+BinaryChainLeftExpr     := ExprTrailingWhSp | BinaryChainNoWhSpExpr;
+BinaryChainTargetExpr   := ("+>" | "<+") (ExprLeadingWhSp | BinaryChainNoWhSpExpr | BinaryChainSubExpr);
+BinaryChainSubExpr      := ((ExprWhSp | BinaryChainNoWhSpExpr) (BinaryChainTargetExpr | PipelineTargetExpr)) | ("(" WhSp* BinaryChainSubExpr WhSp* ")");
+BinaryChainNoWhSpExpr   := BlockExpr | ("(" WhSp* Expr WhSp* ")");
+
+PipelineTargetExpr      := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
+PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineTargetExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
+PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 
 
 (*************** Identifier / Access / Range Expressions ***************)
@@ -112,7 +116,8 @@ DepMatchExpr            := "?(" WhSp* ExprNoBlock WhSp* "){" WhSp* DepPatternStm
 DepPatternStmts         := ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
 DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
 DepCondClause           := ("?" | "!") "[" WhSp* DepCondExprList WhSp* "]";
-DepCondExprList         := ExprNoBlock (WhSp* "," WhSp* ExprNoBlock)* (WhSp* ",")?;
+DepCondExprList         := (ExprNoBlock | DepCondBinaryBoolExpr) (WhSp* "," WhSp* (ExprNoBlock | DepCondBinaryBoolExpr))* (WhSp* ",")?;
+DepCondBinaryBoolExpr   := (BooleanOp WhSp* OperandExpr) | ("(" WhSp* DepCondBinaryBoolExpr WhSp* ")");
 
 
 (*************** Loops/Comprehensions ***************)
@@ -387,6 +392,9 @@ foo ~map ![x] ~each foo;
 x . y [3].[1..3] .<a,b,> ~filter { y };
 
 x #> (y(#.y,2) #> z);
+
+def cb1: f(2) +> g +> h(3)(4);
+def cb2: f(2) <+ g <+ h(3)(4);
 
 defn myFn(x) #> f(#..3);
 
