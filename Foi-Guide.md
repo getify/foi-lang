@@ -1385,7 +1385,7 @@ def uniques: <[ &something, &another ]>;
 // < 4, 5, 6, 7 >
 ```
 
-All syntax rules of Tuple definition `<    >` still apply inside the `<[    ]>`, including use of the `&` and `%` sigils; as Sets *are* Tuples, not Records, field names are not allowed.
+All syntax rules/variation of Tuple definition `<    >` still apply inside the `<[    ]>`, including use of the `&` pick sigil (but *not* Record `%` sigil); as Sets *are* Tuples, not Records, field names are not allowed.
 
 Unlike `+` which merely concatenates, the `$+` operator acts as a unique-only Set-append operation:
 

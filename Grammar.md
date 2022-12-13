@@ -3,56 +3,133 @@
 The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form), as [verified here](https://mdkrajnak.github.io/ebnftest/):
 
 ```ebnf
+(*************** Program / Statements ***************)
+
 Program                 := WhSp* (StmtSemi WhSp*)* StmtSemiOpt?;
 
 Stmt                    := DefVarStmt | DefBlockStmt | DefTypeStmt | Expr;
 StmtSemi                := Stmt? (WhSp* ";")+;
 StmtSemiOpt             := Stmt? (WhSp* ";")*;
 
-Op                      := NamedComprOp | BooleanOp | TripleOp | DoubleOp | SingleOp;
+
+(*************** Whitespace ***************)
+
+WhSp                    := Whitespace | Comment;
+Whitespace              := #"[\s]+" | (*u0085*) "" | (*u180e*) "᠎" | (*u200b*) "​" | (*u200c*) "‍" | (*u200d*) "‌" | (*u200e*) "‎" | (*u200f*) "‏";
+Comment                 := LineComment | BlockComment;
+LineComment             := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
+BlockComment            := "///" #"[^]*?///";
+
+
+(*************** Core Syntax ***************)
+
+Op                      := NamedComprOp | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
 NamedComprOp            := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-BooleanOp               := NamedBoolOp | SymbolicBoolOp;
 NamedBoolOp             := #"[?!](?:in|as|has|and|or|empty)";
-SymbolicBoolOp          := #"[?!](?:=|>|<|>=|<=|<>|<=>|$=)";
-TripleOp                := "~<<" | "~<*" | "...";
-DoubleOp                := ".." | "+>" | "<+" | "#>" | "~<" | "$+";
-SingleOp                := #"[+\-*/?!]";
+SymbolicBoolOp          := #"[?!](?:=|>|<|>=|<=|<>|<=>|\$=)";
+SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!]";
 
 Empty                   := "empty";
 Boolean                 := "true" | "false";
 Keyword                 := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | "int" | "integer" | "float" | "bool" | "boolean" | "str";
 BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
 
-AssignmentExpr          := Identifier WhSp* ":=" WhSp* Expr;
 
-PipelineRightExpr      := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
-PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineRightExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
-PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
+(*************** Number Literals ***************)
+
+NumberLit               := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
+
+Esc                     := "\\";
+BinaryEsc               := Esc "b";
+HexEsc                  := Esc "h";
+OctalEsc                := Esc "o";
+UnicodeEsc              := Esc "u";
+MonadicEsc              := Esc "@";
+
+Base10Number            := "-"? Base10Digit+ ("." Base10Digit+)?;
+Base10Digit             := OctalDigit | "8" | "9";
+
+EscBase10               := Esc EscNum;
+EscNum                  := "-"? EscNumDigits ("." EscNumDigits)?;
+EscNumDigits            := Base10Digit+ ("_" EscNumDigits)?;
+
+BinaryInteger           := BinaryEsc "-"? BinaryDigit+;
+BinaryDigit             := "0" | "1";
+
+HexInteger              := HexEsc HexNum;
+HexNum                  := "-"? HexDigit+;
+HexDigit                := Base10Digit | #"[a-fA-F]";
+
+OctalInteger            := OctalEsc "-"? OctalDigit+;
+OctalDigit              := BinaryDigit | #"[2-7]";
+
+UnicodeChar             := UnicodeEsc HexDigit+;
+
+MonadicNumber           := MonadicEsc (EscNum | HexNum);
+
+PositiveIntLit          := Base10Digit+ | (Esc EscNumDigits) (HexEsc HexDigit+) | (OctalEsc OctalDigit+) | (BinaryEsc BinaryDigit+);
 
 
-(*************** General Expressions ***************)
+(*************** String Literals ***************)
 
-Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* Expr WhSp* ")");
+StrLit                  := PlainStr | SpacingStr | InterpStr | InterpSpacingStr;
+
+InterpEsc               := Esc "`";
+InterpSpacingEsc        := Esc InterpEsc;
+
+PlainStr                := '"' (#'[^"]' | '""')* '"';
+SpacingStr              := Esc PlainStr;
+InterpStr               := InterpEsc InterpLit;
+InterpSpacingStr        := InterpSpacingEsc InterpLit;
+InterpLit               := '"' (#'[^"`]' | '""' | "`" WhSp* Expr* WhSp* "`")* '"';
+
+
+(*************** Data Structures ***************)
+
+DataStructLit           := RecordTupleLit | SetLit;
+RecordTupleLit          := "<" WhSp* RecordTupleEntryList WhSp* ">";
+RecordTupleEntryList    := ("," WhSp*)* (RecordTupleEntry (WhSp* "," WhSp* RecordTupleEntry?)*)?;
+RecordTupleEntry        := RecordTupleValue | PickValue | RecordProperty;
+RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | LispCallExpr | AtCallExpr | ("(" WhSp* RecordTupleValue WhSp* ")");
+PickValue               := "&" IdentifierExpr;
+RecordProperty          := (":" PropertyExpr) | ((("%" ("#" | Identifier)) | PropertyExpr) WhSp* ":" WhSp* RecordTupleValue);
+PropertyExpr            := Identifier | PositiveIntLit;
+SetLit                  := "<[" WhSp* SetEntryList WhSp* "]>";
+SetEntryList            := ("," WhSp*)* (SetEntry (WhSp* "," WhSp* SetEntry?)*)?;
+SetEntry                := RecordTupleValue | PickValue;
+
+
+(*************** General/Misc Expressions ***************)
+
+Expr                    := BlockExpr | ExprNoBlock | ComprExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
 ExprNoBlock             := Empty | BareOperandExpr | GuardedExpr | MatchExpr | DefFuncExpr | AssignmentExpr | BinaryChainExpr | ExprAccessExpr | ("(" WhSp* ExprNoBlock WhSp* ")");
 BareOperandExpr         := Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | UnaryExpr | BinaryExpr;
 ExprTrailingWhSp        := Expr WhSp+;
 ExprLeadingWhSp         := WhSp+ Expr;
 ExprWhSp                := ExprLeadingWhSp WhSp+;
-ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAccessExpr | MultiAccessExpr);
+GroupedExpr             := "(" WhSp* Expr WhSp* ")";
 
-UnaryExpr               := (("?" | "!") WhSp* OperandNoEmptyExpr) | (("?empty" | "!empty") (ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")")));
-OperandNoEmptyExpr      := BareOperandExpr | ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")");
+ExprAccessExpr          := (ExprNoBlock | GroupedExpr) (SingleAccessExpr | MultiAccessExpr);
+
+UnaryExpr               := (("?" | "!") WhSp* OperandNoEmptyExpr) | (("?empty" | "!empty") (ExprLeadingWhSp | GroupedExpr));
+OperandNoEmptyExpr      := BareOperandExpr | ExprLeadingWhSp | GroupedExpr;
 
 BinaryExpr              := NamedBoolBinaryExpr | GeneralBinaryExpr;
-NamedBoolBinaryExpr     := (ExprTrailingWhSp | ("(" WhSp* Expr WhSp* ")")) NamedBoolRightExpr;
-NamedBoolRightExpr      := NamedBoolOp (ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")"));
+NamedBoolBinaryExpr     := (ExprTrailingWhSp | GroupedExpr) NamedBoolRightExpr;
+NamedBoolRightExpr      := NamedBoolOp (ExprLeadingWhSp | GroupedExpr);
 GeneralBinaryExpr       := Expr WhSp* (SymbolicBoolOp | "$+" | #"[+\-*/]") WhSp* Expr;
 
 BinaryChainExpr         := (BinaryChainLeftExpr (BinaryChainRightExpr | PipelineRightExpr)) | ("(" WhSp* BinaryChainExpr WhSp* ")")
 BinaryChainLeftExpr     := ExprTrailingWhSp | BinaryChainNoWhSpExpr;
 BinaryChainRightExpr    := ("+>" | "<+") (ExprLeadingWhSp | BinaryChainNoWhSpExpr | BinaryChainSubExpr);
 BinaryChainSubExpr      := ((ExprWhSp | BinaryChainNoWhSpExpr) (BinaryChainRightExpr | PipelineRightExpr)) | ("(" WhSp* BinaryChainSubExpr WhSp* ")");
-BinaryChainNoWhSpExpr   := BlockExpr | ("(" WhSp* Expr WhSp* ")");
+BinaryChainNoWhSpExpr   := BlockExpr | GroupedExpr;
+
+AssignmentExpr          := Identifier WhSp* ":=" WhSp* Expr;
+
+PipelineRightExpr       := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
+PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineRightExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
+PipelineNoWhSpExpr      := BlockExpr | GroupedExpr;
 
 
 (*************** Identifier / Access / Range Expressions ***************)
@@ -151,70 +228,6 @@ DoLoopComprExpr         := ((DoLoopComprRangeExpr WhSp+) | ("(" WhSp* DoLoopComp
 DoLoopComprRangeExpr    := ComprRangeNoEachExpr | ComprExpr;
 
 
-(*************** Number Literals ***************)
-
-NumberLit               := Base10Number | EscBase10 | BinaryInteger | HexInteger | OctalInteger | UnicodeChar | MonadicNumber;
-
-Esc                     := "\\";
-BinaryEsc               := Esc "b";
-HexEsc                  := Esc "h";
-OctalEsc                := Esc "o";
-UnicodeEsc              := Esc "u";
-MonadicEsc              := Esc "@";
-
-Base10Number            := "-"? Base10Digit+ ("." Base10Digit+)?;
-Base10Digit             := OctalDigit | "8" | "9";
-
-EscBase10               := Esc EscNum;
-EscNum                  := "-"? EscNumDigits ("." EscNumDigits)?;
-EscNumDigits            := Base10Digit+ ("_" EscNumDigits)?;
-
-BinaryInteger           := BinaryEsc "-"? BinaryDigit+;
-BinaryDigit             := "0" | "1";
-
-HexInteger              := HexEsc HexNum;
-HexNum                  := "-"? HexDigit+;
-HexDigit                := Base10Digit | #"[a-fA-F]";
-
-OctalInteger            := OctalEsc "-"? OctalDigit+;
-OctalDigit              := BinaryDigit | #"[2-7]";
-
-UnicodeChar             := UnicodeEsc HexDigit+;
-
-MonadicNumber           := MonadicEsc (EscNum | HexNum);
-
-PositiveIntLit          := Base10Digit+ | (Esc EscNumDigits) (HexEsc HexDigit+) | (OctalEsc OctalDigit+) | (BinaryEsc BinaryDigit+);
-
-
-(*************** String Literals ***************)
-
-StrLit                  := PlainStr | SpacingStr | InterpStr | InterpSpacingStr;
-
-InterpEsc               := Esc "`";
-InterpSpacingEsc        := Esc InterpEsc;
-
-PlainStr                := '"' (#'[^"]' | '""')* '"';
-SpacingStr              := Esc PlainStr;
-InterpStr               := InterpEsc InterpLit;
-InterpSpacingStr        := InterpSpacingEsc InterpLit;
-InterpLit               := '"' (#'[^"`]' | '""' | "`" WhSp* Expr* WhSp* "`")* '"';
-
-
-(*************** Data Structures ***************)
-
-DataStructLit           := RecordTupleLit | SetLit;
-RecordTupleLit          := "<" WhSp* RecordTupleEntryList WhSp* ">";
-RecordTupleEntryList    := ("," WhSp*)* (RecordTupleEntry (WhSp* "," WhSp* RecordTupleEntry?)*)?;
-RecordTupleEntry        := RecordTupleValue | PickValue | RecordProperty;
-RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | LispCallExpr | AtCallExpr | ("(" WhSp* RecordTupleValue WhSp* ")");
-PickValue               := "&" IdentifierExpr;
-RecordProperty          := (":" PropertyExpr) | ((("%" ("#" | Identifier)) | PropertyExpr) WhSp* ":" WhSp* RecordTupleValue);
-PropertyExpr            := Identifier | PositiveIntLit;
-SetLit                  := "<[" WhSp* SetEntryList WhSp* "]>";
-SetEntryList            := ("," WhSp*)* (SetEntry (WhSp* "," WhSp* SetEntry?)*)?;
-SetEntry                := RecordTupleValue | PickValue;
-
-
 (*************** Functions ***************)
 
 DefFuncExpr             := "defn" (WhSp+ Identifier "@"?)? WhSp* ("(" WhSp* (ParameterList | GatherParameter)? WhSp* ")")+ FuncMeta? WhSp* FuncBody;
@@ -234,7 +247,7 @@ FuncBodyStmt            := Stmt | ("^" WhSp* Expr);
 
 (*************** Function Calls ***************)
 
-CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr | ("(" WhSp* CallExpr WhSp* ")");
+CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr;
 PrefixCallExpr          := ExprNoBlock WhSp* "(" WhSp* PrefixArgList? WhSp* ")";
 PrefixArgList           := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
 LispCallExpr            := "|" WhSp* (("'"? ExprNoBlock (WhSp+ LispArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispArgList) WhSp* "|";
@@ -248,15 +261,6 @@ AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | I
 (* TODO: finish these *)
 
 DefTypeStmt             := "deft" WhSp+ Identifier WhSp+ #"[^;]+" WhSp*;
-
-
-(*************** Whitespace ***************)
-
-WhSp                    := Whitespace | Comment;
-Whitespace              := #"[\s]+" | (*u0085*) "" | (*u180e*) "᠎" | (*u200b*) "​" | (*u200c*) "‍" | (*u200d*) "‌" | (*u200e*) "‎" | (*u200f*) "‏";
-Comment                 := LineComment | BlockComment;
-LineComment             := "//" #"[^\n/][^\n]*"? &("\n" | Epsilon);
-BlockComment            := "///" #"[^]*?///";
 ```
 
 ## Grammar Test Snippets
@@ -361,6 +365,10 @@ x ?and y !and z;
 x ?in y;
 x?>y;
 x ?> y;
+x ?= y;
+x != y;
+x ?$= y;
+x !$= y;
 ```
 
 ```java
