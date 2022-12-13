@@ -11,9 +11,11 @@ StmtSemiOpt             := Stmt? (WhSp* ";")*;
 
 Op                      := NamedComprOp | BooleanOp | TripleOp | DoubleOp | SingleOp;
 NamedComprOp            := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-BooleanOp               := #"[?!](?:in|as|has|and|or|empty|=|>|<|>=|<=|<>|$=|<=>)";
+BooleanOp               := NamedBoolOp | SymbolicBoolOp;
+NamedBoolOp             := #"[?!](?:in|as|has|and|or|empty)";
+SymbolicBoolOp          := #"[?!](?:=|>|<|>=|<=|<>|<=>|$=)";
 TripleOp                := "~<<" | "~<*" | "...";
-DoubleOp                := ".." | "@@" | "->" | "+>" | "<+" | "#>" | "~<" | "$+";
+DoubleOp                := ".." | "+>" | "<+" | "#>" | "~<" | "$+";
 SingleOp                := #"[+\-*/?!]";
 
 Empty                   := "empty";
@@ -22,6 +24,10 @@ Keyword                 := "def" | "defn" | "deft" | "import" | "export" | ":as"
 BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
 
 AssignmentExpr          := Identifier WhSp* ":=" WhSp* Expr;
+
+PipelineRightExpr      := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
+PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineRightExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
+PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 
 
 (*************** General Expressions ***************)
@@ -34,21 +40,19 @@ ExprLeadingWhSp         := WhSp+ Expr;
 ExprWhSp                := ExprLeadingWhSp WhSp+;
 ExprAccessExpr          := (ExprNoBlock | ("(" WhSp* Expr WhSp* ")")) (SingleAccessExpr | MultiAccessExpr);
 
-UnaryExpr               := UnaryOp WhSp* OperandExpr;
-UnaryOp                 := "?" | "!" | "?empty" | "!empty";
-OperandExpr             := BareOperandExpr | ("(" WhSp* Expr WhSp* ")");
-BinaryExpr              := OperandExpr WhSp* BinaryOp WhSp* OperandExpr;
-BinaryOp                := BooleanOp | "$+" | #"[+\-*/]";
+UnaryExpr               := (("?" | "!") WhSp* OperandNoEmptyExpr) | (("?empty" | "!empty") (ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")")));
+OperandNoEmptyExpr      := BareOperandExpr | ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")");
 
-BinaryChainExpr         := (BinaryChainLeftExpr (BinaryChainTargetExpr | PipelineTargetExpr)) | ("(" WhSp* BinaryChainExpr WhSp* ")")
+BinaryExpr              := NamedBoolBinaryExpr | GeneralBinaryExpr;
+NamedBoolBinaryExpr     := (ExprTrailingWhSp | ("(" WhSp* Expr WhSp* ")")) NamedBoolRightExpr;
+NamedBoolRightExpr      := NamedBoolOp (ExprLeadingWhSp | ("(" WhSp* Expr WhSp* ")"));
+GeneralBinaryExpr       := Expr WhSp* (SymbolicBoolOp | "$+" | #"[+\-*/]") WhSp* Expr;
+
+BinaryChainExpr         := (BinaryChainLeftExpr (BinaryChainRightExpr | PipelineRightExpr)) | ("(" WhSp* BinaryChainExpr WhSp* ")")
 BinaryChainLeftExpr     := ExprTrailingWhSp | BinaryChainNoWhSpExpr;
-BinaryChainTargetExpr   := ("+>" | "<+") (ExprLeadingWhSp | BinaryChainNoWhSpExpr | BinaryChainSubExpr);
-BinaryChainSubExpr      := ((ExprWhSp | BinaryChainNoWhSpExpr) (BinaryChainTargetExpr | PipelineTargetExpr)) | ("(" WhSp* BinaryChainSubExpr WhSp* ")");
+BinaryChainRightExpr    := ("+>" | "<+") (ExprLeadingWhSp | BinaryChainNoWhSpExpr | BinaryChainSubExpr);
+BinaryChainSubExpr      := ((ExprWhSp | BinaryChainNoWhSpExpr) (BinaryChainRightExpr | PipelineRightExpr)) | ("(" WhSp* BinaryChainSubExpr WhSp* ")");
 BinaryChainNoWhSpExpr   := BlockExpr | ("(" WhSp* Expr WhSp* ")");
-
-PipelineTargetExpr      := "#>" (ExprLeadingWhSp | PipelineNoWhSpExpr | PipelineSubExpr);
-PipelineSubExpr         := ((ExprWhSp | PipelineNoWhSpExpr) PipelineTargetExpr) | ("(" WhSp* PipelineSubExpr WhSp* ")");
-PipelineNoWhSpExpr      := BlockExpr | ("(" WhSp* Expr WhSp* ")");
 
 
 (*************** Identifier / Access / Range Expressions ***************)
@@ -117,7 +121,7 @@ DepPatternStmts         := ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
 DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
 DepCondClause           := ("?" | "!") "[" WhSp* DepCondExprList WhSp* "]";
 DepCondExprList         := (ExprNoBlock | DepCondBinaryBoolExpr) (WhSp* "," WhSp* (ExprNoBlock | DepCondBinaryBoolExpr))* (WhSp* ",")?;
-DepCondBinaryBoolExpr   := (BooleanOp WhSp* OperandExpr) | ("(" WhSp* DepCondBinaryBoolExpr WhSp* ")");
+DepCondBinaryBoolExpr   := (NamedBoolRightExpr | (SymbolicBoolOp WhSp* Expr)) | ("(" WhSp* DepCondBinaryBoolExpr WhSp* ")");
 
 
 (*************** Loops/Comprehensions ***************)
@@ -221,7 +225,7 @@ FuncPrecondList         := FuncPrecond (WhSp+ FuncPrecond)*;
 FuncPrecond             := CondClause ":" WhSp* ExprNoBlock;
 FuncOverClause          := ":over" WhSp* "(" WhSp* Identifier (WhSp* "," WhSp* Identifier)* WhSp* ")";
 FuncAsClause            := ":as" WhSp+ Identifier;
-FuncBody                := ("^" WhSp* ExprNoBlock) | PipelineTargetExpr | FuncBodyBlock;
+FuncBody                := ("^" WhSp* ExprNoBlock) | PipelineRightExpr | FuncBodyBlock;
 FuncBodyBlock           := "{" WhSp* (FuncBodyStmtSemi WhSp*)* FuncBodyStmtSemiOpt? WhSp* "}";
 FuncBodyStmtSemi        := FuncBodyStmt (WhSp* ";")+;
 FuncBodyStmtSemiOpt     := FuncBodyStmt (WhSp* ";")*;
@@ -233,7 +237,7 @@ FuncBodyStmt            := Stmt | ("^" WhSp* Expr);
 CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr | ("(" WhSp* CallExpr WhSp* ")");
 PrefixCallExpr          := ExprNoBlock WhSp* "(" WhSp* PrefixArgList? WhSp* ")";
 PrefixArgList           := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
-LispCallExpr            := "|" WhSp* (("'"? ExprNoBlock (WhSp+ LispArgList)?) | ((("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispArgList) WhSp* "|";
+LispCallExpr            := "|" WhSp* (("'"? ExprNoBlock (WhSp+ LispArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispArgList) WhSp* "|";
 LispArgList             := ("," WhSp*)* (LispArgExpr (WhSp* "," WhSp* LispArgExpr?)*)?;
 LispArgExpr             := ExprNoBlock | NamedArgExpr;
 NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprNoBlock)) | ("(" WhSp* NamedArgExpr WhSp* ")");
@@ -343,12 +347,20 @@ def /// e: 3;///  f: 4;
 (2 + 3) + 4;
 2 + (3 + 4);
 x + y + true;
-?2;
-!2;
+?x;
 ? x;
+?(x);
+!x;
 ! x;
-(x ?and !y) !or (z + 2);
-(x?and!y)!or(z+2);
+!(x);
+x ?and y !and z;
+(x ?and !y) !or (z / 2);
+(x ?and !y)!or(z/2);
+?empty y;
+?x;
+x ?in y;
+x?>y;
+x ?> y;
 ```
 
 ```java
