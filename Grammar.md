@@ -230,9 +230,9 @@ FuncBodyStmt            := Stmt | ("^" WhSp* Expr);
 
 (*************** Function Calls ***************)
 
-CallExpr                := InfixCallExpr | LispCallExpr | AtCallExpr | ("(" WhSp* CallExpr WhSp* ")");
-InfixCallExpr           := ExprNoBlock WhSp* "(" WhSp* InfixArgList? WhSp* ")";
-InfixArgList            := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
+CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr | ("(" WhSp* CallExpr WhSp* ")");
+PrefixCallExpr          := ExprNoBlock WhSp* "(" WhSp* PrefixArgList? WhSp* ")";
+PrefixArgList           := ("," WhSp*)* (ExprNoBlock (WhSp* "," WhSp* ExprNoBlock?)*)?;
 LispCallExpr            := "|" WhSp* (("'"? ExprNoBlock (WhSp+ LispArgList)?) | ((("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispArgList) WhSp* "|";
 LispArgList             := ("," WhSp*)* (LispArgExpr (WhSp* "," WhSp* LispArgExpr?)*)?;
 LispArgExpr             := ExprNoBlock | NamedArgExpr;
