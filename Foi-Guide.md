@@ -4311,7 +4311,7 @@ def myStatus: getOrderStatus(order) :as OrderStatus;
 Function signatures may optionally be typed via custom types:
 
 ```java
-deft InterestingFunc (int,string) -> empty;
+deft InterestingFunc (int,string) ^empty;
 
 defn whatever(id,name) :as InterestingFunc {
     // ..
@@ -4331,8 +4331,8 @@ age ?as int;                // true
 This operator is useful in pattern matching:
 
 ```java
-deft SimpleFunc (int) -> empty;
-deft InterestingFunc (int,string) -> empty;
+deft SimpleFunc (int) ^empty;
+deft InterestingFunc (int,string) ^empty;
 
 def result1: ?(myFn){
     ?[?as SimpleFunc]: myFn(42)

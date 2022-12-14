@@ -32,7 +32,7 @@ SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "
 Empty                   := "empty";
 Boolean                 := "true" | "false";
 Keyword                 := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | NativeType;
-NativeType              := "int" | "integer" | "float" | "bool" | "boolean" | "str";
+NativeType              := Empty | "int" | "integer" | "float" | "bool" | "boolean" | "str";
 BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
 
 
@@ -271,9 +271,22 @@ AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | I
 
 
 (*************** Types ***************)
-(* TODO: finish these *)
 
-DefTypeStmt             := "deft" WhSp+ Identifier WhSp+ #"[^;]+" WhSp*;
+DefTypeStmt             := "deft" WhSp+ Identifier ((WhSp+ TypeNoFunc) | (WhSp* FuncType)) WhSp*;
+TypeNoFunc              := SimpleType | TypeUnion | DataStructType
+SimpleType              := Identifier | BuiltIn | NativeType;
+TypeUnion               := (SimpleType | DataStructType) (WhSp* "|" WhSp* (SimpleType | DataStructType))+;
+
+DataStructType          := "<" WhSp* DataStructTypeList? WhSp* ("," WhSp*)? ">";
+DataStructTypeList      := DataStructFinalValType | ((DataStructValueType | DataStructFieldType) (WhSp* "," WhSp* (DataStructValueType | DataStructFieldType))* (WhSp* "," WhSp* DataStructFinalValType)?);
+DataStructValueType     := SimpleType | DataStructType;
+DataStructFinalValType  := "*" DataStructValueType;
+DataStructFieldType     := Identifier WhSp* ":" WhSp* DataStructValueType;
+
+FuncType                := "(" WhSp* FuncTypeArgList? WhSp* ("," WhSp*)? ")" WhSp* "^" WhSp* "?"? (SimpleType | DataStructType);
+FuncTypeArgList         := FuncTypeFinalArg | (FuncTypeArg (WhSp* "," WhSp* FuncTypeArg)* (WhSp* "," WhSp* FuncTypeFinalArg)?);
+FuncTypeArg             := "?"? (SimpleType | DataStructType);
+FuncTypeFinalArg        := FuncTypeArg | ("*" (SimpleType | DataStructType));
 ```
 
 ## Grammar Test Snippets
@@ -385,8 +398,6 @@ x !$= y;
 ```
 
 ```java
-deft Whatever int | bool;
-
 def cb: defn(x)^x;
 
 def (x: 2, y: empty) { f(x.2); };
@@ -430,6 +441,7 @@ x #> (y(#.y,2) #> z);
 
 def cb1: f(2) +> g +> h(3)(4);
 def cb2: f(2) <+ g <+ h(3)(4);
+def cb3: f +> (defn(v) ^v) +> g;
 
 defn myFn(x) #> f(#..3);
 
@@ -505,6 +517,26 @@ f(Either.Right @ (2));
     ?[?as int]: f(#) :as bool;
     ?: # :as bool
 }):as bool;
+```
+
+```java
+deft F(?X) ^G;
+deft X(Y,Z) ^empty;
+deft Y(_) ^Either;
+deft Z() ^Either;
+deft W <
+    a: Q,
+    b: S,
+    c: U,
+    d: < int, string, *bool, >,
+    *< int, int >,
+>;
+deft Q(R) ^PushStream;
+deft R(_) ^PushStream;
+deft S(T) ^ PushStream;
+deft T(*_)^ _;
+deft U(int, string, *float) ^bool;
+deft V Left | Right;
 ```
 
 ## License
