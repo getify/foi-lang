@@ -21,8 +21,8 @@ deft ChainCB(any) ^Promise;
 deft Map(MapCB) ^Promise;
 deft MapCB(any) ^any;
 deft Resolved() ^bool;
-deft Race(List@Promise) ^Promise;
-deft All(List@Promise) ^Promise;
+deft Race(List{Promise}) ^Promise;
+deft All(List{Promise}) ^Promise;
 deft PromiseSubjectUnitConstructor() ^PromiseSubject;
 deft PromiseSubject <
 	pr: Promise,

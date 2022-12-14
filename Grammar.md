@@ -23,16 +23,18 @@ BlockComment            := "///" #"[^]*?///";
 
 (*************** Core Syntax ***************)
 
-Op                      := NamedComprOp | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
-NamedComprOp            := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
+Op                      := ComprOpNamed | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
 NamedBoolOp             := #"[?!](?:empty|has|and|in|as|or)";
 SymbolicBoolOp          := "?<=>" | "!<=>" | #"[?!](?:>=|<=|<>|\$=)" | #"[?!][=<>]";
 SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!]";
 
+ReservedWord            := Empty | Boolean | NamedKeywordNoEmpty | NativeTypeNoEmpty | BuiltIn;
 Empty                   := "empty";
 Boolean                 := "true" | "false";
-Keyword                 := "def" | "defn" | "deft" | "import" | "export" | ":as" | ":over" | NativeType;
-NativeType              := Empty | "int" | "integer" | "float" | "bool" | "boolean" | "str";
+Keyword                 := NamedKeywordNoEmpty | ":as" | ":over";
+NamedKeywordNoEmpty     := "def" | "defn" | "deft" | "import" | "export";
+NativeType              := Empty | NativeTypeNoEmpty;
+NativeTypeNoEmpty       := "int" | "integer" | "float" | "bool" | "boolean" | "str" | "string";
 BuiltIn                 := "Id" | "None" | "Maybe" | "Left" | "Right" | "Either" | "Promise" | "PromiseSubject" | "PushStream" | "PushSubject" | "PullStream" | "PullSubject" | "Channel" | "Gen" | "IO" | "Value" | "Number" | "List";
 
 
@@ -126,7 +128,7 @@ GrpBareOpExprNoEmpAsOpt := "(" WhSp* BareOpExprNoEmptyAsOpt WhSp* ")";
 
 ExprNoBlockGroupedAsOpt := ExprNoBlock | GroupedExprNoBlockAsOpt;
 
-AsAnnotationExpr        := ":as" WhSp+ (Identifier | NativeType | BuiltIn);
+AsAnnotationExpr        := ":as" WhSp+ NamedType;
 
 ExprAccessExpr          := (ExprNoBlock | GroupedExprAsOpt) (SingleAccessExpr | MultiAccessExpr);
 AssignmentExpr          := (Identifier | IdentifierSingleExpr) WhSp* ":=" WhSp* ExprAsOpt;
@@ -148,7 +150,7 @@ PipelineRightExpr       := "#>" WhSp* (OperandExpr | BlockExpr | GroupedExprAsOp
 
 (*************** Identifier / Access / Range Expressions ***************)
 
-Identifier              := #"[a-zA-Z0-9_~]+(?<!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~cata|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List))";
+Identifier              := (#"(?!(?:~each|~map|~filter|~fold|~foldR|~cata|~chain|~bind|~flatMap|~ap|~foldMap)\b)[a-zA-Z0-9_~]+(?<!\b(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|string|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List))") | (ComprOpNamed #"[a-zA-Z0-9_~]"+) | (#"[a-zA-Z0-9_~]"+ ReservedWord);
 
 IdentifierExpr          := "#" | "@" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr | AtExpr;
 IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
@@ -221,8 +223,10 @@ ComprExpr               := (((ComprRangeNoEachExpr WhSp+ ComprOpNoEach) | (Compr
 ComprRangeNoEachExpr    := IdentifierExpr | CallExpr | DataStructLit | ClosedRangeExpr | ExprAccessExpr | ("(" WhSp* ComprRangeNoEachExpr WhSp* ")");
 ComprRangeEachExpr      := CondClause | ComprRangeNoEachExpr | ("(" WhSp* ComprRangeEachExpr WhSp* ")");
 ComprOp                 := ComprOpNoEach | ComprOpEach;
+ComprOpNamed            := ComprOpEach | ComprOpNamedNoEach;
 ComprOpEach             := "~each";
-ComprOpNoEach           := "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap" | "~<";
+ComprOpNoEach           := ComprOpNamedNoEach | "~<";
+ComprOpNamedNoEach      := "~map" | "~filter" | "~fold" | "~foldR" | "~cata" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
 ComprIterationExpr      := BlockExpr | ComprIterNoBlockExpr;
 ComprIterNoBlockExpr    := ComprExpr | IdentifierExpr | CallExpr | ExprAccessExpr |("(" WhSp* ComprIterNoBlockExpr WhSp* ")");
 
@@ -274,21 +278,26 @@ AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | I
 
 (*************** Types ***************)
 
-DefTypeStmt             := "deft" WhSp+ Identifier ((WhSp+ TypeNoFunc) | (WhSp* FuncType)) WhSp*;
-TypeNoFunc              := SimpleType | TypeUnion | DataStructType
-SimpleType              := Identifier | BuiltIn | NativeType;
-TypeUnion               := (SimpleType | DataStructType) (WhSp* "|" WhSp* (SimpleType | DataStructType))+;
+DefTypeStmt             := "deft" WhSp+ Identifier ((WhSp+ NoFuncType) | (WhSp* FuncType)) WhSp*;
+
+NoFuncType              := UnionType | NoUnionType;
+UnionType               := NoUnionType (WhSp* "|" WhSp* NoUnionType)+;
+NoUnionType             := SimpleType | DataStructType | NestedType | GroupedType;
+SimpleType              := NamedType | PlainStr | SpacingStr | NumberLit | Boolean;
+NamedType               := ((Identifier | BuiltIn) ("." (Identifier | BuiltIn))*) | NativeType;
+NestedType              := NamedType WhSp* GroupedType;
+GroupedType             := "{" WhSp* (NoUnionType | (UnionType (WhSp* "|")?) | FuncType) WhSp* "}";
 
 DataStructType          := "<" WhSp* DataStructTypeList? WhSp* ("," WhSp*)? ">";
 DataStructTypeList      := DataStructFinalValType | ((DataStructValueType | DataStructFieldType) (WhSp* "," WhSp* (DataStructValueType | DataStructFieldType))* (WhSp* "," WhSp* DataStructFinalValType)?);
-DataStructValueType     := SimpleType | DataStructType;
-DataStructFinalValType  := "*" DataStructValueType;
+DataStructValueType     := NoFuncType | GroupedType;
+DataStructFinalValType  := "*" NoUnionType;
 DataStructFieldType     := Identifier WhSp* ":" WhSp* DataStructValueType;
 
-FuncType                := "(" WhSp* FuncTypeArgList? WhSp* ("," WhSp*)? ")" WhSp* "^" WhSp* "?"? (SimpleType | DataStructType);
+FuncType                := "(" WhSp* FuncTypeArgList? WhSp* ("," WhSp*)? ")" WhSp* "^" WhSp* "?"? NoUnionType;
 FuncTypeArgList         := FuncTypeFinalArg | (FuncTypeArg (WhSp* "," WhSp* FuncTypeArg)* (WhSp* "," WhSp* FuncTypeFinalArg)?);
-FuncTypeArg             := "?"? (SimpleType | DataStructType);
-FuncTypeFinalArg        := FuncTypeArg | ("*" (SimpleType | DataStructType));
+FuncTypeArg             := "?"? NoUnionType;
+FuncTypeFinalArg        := FuncTypeArg | ("*" NoUnionType);
 ```
 
 ## Grammar Test Snippets
@@ -448,7 +457,9 @@ def cb3: f +> (defn(v) ^v) +> g;
 defn myFn(x) #> f(#..3);
 
 2..4 #> { f(#.0) };
+```
 
+```java
 List ~<< {
     def x:: getSomething();
     def y: uppercase(x);
@@ -522,14 +533,14 @@ f(Either.Right @ (2));
 ```
 
 ```java
-deft F(?X) ^G;
+deft F (?X) ^G;
 deft X(Y,Z) ^empty;
 deft Y(_) ^Either;
 deft Z() ^Either;
 deft W <
     a: Q,
-    b: S,
-    c: U,
+    b: S | int,
+    c: U | {(*string) ^{bool|42}},
     d: < int, string, *bool, >,
     *< int, int >,
 >;
@@ -539,6 +550,8 @@ deft S(T) ^ PushStream;
 deft T(*_)^ _;
 deft U(int, string, *float) ^bool;
 deft V Left | Right;
+deft A { Left | Right };
+deft B(str, *{(int)^int}) ^{"yes"|"no"};
 ```
 
 ## License
