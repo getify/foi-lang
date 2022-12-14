@@ -25,8 +25,8 @@ BlockComment            := "///" #"[^]*?///";
 
 Op                      := NamedComprOp | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
 NamedComprOp            := "~each" | "~map" | "~filter" | "~fold" | "~foldR" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-NamedBoolOp             := #"[?!](?:in|as|has|and|or|empty)";
-SymbolicBoolOp          := #"[?!](?:=|>|<|>=|<=|<>|<=>|\$=)";
+NamedBoolOp             := #"[?!](?:empty|has|and|in|as|or)";
+SymbolicBoolOp          := "?<=>" | "!<=>" | #"[?!](?:>=|<=|<>|\$=)" | #"[?!][=<>]";
 SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!]";
 
 Empty                   := "empty";
@@ -129,7 +129,7 @@ ExprNoBlockGroupedAsOpt := ExprNoBlock | GroupedExprNoBlockAsOpt;
 AsAnnotationExpr        := ":as" WhSp+ (Identifier | NativeType | BuiltIn);
 
 ExprAccessExpr          := (ExprNoBlock | GroupedExprAsOpt) (SingleAccessExpr | MultiAccessExpr);
-AssignmentExpr          := Identifier WhSp* ":=" WhSp* ExprAsOpt;
+AssignmentExpr          := (Identifier | IdentifierSingleExpr) WhSp* ":=" WhSp* ExprAsOpt;
 
 UnaryExpr               := SymbolicUnaryExpr | NamedUnaryExpr | GroupedUnaryExpr;
 GroupedUnaryExpr        := "(" WhSp* UnaryExpr WhSp* ")";
@@ -148,7 +148,7 @@ PipelineRightExpr       := "#>" WhSp* (OperandExpr | BlockExpr | GroupedExprAsOp
 
 (*************** Identifier / Access / Range Expressions ***************)
 
-Identifier              := #"\b(?!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List)\b)[a-zA-Z0-9_~]+";
+Identifier              := #"[a-zA-Z0-9_~]+(?<!(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|~each|~map|~filter|~fold|~foldR|~cata|~chain|~bind|~flatMap|~ap|~foldMap|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List))";
 
 IdentifierExpr          := "#" | "@" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr | AtExpr;
 IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
@@ -252,7 +252,7 @@ FuncPrecondList         := FuncPrecond (WhSp+ FuncPrecond)*;
 FuncPrecond             := CondClause ":" WhSp* ExprNoBlockGroupedAsOpt;
 FuncOverClause          := ":over" WhSp* "(" WhSp* Identifier (WhSp* "," WhSp* Identifier)* WhSp* ")";
 FuncAsClause            := ":as" WhSp+ Identifier;
-FuncBody                := ("^" WhSp* ExprNoBlockGroupedAsOpt) | PipelineRightExpr | FuncBodyBlock;
+FuncBody                := ("^" WhSp* (ExprNoBlock | GroupedExprAsOpt)) | PipelineRightExpr | FuncBodyBlock;
 FuncBodyBlock           := "{" WhSp* (FuncBodyStmtSemi WhSp*)* FuncBodyStmtSemiOpt? WhSp* "}";
 FuncBodyStmtSemi        := FuncBodyStmt (WhSp* ";")+;
 FuncBodyStmtSemiOpt     := FuncBodyStmt (WhSp* ";")*;
@@ -262,11 +262,13 @@ FuncBodyStmt            := Stmt | ("^" WhSp* ExprAsOpt);
 (*************** Function Calls ***************)
 
 CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr;
-PrefixCallExpr          := ExprNoBlockGroupedAsOpt WhSp* "(" WhSp* ArgList? WhSp* ")";
-ArgList                 := ("," WhSp*)* (ArgExpr (WhSp* "," WhSp* ArgExpr?)*)?;
-ArgExpr                 := ExprNoBlockAsOpt | NamedArgExpr;
-NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprNoBlockAsOpt)) | ("(" WhSp* NamedArgExpr WhSp* ")");
-LispCallExpr            := "|" WhSp* (("'"? ExprNoBlockGroupedAsOpt (WhSp+ ArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ ArgList) WhSp* "|";
+PrefixCallExpr          := ExprNoBlockGroupedAsOpt WhSp* "(" WhSp* CallArgList? WhSp* ")";
+CallArgList             := ("," WhSp*)* (CallArgExpr (WhSp* "," WhSp* CallArgExpr?)*)?;
+CallArgExpr             := ExprAsOpt | NamedArgExpr;
+NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprAsOpt)) | ("(" WhSp* NamedArgExpr WhSp* ")");
+LispCallExpr            := "|" WhSp* (("'"? ExprNoBlockGroupedAsOpt (WhSp+ LispCallArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispCallArgList) WhSp* "|";
+LispCallArgList         := ("," WhSp*)* (LispCallArgExpr (WhSp* "," WhSp* LispCallArgExpr?)*)?;
+LispCallArgExpr         := ("..." WhSp*)? CallArgExpr;
 AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | IdentifierSingleExpr) WhSp+ "@")) WhSp* ExprNoBlockGroupedAsOpt);
 
 
@@ -426,7 +428,7 @@ defn add(x)(y,<:z>)
     ?[z]: (g: z) { fn(g) };
     x.[y..z];
     y.<first,last>;
-    |+ 1,2,3|;
+    |+ 1,2,3,...nums|;
     |myFn x:2,3|;
     myFn(3,x:2);
     ^42

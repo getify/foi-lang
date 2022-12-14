@@ -8,27 +8,27 @@ features/syntax.
 
 
 // type definitions
-deft PromiseConstructor(?Init) -> Promise;
-deft Init(Resolve) -> empty;
-deft Resolve(any) -> Either;
+deft PromiseConstructor(?Init) ^Promise;
+deft Init(Resolve) ^empty;
+deft Resolve(any) ^Either;
 deft Promise <
 	chain: Chain,
 	map: Map,
 	resolved: Resolved,
 >;
-deft Chain(ChainCB) -> Promise;
-deft ChainCB(any) -> Promise;
-deft Map(MapCB) -> Promise;
-deft MapCB(any) -> any;
-deft Resolved() -> bool;
-deft Race(List@Promise) -> Promise;
-deft All(List@Promise) -> Promise;
-deft PromiseSubjectUnitConstructor() -> PromiseSubject;
+deft Chain(ChainCB) ^Promise;
+deft ChainCB(any) ^Promise;
+deft Map(MapCB) ^Promise;
+deft MapCB(any) ^any;
+deft Resolved() ^bool;
+deft Race(List@Promise) ^Promise;
+deft All(List@Promise) ^Promise;
+deft PromiseSubjectUnitConstructor() ^PromiseSubject;
 deft PromiseSubject <
 	pr: Promise,
 	resolve: Resolve,
 >;
-deft PromiseUnitConstructor(any) -> Promise;
+deft PromiseUnitConstructor(any) ^Promise;
 
 
 // module-local variables
@@ -90,7 +90,7 @@ defn all(prs)
 defn PromiseSubject@()
 	:as PromiseSubjectUnitConstructor
 {
-	def resolve;
+	def resolve: empty;
 	def pr: Promise(
 		defn(res) :over (resolve) { resolve := res; }
 	);
@@ -137,7 +137,7 @@ defn Promise(initFn)
 		:as Chain
 	{
 		def subj: PromiseSubject@;
-		subscribe(publicAPI,fn +> (~map subj.resolve));
+		subscribe(publicAPI,fn +> |~map ,subj.resolve|);
 		^subj.pr;
 	};
 	

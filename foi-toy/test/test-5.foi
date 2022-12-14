@@ -6,7 +6,7 @@ syntax. The :: below are kind of like "await".
 ///
 
 
-defn renderLargeOrders() ^Promise ~<< {
+defn renderLargeOrders() ^(Promise ~<< {
 	def orders:: fetch("/all-orders");
 	def largeOrders: orders ~filter (order) { order.total ?>= 100; };
 	def customers:: all(
@@ -26,7 +26,7 @@ defn renderLargeOrders() ^Promise ~<< {
 			</li>
 		"; } |)
 	`</ul>";
-};
+});
 
 renderLargeOrders()
 ~map (html) { document.body.innerHTML := html; };
