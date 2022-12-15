@@ -95,7 +95,7 @@ RecordTupleEntryList    := ("," WhSp*)* (RecordTupleEntry (WhSp* "," WhSp* Recor
 RecordTupleEntry        := RecordTupleValue | PickValue | RecordProperty;
 RecordTupleValue        := Empty | Boolean | NumberLit | StrLit | DataStructLit | IdentifierExpr | CallExpr | ("(" WhSp* RecordTupleValue WhSp* ")");
 PickValue               := "&" IdentifierExpr;
-RecordProperty          := (":" PropertyExpr) | ((("%" ("#" | Identifier)) | PropertyExpr) WhSp* ":" WhSp* RecordTupleValue);
+RecordProperty          := (":" PropertyExpr) | ((("%" ("#" | IdentifierExpr | StrLit)) | PropertyExpr) WhSp* ":" WhSp* RecordTupleValue);
 PropertyExpr            := Identifier | PositiveIntLit;
 SetLit                  := "<[" WhSp* SetEntryList WhSp* "]>";
 SetEntryList            := ("," WhSp*)* (SetEntry (WhSp* "," WhSp* SetEntry?)*)?;
@@ -406,6 +406,10 @@ defn a~each() ^empty;
 <
     ,,&v.x.[3..].<a,b> , "Hello" , 3,,4, :foo,
     yes: empty, (|fn 1|),
+    %x.y.z: false,
+    %"Hello World": 2,
+    %\\`" this
+    is `adverb` ""crazy""!": 42,
     %bar:<1>,,
 >;
 <[]>;
@@ -548,6 +552,7 @@ f(Either.Right @ (2));
 ```
 
 ```java
+| * getQty(order,item), getPrice(item) | :as float;
 ?3 :as bool;
 ?(3) :as bool;
 ?(3):as bool;

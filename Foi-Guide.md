@@ -1099,7 +1099,15 @@ def person: < %field: "Kyle", last: "Simpson" >;
 // < first: "Kyle", last: "Simpson" >
 ```
 
-When defining a Record and the field name matches the variable holding the value, a concise syntax is allowed:
+This also works with a `%`-prefixed string literal as the field name -- field names can thus contain arbitrary characters (like whitespace!):
+
+```java
+def person: < name: "Kyle Simpson", %"favorite number": 42 >;
+
+person["favorite number"];      // 42
+```
+
+When defining a Record and the field name matches the variable holding the value, this concise syntax is allowed:
 
 ```java
 def first: "Kyle";
@@ -4303,7 +4311,7 @@ def cost: | * getQty(order,item), getPrice(item) | :as float;
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
 
 ```java
-deft OrderStatus { empty, "pending", "shipped" }
+deft OrderStatus { empty | "pending" | "shipped" };
 
 def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
@@ -4315,7 +4323,7 @@ deft InterestingFunc (int,string) ^empty;
 
 defn whatever(id,name) :as InterestingFunc {
     // ..
-}
+};
 ```
 
 The `?as` operator corresponds to the `:as` type annotation keyword; it's a boolean operator that returns `true` if a value/expression matches the indicated type, `false` otherwise:
