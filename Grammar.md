@@ -70,7 +70,7 @@ UnicodeChar             := UnicodeEsc HexDigit+;
 
 MonadicNumber           := MonadicEsc (EscNum | HexNum);
 
-PositiveIntLit          := Base10Digit+ | (Esc EscNumDigits) (HexEsc HexDigit+) | (OctalEsc OctalDigit+) | (BinaryEsc BinaryDigit+);
+PositiveIntLit          := Base10Digit+ | (Esc EscNumDigits) | (HexEsc HexDigit+) | (OctalEsc OctalDigit+) | (BinaryEsc BinaryDigit+);
 
 
 (*************** String Literals ***************)
@@ -150,7 +150,7 @@ PipelineRightExpr       := "#>" WhSp* (OperandExpr | BlockExpr | GroupedExprAsOp
 
 (*************** Identifier / Access / Range Expressions ***************)
 
-Identifier              := (#"(?!(?:~each|~map|~filter|~fold|~foldR|~cata|~chain|~bind|~flatMap|~ap|~foldMap)\b)[a-zA-Z0-9_~]+(?<!\b(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|string|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List))") | (ComprOpNamed #"[a-zA-Z0-9_~]"+) | (#"[a-zA-Z0-9_~]"+ ReservedWord);
+Identifier              := (#"(?!(?:[0-9]+|~each|~map|~filter|~fold|~foldR|~cata|~chain|~bind|~flatMap|~ap|~foldMap)\b)[a-zA-Z0-9_~]+(?<!\b(?:def|defn|deft|import|export|empty|true|false|int|integer|float|bool|boolean|str|string|Id|None|Maybe|Left|Right|Either|Promise|PromiseSubject|PushStream|PushSubject|PullStream|PullSubject|Channel|Gen|IO|Value|Number|List))") | #"[0-9]+~" | (ComprOpNamed #"[a-zA-Z0-9_~]"+) | (#"[a-zA-Z0-9_~]"+ ReservedWord);
 
 IdentifierExpr          := "#" | "@" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr | AtExpr;
 IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
@@ -160,8 +160,8 @@ AtExpr                  := ("@" | Identifier | BuiltIn | IdentifierSingleExpr) "
 SingleAccessExpr        := (WhSp* (DotSingleIdentifier | BracketExpr))+;
 MultiAccessExpr         := (WhSp* (DotMultiIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr))+;
 
-DotSingleIdentifier     := "." WhSp* (Identifier | BuiltIn | IdentifierSingleExpr);
-DotMultiIdentifier      := "." WhSp* (Identifier | BuiltIn | IdentifierMultiExpr);
+DotSingleIdentifier     := "." WhSp* (Base10Digit+ | Identifier | BuiltIn | IdentifierSingleExpr);
+DotMultiIdentifier      := "." WhSp* (Base10Digit+ | Identifier | BuiltIn | IdentifierMultiExpr);
 BracketExpr             := "[" WhSp* ExprNoBlockAsOpt WhSp* "]";
 
 DotBracketExpr          := ".[" WhSp* RangeExpr WhSp* "]";
@@ -326,6 +326,36 @@ def c  :   1 ; ;;
 def d: /// hello
 /// 3;
 def /// e: 3;///  f: 4;
+```
+
+```java
+def 123a: empty;
+def a123: empty;
+def 123~: empty;
+def ~123: empty;
+def Value~: empty;
+def ~Value: empty;
+def empty~: empty;
+def ~empty: empty;
+def int~: empty;
+def ~int: empty;
+def ~eachA: empty;
+def ~each~: empty;
+def a~each: empty;
+
+defn 123a() ^empty;
+defn a123() ^empty;
+defn 123~() ^empty;
+defn ~123() ^empty;
+defn Value~() ^empty;
+defn ~Value() ^empty;
+defn empty~() ^empty;
+defn ~empty() ^empty;
+defn int~() ^empty;
+defn ~int() ^empty;
+defn ~eachA() ^empty;
+defn ~each~() ^empty;
+defn a~each() ^empty;
 ```
 
 ```java
