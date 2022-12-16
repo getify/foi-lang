@@ -1,6 +1,6 @@
 # Foi: a different kind of functional programming language
 
-**Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. It pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, CommonLisp, and others.
+**Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. It pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and others.
 
 The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
 
@@ -54,9 +54,9 @@ That said, here are a few explanations to help bring some clarity to **Foi**'s p
 
     As mentioned previously, `^` points upward, to semantically hint "return value up/out".
 
-* **Infix + Lisp** Pretty much all programming languages either use infix form or lisp form.
+* **Prefix/Infix + Lisp** For function calls and expressions, pretty much all programming languages use prefix/infix form or lisp form.
 
-    The infix form (`x + 3`, `myFn(1,2,3)`) is extremely common and familiar. The lisp form (`(+ x 3)`, `(myFn 1 2 3)`) is much more powerful/flexible. But why do we have to choose? I believe we should be able to combine these capabilities into a single language.
+    The prefix/infix form (`x + 3`, `myFn(1,2,3)`) is extremely common and familiar. The lisp form (`(+ x 3)`, `(myFn 1 2 3)`) is much more powerful/flexible. But why do we have to choose? I believe we should be able to combine these capabilities into a single language.
 
     In **Foi**, an optional lisp-like form, denoted with `| .. |` (pipes) instead of `( .. )` (parentheses) lets you opt into lisp expression semantics, treating all operators and functions alike.
 
@@ -113,7 +113,7 @@ That said, here are a few explanations to help bring some clarity to **Foi**'s p
 
     This means, for example, there's no such thing as a `return` statement from inside a loop, or from inside a conditional (guarded expression or pattern match expression).
 
-    However, **Foi** does recognize a valid subset of conditional "early return" use-cases. In fact, **Foi** insists that they should be elevated to be visible and obvious in the function declaration header, rather than buried
+    However, **Foi** does recognize a valid subset of conditional "early return" use-cases. In fact, **Foi** insists that they should be elevated to be visible and obvious in the function declaration header, rather than buried in the middle of the function body.
 
     These are basically conditions that can be checked before the function has even been fully invoked (but its arguments are computed and known); they do not require any internal function state to evaluate. In other words, these are "preconditions" that, if not met, obviate the need to run the the function; its result (fixed or error) can be statically determined.
 

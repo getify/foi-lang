@@ -26,8 +26,8 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>{ x }</code></td><td><code>&lt; :x &gt;</code></td><td>Concise Property</td></tr>
     <tr><td><code>obj.prop</code> <code>obj[propName]</code></td><td><code>obj.prop</code> <code>obj[propName]</code></td><td>Object Property Access</td></tr>
     <tr><td><code>arr[3]</code></td><td><code>arr.3</code> <code>arr[3]</code></td><td>Array Index Access</td></tr>
-    <tr><td>arr.at(-1)</td><td><code>arr.-1</code></td><td>Relative Array Index Access</td></tr>
-    <tr><td><code>arr.slice(2,5)</code></td><td><code>arr.[2..5]</code></td><td>Array Range Access</td></tr>
+    <tr><td><code>arr.at(-1)</code></td><td><code>arr.-1</code></td><td>Relative Array Index Access</td></tr>
+    <tr><td><code>arr.slice(2,6)</code></td><td><code>arr.[2..5]</code></td><td>Array Range Access</td></tr>
     <tr><td><code>new Map([[ obj, 42 ]])</code></td><td><code>&lt; %obj: 42 &gt;</code></td><td>Map (Foi Record)</td></tr>
     <tr><td><code>new Set([ 1, 1, 2, 2 ])</code></td><td><code>&lt;[ 1, 1, 2, 2 ]&gt;</code></td><td>Set (Foi Tuple -- with duplicate filtering)</td></tr>
     <tr><td><code>=</code></td><td><code>:=</code></td><td>Assignment</td></tr>
@@ -40,21 +40,21 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>!( || )</code></td><td><code>!or</code></td><td>Boolean NOT OR (Foi NOR)</td></tr>
     <tr><td><code>==</code></td><td><code>?=</code></td><td>Equality</td></tr>
     <tr><td><code>!=</code></td><td><code>!=</code></td><td>Inequality</td></tr>
-    <tr><td><code>== null</code></td><td><code>?empty</code></td><td>Is <code>null</code> (Foi <code>empty</code>)</td></tr>
-    <tr><td><code>!= null</code></td><td><code>!empty</code></td><td>Is Not <code>null</code> (Foi <code>! empty</code>)</td></tr>
+    <tr><td><code>v == null</code></td><td><code>?empty v</code></td><td>Is <code>null</code> (Foi <code>empty</code>)</td></tr>
+    <tr><td><code>v != null</code></td><td><code>!empty v</code></td><td>Is Not <code>null</code> (Foi <code>!= empty</code>)</td></tr>
     <tr><td><code>&gt;</code></td><td><code>?&gt;</code></td><td>Greater Than</td></tr>
     <tr><td><code>&gt;=</code></td><td><code>?&gt;=</code></td><td>Greater Than / Equal</td></tr>
     <tr><td><code>&lt;</code></td><td><code>?&lt;</code></td><td>Less Than</td></tr>
     <tr><td><code>&lt;=</code></td><td><code>?&lt;=</code></td><td>Less Than / Equal</td></tr>
-    <tr><td><code>!( &gt )</code></td><td><code>!&gt;</code></td><td>Not Greater Than</td></tr>
-    <tr><td><code>!( &gt;= )</code></td><td><code>!&gt;=</code></td><td>Not Greater Than / Equal</td></tr>
-    <tr><td><code>!( &lt; )</code></td><td><code>!&lt;</code></td><td>Not Less Than</td></tr>
-    <tr><td><code>!( &lt;= )</code></td><td><code>!&lt;=</code></td><td>Not Less Than / Equal</td></tr>
-    <tr><td><code>&gt; &amp;&amp; &lt;</code></td><td><code>?&lt;&gt;</code></td><td>In Between, Not Inclusive </td></tr>
-    <tr><td><code>&gt;= &amp;&amp; &lt;=</code></td><td><code>?&lt;=&gt;</code></td><td>In Between, Inclusive</td></tr>
-    <tr><td><code>&lt; || &gt;</code></td><td><code>!&lt;&gt;</code></td><td>Not In Between, Not Inclusive </td></tr>
-    <tr><td><code>&lt;= || &gt;=</code></td><td><code>!&lt;=&gt;</code></td><td>Not In Between, Inclusive</td></tr>
-    <tr><td><code>+</code></td><td><code>+</code></td><td>Plus</td></tr>
+    <tr><td><code>!(x &gt y)</code></td><td><code>x !&gt; y</code></td><td>Not Greater Than</td></tr>
+    <tr><td><code>!(x &gt;= y)</code></td><td><code>x !&gt;= y</code></td><td>Not Greater Than / Equal</td></tr>
+    <tr><td><code>!(x &lt; y)</code></td><td><code>x !&lt; y</code></td><td>Not Less Than</td></tr>
+    <tr><td><code>!(x &lt;= y)</code></td><td><code>x !&lt;= y</code></td><td>Not Less Than / Equal</td></tr>
+    <tr><td><code>y &gt; x &amp;&amp; y &lt; z</code></td><td><code>|?&lt;&gt; x,y,z|</code></td><td>In Between, Not Inclusive </td></tr>
+    <tr><td><code>y &lt; x || y &gt; z</code></td><td><code>|!&lt;&gt; x,y,z|</code></td><td>Not In Between, Not Inclusive </td></tr>
+    <tr><td><code>y &gt;= x &amp;&amp; y &lt;= z</code></td><td><code>|?&lt;=&gt; x,y,z|</code></td><td>In Between, Inclusive</td></tr>
+    <tr><td><code>y &lt;= x || y &gt;= z</code></td><td><code>|!&lt;=&gt; x,y,z|</code></td><td>Not In Between, Inclusive</td></tr>
+    <tr><td><code>+</code></td><td><code>+</code></td><td>Plus/Concatenation</td></tr>
     <tr><td><code>-</code></td><td><code>-</code></td><td>Minus</td></tr>
     <tr><td><code>*</code></td><td><code>*</code></td><td>Multiply</td></tr>
     <tr><td><code>/</code></td><td><code>/</code></td><td>Divide</td></tr>
@@ -66,7 +66,7 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>function myFunc(...params) ..</code></td><td><code>defn myFunc(*params) ..</code></td><td>Function Rest Parameter</td></tr>
     <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
     <tr><td><code>myFunc(...args)</code></td><td><code>myFunc(...args)</code></td><td>Function Call Argument Spread</td></tr>
-    <tr><td><code>.. ? .. : ..</code> <code>if</code> <code>if .. else if .. else</code><br><code>switch .. case .. default</code></td><td><code>?{ ?[..]: .. ?: .. }</code><br><code>?(..){ ?[..]: .. ?: .. }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
+    <tr><td><code>x > 0 ? y : z</code> <code>if (x > 0) y else z</code><br><code>switch (true) case (x > 0): y; break; default: z</code></td><td><code>?{ ?[x ?> 0]: y; ?: z }</code><br><code>?(x){ ?[?> 0]: y; ?: z }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
     <tr><td><code>if (x > 0) myFunc(x)</code></td><td><code>?[x ?> 0]: myFunc(x)</code></td><td>Statement Guard Clause</td></tr>
     <tr><td><code>for (..)</code> <code>while (..)</code> <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
     <tr><td><code>.map(..)</code></td><td><code>~map</code></td><td>Map (Foi Comprehension)</td></tr>

@@ -364,11 +364,11 @@ It's clearly an idiosyncratic choice for **Foi** to use `|    |` [for its S-expr
 
 I wanted to take a moment to explain my justification for this choice.
 
-Unlike all those other Lisp languages, **Foi** takes the very unusual step of combining a prefix-Lisp form in the same language as an infix function call form.
+Unlike all those other Lisp languages, **Foi** takes the very unusual step of combining a prefix-Lisp form in the same language as an prefix function call form.
 
-And because of the strong familiarity (from non-Lisp languages) of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in infix language form) for expression grouping, providing yet another complication.
+And because of the strong familiarity (from non-Lisp languages) of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in prefix language form) for expression grouping, providing yet another complication.
 
-Syntactically/grammatically, it's thus challenging to support variations like `whatever(42)` (infix function call form), `(whatever 42)` (prefix Lisp form), and `(42 + whatever())` (infix expression grouping)... all in the same language, especially as these expressions nest inside each other in complicated ways.
+Syntactically/grammatically, it's thus challenging to support variations like `whatever(42)` (prefix function call form), `(whatever 42)` (prefix Lisp form), and `(42 + whatever())` (infix expression grouping)... all in the same language, especially as these expressions nest inside each other in complicated ways.
 
 Simpler Lisp languages are free to use `(    )` for their S-expressions mostly because they don't really use `(    )` for any of these other purposes. However, **Foi** must address the conflation issue.
 
@@ -460,7 +460,7 @@ That's probably what I will do, personally. Given the above analysis and constra
 
 So... why does **Foi** even include this optional Lisp-like form? It adds complexity to the language -- for implementers, authors, and readers! -- but for what purpose?
 
-The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional infix call-site form (e.g., `whatever(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
+The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional prefix call-site form (e.g., `whatever(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
 
 We'll cover many of those capabilities over several following sub-sections.
 
@@ -1855,7 +1855,7 @@ Both `Value@` and the abbreviated `@` are defined as the identity function. They
 
 Additionally, as shown, **Foi** provides a shorthand when a single-argument function name ends in `@`; its argument can be applied without surrounding `(    )`, with or without whitespace between `@` and the argument, saving 1-2 characters.
 
-**Note:** For readability/operator-precedence sake, you may still optionally use the `(    )` around the argument; it's technically treated as an expression grouping rather than part of the required infix function invocation syntax.
+**Note:** For readability/operator-precedence sake, you may still optionally use the `(    )` around the argument; it's technically treated as an expression grouping rather than part of the required prefix function invocation syntax.
 
 Here's an example of how you might use the identity unit function:
 
