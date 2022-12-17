@@ -34,6 +34,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Inspecting](#inspecting)
     - [Generating Sequences (Ranges)](#generating-sequences-ranges)
     - [Deriving Instead Of Mutating](#deriving-instead-of-mutating)
+    - [Progressive Definition](#progressive-definition)
     - [Maps](#maps)
     - [Sets](#sets)
 * [Functions](#functions)
@@ -1119,30 +1120,6 @@ def person: < :first, :last >;
 def person: < first: first, last: last >;
 ```
 
-To progressively define the contents of a Record/Tuple across an arbitrary number of statements/operations, use a Record/Tuple *def-block* `<{    }>`:
-
-```java
-def numbers: <{
-    def five: 5;
-    def six: empty;
-
-    #1 := 4;
-    #2 := five;
-
-    six := #1 + #2 - 3;
-    #3 := six;
-}>;
-
-def person: <{
-    #first := "Kyle";
-    #last := "Simpson";
-}>;
-```
-
-As shown, the `<{    }>` *def-block* can contain any arbitrary logic for determining the contents, including traditional function calls, loops, etc. Once the block closes, the computed value is frozen as immutable.
-
-Inside a `<{    }>` *def-block*, the `#` sigil indicates a self-reference to the current Record/Tuple context that's being defined, and can be used either in l-value (assignment target) or r-value (value expression) positions. However, these special self-references cannot cross inner-function boundaries.
-
 ### Equality Comparison
 
 Since Records/Tuples are primitive (and immutable) value types in **Foi**, equality comparison is structural (meaning deep contents comparison rather than reference identity).
@@ -1368,6 +1345,59 @@ def entry: < &person, nickname: empty >;
 ```
 
 As shown, `empty` means the *absence of a value*, and thus cannot actually be held in a Record/Tuple.
+
+### Progressive Definition
+
+Since Records and Tuples are immutable, if you need to define them bit by bit -- via conditionals, loops, etc -- lack of mutability can make things inconvenient. These are probably the two most obvious approaches:
+
+1. Define all the contents ahead of time (in separate variables), and then assemble the Record/Tuple at the end:
+
+    ```java
+    def name: ?{
+        ?[customer.type ?= "business"]: customer.businessName;
+        ?: \`"`customer.last`, `customer.first`";
+    };
+
+    def orderTotal: orders ~fold (total,order) { total + order.total };
+
+    def record: < :name, :orderTotal >;
+    ```
+
+2. Redefine the Record/Tuple step-by-step, through derivations and variable re-assignment:
+
+    ```java
+    def record: empty;
+
+    ?{
+        ?[customer.type ?= "business"]: record := < name: customer.businessName >;
+        ?: record := < name: \`"`customer.last`, `customer.first`" >;
+    };
+
+    record := <
+        &record,
+        orderTotal: |~fold orders, (total,order) { total + order.total }|
+    >;
+    ```
+
+These accomplish the task, but they're a bit imperative.
+
+There's another strategy which is more FP idiomatic, using the [`Id` monad](#monads-and-friends):
+
+```java
+def record:
+    Id@ (?{
+        ?[customer.type ?= "business"]: < name: customer.businessName >;
+        ?: < name: \`"`customer.last`, `customer.first`" >;
+    })
+    ~map (record) {
+        def orderTotal: orders ~fold (total,order) { total + order.total };
+        < &record, :orderTotal >;
+    };
+```
+
+The benefit of this idiom is that we don't have to track reassignment of a `record` variable as each part of the Record is computed and added. Each step (typically, a `~map` comprehension as shown) just returns the new (derived) Record value.
+
+**Note:** In this snippet, `record` is a monadic value (an instance of the `Id` identity monad); the Record itself is held inside `record`. To access/work with this underlying Record value, you can use [monadic techniques](#monads-and-friends) and [other capabilities](#broader-category-theory-capabilities).
 
 ### Maps
 
