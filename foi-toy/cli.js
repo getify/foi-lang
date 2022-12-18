@@ -83,6 +83,7 @@ function *tokenize(str) {
 	var escapeToken = null;
 	var pendingToken = null;
 	var pendingToken2 = null;
+	var minusOpAllowed = false;
 	var stateHandlers = {
 		base,
 		string,
@@ -247,12 +248,16 @@ function *tokenize(str) {
 				!flushAll &&
 				(
 					[
-						"DOUBLE_QUOTE", "ESCAPE", "HYPHEN", "WHITESPACE",
-						"GENERAL", "STRING", "NUMBER", "FORWARD_SLASH",
-						"COMMENT", "PERIOD", "TILDE", "QMARK", "EXMARK",
-						"COLON",
-					]
-						.includes(curToken.type) ||
+						"DOUBLE_QUOTE", "ESCAPE", "WHITESPACE", "GENERAL",
+						"STRING", "NUMBER", "FORWARD_SLASH", "COMMENT",
+						"PERIOD", "TILDE", "QMARK", "EXMARK", "COLON",
+					].includes(curToken.type) ||
+
+					(
+						curToken.type == "HYPHEN" &&
+						!minusOpAllowed
+					) ||
+
 					(
 						state.type == "escapedString" &&
 						curToken.type == "BACKTICK"
@@ -510,94 +515,122 @@ function *tokenize(str) {
 			// operator characters
 			case "~": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("TILDE",char,position), null ];
 			}
 			case "!": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("EXMARK",char,position), null ];
 			}
 			case "#": {
 				escapeToken = null;
+				minusOpAllowed = true;
 				return [ TOKEN("HASH",char,position), null ];
 			}
 			case "$": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("DOLLAR",char,position), null ];
 			}
 			case "%": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("PERCENT",char,position), null ];
 			}
 			case "^": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("CARET",char,position), null ];
 			}
 			case "&": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("AMPERSAND",char,position), null ];
 			}
 			case "*": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("STAR",char,position), null ];
 			}
 			case "(": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("OPEN_PAREN",char,position), null ];
 			}
 			case ")": {
 				escapeToken = null;
+				minusOpAllowed = true;
 				return [ TOKEN("CLOSE_PAREN",char,position), null ];
 			}
 			case "-": {
+				if (
+					pendingToken != null &&
+					pendingToken.type == "HYPHEN"
+				) {
+					minusOpAllowed = false;
+				}
 				escapeToken = null;
 				return [ TOKEN("HYPHEN",char,position), null ];
 			}
 			case "+": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("PLUS",char,position), null ];
 			}
 			case "=": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("EQUAL",char,position), null ];
 			}
 			case "{": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("OPEN_BRACE",char,position), null ];
 			}
 			case "[": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("OPEN_BRACKET",char,position), null ];
 			}
 			case "}": {
 				escapeToken = null;
+				minusOpAllowed = true;
 				return [ TOKEN("CLOSE_BRACE",char,position), null ];
 			}
 			case "]": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("CLOSE_BRACKET",char,position), null ];
 			}
 			case "|": {
 				escapeToken = null;
+				minusOpAllowed = true;
 				return [ TOKEN("PIPE",char,position), null ];
 			}
 			case ":": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("COLON",char,position), null ];
 			}
 			case ";": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("SEMICOLON",char,position), null ];
 			}
 			case "'": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("SINGLE_QUOTE",char,position), null ];
 			}
 			case "<": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("OPEN_ANGLE",char,position), null ];
 			}
 			case ",": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("COMMA",char,position), null ];
 			}
 			case ">": {
@@ -606,15 +639,18 @@ function *tokenize(str) {
 			}
 			case ".": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("PERIOD",char,position), null ];
 			}
 			case "?": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				return [ TOKEN("QMARK",char,position), null ];
 			}
 
 			case "/": {
 				escapeToken = null;
+				minusOpAllowed = false;
 				let nextToken = TOKEN("FORWARD_SLASH",char,position);
 
 				// started a comment?
@@ -640,6 +676,8 @@ function *tokenize(str) {
 			case "7":
 			case "8":
 			case "9": {
+				minusOpAllowed = true;
+
 				// plain escape on regular number
 				// literal?
 				if (
@@ -665,6 +703,8 @@ function *tokenize(str) {
 			case "h":
 			case "b":
 			case "o": {
+				minusOpAllowed = true;
+
 				// completing a number escape sequence?
 				if (
 					escapeToken != null &&
@@ -685,6 +725,8 @@ function *tokenize(str) {
 
 			// escape sequence?
 			case "\\": {
+				minusOpAllowed = false;
+
 				// extending an escape sequence?
 				if (
 					escapeToken != null &&
@@ -702,6 +744,8 @@ function *tokenize(str) {
 
 			// backtick?
 			case "`": {
+				minusOpAllowed = false;
+
 				// interpolated string escape?
 				if (
 					escapeToken != null &&
@@ -718,6 +762,8 @@ function *tokenize(str) {
 			}
 
 			case "@": {
+				minusOpAllowed = false;
+
 				// completing monadic escape sequence?
 				if (
 					escapeToken != null &&
@@ -738,6 +784,8 @@ function *tokenize(str) {
 
 			// starting a string literal?
 			case "\"": {
+				minusOpAllowed = false;
+
 				// starting an escaped string literal?
 				if (
 					escapeToken != null &&
@@ -782,6 +830,8 @@ function *tokenize(str) {
 				}
 				// otherwise, general text
 				else {
+					minusOpAllowed = true;
+
 					escapeToken = null;
 					return [ TOKEN("GENERAL",char,position), null ];
 				}
@@ -791,6 +841,7 @@ function *tokenize(str) {
 
 	function string(char,position) {
 		escapeToken = null;
+		minusOpAllowed = false;
 
 		switch (char) {
 			// possibly end of the string literal?
@@ -808,6 +859,8 @@ function *tokenize(str) {
 			state.context.value == "\\\\`" ? "interpolatedSpacing" :
 			"regular"
 		);
+
+		minusOpAllowed = false;
 
 		switch (char) {
 			case "`": {
@@ -848,6 +901,8 @@ function *tokenize(str) {
 	function interpolatedBase(char,position) {
 		switch (char) {
 			case "`": {
+				minusOpAllowed = false;
+
 				// an escaped backtick found
 				// inside a string?
 				if (
@@ -892,7 +947,10 @@ function *tokenize(str) {
 		switch (char) {
 			// binary digits?
 			case "0":
-			case "1": return [ TOKEN("NUMBER",char,position), null ];
+			case "1": {
+				minusOpAllowed = true;
+				return [ TOKEN("NUMBER",char,position), null ];
+			}
 
 			// octal digits?
 			case "2":
@@ -901,6 +959,8 @@ function *tokenize(str) {
 			case "5":
 			case "6":
 			case "7": {
+				minusOpAllowed = true;
+
 				// tokening a octal-compatible number
 				// literal?
 				if ([ "regular", "hex", "octal", "monad" ].includes(escapeType)) {
@@ -916,6 +976,8 @@ function *tokenize(str) {
 			// remaining digits?
 			case "8":
 			case "9": {
+				minusOpAllowed = true;
+
 				// tokening a octal-compatible number
 				// literal?
 				if ([ "regular", "hex", "monad" ].includes(escapeType)) {
@@ -941,6 +1003,8 @@ function *tokenize(str) {
 			case "D":
 			case "E":
 			case "F": {
+				minusOpAllowed = true;
+
 				// tokening a hex-compatible number
 				// literal?
 				if ([ "hex", "monad" ].includes(escapeType)) {
@@ -968,13 +1032,16 @@ function *tokenize(str) {
 				) {
 					let nextToken = TOKEN("PERIOD",char,position);
 					if (nextToken.type == "DOUBLE_PERIOD") {
+						minusOpAllowed = false;
 						return [ nextToken, POP_STATE ];
 					}
 					else {
+						minusOpAllowed = true;
 						return [ nextToken, null ];
 					}
 				}
 				else {
+					minusOpAllowed = true;
 					return [
 						// NOTE: intentionally avoiding
 						// `TOKEN(..)` here, to force
@@ -1001,6 +1068,7 @@ function *tokenize(str) {
 					) &&
 					state.context.value != "\\u"
 				) {
+					minusOpAllowed = false;
 					return [
 						TOKEN("NUMBER",char,position),
 						null
@@ -1009,6 +1077,7 @@ function *tokenize(str) {
 				// otherwise, must be a minus sign that
 				// ends the number literal
 				else {
+					minusOpAllowed = true;
 					return [
 						TOKEN("HYPHEN",char,position),
 						POP_STATE
@@ -1017,6 +1086,8 @@ function *tokenize(str) {
 			}
 
 			case "_": {
+				minusOpAllowed = true;
+
 				// separator in valid position in
 				// escaped number literal?
 				if (
@@ -1043,6 +1114,7 @@ function *tokenize(str) {
 			// otherwise, done tokenizing escaped
 			// number literal
 			default: {
+				minusOpAllowed = true;
 				let [ nextToken ] = base(char,position);
 				return [ nextToken, POP_STATE ];
 			}
@@ -1055,6 +1127,7 @@ function *tokenize(str) {
 			state.context == "//" ? "line" : "block"
 		);
 		escapeToken = null;
+		minusOpAllowed = false;
 
 		switch (char) {
 			case "/": {

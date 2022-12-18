@@ -20,3 +20,20 @@ def f: \o427;
 def g: \@1234567890_1234567890_1234567890;
 
 def h: \uA327;
+
+// make sure hyphen is properly identified
+// as either part of number literal or minus
+// sign
+def x: 3-3;
+def x: \3-3;
+def x: -3-3;
+def x: -3 -3;
+def x: y-3;
+def x: y -3;
+
+def x: 3;-3;
+def x: y+-3;
+def x: y + -3;
+def x: y(-3);
+def x: y(-3)-3;
+def x: <1,2,-3>-3;
