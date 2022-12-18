@@ -20,6 +20,8 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>{ x: 2 }</code></td><td><code>&lt; x: 2 &gt;</code></td><td>Object (Foi Record)</td></tr>
     <tr><td><code>{ [propName]: 2 }</code></td><td><code>&lt; %propName: 2 &gt;</code></td><td>Computed Property Name</td></tr>
     <tr><td><code>[ 2, 3 ]</code></td><td><code>&lt; 2, 3 &gt;</code></td><td>Array (Foi Tuple)</td></tr>
+    <tr><td><code>arr.includes(x)</code></td><td><code>x ?in arr</code></td><td>Array Includes</td></tr>
+    <tr><td><code>propName in obj</code></td><td><code>obj ?has propName</code></td><td>Object Property Exists</td></tr>
     <tr><td><code>{ ...obj }</code></td><td><code>&lt; &obj &gt;</code></td><td>Object Spread (Foi Record Pick)</td></tr>
     <tr><td><code>{ prop: obj.prop }</code></td><td><code>&lt; &obj.prop &gt;</code></td><td>Object Pick</td></tr>
     <tr><td><code>[ ...arr ]</code></td><td><code>&lt; &arr &gt;</code></td><td>Array Spread (Foi Tuple Pick)</td></tr>
@@ -85,11 +87,11 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>var x: int = 42</code></td><td><code>def x: 42 :as int</code></td><td>TypeScript Static Annotation (Foi Value-Type Annotation)</td></tr>
     <tr><td><code>type MyType = ..</code></td><td><code>deft MyType ..</code></td><td>Custom Type Definition</td></tr>
     <tr><td>----------------</td><td>--------------------</td><td>--------------------</td></tr>
-    <tr><td><code>NaN</code></td><td>(not in Foi)</td><td></td></tr>
-    <tr><td><code>class ..</code></td><td>(not in Foi)</td><td></td></tr>
-    <tr><td><code>this.</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>NaN</code> <code>Infinity</code> <code>-Infinity</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>new</code> <code>super</code> <code>class ..</code> <code>extends</code> <code>static</code> <code>this</code> <code>instanceof</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>delete</code> <code>void</code> <code>typeof</code> <code>yield</code></td><td>(not in Foi)</td><td></td></tr>
     <tr><td><code>try .. catch</code></td><td>(not in Foi)</td><td></td></tr>
-    <tr><td><code>x &lt;&lt; y</code> <code>x &lt;&lt;&lt; y</code> <code>~x</code> <code>x % y</code> <code>x & y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td>(not in Foi)</td><td></td></tr>
+    <tr><td><code>x === y</code> <code>x++</code> <code>++x</code> <code>x--</code> <code>--x</code> <code>x += y</code> <code>x -= y</code> <code>x *= y</code> <code>x /= y</code> <code>x %= y</code> <code>x &= y</code> <code>x |= y</code> <code>x **= y</code> <code>x &amp;&amp;= y</code> <code>x ||= y</code> <code>x ??= y</code> <code>x &lt;&lt;= y</code> <code>x &gt;&gt;= y</code> <code>x &gt;&gt;&gt;= y</code> <code>x ** y</code> <code>x &lt;&lt; y</code> <code>x &gt;&gt; y</code> <code>x &gt;&gt;&gt; y</code> <code>~x</code> <code>x % y</code> <code>x &amp; y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td>(not in Foi)</td><td></td></tr>
     <tr><td>----------------</td><td>--------------------</td><td>--------------------</td></tr>
     <tr><td>(not in JS)</td><td><code>|myFunc 1,2,3|</code> <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation</td></tr>
     <tr><td>(proposed for JS)</td><td><code>|myFn 1,,|</code> <code>|myFn 1,,3|</code></td><td>Function Partial Application</td></tr>
@@ -99,8 +101,8 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td>(not in JS)</td><td><code>2..5</code> <code>"a".."f"</code></td><td>Range Of Sequential Values</td></tr>
     <tr><td>(not in JS)</td><td><code>:over (..)</code></td><td>Closure Side Effect Declaration</td></tr>
     <tr><td>(not in JS)</td><td><code>defn myFunc() ?[ .. ]: ..</code></td><td>Function Precondition</td></tr>
-    <tr><td>(not in JS)</td><td><code><code>Promise ~&lt;* { .. }</code></code></td><td>Promise Looping</td></tr>
-    <tr><td>(not in JS)</td><td><code>def myFunc: incVal +&gt; doubleVal +&gt; formatNum</code></td><td>Function Composition</td></tr>
+    <tr><td>(not in JS)</td><td><code>Promise ~&lt;* { .. }</code></td><td>Promise Looping</td></tr>
+    <tr><td>(not in JS)</td><td><code>def myFunc: incVal +&gt; doubleVal +&gt; formatNum</code><br><code>def myFunc: formatNum &lt;+ doubleVal &lt;+ incVal</code></td><td>Function Composition</td></tr>
     <tr><td>(not in JS)</td><td><code>defn myFunc(v) #&gt; incVal #&gt; doubleVal #&gt; formatNum</code></td><td>Pipeline Function</td></tr>
     <tr><td>(not in JS)</td><td><code>defn add(x)(y) ^x + y</code></td><td>Curried Function Declaration</td></tr>
     <tr><td>(not in JS)</td><td><code>Id</code> <code>Value</code> <code>Number</code> <code>None</code> <code>Maybe</code> <code>Either</code> <code>Left</code> <code>Right</code> <code>List</code> <code>IO</code> <code>Gen</code> <code>PushStream</code> <code>PullStream</code> <code>Channel</code> (CSP) <code>~ap</code> <code>~foldMap</code> <code>~cata</code> <code>~&lt;&lt;</td><td>Monads, Monadic Comprehensions</td></tr>
