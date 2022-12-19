@@ -111,15 +111,22 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
 
 ## Comparison Examples
 
-Here are some screenshots showing typical JS code (on top, in each image) to the equivalent **Foi** code (on bottom, in each image).
+Here are some screenshots showing typical JS code (on top or left, in each image) to the equivalent **Foi** code (on bottom or right, in each image).
 
 <table>
 <tr>
-    <td valign="top"><a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a></td>
-    <td rowspan="2" valign="top"><a href="foi-js-comparison-3.png"><img src="foi-js-comparison-3.png" width=300 alt="Comparison: async..await fetch + rendering html"></a></td>
+    <td><a href="foi-js-comparison-1.png"><img src="foi-js-comparison-1.png" width=300 alt="Comparison: chunking an array"></a></td>
+    <td rowspan="2">
+        <a href="foi-js-comparison-3.png"><img src="foi-js-comparison-3.png" width=300 alt="Comparison: async..await fetch + rendering html"></a><br><br><a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a></td>
 </tr>
 <tr>
-    <td><a href="foi-js-comparison-2.png"><img src="foi-js-comparison-2.png" width=300 alt="Comparison: memoized fibonacci number computation"></a></td>
+    <td><a href="foi-js-comparison-4.png"><img src="foi-js-comparison-4.png" width=300 alt="Comparison: converting string of binary digits into base-10 number"></a></td>
+</tr>
+<tr>
+    <td></td>
+</tr>
+<tr>
+    <td colspan="2"><a href="foi-js-comparison-5.png"><img src="foi-js-comparison-5.png" width=600 alt="Comparison: iterative BFS algorithm, finding size of largest region in matrix"></a></td>
 </tr>
 </table>
 

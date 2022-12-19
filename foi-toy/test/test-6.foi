@@ -1,0 +1,14 @@
+defn binaryToDecimalConverter(binaryDigits) {
+	def < :decimal >: (| ~fold
+		binaryDigits,
+		< decimal: 0, idx: 0, >,
+		(< :decimal, :idx >, digit) {
+			def power: size(binaryDigits) - idx - 1;
+			decimal := decimal + (digit * pow(2,power));
+			< :decimal, idx: |+ idx,1| >;
+		}
+	|);
+	^decimal;
+};
+
+binaryToDecimalConverter("111110011101100");  // 31980
