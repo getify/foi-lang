@@ -24,15 +24,29 @@ def h: \uA327;
 // make sure hyphen is properly identified
 // as either part of number literal or minus
 // sign
-def x: 3-3;
-def x: \3-3;
+def x: \-3-3;
+def x: \-3 -3;
+def x: \-3 \-3;		// invalid syntax (missing binary operator)
+def x: \-3--3;
+def x: \-3- -3;
+def x: \-3 --3;
+def x: \-3 - -3;
+
 def x: -3-3;
 def x: -3 -3;
+def x: -3 \-3;		// invalid syntax (missing binary operator)
+def x: -3--3;
+def x: -3- -3;
+def x: -3 --3;
+def x: -3 - -3;
+
 def x: y-3;
 def x: y -3;
+def x: y - 3;
 
 def x: 3;-3;
 def x: y+-3;
+def x: y +-3;
 def x: y + -3;
 def x: y(-3);
 def x: y(-3)-3;

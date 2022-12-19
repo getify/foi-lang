@@ -232,8 +232,17 @@ function *tokenize(str) {
 				pendingToken = null;
 				yield tok;
 			}
-			// need to emit pending token now?
-			else if (flushPending) {
+			else if (
+				// must emit pending token now?
+				flushPending ||
+
+				// hyphen no longer needs to be
+				// held as pending?
+				(
+					pendingToken.type == "HYPHEN" &&
+					tokenReady
+				)
+			) {
 				// need to specialize a token type?
 				let tok = specializeTokenType(pendingToken);
 				pendingToken = null;
@@ -247,20 +256,29 @@ function *tokenize(str) {
 			if (
 				!flushAll &&
 				(
+					// token types that may be affected
+					// by next token(s), so need to be
+					// held as pending just in case?
 					[
 						"DOUBLE_QUOTE", "ESCAPE", "WHITESPACE", "GENERAL",
 						"STRING", "NUMBER", "FORWARD_SLASH", "COMMENT",
 						"PERIOD", "TILDE", "QMARK", "EXMARK", "COLON",
 					].includes(curToken.type) ||
 
+					// hyphen that should not be a minus
+					// operator, and thus might be part
+					// of a number literal?
 					(
 						curToken.type == "HYPHEN" &&
 						!minusOpAllowed
 					) ||
 
+					// backtick in an interpolated
+					// string literal?
 					(
+						curToken.type == "BACKTICK" &&
 						state.type == "escapedString" &&
-						curToken.type == "BACKTICK"
+						[ "\\`", "\\\\`", ].includes(state.context.value)
 					)
 				)
 			) {
@@ -272,6 +290,18 @@ function *tokenize(str) {
 				}
 			}
 			else {
+				// hyphen that must be a minus
+				// operator?
+				if (
+					curToken.type == "HYPHEN" &&
+					minusOpAllowed
+				) {
+					// another adjacent minus
+					// operator would not be
+					// allowed
+					minusOpAllowed = false;
+				}
+
 				// need to specialize token type?
 				yield specializeTokenType(curToken);
 			}
@@ -311,7 +341,8 @@ function *tokenize(str) {
 			pendingToken.end += value.length;
 			return pendingToken;
 		}
-		// negative number literal?
+		// previous hyphen was starting a bare
+		// number literal?
 		else if (
 			pendingToken != null &&
 			pendingToken.type == "HYPHEN" &&
@@ -564,12 +595,6 @@ function *tokenize(str) {
 				return [ TOKEN("CLOSE_PAREN",char,position), null ];
 			}
 			case "-": {
-				if (
-					pendingToken != null &&
-					pendingToken.type == "HYPHEN"
-				) {
-					minusOpAllowed = false;
-				}
 				escapeToken = null;
 				return [ TOKEN("HYPHEN",char,position), null ];
 			}
@@ -1068,7 +1093,6 @@ function *tokenize(str) {
 					) &&
 					state.context.value != "\\u"
 				) {
-					minusOpAllowed = false;
 					return [
 						TOKEN("NUMBER",char,position),
 						null
@@ -1077,7 +1101,6 @@ function *tokenize(str) {
 				// otherwise, must be a minus sign that
 				// ends the number literal
 				else {
-					minusOpAllowed = true;
 					return [
 						TOKEN("HYPHEN",char,position),
 						POP_STATE
@@ -1227,7 +1250,7 @@ function highlight(tokens) {
 				"oops"
 			);
 
-			html += `<i class="${className}">${value}</i>`;
+			html += `<i class="${className}" title="${token.type}">${value}</i>`;
 		}
 	}
 
