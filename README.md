@@ -2,27 +2,83 @@
 
 **Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. It pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and others.
 
+```java
+greetings("my friend");
+// Hello, my friend!
+
+defn greetings(who) {
+    def msg: \`"Hello, `who`!";
+    log(msg);
+};
+```
+
 The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
 
-An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently/fully learn **Foi** in a few days. It also shouldn't take thousands of pages of books or months of workshop videos to fully detail the surface area of **Foi**.
+An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently/fully learn **Foi** in a few days. It also shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**.
+
+Hopefully, without too much heavy orientation, code like this will settle into familiarity for you:
+
+```java
+defn getFavoriteMovies(userID) ^(IO ~<< {
+    def movieIDs:: fetch(\`"/movies/`userID`");
+    def movieTitles:: all(
+        movieIDs ~map (movieID) {
+            fetch(\`"/movie/`movieID`")
+        }
+        ~map |. ,"title"|
+    );
+    def itemsHTML: | ~fold
+        movieTitles,
+        "",
+        (html,title) { html + \`"<li>`title`</li>" }
+    |;
+    document.body.innerHTML := \`"<ul>`itemsHTML`</ul>";
+});
+
+getFavoriteMovies(123).run();
+```
+
+### TL;DR
+
+If you're already convinced and ready to jump in, you may want to check these out next:
+
+* [Foi vs JS Cheatsheet](Cheatsheet.md)
+* [Foi vs JS code snippets](Cheatsheet.md#comparison-examples)
+* [(Mostly Complete) Foi Guide](Foi-Guide.md)
+* [Formal Grammar](Grammar.md) (for language theory enthusiasts)
+* [Foi-Toy](foi-toy/README.md) (CLI tool)
+
+But if you're still skeptical, please read on for more about the [intent](#mission) and [design philosophy](#design-philosophy) of the **Foi** language.
 
 ## Mission
 
 **Foi** promotes coherence and safety through declarative Functional Programming (FP) patterns as first class language features, while bridging (with familiar idioms) to those more experienced in traditionally imperative programming languages.
 
-It should feel intuitive when doing the *right*&trade; things, appear obvious when doing the *risky* things, and discourage doing the *dangerous* things.
+It should feel intuitive when doing the *right*&trade; things, alert you of the *risky* things, and discourage doing the *dangerous* things.
 
 **Foi** is a language you write for other humans to read first. It's only a secondary benefit that the computer can understand the code and execute the desired operations.
 
-## Design Summary
+## Design Philosophy
 
-**Foi** aims to be a novel mix of a variety of syntactic styles and ideas from various languages. One primary goal is for **Foi** features to have internal consistency with each other, built on self-evident (as much as possible!) semantics and mental models. As such, there will be parts of **Foi** that look familiar and other parts that feel quite unfamiliar.
+**Foi** aims to be a novel mix of a variety of syntactic styles and ideas from various languages. One primary goal is for **Foi** features to have internal consistency with each other, built on self-evident (as much as possible!) semantics and mental models. As such, there will be parts of **Foi** that look familiar and other parts that may feel quite unfamiliar at first.
 
-Ultimately, the hope is these design decisions diverge enough from familiar languages to take useful steps forward, but not too much that **Foi** is unuseful or impractical.
+```java
+defn factorial(n)
+    ![n ?> 1]: 1
+    ^(n * factorial(n-1));
 
-A programming language design is a delicate balance, and inevitably will be judged both on aesthetics and on empirical outcomes. It's impossible to design a perfect language that everyone loves at first glance.
+// or (tail-recursive):
 
-That said, here are a few explanations to help bring some clarity to **Foi**'s particular design decisions:
+defn factorial(n,total:1)
+    ![n ?> 1]: total
+    ^factorial(n-1,n*total);
+```
+
+Ultimately, the hope is the syntax and design decisions diverge enough from familiar languages to take useful steps forward, but not too much that **Foi** is unuseful or impractical.
+
+Obviously, programming language design is a delicate balance, and inevitably will be judged both on subjective aesthetics and on empirical outcomes. And it's impossible to design a perfect language that everyone loves at first glance.
+
+To prepare you for exploring **Foi**, here are a few explanations to clarify the design philosophy:
 
 * **Words vs Symbols** I don't think a language should be all symbols. I struggle to memorize arbitrary symbol combinations just as much as anyone. But I similarly feel overburdened when a language is full of long lists of reserved keywords.
 
