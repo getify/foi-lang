@@ -26,7 +26,7 @@ BlockComment            := "///" #"[^]*?///";
 Op                      := ComprOpNamed | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
 NamedBoolOp             := #"[?!](?:empty|has|and|in|as|or)";
 SymbolicBoolOp          := "?<=>" | "!<=>" | #"[?!](?:>=|<=|<>|\$=)" | #"[?!][=<>]";
-SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!]";
+SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!.]";
 
 ReservedWord            := Empty | Boolean | NamedKeywordNoEmpty | NativeTypeNoEmpty | BuiltIn;
 Empty                   := "empty";
