@@ -54,7 +54,7 @@ But if you're still skeptical, please read on for more about the [intent](#missi
 
 **Foi** promotes coherence and safety through declarative Functional Programming (FP) patterns as first class language features, while bridging (with familiar idioms) to those more experienced in traditionally imperative programming languages.
 
-It should feel intuitive when doing the *right*&trade; things, alert you of the *risky* things, and discourage doing the *dangerous* things.
+The *right*&trade; things should be intuitive, the *risky* things should be apparent, and the *problematic* things should be difficult or impossible.
 
 **Foi** is a language you write for other humans to read first. It's only a secondary benefit that the computer can understand the code and execute the desired operations.
 
