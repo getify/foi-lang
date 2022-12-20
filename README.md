@@ -60,7 +60,9 @@ The *right*&trade; things should be intuitive, the *risky* things should be appa
 
 ## Design Philosophy
 
-**Foi** aims to be a novel mix of a variety of syntactic styles and ideas from various languages. One primary goal is for **Foi** features to have internal consistency with each other, built on self-evident (as much as possible!) semantics and mental models. As such, there will be parts of **Foi** that look familiar and other parts that may feel quite unfamiliar at first.
+**Foi** aims to be a novel mix of a variety of syntactic styles and ideas from various languages. One primary goal is for **Foi** features to have internal consistency with each other, built on self-evident (as much as possible!) semantics and mental models. As such, there will be parts of **Foi** that should look familiar and other parts that may feel quite unfamiliar at first.
+
+The syntax and design decisions attempt to diverge enough from familiar languages to take useful steps forward, but not too much that **Foi** is unuseful or impractical.
 
 ```java
 defn factorial(n)
@@ -74,11 +76,9 @@ defn factorial(n,total:1)
     ^factorial(n-1,n*total);
 ```
 
-Ultimately, the hope is the syntax and design decisions diverge enough from familiar languages to take useful steps forward, but not too much that **Foi** is unuseful or impractical.
+Programming language design is a delicate balance, and inevitably will be judged both on subjective aesthetics and on empirical outcomes. And it's impossible to design a perfect language that everyone loves at first glance. Some will appreciate **Foi**, others will dislike it.
 
-Obviously, programming language design is a delicate balance, and inevitably will be judged both on subjective aesthetics and on empirical outcomes. And it's impossible to design a perfect language that everyone loves at first glance.
-
-To prepare you for exploring **Foi**, here are a few explanations to clarify the design philosophy:
+To prepare for exploration of **Foi**, here are some aspects of the design philosophy:
 
 * **Words vs Symbols** I don't think a language should be all symbols. I struggle to memorize arbitrary symbol combinations just as much as anyone. But I similarly feel overburdened when a language is full of long lists of reserved keywords.
 
