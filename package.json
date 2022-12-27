@@ -1,10 +1,15 @@
 {
 	"name": "foi-lang",
-	"version": "0.0.11",
+	"version": "0.0.12",
 	"description": "Foi: a different kind of functional programming language",
 	"repository": "getify/foi-lang",
+	"scripts": {
+		"build-foi-toy-web": "foi-toy/scripts/build-web",
+		"build": "npm run build-foi-toy-web"
+	},
 	"devDependencies": {
-		"minimist": "~1.2.7"
+		"minimist": "~1.2.7",
+		"moduloze": "~0.9.1"
 	},
 	"keywords": [
 		"fp",

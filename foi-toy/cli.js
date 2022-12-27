@@ -9,7 +9,7 @@ var args = require("minimist")(process.argv.slice(2));
 const { tokenize, } = require(path.join(__dirname,"src","tokenizer.js"));
 const { highlight, } = require(path.join(__dirname,"src","highlighter.js"));
 
-main();
+main().catch(console.log);
 
 
 // **********************
@@ -25,8 +25,10 @@ async function main() {
 	var tokens = tokenize(fileStream);
 
 	if (args.color) {
-		let tmplHTML = await fsp.readFile(path.join(__dirname,"src","tmpl.html"),"utf-8");
-		let tmplCSS = await fsp.readFile(path.join(__dirname,"src","tmpl.css"),"utf-8");
+		let [ tmplHTML, tmplCSS, ] = await Promise.all([
+			fsp.readFile(path.join(__dirname,"src","tmpl.html"),"utf-8"),
+			fsp.readFile(path.join(__dirname,"src","tmpl.css"),"utf-8"),
+		]);
 		let tmplParts = tmplHTML.split(/\<\/?(?:pre|style)\>/);
 
 		process.stdout.write(tmplParts[0]);

@@ -1,14 +1,6 @@
 "use strict";
 
-const {
-	OPERATORS,
-	NATIVES,
-	KEYWORDS,
-	BUILTINS,
-	COMPREHENSIONS,
-	BOOLEAN_NAMED_OPERATORS,
-	WHITESPACE,
-} = require("./tokenizer.js");
+const { OPERATORS, } = require("./tokenizer.js");
 
 module.exports = {
 	highlight,

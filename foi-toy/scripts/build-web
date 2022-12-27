@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+
+"use strict";
+
+var path = require("path");
+var fsp = require("fs/promises");
+
+var { build, } = require("moduloze");
+
+var config = {
+    buildESM: true
+};
+
+var depMap = {
+    "src/tokenizer.js": "Tokenizer",
+    "src/highlighter.js": "Highlighter"
+};
+
+const ROOT_DIR = path.join(__dirname,"..");
+const SRC_DIR = path.join(ROOT_DIR,"src");
+const WEB_JS_DIR = path.join(ROOT_DIR,"web","js");
+
+
+main().catch(console.log);
+
+
+// **********************
+
+async function main() {
+	console.log("*** Building Foi-Toy Web ***");
+
+	var [
+		packageJSON,
+		copyrightHeader,
+		tokenizerCode,
+		highlighterCode
+	] = await Promise.all([
+		fsp.readFile(path.join(ROOT_DIR,"..","package.json"),"utf-8"),
+		fsp.readFile(path.join(SRC_DIR,"copyright-header.txt"),"utf-8"),
+		fsp.readFile(path.join(SRC_DIR,"tokenizer.js"),"utf-8"),
+		fsp.readFile(path.join(SRC_DIR,"highlighter.js"),"utf-8"),
+	]);
+
+	packageJSON = JSON.parse(packageJSON);
+
+	// read version number from package.json
+	var version = packageJSON.version;
+	var year = (new Date()).getFullYear();
+
+	copyrightHeader = copyrightHeader
+		.replace(/`/g,"")
+		.replace(/#VERSION#/g,version)
+		.replace(/#YEAR#/g,year);
+
+	var { esm: { code: tokenizerESM, }, } = build(
+		config,
+		"src/tokenizer.js",
+		tokenizerCode,
+		depMap
+	);
+	var { esm: { code: highlighterESM, }, } = build(
+		config,
+		"src/highlighter.js",
+		highlighterCode,
+		depMap
+	);
+	tokenizerESM = `${copyrightHeader.replace("#FILENAME#","tokenizer.js")}${tokenizerESM}`;
+	highlighterESM = `${copyrightHeader.replace("#FILENAME#","highlighter.js")}${highlighterESM}`;
+
+	await Promise.all([
+		fsp.writeFile(path.join(__dirname,"..","web","js","tokenizer.js"),tokenizerESM,"utf-8"),
+		fsp.writeFile(path.join(__dirname,"..","web","js","highlighter.js"),highlighterESM,"utf-8"),
+	]);
+
+	console.log("Complete.");
+}

@@ -1,2 +1,4 @@
 node_modules/
+foi-toy/web/js/tokenizer.js
+foi-toy/web/js/highlighter.js
 package-lock.json
