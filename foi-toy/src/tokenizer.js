@@ -302,23 +302,6 @@ async function *tokenize(charStream) {
 		}
 	}
 
-	function specializeTokenType(token) {
-		if (NATIVES.includes(token.value)) {
-			token.type = "NATIVE";
-		}
-		else if (KEYWORDS.includes(token.value)) {
-			token.type = "KEYWORD";
-		}
-		else if (BUILTINS.includes(token.value)) {
-			token.type = "BUILTIN";
-		}
-		else if (COMPREHENSIONS.includes(token.value)) {
-			token.type = "COMPREHENSION";
-		}
-
-		return token;
-	}
-
 	function TOKEN(type,value,start) {
 		// digit(s) followed by a general letter?
 		if (
@@ -1186,4 +1169,21 @@ async function *tokenize(charStream) {
 			default: return [ TOKEN("COMMENT",char,position), null ];
 		}
 	}
+}
+
+function specializeTokenType(token) {
+	if (NATIVES.includes(token.value)) {
+		token.type = "NATIVE";
+	}
+	else if (KEYWORDS.includes(token.value)) {
+		token.type = "KEYWORD";
+	}
+	else if (BUILTINS.includes(token.value)) {
+		token.type = "BUILTIN";
+	}
+	else if (COMPREHENSIONS.includes(token.value)) {
+		token.type = "COMPREHENSION";
+	}
+
+	return token;
 }

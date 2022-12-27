@@ -1,8 +1,5 @@
 "use strict";
 
-var path = require("path");
-var fs = require("fs");
-
 const {
 	OPERATORS,
 	NATIVES,
@@ -11,7 +8,7 @@ const {
 	COMPREHENSIONS,
 	BOOLEAN_NAMED_OPERATORS,
 	WHITESPACE,
-} = require(path.join(__dirname,"tokenizer.js"));
+} = require("./tokenizer.js");
 
 module.exports = {
 	highlight,
@@ -22,10 +19,6 @@ module.exports.highlight = highlight;
 // **********************
 
 async function *highlight(tokens) {
-	var tmpl = fs.readFileSync(path.join(__dirname,"tmpl.html"),"utf-8");
-	var tmplParts = tmpl.split("<pre>");
-	yield `${tmplParts[0]}<pre>`;
-
 	for await (let token of tokens) {
 		if (token.type == "WHITESPACE") {
 			yield token.value;
@@ -83,5 +76,4 @@ async function *highlight(tokens) {
 			yield `<i class="${className}" title="${token.type}">${value}</i>`;
 		}
 	}
-	yield tmplParts[1];
 }

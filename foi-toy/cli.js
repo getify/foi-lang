@@ -3,6 +3,7 @@
 var util = require("util");
 var path = require("path");
 var fs = require("fs");
+var fsp = require("fs/promises");
 var args = require("minimist")(process.argv.slice(2));
 
 const { tokenize, } = require(path.join(__dirname,"src","tokenizer.js"));
@@ -24,9 +25,19 @@ async function main() {
 	var tokens = tokenize(fileStream);
 
 	if (args.color) {
+		let tmplHTML = await fsp.readFile(path.join(__dirname,"src","tmpl.html"),"utf-8");
+		let tmplCSS = await fsp.readFile(path.join(__dirname,"src","tmpl.css"),"utf-8");
+		let tmplParts = tmplHTML.split(/\<\/?(?:pre|style)\>/);
+
+		process.stdout.write(tmplParts[0]);
+		process.stdout.write(`<style>\n${tmplCSS}</style>`);
+		process.stdout.write(`${tmplParts[2]}<pre>`);
+
 		for await (let htmlChunk of highlight(tokens)) {
 			process.stdout.write(htmlChunk);
 		}
+
+		process.stdout.write(`</pre>${tmplParts[4]}`);
 	}
 	else {
 		for await (let token of tokens) {
