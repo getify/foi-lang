@@ -5,11 +5,13 @@ The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extend
 ```ebnf
 (*************** Program / Statements ***************)
 
-Program                 := WhSp* (StmtSemi WhSp*)* StmtSemiOpt? WhSp*;
+Program                 := WhSp* ((StmtSemi | ExportStmtSemi) WhSp*)* (StmtSemiOpt | ExportStmtSemiOpt)? WhSp*;
 
 Stmt                    := DefVarStmt | DefBlockStmt | DefTypeStmt | ExprAsOpt;
 StmtSemi                := Stmt? (WhSp* ";")+;
 StmtSemiOpt             := Stmt? (WhSp* ";")*;
+ExportStmtSemi          := ExportExpr (WhSp* ";")+;
+ExportStmtSemiOpt       := ExportExpr (WhSp* ";")*;
 
 
 (*************** Whitespace ***************)
@@ -147,6 +149,13 @@ NamedBoolBinaryExpr     := (GroupedExprAsOpt NamedBoolRightExpr) | ((OperandExpr
 NamedBoolRightExpr      := (NamedBoolOp GroupedExprAsOpt) | (NamedBoolOp WhSp+ (OperandExpr | GroupedExprAsOpt)) | (("?" | "!") "as" WhSp* NativeType);
 PipelineRightExpr       := "#>" WhSp* (OperandExpr | BlockExpr | GroupedExprAsOpt);
 
+ImportExpr              := "import" WhSp+ PlainStr;
+ExportExpr              := "export" WhSp+ "{" WhSp* ExportBindingsList WhSp* "}";
+ExportBindingsList      := ExportBinding (WhSp* "," WhSp* ExportBinding)* (WhSp* ",")?;
+ExportBinding           := ExportNamedBinding | ExportConciseBinding;
+ExportNamedBinding      := Identifier WhSp* ":"  WhSp* Identifier MultiAccessExpr?;
+ExportConciseBinding    := ":" Identifier SingleAccessExpr?;
+
 
 (*************** Identifier / Access / Range Expressions ***************)
 
@@ -176,10 +185,10 @@ AnglePropertyList       := PropertyExpr (WhSp* "," WhSp* PropertyExpr)* (WhSp* "
 
 (*************** Variable Definitions / Destructuring / Blocks ***************)
 
-DefVarStmt              := "def" WhSp+ (Identifier | DestructureTarget) WhSp* ":" WhSp* ExprAsOpt;
+DefVarStmt              := "def" WhSp+ (Identifier | DestructureTarget) WhSp* ":" WhSp* (ExprAsOpt | ImportExpr);
 
 DestructureTarget       := "<" WhSp* DestructureDefList WhSp* ">";
-DestructureDefList      := DestructureDef (WhSp* "," WhSp* DestructureDef)* (WhSp* ",")?
+DestructureDefList      := DestructureDef (WhSp* "," WhSp* DestructureDef)* (WhSp* ",")?;
 DestructureDef          := DestructureNamedDef | DestructureConciseDef | DestructureCapture;
 DestructureNamedDef     := Identifier WhSp* ":"  WhSp* Identifier MultiAccessExpr?;
 DestructureConciseDef   := ":" Identifier SingleAccessExpr?;
@@ -272,7 +281,7 @@ CallArgExpr             := ExprAsOpt | NamedArgExpr;
 NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprAsOpt)) | ("(" WhSp* NamedArgExpr WhSp* ")");
 LispCallExpr            := "|" WhSp* (("'"? ExprNoBlockGroupedAsOpt (WhSp+ LispCallArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispCallArgList) WhSp* "|";
 LispCallArgList         := ("," WhSp*)* (LispCallArgExpr (WhSp* "," WhSp* LispCallArgExpr?)*)?;
-LispCallArgExpr         := ("..." WhSp*)? CallArgExpr;
+LispCallArgExpr         := (("..." WhSp*)? CallArgExpr) | Op;
 AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | IdentifierSingleExpr) WhSp+ "@")) WhSp* ExprNoBlockGroupedAsOpt);
 
 
@@ -587,6 +596,13 @@ deft U(int, string, *float) ^bool;
 deft V Left | Right;
 deft A { Left | Right };
 deft B(str, *{(int)^int}) ^{"yes"|"no"};
+```
+
+```java
+def x: import "X";
+def < :log >: import "#Std";
+
+export { :x, :y, z: zzz, };
 ```
 
 ## License
