@@ -1,4 +1,7 @@
 node_modules/
+foi-toy/web/foi-grammar.txt
+foi-toy/web/syntax-color.html
+foi-toy/web/js/grammar-checker.js
 foi-toy/web/js/tokenizer.js
 foi-toy/web/js/highlighter.js
 package-lock.json

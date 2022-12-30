@@ -1,0 +1,26 @@
+#input {
+	width: 90%;
+	height: 10em;
+}
+
+#token-list {
+	width: 75%;
+	min-height: 10em;
+	max-height: 20em;
+	overflow-y: scroll;
+}
+
+#syntax-color {
+	width: 90%;
+	min-height: 10em;
+	max-height: 30em;
+	border: none;
+}
+
+summary {
+	cursor: pointer;
+}
+
+.hidden {
+	display: none;
+}

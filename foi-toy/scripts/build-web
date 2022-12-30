@@ -18,7 +18,8 @@ var depMap = {
 
 const ROOT_DIR = path.join(__dirname,"..");
 const SRC_DIR = path.join(ROOT_DIR,"src");
-const WEB_JS_DIR = path.join(ROOT_DIR,"web","js");
+const WEB_DIR = path.join(ROOT_DIR,"web");
+const WEB_JS_DIR = path.join(WEB_DIR,"js");
 
 
 main().catch(console.log);
@@ -31,14 +32,20 @@ async function main() {
 
 	var [
 		packageJSON,
+		grammarMD,
 		copyrightHeader,
 		tokenizerCode,
-		highlighterCode
+		highlighterCode,
+		tmplHTMLCode,
+		tmplCSSCode,
 	] = await Promise.all([
 		fsp.readFile(path.join(ROOT_DIR,"..","package.json"),"utf-8"),
+		fsp.readFile(path.join(ROOT_DIR,"..","Grammar.md"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"copyright-header.txt"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"tokenizer.js"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"highlighter.js"),"utf-8"),
+		fsp.readFile(path.join(SRC_DIR,"tmpl.html"),"utf-8"),
+		fsp.readFile(path.join(SRC_DIR,"tmpl.css"),"utf-8"),
 	]);
 
 	packageJSON = JSON.parse(packageJSON);
@@ -47,11 +54,16 @@ async function main() {
 	var version = packageJSON.version;
 	var year = (new Date()).getFullYear();
 
+	// extract grammar
+	var grammar = (grammarMD.match(/^```ebnf$\s([^]*?)\s^```$/m) || [null,""])[1];
+
+	// process copyright header
 	copyrightHeader = copyrightHeader
 		.replace(/`/g,"")
 		.replace(/#VERSION#/g,version)
 		.replace(/#YEAR#/g,year);
 
+	// transpile CJS to ESM
 	var { esm: { code: tokenizerESM, }, } = build(
 		config,
 		"src/tokenizer.js",
@@ -67,10 +79,19 @@ async function main() {
 	tokenizerESM = `${copyrightHeader.replace("#FILENAME#","tokenizer.js")}${tokenizerESM}`;
 	highlighterESM = `${copyrightHeader.replace("#FILENAME#","highlighter.js")}${highlighterESM}`;
 
+	var syntaxColorHTML = tmplHTMLCode.replace("<style></style>",`<style>\n${tmplCSSCode}</style>`);
+
 	await Promise.all([
-		fsp.writeFile(path.join(__dirname,"..","web","js","tokenizer.js"),tokenizerESM,"utf-8"),
-		fsp.writeFile(path.join(__dirname,"..","web","js","highlighter.js"),highlighterESM,"utf-8"),
+		fsp.writeFile(path.join(WEB_DIR,"foi-grammar.txt"),grammar,"utf-8"),
+		fsp.writeFile(path.join(WEB_DIR,"syntax-color.html"),syntaxColorHTML,"utf-8"),
+		fsp.writeFile(path.join(WEB_JS_DIR,"tokenizer.js"),tokenizerESM,"utf-8"),
+		fsp.writeFile(path.join(WEB_JS_DIR,"highlighter.js"),highlighterESM,"utf-8"),
 	]);
+
+	await fsp.copyFile(
+		path.join(SRC_DIR,"grammar-checker.js"),
+		path.join(WEB_JS_DIR,"grammar-checker.js")
+	);
 
 	console.log("Complete.");
 }
