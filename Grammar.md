@@ -236,7 +236,7 @@ ComprOpNamed            := ComprOpEach | ComprOpNamedNoEach;
 ComprOpEach             := "~each";
 ComprOpNoEach           := ComprOpNamedNoEach | "~<";
 ComprOpNamedNoEach      := "~map" | "~filter" | "~fold" | "~foldR" | "~cata" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
-ComprIterationExpr      := BlockExpr | ComprIterNoBlockExpr;
+ComprIterationExpr      := BlockExpr | ComprIterNoBlockExpr | GroupedExprAsOpt;
 ComprIterNoBlockExpr    := ComprExpr | IdentifierExpr | CallExpr | ExprAccessExpr |("(" WhSp* ComprIterNoBlockExpr WhSp* ")");
 
 DoComprExpr             := (Identifier | BuiltIn) WhSp+ "~<<" WhSp* DoBlockExpr;
