@@ -1,6 +1,8 @@
 # Foi Grammar
 
-The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form), as [verified here](https://mdkrajnak.github.io/ebnftest/):
+The **Foi** language grammar in [EBNF form](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form), as [verified here](https://mdkrajnak.github.io/ebnftest/).
+
+You can also use this grammar to validate code using the [Online Foi-Toy web tool](https://toy.foi-lang.com) or the [Foi-Toy CLI tool](foi-toy/README.md).
 
 ```ebnf
 (*************** Program / Statements ***************)

@@ -1,6 +1,14 @@
 # Foi-Toy
 
+----
+
+[ONLINE FOI-TOY](https://toy.foi-lang.com)
+
+----
+
 This is an experimental tool for toying around with **Foi** code. It is **not** an official implementation of the **Foi** language.
+
+Foi-Toy is available as an [online tool](https://toy.foi-lang.com) or as a [CLI tool](#to-use).
 
 ## Features
 
@@ -158,7 +166,9 @@ Tokens/syntax highlighting output are skipped if the validation fails.
 
 ## To Use
 
-Save **Foi** code in a file -- generally with a `.foi` filename extension, but you can use whatever you like.
+You can [play with Foi-Toy online here](https://toy.foi-lang.com), or use the CLI tool.
+
+To use the CLI tool of Foi-Toy, save **Foi** code in a file -- generally with a `.foi` filename extension, but you can use whatever you like.
 
 Then invoke `node cli.js --file={FILE-PATH}` with a path to the file you want to check. Foi-Toy will default to printing out a list of tokens that were processed from the file.
 

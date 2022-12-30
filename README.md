@@ -1,5 +1,11 @@
 # Foi: a different kind of functional programming language
 
+----
+
+[ONLINE FOI PLAYGROUND](https://toy.foi-lang.com)
+
+----
+
 **Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. It pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and others.
 
 ```java
@@ -47,6 +53,7 @@ If you're already convinced and ready to jump in, you may want to check these ou
 * [(Mostly Complete) Foi Guide](Foi-Guide.md)
 * [Formal Grammar](Grammar.md) (for language theory enthusiasts)
 * [Foi-Toy](foi-toy/README.md) (CLI tool)
+* [Foi-Toy Online](https://toy.foi-lang.com) (Web tool)
 
 But if you're still skeptical, please read on for more about the [intent](#mission) and [design philosophy](#design-philosophy) of the **Foi** language.
 
@@ -244,9 +251,11 @@ For implementers or language design enthusiasts, a [formal grammar specification
 
 **Foi** is still being designed. As such, there's no official compiler/interpreter yet.
 
-However, [Foi-Toy](foi-toy/README.md) is an experimental tool for playing around with **Foi** code, prior to there being an official compiler.
+However, [Foi-Toy](foi-toy/README.md) is an experimental tCLI ool for playing around with **Foi** code, prior to there being an official compiler.
 
-Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots.
+Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots. Foi-Toy can also validate code against the formal language grammar.
+
+Additionally, there's an [online version of Foi-Toy](https://toy.foi-lang.com) to play around with tokenization, syntax highlighting, and validation.
 
 ## License
 
