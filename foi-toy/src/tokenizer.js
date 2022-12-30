@@ -85,6 +85,10 @@ async function *tokenize(charStream) {
 		comment,
 	};
 
+	if (typeof charStream == "string") {
+		charStream = [ charStream ];
+	}
+
 	for await (let chunk of charStream) {
 		for (let [idx,char] of Object.entries(chunk)) {
 			idx = Number(idx);
