@@ -322,6 +322,16 @@ async function *tokenize(charStream) {
 			pendingToken.end += value.length;
 			return pendingToken;
 		}
+		// general letter(s) followed by a digit?
+		else if (
+			pendingToken != null &&
+			pendingToken.type == "GENERAL" &&
+			type == "NUMBER"
+		) {
+			pendingToken.value += value;
+			pendingToken.end += value.length;
+			return pendingToken;
+		}
 		// previous hyphen was starting a bare
 		// number literal?
 		else if (
