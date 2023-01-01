@@ -171,7 +171,7 @@ AtExpr                  := ("@" | Identifier | BuiltIn | IdentifierSingleExpr) "
 SingleAccessExpr        := (WhSp* (DotSingleIdentifier | BracketExpr))+;
 MultiAccessExpr         := (WhSp* (DotMultiIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr))+;
 
-DotSingleIdentifier     := "." WhSp* (Base10Digit+ | Identifier | BuiltIn | IdentifierSingleExpr);
+DotSingleIdentifier     := "." WhSp* (("-"? Base10Digit+) | Identifier | BuiltIn | IdentifierSingleExpr);
 DotMultiIdentifier      := "." WhSp* (Base10Digit+ | Identifier | BuiltIn | IdentifierMultiExpr);
 BracketExpr             := "[" WhSp* ExprNoBlockAsOpt WhSp* "]";
 
@@ -456,7 +456,7 @@ x !$= y;
 ```java
 def cb: defn(x)^x;
 
-def (x: 2, y: empty) { f(x.2); };
+def (x: 2, y: empty) { f(x.2,x.-1); };
 
 def < x : y.2, #obj, :w.4 >: obj;
 
