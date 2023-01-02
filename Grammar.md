@@ -216,15 +216,15 @@ GuardedExpr             := CondClause ":" WhSp* ExprAsOpt;
 
 MatchExpr               := IndepMatchExpr | DepMatchExpr;
 IndepMatchExpr          := "?{" WhSp* IndepPatternStmts WhSp* "}";
-IndepPatternStmts       := IndepPatternStmtOnly | ((IndepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
-IndepPatternStmtOnly    := CondClause MatchConsequentNoSemi;
+IndepPatternStmts       := IndepPatternStmtNoSemi | ((IndepPatternStmt WhSp*)+ (ElseStmt | IndepPatternStmtNoSemi)?) | ElseStmt;
+IndepPatternStmtNoSemi  := CondClause MatchConsequentNoSemi;
 IndepPatternStmt        := CondClause MatchConsequent (WhSp* ";")*;
 MatchConsequentNoSemi   := ":" WhSp* ExprAsOpt | BlockExpr;
 MatchConsequent         := ":" WhSp* ((ExprAsOpt WhSp* ";") | BlockExpr);
 ElseStmt                := "?" MatchConsequentNoSemi (WhSp* ";")*;
 DepMatchExpr            := "?(" WhSp* ExprNoBlockAsOpt WhSp* "){" WhSp* DepPatternStmts WhSp* "}";
-DepPatternStmts         := DepPatternStmtOnly | ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
-DepPatternStmtOnly      := DepCondClause MatchConsequentNoSemi;
+DepPatternStmts         := DepPatternStmtNoSemi | ((DepPatternStmt WhSp*)+ (ElseStmt | IndepPatternStmtNoSemi)?) | ElseStmt;
+DepPatternStmtNoSemi    := DepCondClause MatchConsequentNoSemi;
 DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
 DepCondClause           := ("?" | "!") "[" WhSp* DepCondExprList WhSp* "]";
 DepCondExprList         := (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr) (WhSp* "," WhSp* (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr))* (WhSp* ",")?;
@@ -484,6 +484,8 @@ defn add(x)(y,<:z>)
     };
     ?{ ?[x]: x };
     ?(x){ ?[x]: x };
+    ?{ ?[x]: x; ?[y]: y };
+    ?(x){ ?[x]: x; ?[y]: y };
     ?[z]: (g: z) { fn(g) };
     x.[y..z];
     y.<first,last>;
