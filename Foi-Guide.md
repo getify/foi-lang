@@ -1248,7 +1248,7 @@ def numbers: < 3, 4, 5, 6, 7 >;
 
 def head: numbers.0;                // 3
 def first: numbers.[..0];           // < 3 >
-def leading: numbers.[..3];         // < 3, 4, 5, 6 >
+def leading: numbers.[..-2];        // < 3, 4, 5, 6 >
 
 def last: numbers.-1;               // 7
 def trailing: numbers.[-1..];       // < 7 >

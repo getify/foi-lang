@@ -251,7 +251,7 @@ For implementers or language design enthusiasts, a [formal grammar specification
 
 **Foi** is still being designed. As such, there's no official compiler/interpreter yet.
 
-However, [Foi-Toy](foi-toy/README.md) is an experimental tCLI ool for playing around with **Foi** code, prior to there being an official compiler.
+However, [Foi-Toy](foi-toy/README.md) is an experimental CLI tool for playing around with **Foi** code, prior to there being an official compiler.
 
 Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots. Foi-Toy can also validate code against the formal language grammar.
 
