@@ -192,7 +192,7 @@ DefVarStmt              := "def" WhSp+ (Identifier | DestructureTarget) WhSp* ":
 DestructureTarget       := "<" WhSp* DestructureDefList WhSp* ">";
 DestructureDefList      := DestructureDef (WhSp* "," WhSp* DestructureDef)* (WhSp* ",")?;
 DestructureDef          := DestructureNamedDef | DestructureConciseDef | DestructureCapture;
-DestructureNamedDef     := Identifier WhSp* ":"  WhSp* Identifier MultiAccessExpr?;
+DestructureNamedDef     := Identifier WhSp* ":"  WhSp* (Identifier | BracketExpr) MultiAccessExpr?;
 DestructureConciseDef   := ":" Identifier SingleAccessExpr?;
 DestructureCapture      := "#" Identifier;
 
@@ -458,7 +458,7 @@ def cb: defn(x)^x;
 
 def (x: 2, y: empty) { f(x.2,x.-1); };
 
-def < x : y.2, #obj, :w.4 >: obj;
+def < x : y.2, #obj, :w.4, z: [i+1], >: obj;
 
 def f: defn(*x)^x.[1..];
 

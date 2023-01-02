@@ -699,9 +699,15 @@ The `:items.0.price` syntax form implicitly assumes a target variable name from 
 
 If you need to "rename" the target variable -- for example, if the source property name isn't fixed or a suitable identifier -- the target name (`firstItem` above) may be specified before the `:`.
 
-Finally, to capture the entire value being destructured, use `#` prefixing a target variable name.
+To capture the entire value being destructured, use `#` prefixing a target variable name (as in `#order` above).
 
-This destructuring form is also allowed in a block-definitions clause:
+To compute the top-level source property name with a dynamic expression:
+
+```java
+def < lastItem: [size(items)-1] >: items;
+```
+
+These various destructuring forms are also allowed in a block-definitions clause:
 
 ```java
 def (< :items.0.price >: getOrder(123)) {
