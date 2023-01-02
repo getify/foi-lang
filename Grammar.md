@@ -216,12 +216,15 @@ GuardedExpr             := CondClause ":" WhSp* ExprAsOpt;
 
 MatchExpr               := IndepMatchExpr | DepMatchExpr;
 IndepMatchExpr          := "?{" WhSp* IndepPatternStmts WhSp* "}";
-IndepPatternStmts       := ((IndepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+IndepPatternStmts       := IndepPatternStmtOnly | ((IndepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+IndepPatternStmtOnly    := CondClause MatchConsequentNoSemi;
 IndepPatternStmt        := CondClause MatchConsequent (WhSp* ";")*;
+MatchConsequentNoSemi   := ":" WhSp* ExprAsOpt | BlockExpr;
 MatchConsequent         := ":" WhSp* ((ExprAsOpt WhSp* ";") | BlockExpr);
-ElseStmt                := "?:" WhSp* ExprAsOpt (WhSp* ";")*;
+ElseStmt                := "?" MatchConsequentNoSemi (WhSp* ";")*;
 DepMatchExpr            := "?(" WhSp* ExprNoBlockAsOpt WhSp* "){" WhSp* DepPatternStmts WhSp* "}";
-DepPatternStmts         := ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+DepPatternStmts         := DepPatternStmtOnly | ((DepPatternStmt WhSp*)+ ElseStmt?) | ElseStmt;
+DepPatternStmtOnly      := DepCondClause MatchConsequentNoSemi;
 DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
 DepCondClause           := ("?" | "!") "[" WhSp* DepCondExprList WhSp* "]";
 DepCondExprList         := (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr) (WhSp* "," WhSp* (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr))* (WhSp* ",")?;
@@ -479,6 +482,8 @@ defn add(x)(y,<:z>)
     ?( fn(g) ){
         ?[ x, z . y [3] ]: g;
     };
+    ?{ ?[x]: x };
+    ?(x){ ?[x]: x };
     ?[z]: (g: z) { fn(g) };
     x.[y..z];
     y.<first,last>;
