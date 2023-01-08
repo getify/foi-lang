@@ -234,7 +234,7 @@ DepCondBinaryBoolExpr   := NamedBoolRightExpr | SymbolicBoolRightExpr | ("(" WhS
 (*************** Loops/Comprehensions ***************)
 
 ComprExpr               := (((ComprRangeNoEachExpr WhSp+ ComprOpNoEach) | (ComprRangeEachExpr WhSp+ ComprOpEach) | (ComprExpr WhSp+ ComprOp)) WhSp+ ComprIterationExpr) | ("(" WhSp* ComprExpr WhSp* ")");
-ComprRangeNoEachExpr    := IdentifierExpr | CallExpr | DataStructLit | ClosedRangeExpr | ExprAccessExpr | ("(" WhSp* ComprRangeNoEachExpr WhSp* ")");
+ComprRangeNoEachExpr    := IdentifierExpr | CallExpr | DataStructLit | ClosedRangeExpr | ExprAccessExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* ComprRangeNoEachExpr WhSp* ")");
 ComprRangeEachExpr      := CondClause | ComprRangeNoEachExpr | ("(" WhSp* ComprRangeEachExpr WhSp* ")");
 ComprOp                 := ComprOpNoEach | ComprOpEach;
 ComprOpNamed            := ComprOpEach | ComprOpNamedNoEach;
@@ -242,7 +242,7 @@ ComprOpEach             := "~each";
 ComprOpNoEach           := ComprOpNamedNoEach | "~<";
 ComprOpNamedNoEach      := "~map" | "~filter" | "~fold" | "~foldR" | "~cata" | "~chain" | "~bind" | "~flatMap" | "~ap" | "~foldMap";
 ComprIterationExpr      := BlockExpr | ComprIterNoBlockExpr | GroupedExprAsOpt;
-ComprIterNoBlockExpr    := ComprExpr | IdentifierExpr | CallExpr | ExprAccessExpr |("(" WhSp* ComprIterNoBlockExpr WhSp* ")");
+ComprIterNoBlockExpr    := ComprExpr | IdentifierExpr | CallExpr | ExprAccessExpr | ("(" WhSp* ComprIterNoBlockExpr WhSp* ")");
 
 DoComprExpr             := (Identifier | BuiltIn) WhSp+ "~<<" WhSp* DoBlockExpr;
 DoBlockExpr             := DoBlockDefsInitOpt? WhSp* DoBareBlockExpr;
@@ -256,8 +256,10 @@ DoStmt                  := Stmt | DoDefVarStmt;
 DoStmtSemiOpt           := DoStmt? (WhSp* ";")*;
 DoFinalUnwrapExpr       := "::" ExprNoBlockAsOpt (WhSp* ";")*;
 
-DoLoopComprExpr         := ((DoLoopComprRangeExpr WhSp+) | ("(" WhSp* DoLoopComprRangeExpr WhSp* ")")) "~<*" WhSp DoBlockExpr;
+DoLoopComprExpr         := ((DoLoopComprRangeExpr WhSp+) | ("(" WhSp* DoLoopComprRangeExpr WhSp* ")")) "~<*" WhSp DoLoopIterationExpr;
 DoLoopComprRangeExpr    := ComprRangeNoEachExpr | ComprExpr;
+DoLoopIterationExpr     := DoBlockExpr | DoLoopIterNoBlockExpr;
+DoLoopIterNoBlockExpr   := IdentifierExpr | CallExpr | ExprAccessExpr | ("(" WhSp* DoLoopIterNoBlockExpr WhSp* ")");
 
 
 (*************** Functions ***************)
