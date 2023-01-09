@@ -1,6 +1,6 @@
 #input {
 	width: 90%;
-	height: 10em;
+	min-height: 15em;
 }
 
 #token-list {
@@ -12,8 +12,7 @@
 
 #syntax-color {
 	width: 90%;
-	min-height: 10em;
-	max-height: 30em;
+	min-height: 30em;
 	border: none;
 }
 
