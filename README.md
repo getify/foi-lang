@@ -147,7 +147,7 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
 * **Side Effects** Since there are no mutable values in **Foi**, the most common type of (in-program) side effect (bug!) in programming is completely impossible.
 
-    The only possible in-program *side effect* is re-assignment of a variable (which is actually rarely the source of bugs, despite the a popular claims to the contrary). **Foi** allows such re-assignments, unlike many languages (especially FP languages) that have forms like `const` to disallow re-assignment.
+    The only possible in-program *side effect* is re-assignment of a variable (which is actually rarely the source of bugs, despite popular claims to the contrary). **Foi** allows such re-assignments, unlike many languages (especially FP languages) that have forms like `const` to disallow re-assignment.
 
     However, these re-assignment side effects must be declared if they cross a function boundary (via closure). You do so in the function signature, via the `:over` clause:
 
@@ -178,7 +178,7 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     However, **Foi** does recognize a valid subset of conditional "early return" use-cases. In fact, **Foi** insists that they should be elevated to be visible and obvious in the function declaration header, rather than buried in the middle of the function body.
 
-    These are basically conditions that can be checked before the function has even been fully invoked (but its arguments are computed and known); they do not require any internal function state to evaluate. In other words, these are "preconditions" that, if not met, obviate the need to run the the function; its result (fixed or error) can be statically determined.
+    These are basically conditions that can be checked before the function has even been fully invoked (but its arguments are computed and known); they do not require any internal function state to evaluate. In other words, these are "preconditions" that, if not met, obviate the need to run the function; its result (fixed or error) can be statically determined.
 
     For example, a function may return an error (via `Left` monadic value) if the arguments passed in are invalid/insufficient for the function's expectations. **Note:** This is a runtime scenario, orthogonal to a static type mismatch the compiler could have discovered and failed a build. Another example is a "base condition" in a recursive function.
 
