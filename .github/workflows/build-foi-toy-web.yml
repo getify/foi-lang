@@ -36,7 +36,7 @@ jobs:
       - name: install deps and build foi-toy web
         run: |
           npm install
-          npm run build-foi-toy-web
+          npm run build:foi-toy-web
       - name: Setup Pages
         uses: actions/configure-pages@v2
       - name: Upload artifact

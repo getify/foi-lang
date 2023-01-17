@@ -1,11 +1,13 @@
 {
 	"name": "foi-lang",
-	"version": "0.0.14",
+	"version": "0.0.15",
 	"description": "Foi: a different kind of functional programming language",
 	"repository": "getify/foi-lang",
 	"scripts": {
-		"build-foi-toy-web": "foi-toy/scripts/build-web",
-		"build": "npm run build-foi-toy-web"
+		"build:foi-toy-web": "foi-toy/scripts/build-web",
+		"build": "npm run build:foi-toy-web",
+		"start:foi-toy-web": "npx http-server foi-toy/web -p 8080",
+		"start": "npm run start:foi-toy-web"
 	},
 	"devDependencies": {
 		"minimist": "~1.2.7",
