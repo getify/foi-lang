@@ -217,16 +217,17 @@ GuardedExpr             := CondClause ":" WhSp* ExprAsOpt;
 MatchExpr               := IndepMatchExpr | DepMatchExpr;
 IndepMatchExpr          := "?{" WhSp* IndepPatternStmts WhSp* "}";
 IndepPatternStmts       := IndepPatternStmtNoSemi | ((IndepPatternStmt WhSp*)+ (ElseStmt | IndepPatternStmtNoSemi)?) | ElseStmt;
-IndepPatternStmtNoSemi  := CondClause MatchConsequentNoSemi;
-IndepPatternStmt        := CondClause MatchConsequent (WhSp* ";")*;
+IndepPatternStmtNoSemi  := IndepCondClause MatchConsequentNoSemi;
+IndepPatternStmt        := IndepCondClause MatchConsequent (WhSp* ";")*;
+IndepCondClause         := ("?" | "!" | Epsilon) BracketExpr;
 MatchConsequentNoSemi   := ":" WhSp* ExprAsOpt | BlockExpr;
 MatchConsequent         := ":" WhSp* ((ExprAsOpt WhSp* ";") | BlockExpr);
 ElseStmt                := "?" MatchConsequentNoSemi (WhSp* ";")*;
 DepMatchExpr            := "?(" WhSp* ExprNoBlockAsOpt WhSp* "){" WhSp* DepPatternStmts WhSp* "}";
-DepPatternStmts         := DepPatternStmtNoSemi | ((DepPatternStmt WhSp*)+ (ElseStmt | IndepPatternStmtNoSemi)?) | ElseStmt;
+DepPatternStmts         := DepPatternStmtNoSemi | ((DepPatternStmt WhSp*)+ (ElseStmt | DepPatternStmtNoSemi)?) | ElseStmt;
 DepPatternStmtNoSemi    := DepCondClause MatchConsequentNoSemi;
 DepPatternStmt          := DepCondClause MatchConsequent (WhSp* ";")*;
-DepCondClause           := ("?" | "!") "[" WhSp* DepCondExprList WhSp* "]";
+DepCondClause           := ("?" | "!" | Epsilon) "[" WhSp* DepCondExprList WhSp* "]";
 DepCondExprList         := (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr) (WhSp* "," WhSp* (ExprNoBlockGroupedAsOpt | DepCondBinaryBoolExpr))* (WhSp* ",")?;
 DepCondBinaryBoolExpr   := NamedBoolRightExpr | SymbolicBoolRightExpr | ("(" WhSp* DepCondBinaryBoolExpr WhSp* ")");
 
@@ -477,12 +478,14 @@ defn add(x)(y,<:z>)
     ?{?: 42;};
     ?{
         ?[z]: fn(g);
+        [w]: w;
         ![x]: { fn(g) };
         ?[y]: (v, <:z>) { fn(g); }
         ?: 42
     };
     ?( fn(g) ){
-        ?[ x, z . y [3] ]: g;
+        [?> y]: g;
+        ?[ x, z . y [3] ]: g
     };
     ?{ ?[x]: x };
     ?(x){ ?[x]: x };
