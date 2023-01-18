@@ -1,13 +1,16 @@
-#input {
-	width: 90%;
-	min-height: 15em;
+html {
+	box-sizing: border-box;
 }
 
-#token-list {
-	width: 75%;
-	min-height: 10em;
-	max-height: 20em;
-	overflow-y: scroll;
+*,
+*::before,
+*::after {
+	box-sizing: inherit;
+}
+
+#input {
+	width: 80%;
+	min-height: 15em;
 }
 
 #syntax-color-resizer {
@@ -16,12 +19,24 @@
 	padding: 0;
 	resize: both;
 	overflow: hidden;
+	width: 80%;
 }
 #syntax-color {
 	flex-grow: 1;
 	margin: 0;
 	padding: 0;
 	border: 0;
+}
+
+#token-details {
+	margin-top: 1em;
+}
+
+#token-list {
+	width: 80%;
+	min-height: 10em;
+	max-height: 20em;
+	overflow-y: scroll;
 }
 
 summary {
