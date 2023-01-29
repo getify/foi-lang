@@ -50,6 +50,7 @@ If you're already convinced and ready to jump in, you may want to check these ou
 
 * [Foi vs JS Cheatsheet](Cheatsheet.md)
 * [Foi vs JS code snippets](Cheatsheet.md#comparison-examples)
+    - [More Foi vs JS code comparisons](https://github.com/getify/foi-lang/discussions/10)
 * [(Mostly Complete) Foi Guide](Foi-Guide.md)
 * [Formal Grammar](Grammar.md) (for language theory enthusiasts)
 * [Foi-Toy](foi-toy/README.md) (CLI tool)
