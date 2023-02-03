@@ -261,6 +261,7 @@ async function *tokenize(charStream) {
 						"DOUBLE_QUOTE", "ESCAPE", "WHITESPACE", "GENERAL",
 						"STRING", "NUMBER", "FORWARD_SLASH", "COMMENT",
 						"PERIOD", "TILDE", "QMARK", "EXMARK", "COLON",
+						"BACKTICK"
 					].includes(curToken.type) ||
 
 					// hyphen that should not be a minus
@@ -269,14 +270,6 @@ async function *tokenize(charStream) {
 					(
 						curToken.type == "HYPHEN" &&
 						!minusOpAllowed
-					) ||
-
-					// backtick in an interpolated
-					// string literal?
-					(
-						curToken.type == "BACKTICK" &&
-						state.type == "escapedString" &&
-						[ "\\`", "\\\\`", ].includes(state.context.value)
 					)
 				)
 			) {
@@ -762,10 +755,10 @@ async function *tokenize(charStream) {
 			case "`": {
 				minusOpAllowed = false;
 
-				// interpolated string escape?
+				// interpolated-spacing string escape?
 				if (
 					escapeToken != null &&
-					[ "\\", "\\\\" ].includes(escapeToken.value)
+					escapeToken.value == "\\"
 				) {
 					escapeToken.value += char;
 					escapeToken.end++;
@@ -805,12 +798,26 @@ async function *tokenize(charStream) {
 				// starting an escaped string literal?
 				if (
 					escapeToken != null &&
-					[ "\\", "\\`", "\\\\`" ].includes(escapeToken.value)
+					[ "\\", "\\`" ].includes(escapeToken.value)
 				) {
 					let context = escapeToken;
 					escapeToken = null;
 					return [
 						TOKEN("DOUBLE_QUOTE",char,position),
+						{ type: "escapedString", context, }
+					];
+				}
+				// starting an interpolated string literal?
+				else if (
+					pendingToken != null &&
+					pendingToken.type == "BACKTICK"
+				) {
+					pendingToken.type = "ESCAPE";
+					let context = pendingToken;
+					pendingToken2 = TOKEN("DOUBLE_QUOTE",char,position);
+					escapeToken = null;
+					return [
+						pendingToken2,
 						{ type: "escapedString", context, }
 					];
 				}
@@ -871,9 +878,9 @@ async function *tokenize(charStream) {
 	function escapedString(char,position) {
 		var state = currentState[currentState.length-1];
 		var escapeType = (
-			state.context.value == "\\`" ? "interpolated" :
-			state.context.value == "\\\\`" ? "interpolatedSpacing" :
-			"regular"
+			state.context.value == "`" ? "interpolated" :
+			state.context.value == "\\`" ? "interpolatedSpacing" :
+			"basic"
 		);
 
 		minusOpAllowed = false;
@@ -883,9 +890,10 @@ async function *tokenize(charStream) {
 				// possibly starting an interpolated
 				// expression?
 				if ([ "interpolated", "interpolatedSpacing" ].includes(escapeType)) {
+					let context = TOKEN("BACKTICK",char,position);
 					return [
-						TOKEN("BACKTICK",char,position),
-						{ type: "interpolatedBase", context: null }
+						context,
+						{ type: "interpolatedBase", context, }
 					];
 				}
 				// otherwise, just general text in
@@ -899,7 +907,7 @@ async function *tokenize(charStream) {
 				// whitespace?
 				if (WHITESPACE.includes(char)) {
 					// in an escaped string that collapses certain whitespace?
-					if ([ "regular", "interpolatedSpacing" ].includes(escapeType)) {
+					if ([ "basic", "interpolatedSpacing" ].includes(escapeType)) {
 						return [ TOKEN("WHITESPACE",char,position), null ];
 					}
 					else {
@@ -932,11 +940,11 @@ async function *tokenize(charStream) {
 					// string-tokenizing state
 					return [ pendingToken, POP_STATE ];
 				}
-				// not part of an escape sequence, so
+				// cannot be part of an escape sequence, so
 				// must be ending the interpolated expression?
 				else if (
 					escapeToken == null ||
-					![ "\\", "\\\\" ].includes(escapeToken.value)
+					escapeToken.value != "\\"
 				) {
 					return [ TOKEN("BACKTICK",char,position), POP_STATE ];
 				}
@@ -956,7 +964,7 @@ async function *tokenize(charStream) {
 			(state.context.value == "\\h" || state.context.value == "\\u") ? "hex" :
 			state.context.value == "\\b" ? "binary" :
 			state.context.value == "\\o" ? "octal" :
-			"regular"
+			"basic"
 		);
 		escapeToken = null;
 
@@ -979,7 +987,7 @@ async function *tokenize(charStream) {
 
 				// tokening a octal-compatible number
 				// literal?
-				if ([ "regular", "hex", "octal", "monad" ].includes(escapeType)) {
+				if ([ "basic", "hex", "octal", "monad" ].includes(escapeType)) {
 					return [ TOKEN("NUMBER",char,position), null ];
 				}
 				// otherwise, no longer in a valid
@@ -996,7 +1004,7 @@ async function *tokenize(charStream) {
 
 				// tokening a octal-compatible number
 				// literal?
-				if ([ "regular", "hex", "monad" ].includes(escapeType)) {
+				if ([ "basic", "hex", "monad" ].includes(escapeType)) {
 					return [ TOKEN("NUMBER",char,position), null ];
 				}
 				// otherwise, no longer in a valid
@@ -1044,7 +1052,7 @@ async function *tokenize(charStream) {
 					pendingToken != null &&
 					pendingToken.type == "NUMBER" &&
 					!pendingToken.value.includes(".") &&
-					[ "regular", "monad" ].includes(escapeType)
+					[ "basic", "monad" ].includes(escapeType)
 				) {
 					let nextToken = TOKEN("PERIOD",char,position);
 					if (nextToken.type == "DOUBLE_PERIOD") {
@@ -1105,7 +1113,7 @@ async function *tokenize(charStream) {
 				// separator in valid position in
 				// escaped number literal?
 				if (
-					[ "regular", "monad" ].includes(escapeType) &&
+					[ "basic", "monad" ].includes(escapeType) &&
 					pendingToken != null &&
 					pendingToken.type == "NUMBER" &&
 					(

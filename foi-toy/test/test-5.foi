@@ -11,14 +11,14 @@ defn renderLargeOrders() ^(Promise ~<< {
 	def largeOrders: orders ~filter (order) { order.total ?>= 100; };
 	def customers:: all(
 		largeOrders ~map (order) {
-			fetch(\`"/customer/id/`order.custId`");
+			fetch(`"/customer/id/`order.custId`");
 		}
 	);
 	def records: largeOrders ~map (order,idx) {
 		< &order, customer: customers[idx] >;
 	};
-	\`"<ul>`
-		(| ~fold records, "", (html,record) { html + \`"
+	`"<ul>`
+		(| ~fold records, "", (html,record) { `"`html`
 			<li id=""order-`record.orderId`"">
 				<span>Order #`record.orderId`</span>
 				<span>Total: $`format(record.total)`</span>

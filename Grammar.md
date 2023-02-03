@@ -81,14 +81,18 @@ PositiveIntLit          := Base10Digit+ | (Esc EscNumDigits) | (HexEsc HexDigit+
 
 StrLit                  := PlainStr | SpacingStr | InterpStr | InterpSpacingStr;
 
-InterpEsc               := Esc "`";
+InterpEsc               := "`";
 InterpSpacingEsc        := Esc InterpEsc;
 
 PlainStr                := '"' (#'[^"]' | '""')* '"';
 SpacingStr              := Esc PlainStr;
 InterpStr               := InterpEsc InterpLit;
 InterpSpacingStr        := InterpSpacingEsc InterpLit;
-InterpLit               := '"' (#'[^"`]' | '""' | "`" WhSp* ExprAsOpt? WhSp* "`")* '"';
+InterpLit               := '"' (#'[^"`]' | '""' | "`" WhSp* InterpExprAsOpt? WhSp* "`")* '"';
+InterpExprAsOpt         := !('`"') ExprAsOpt;
+
+(* NOTE: the above `InterpExprAsOpt` production has a negative-lookahead *)
+(* to avoid a grammar ambiguity with nested interpolated-strings.        *)
 
 
 (*************** Data Structures ***************)
@@ -403,11 +407,11 @@ defn a~each() ^empty;
 \"A single line
     string with whitespace collapsing, defined across multiple
   lines";
-\\`"A single line (with
-   whitespace) collapsing, and a single `` backtick";
-\`"Special number: `-3.1415962`
+\`"A single line (with
+   whitespace collapsing), and a single `` backtick";
+`"Special number: `-3.1415962`
    Name: `name`
-   Greeting: `\\`"Hello world"`
+   Greeting: `\`"Hello world"`
    Reaction: `\"Yay!"`
    Reply: `"Ok."`
 !";

@@ -201,33 +201,35 @@ If you want to collapse new lines (and line trailing/leading whitespace) into a 
 // This is all on the same line.
 ```
 
-To interpolate expressions inside of a string, immediately prefix the string literal with a `` \` `` (backslash + back-tick), and then also delimit each expression inside the string with `` ` `` back-ticks:
+To interpolate expressions inside of a string, immediately prefix the string literal with a `` ` `` (back-tick), and then also delimit each expression inside the string with `` ` `` back-ticks:
 
 ```java
-\`"My name is `name`.";
+`"My name is `name`.";
 // My name is Kyle.
 ```
 
-The interpolated expression can be any valid **Foi** expression.
+The interpolated expression (inside the `` ` .. ` ``) can be any valid **Foi** expression.
 
-Interpolation is the best way to include a unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
+**Warning:** There's one minor caveat to the above statement. An interpolated expression *cannot* itself contain a bare (`` `".." ``) interpolated string, because the `` `" `` sequence would be a grammar ambiguity (opening another interpolated string, or closing the current interpolated expression and outer string). To nest an interpolated string inside an interpolated expression, you must use a slightly unfortunate work-around. For the inner/nested interpolated string literal, escape it with combined whitespace-collapsing as well (via `` \` ``), as illustrated shortly; fortunately, the `` \`" `` sequence is *not* grammatically ambiguous.
+
+Interpolation is also the best way to include a unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
 
 ```java
-\`"I was happy `\u263A` to see you!";
+`"I was happy `\u263A` to see you!";
 // I was happy ☺ to see you!
 ```
 
 To include a literal `` ` `` back-tick by itself (not as an interpolation delimiter) in an interpolation-parsed string, escape it with a second `` ` ``, like this:
 
 ```java
-\`"Here is a single `` back-tick, `name`.";
+`"Here is a single `` back-tick, `name`.";
 // Here is a single ` back-tick, Kyle.
 ```
 
-To both collapse whitespace, as well as allow interpolation, combine the `\` and  `` \` ``, in order, like this:
+To both collapse whitespace, as well as allow interpolation, combine the `\` and  `` ` ``, in order, like this:
 
 ```java
-\\`"This is
+\`"This is
    one line, written
  by `uppercase(name)`.";
 // This is one line, written by KYLE.
@@ -672,8 +674,8 @@ In addition to the definitions-block form just shown, several other expressions 
 * A [loop iteration block](#loops-and-comprehensions) with block-definitions clause:
 
     ```java
-    0..3 ~each (v, idx) {
-        log(v + ": " + idx);
+    0..3 ~each (v,idx) {
+        log(`"`v`: `idx`");
     };
     ```
 
@@ -958,7 +960,7 @@ It may also be useful to access the topic of a pattern matching expression insid
 def myName: "Kyle";
 
 def greeting: ?(myName){
-    ?["Kyle"]: | + "Hello ", #, "!" |
+    ?["Kyle"]: `"Hello `#`!"
     ?: "Goodbye!"
 };
 
@@ -1361,7 +1363,7 @@ Since Records and Tuples are immutable, if you need to define them bit by bit --
     ```java
     def name: ?{
         ?[customer.type ?= "business"]: customer.businessName;
-        ?: \`"`customer.last`, `customer.first`";
+        ?: `"`customer.last`, `customer.first`";
     };
 
     def orderTotal: orders ~fold (total,order) { total + order.total };
@@ -1376,7 +1378,7 @@ Since Records and Tuples are immutable, if you need to define them bit by bit --
 
     ?{
         ?[customer.type ?= "business"]: record := < name: customer.businessName >;
-        ?: record := < name: \`"`customer.last`, `customer.first`" >;
+        ?: record := < name: `"`customer.last`, `customer.first`" >;
     };
 
     record := <
@@ -1393,7 +1395,7 @@ There's another strategy which is more FP idiomatic, using the [`Id` monad](#mon
 def record:
     Id@ (?{
         ?[customer.type ?= "business"]: < name: customer.businessName >;
-        ?: < name: \`"`customer.last`, `customer.first`" >;
+        ?: < name: `"`customer.last`, `customer.first`" >;
     })
     ~map (record) {
         def orderTotal: orders ~fold (total,order) { total + order.total };
@@ -1958,7 +1960,7 @@ Here's an example of how you might use this utility:
 
 ```java
 defn getName(record,getLabel: @@"Default") {
-    ^(getLabel(record) + ": " + record.name);
+    ^(`"`getLabel(record)`: `record.name`");
 };
 ```
 
@@ -2031,7 +2033,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 
         ```java
         2..5 ~each (v, idx) {
-            log(idx + ": " + v);
+            log(`"`idx`: `v`");
         };
         // 0: 2
         // 1: 3
@@ -2774,7 +2776,7 @@ Maybe ~<< {
     def shipAddr:: prop("shippingAddress",order);
     def street:: prop("street",shipAddr);
     Id ~<< (streetV:: street) {
-        log("Street: " + streetV);
+        log(`"Street: `streetV`");
     };
 };
 // Street: 123 Easy St
@@ -2784,7 +2786,7 @@ Maybe ~<< {
     def billAddr:: prop("billingAddress",order);
     def street:: prop("street",billAddr);
     Id ~<< (streetV:: street) {
-        log("Street: " + streetV);
+        log(`"Street: `streetV`");
     };
 };
 // None
@@ -2852,7 +2854,7 @@ By holding an error message in a `Left` -- similar to `None`, except it can repr
 In this example, the error message specified for `halve(0)` sets `e1` as a `Left`, and thus its associated `~map` comprehension does nothing:
 
 ```java
-defn print(v) ^log("Value: " + v);
+defn print(v) ^log(`"Value: `v`");
 defn halve(v)
     ![v ?> 1]: Left@ "Value must be greater than 1"
     ![mod(v,2) ?= 0]: Right@ (v + 1) / 2
@@ -3138,7 +3140,7 @@ def pr2: subj.pr ~map (v) {
 // Promise{..pending..}
 
 pr2 ~map (v) {
-    log("v: " + v);
+    log(`"v: `v`");
 };
 // Promise{..pending..}
 
@@ -3203,7 +3205,7 @@ defn printResponses(prs)
     ![size(prs) ?> 0]: Promise@ "Complete."
 {
     ^prs.0 ~< (resp) {
-        log("resp: " + resp);
+        log(`"resp: `resp`");
         printResponses(prs.[1..]);
     };
 };
@@ -3235,7 +3237,7 @@ The `~<*` operator extends `Promise` *do comprehension*, to loop asynchronously 
 ```java
 defn printResponses(prs) {
     ^prs ~<* (resp) {
-        log("resp: " + resp);
+        log(`"resp: `resp`");
     }
     ~map { "Complete."; };
 };
@@ -3254,7 +3256,7 @@ urls ~map fetch
 ~<* (resp) {
     def v:: processResp(resp);
     def success:: storeVal(v);
-    ?[success]: log("Stored: " + v);
+    ?[success]: log(`"Stored: `v`");
 };
 // Promise{..pending..}
 ```
@@ -3266,7 +3268,7 @@ urls ~map fetch
 If the *range* operand provided to `~<*` is not a concrete value but instead a type (like `Promise`) -- as *range* always is with regular `~<<` do comprehensions -- the iteration looping will continue until a `Left` is produced as the **final result** of an iteration:
 
 ```java
-defn printResp(v) { log("Resp: " + v); };
+defn printResp(v) { log(`"Resp: `v`"); };
 defn fetchMoreData() { ... Promise<Either> ... };
 
 Promise ~<* {
@@ -3294,7 +3296,7 @@ def subj2: PromiseSubject@;
 
 race(< subj1.pr, subj2.pr >)
 ~map (v) {
-    log("Value: " + v);
+    log(`"Value: `v`");
 };
 // Promise{..pending..}
 
@@ -3314,7 +3316,7 @@ def subj2: PromiseSubject@;
 
 all(< subj1.pr, subj2.pr >)
 ~map (vals) {
-    log("Values: " + vals);
+    log(`"Values: `vals`");
 };
 // Promise{..pending..}
 
@@ -3351,7 +3353,7 @@ defn putVal(ch,v) ^(
     ch.push(v)
     ~map (ev) {
         Either ~<< (v:: ev) {
-            log("Value put: " + v);
+            log(`"Value put: `v`");
         };
     }
 );
@@ -3360,7 +3362,7 @@ defn takeVal(ch) ^(
     ch.take()
     ~map (ev) {
         Either ~<< (v:: ev) {
-            log("Value taken: " + v);
+            log(`"Value taken: `v`");
         };
     }
 );
@@ -3545,7 +3547,7 @@ Consider:
 defn peekAt(ch,idx) ^(
     ch.peek()
     ~map (v) {
-        log("(" + idx + ") Peeking at value: " + v);
+        log(`"(`idx`) Peeking at value: `v`");
         v;
     }
 );
@@ -3614,7 +3616,7 @@ s ~< (v) {
     PushStream@ (v * 2);
 }
 ~map (v) {
-    log("Value: " + v);
+    log(`"Value: `v`");
 };
 // Value: 42
 ```
@@ -3631,7 +3633,7 @@ def s2:
         PushStream@ (v * 2);
     }
     ~map (v) {
-        log("(1) Value: " + v);
+        log(`"(1) Value: `v`");
         v + 1;
     };
 // PushStream{}
@@ -3642,7 +3644,7 @@ def s2:
 // (1) Value: 3
 
 s2 ~map (v) {
-    log("(2) Value: " + v);
+    log(`"(2) Value: `v`");
 };
 // PushStream{}
 // (2) Value: 2
@@ -3664,7 +3666,7 @@ def subj: PushStream@;
 1..3 ~each subj.push;
 
 def another: subj.stream ~map (v) {
-    log("Value: " + v);
+    log(`"Value: `v`");
 };
 // Value: 1
 // Value: 2
@@ -3707,7 +3709,7 @@ def subj: PushStream@;
 1..3 ~each subj.push;
 
 def s: PushStream ~<< (v:: subj.stream) {
-    log("(1) Value: " + v);
+    log(`"(1) Value: `v`");
     v * 2;
 };
 // PushStream{}
@@ -3720,7 +3722,7 @@ subj.push(4);
 // (1) Value: 4
 
 s ~map (v) {
-    log("(2) Value: " + v);
+    log(`"(2) Value: `v`");
 };
 // PushStream{}
 // (2) Value: 2
@@ -3754,7 +3756,7 @@ s ~< (v) {
     PullStream@ (v * 2);
 }
 ~map (v) {
-    log("Value: " + v);
+    log(`"Value: `v`");
 };
 // PullStream{}
 ```
@@ -3771,7 +3773,7 @@ def t:
         PullStream@ (v * 2);
     }
     ~map (v) {
-        log("Value: " + v);
+        log(`"Value: `v`");
     };
 // PullStream{}
 
@@ -3791,7 +3793,7 @@ def subj: PullSubject@;
 
 def s2: subj.stream
     ~map (v) {
-        log("(1) Value: " + v);
+        log(`"(1) Value: `v`");
         v * 2;
     };
 // PullStream{}
@@ -3800,7 +3802,7 @@ def s2: subj.stream
 // (nothing)
 
 s2 ~map (v) {
-    log("(2) Value: " + v);
+    log(`"(2) Value: `v`");
 };
 // PullStream{}
 
@@ -3838,7 +3840,7 @@ def subj: PushStream@;
 1..3 ~each subj.push;
 
 PullStream ~<< (v:: subj.stream) {
-    log("Value: " + v);
+    log(`"Value: `v`");
 };
 // PullStream{}
 
@@ -3901,7 +3903,7 @@ As with all monads, we can compose instances together via comprehensions like `~
 defn doubleIO(v) ^IO@ (v * 2);
 defn incIO(v) ^ IO@ (v + 1);
 defn finish(v) {
-    log("v: " + v);
+    log(`"v: `v`");
     ^incIO(v);
 };
 
@@ -3964,7 +3966,7 @@ Reader is a pattern for carrying a value across monadic operations, without need
 
 ```java
 def task: IO@ (defn(readerEnv){
-    log("X: " + readerEnv.x);
+    log(`"X: `readerEnv.x`");
 });
 
 task.run(< x: 42 >);
@@ -3980,7 +3982,7 @@ def task:
     IOof@ 42
     ~< (v) {
         IO@ (defn(env){
-            log("Value: " + v, "Env.x: " + env.x);
+            log(`"Value: `v`, Env.x: `env.x`");
         });
     };
 
@@ -3999,7 +4001,7 @@ def fortyTwo: IOof@ 42;
 def task: IO ~<< {
     def v:: fortyTwo;
     def env:: getEnv();
-    log("Value: " + v, "Env.x: " + env.x);
+    log(`"Value: `v`, Env.x: `env.x`");
 };
 
 task.run(< x: 3 >);
@@ -4012,7 +4014,7 @@ In fact, this is even cleaner:
 def fortyTwo: IOof@ 42;
 
 def task: IO ~<< (env, v:: fortyTwo) {
-    log("Value: " + v, "Env.x: " + env.x);
+    log(`"Value: `v`, Env.x: `env.x`");
 };
 
 task.run(< x: 3 >);
@@ -4030,7 +4032,7 @@ Consider:
 ```java
 defn getValue() ^Promise@ 42;
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4052,7 +4054,7 @@ If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
 ```java
 defn readValue() ^IOof@ (Promise@ 42);
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4070,7 +4072,7 @@ Even in the inverse scenario -- where a `Promise` instance holds an `IO` instanc
 ```java
 defn readValue() ^Promise@ (IOof@ 42);
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4090,7 +4092,7 @@ Here's `IO` transforming over a `Channel`:
 ```java
 defn getValue() ^Channel@ 42;
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4116,7 +4118,7 @@ defn getValues() {
     ^subj.stream;
 };
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4142,7 +4144,7 @@ defn getValues() {
     ^subj.stream;
 };
 defn printValue(v) ^IO@ (defn(){
-    log("Value: " + v);
+    log(`"Value: `v`");
 });
 
 def task: IO ~<< {
@@ -4183,7 +4185,7 @@ def getValues() ^PushStream@ 10;
 IO ~<< {
     def v:: getValue();
     def x:: getValues();
-    log("v: " + v + ", x: " + x);
+    log(`"v: `v`, x: `x`");
 }.run();
 // (error)
 ```
@@ -4199,7 +4201,7 @@ def getValues() ^PushStream@ 10;
 IO ~<< {
     def x:: getValues();
     def v:: getValue();
-    log("v: " + v + ", x: " + x);
+    log(`"v: `v`, x: `x`");
 }.run();
 // v: 42, x: 10
 ```

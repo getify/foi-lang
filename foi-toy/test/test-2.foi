@@ -16,9 +16,9 @@ def c: \"What do you
    of
   this?";
 
-def d: \`"My name is: `name`, and here is a `` back-tick character.";
+def d: `"My name is: `name`, and here is a `` back-tick character.";
 
-def e: \\`"You must go
+def e: \`"You must go
 
 	see the `showName` show, it's
 great!
@@ -27,4 +27,4 @@ great!
 def f: \`"Here is the `best(\`"label: `label`") #> uppercase`
    part!";
 
-def g: \`"A string with `some + /// inline comment in interpolated expr /// 42`!";
+def g: `"A string with `some + /// inline comment in interpolated expr /// 42`!";

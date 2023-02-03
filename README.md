@@ -13,9 +13,9 @@ greetings("my friend");
 // Hello, my friend!
 
 defn greetings(who) {
-    def msg: \`"Hello, `who`!";
-    log(msg);
-};
+    def msg: `"Hello, `who`!";
+    log(msg)
+}
 ```
 
 The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
@@ -26,22 +26,22 @@ Hopefully, without too much heavy orientation, code like this will settle into f
 
 ```java
 defn getFavoriteMovies(userID) ^(IO ~<< {
-    def movieIDs:: fetch(\`"/movies/`userID`");
+    def movieIDs:: fetch(`"/movies/`userID`");
     def movieTitles:: all(
         movieIDs ~map (movieID) {
-            fetch(\`"/movie/`movieID`")
+            fetch(`"/movie/`movieID`")
         }
         ~map |. ,"title"|
     );
-    def itemsHTML: | ~fold
+    def itemsHTML: |~fold
         movieTitles,
         "",
-        (html,title) { html + \`"<li>`title`</li>" }
+        (html,title) { `"`html`<li>`title`</li>" }
     |;
-    document.body.innerHTML := \`"<ul>`itemsHTML`</ul>";
+    document.body.innerHTML := `"<ul>`itemsHTML`</ul>";
 });
 
-getFavoriteMovies(123).run();
+getFavoriteMovies(123).run()
 ```
 
 ### TL;DR
@@ -75,7 +75,7 @@ The syntax and design decisions attempt to diverge enough from familiar language
 ```java
 defn factorial(n)
     ![n ?> 1]: 1
-    ^(n * factorial(n-1));
+    ^(n*factorial(n-1));
 
 // or (tail-recursive):
 
@@ -156,7 +156,7 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
     defn myFn(x) :over(y) {
         y := x + z;
         // ..
-    };
+    }
     ```
 
     The compiler enforces this requirement: any lexical variable outside a function's scope (aka, "free variable") that appears as an assignment target must be added to the function's `:over` clause. **Note:** in the above snippet, `z` is also an outer variable, but since it's only read (not assigned to), it does not need to be declared in the `:over` clause.
@@ -186,11 +186,11 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
     **Foi** "preconditions" appear *in the function signature* to express these "early return preconditions", like this:
 
     ```java
-    defn myFn(x) ?[x ?< 0]: 0 { .. };
+    defn myFn(x) ?[x ?< 0]: 0 { .. }
 
     // or:
 
-    defn myFn(x) ![x ?>= 0]: 0 { .. };
+    defn myFn(x) ![x ?>= 0]: 0 { .. }
     ```
 
     In this function signature, the `x` parameter is checked, and if it's less than `0`, the fixed `0` value is substituted ("early returned") in place of the function being invoked.
