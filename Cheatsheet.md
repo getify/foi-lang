@@ -36,26 +36,26 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>var { x } = ..</code><br><code>var [ x ] = ..</code></td><td><code>def &lt; x &gt;: ..</code></td><td>Destructuring</td></tr>
     <tr><td><code>!x</code></td><td><code>!x</code></td><td>Boolean Negate</td></tr>
     <tr><td><code>!!x</code> <code>Boolean(x)</code></td><td><code>?x</code></td><td>Boolean Coerce</td></tr>
-    <tr><td><code>&amp;&amp;</code></td><td><code>?and</code></td><td>Boolean AND</td></tr>
-    <tr><td><code>||</code></td><td><code>?or</code></td><td>Boolean OR</td></tr>
-    <tr><td><code>!( &amp;&amp; )</code></td><td><code>!and</code></td><td>Boolean NOT AND (Foi NAND)</td></tr>
-    <tr><td><code>!( || )</code></td><td><code>!or</code></td><td>Boolean NOT OR (Foi NOR)</td></tr>
+    <tr><td><code>x &amp;&amp; y</code></td><td><code>x ?and y</code></td><td>Boolean AND</td></tr>
+    <tr><td><code>x || y</code></td><td><code>x ?or y</code></td><td>Boolean OR</td></tr>
+    <tr><td><code>!(x &amp;&amp; y)</code></td><td><code>x !and y</code></td><td>Boolean NOT AND (Foi NAND)</td></tr>
+    <tr><td><code>!(x || y)</code></td><td><code>x !or y</code></td><td>Boolean NOT OR (Foi NOR)</td></tr>
     <tr><td><code>==</code></td><td><code>?=</code></td><td>Equality</td></tr>
     <tr><td><code>!=</code></td><td><code>!=</code></td><td>Inequality</td></tr>
     <tr><td><code>v == null</code></td><td><code>?empty v</code></td><td>Is <code>null</code> (Foi <code>empty</code>)</td></tr>
     <tr><td><code>v != null</code></td><td><code>!empty v</code></td><td>Is Not <code>null</code> (Foi <code>!= empty</code>)</td></tr>
-    <tr><td><code>&gt;</code></td><td><code>?&gt;</code></td><td>Greater Than</td></tr>
-    <tr><td><code>&gt;=</code></td><td><code>?&gt;=</code></td><td>Greater Than / Equal</td></tr>
-    <tr><td><code>&lt;</code></td><td><code>?&lt;</code></td><td>Less Than</td></tr>
-    <tr><td><code>&lt;=</code></td><td><code>?&lt;=</code></td><td>Less Than / Equal</td></tr>
-    <tr><td><code>!(x &gt y)</code></td><td><code>x !&gt; y</code></td><td>Not Greater Than</td></tr>
+    <tr><td><code>x &gt; y</code></td><td><code>x ?&gt;y</code></td><td>Greater Than</td></tr>
+    <tr><td><code>x &gt;= y</code></td><td><code>x ?&gt;= y</code></td><td>Greater Than / Equal</td></tr>
+    <tr><td><code>x &lt; y</code></td><td><code>x ?&lt; y</code></td><td>Less Than</td></tr>
+    <tr><td><code>x &lt;= y</code></td><td><code>x ?&lt;= y</code></td><td>Less Than / Equal</td></tr>
+    <tr><td><code>!(x &gt; y)</code></td><td><code>x !&gt; y</code></td><td>Not Greater Than</td></tr>
     <tr><td><code>!(x &gt;= y)</code></td><td><code>x !&gt;= y</code></td><td>Not Greater Than / Equal</td></tr>
     <tr><td><code>!(x &lt; y)</code></td><td><code>x !&lt; y</code></td><td>Not Less Than</td></tr>
     <tr><td><code>!(x &lt;= y)</code></td><td><code>x !&lt;= y</code></td><td>Not Less Than / Equal</td></tr>
-    <tr><td><code>y &gt; x &amp;&amp; y &lt; z</code></td><td><code>|?&lt;&gt; x,y,z|</code></td><td>In Between, Not Inclusive </td></tr>
-    <tr><td><code>y &lt; x || y &gt; z</code></td><td><code>|!&lt;&gt; x,y,z|</code></td><td>Not In Between, Not Inclusive </td></tr>
-    <tr><td><code>y &gt;= x &amp;&amp; y &lt;= z</code></td><td><code>|?&lt;=&gt; x,y,z|</code></td><td>In Between, Inclusive</td></tr>
-    <tr><td><code>y &lt;= x || y &gt;= z</code></td><td><code>|!&lt;=&gt; x,y,z|</code></td><td>Not In Between, Inclusive</td></tr>
+    <tr><td><code>y &gt; x &amp;&amp; y &lt; z</code></td><td><code>(?&lt;&gt;)(x,y,z)</code></td><td>In Between, Not Inclusive </td></tr>
+    <tr><td><code>y &lt; x || y &gt; z</code></td><td><code>(!&lt;&gt;)(x,y,z)</code></td><td>Not In Between, Not Inclusive </td></tr>
+    <tr><td><code>y &gt;= x &amp;&amp; y &lt;= z</code></td><td><code>(?&lt;=&gt;)(x,y,z</code></td><td>In Between, Inclusive</td></tr>
+    <tr><td><code>y &lt;= x || y &gt;= z</code></td><td><code>(!&lt;=&gt;)(x,y,z)</code></td><td>Not In Between, Inclusive</td></tr>
     <tr><td><code>+</code></td><td><code>+</code></td><td>Plus/Concatenation</td></tr>
     <tr><td><code>-</code></td><td><code>-</code></td><td>Minus</td></tr>
     <tr><td><code>*</code></td><td><code>*</code></td><td>Multiply</td></tr>
@@ -68,6 +68,7 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>function myFunc(...params) ..</code></td><td><code>defn myFunc(*params) ..</code></td><td>Function Rest Parameter</td></tr>
     <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
     <tr><td><code>myFunc(...args)</code></td><td><code>myFunc(...args)</code></td><td>Function Call Argument Spread</td></tr>
+    <tr><td><code>myFunc({ x: 1, y: 2 })</code></td><td><code>myFunc(x:1, y:2)</code></td><td>"Named Arguments" (at call-site) Idiom</td></tr>
     <tr><td><code>x > 0 ? y : z</code> <code>if (x > 0) y else z</code><br><code>switch (true) case (x > 0): y; break; default: z</code></td><td><code>?{ ?[x ?> 0]: y; ?: z }</code><br><code>?(x){ ?[?> 0]: y; ?: z }</code></td><td>Decision Making (Foi Pattern Matching)</td></tr>
     <tr><td><code>if (x > 0) myFunc(x)</code></td><td><code>?[x ?> 0]: myFunc(x)</code></td><td>Statement Guard Clause</td></tr>
     <tr><td><code>for (..)</code> <code>while (..)</code> <code>do .. while (..)</code></td><td><code>~each</code></td><td>Imperative Loop</td></tr>
@@ -93,10 +94,10 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>try .. catch</code></td><td>(not in Foi)</td><td></td></tr>
     <tr><td><code>x === y</code> <code>x++</code> <code>++x</code> <code>x--</code> <code>--x</code> <code>x += y</code> <code>x -= y</code> <code>x *= y</code> <code>x /= y</code> <code>x %= y</code> <code>x &= y</code> <code>x |= y</code> <code>x **= y</code> <code>x &amp;&amp;= y</code> <code>x ||= y</code> <code>x ??= y</code> <code>x &lt;&lt;= y</code> <code>x &gt;&gt;= y</code> <code>x &gt;&gt;&gt;= y</code> <code>x ** y</code> <code>x &lt;&lt; y</code> <code>x &gt;&gt; y</code> <code>x &gt;&gt;&gt; y</code> <code>~x</code> <code>x % y</code> <code>x &amp; y</code> <code>x | y</code> <code>x ^ y</code> <code>x?.y</code> <code>x?.[y]</code> <code>x?.(y)</code> <code>x ?? y</code></td><td>(not in Foi)</td><td></td></tr>
     <tr><td>----------------</td><td>--------------------</td><td>--------------------</td></tr>
-    <tr><td>(not in JS)</td><td><code>|myFunc 1,2,3|</code> <code>|+ 1,2,3|</code></td><td>Lisp-like Function/Operator Invocation</td></tr>
-    <tr><td>(proposed for JS)</td><td><code>|myFn 1,,|</code> <code>|myFn 1,,3|</code></td><td>Function Partial Application</td></tr>
-    <tr><td>(not in JS)</td><td><code>|'myFn 3,2,1|</code></td><td>Function Reverse Application</td></tr>
-    <tr><td>(not in JS)</td><td><code>|#&gt; 42,...fns|</code></td><td>Dynamic Pipeline</td></tr>
+    <tr><td>(not in JS)</td><td><code>(*)(2,3,4)</code></td><td>N-Ary Operator (as function) Invocation</td></tr>
+    <tr><td>(proposed for JS)</td><td><code>myFn|1|</code> <code>myFn|1,,3|</code></td><td>Function Partial Application</td></tr>
+    <tr><td>(not in JS)</td><td><code>myFn'(3,2,1)</code></td><td>Function Reverse Application</td></tr>
+    <tr><td>(not in JS)</td><td><code>(#&gt;)(42,...fns)</code></td><td>Dynamic Pipeline</td></tr>
     <tr><td>(not in JS)</td><td><code>arr.<0,2,3></code> <code>obj.&lt;first,last,email&gt;</code></td><td>Record/Tuple Subset Selection</td></tr>
     <tr><td>(not in JS)</td><td><code>2..5</code> <code>"a".."f"</code></td><td>Range Of Sequential Values</td></tr>
     <tr><td>(not in JS)</td><td><code>:over (..)</code></td><td>Closure Side Effect Declaration</td></tr>

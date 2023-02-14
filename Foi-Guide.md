@@ -15,13 +15,11 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
 * [Code Comments](#code-comments)
 * [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
-* [Evaluation-Expression Form](#evaluation-expression-form) (optional lisp-like function call form)
-    - [Expression Readability](#expression-readability)
-    - [Motivations](#motivations)
+    - [Invoking Operators As Functions](#invoking-operators-as-functions)
+    - [Apply (aka Spread)](#apply-aka-spread)
     - [Reversing Argument Order](#reversing-argument-order)
     - [Partial Application](#partial-application)
-    - [N-Ary Operators](#n-ary-operators)
-    - [Apply (aka Spread)](#apply-aka-spread)
+    - [Named Arguments](#named-arguments)
 * [Defining Variables](#defining-variables)
     - [Block-Definitions Clause](#block-definitions-clause)
     - [Destructured Definitions](#destructured-definitions)
@@ -37,12 +35,11 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Progressive Definition](#progressive-definition)
     - [Maps](#maps)
     - [Sets](#sets)
-* [Functions](#functions)
+* [Defining Functions](#defining-functions)
     - [Default Parameter Values](#default-parameter-values)
     - [Gathering Arguments](#gathering-arguments)
     - [Negating a Predicate](#negating-a-predicate)
     - [Function Pre-conditions](#function-pre-conditions)
-    - [Named Arguments](#named-arguments)
     - [Function Recursion](#function-recursion)
     - [Function Currying](#function-currying)
     - [Function Overs](#function-overs)
@@ -328,226 +325,27 @@ Omitting an argument is the same as specifying `empty` for that argument:
 myFn(1,empty,3,empty,empty,6);
 ```
 
-**Note:** Trailing comma(s) are allowed (and ignored).
+**Note:** Trailing comma(s) in the argument list are allowed (and ignored).
 
-## Evaluation-Expression Form
+### Invoking Operators As Functions
 
-All function calls and operators can optionally be evaluated in a lisp-like evaluation-expression form (aka [S-expressions](https://en.wikipedia.org/wiki/S-expression)), with `| |` delimiters, instead of the canonical `( )` Lisp parentheses:
-
-```java
-def < :log >: import "#Std";
-
-| log "Hello" |;               // "Hello"
-
-| log | + 6, 12 ||;            // 18
-```
-
-**Note:** Whitespace is optional inside the `|    |` form, except as required between the first element -- this must be function-resolving expression, including operators -- and the comma-separated argument list (e.g., `6, 12` above). So, `|log "Hello"|` and `|log |+ 6,12||` are the minimal whitespace forms of the above code snippet.
-
-Any function name -- or expression that evaluates to a function -- can be used in the first (callee) position of the `|    |` expression. However, with one exception, keywords (`import`, `def`, etc) may not be used in the callee position.
-
-----
-
-The `defn` keyword (for function definitions -- see later) is the single exception; this keyword can be used as a (function-defining!) function in the evaluation-expression form. The single argument to `defn` is the full function signature (including any optional whitespace):
-
-```js
-def fn: | defn myFn(x) ^x + 1 |;
-
-// equivalent to:
-def fn: defn myFn(x) ^x + 1;
-```
-
-In the above snippet, it doesn't seem like the special case `| defn    |` form offers any benefit, as the shorter form without the `|    |` is identical.
-
-It can be helpful for readability sake, when visually delimiting an inline function definition (aka, a "lambda") inside another evaluation-expression. In fairness, perhaps a wrapping `(    )` would be better here than a wrapping `|    |`. More on this in the following sections.
-
-### Expression Readability
-
-It's clearly an idiosyncratic choice for **Foi** to use `|    |` [for its S-expressions](https://en.wikipedia.org/wiki/S-expression), instead of the nearly-universal `(    )` Lisp form.
-
-I wanted to take a moment to explain my justification for this choice.
-
-Unlike all those other Lisp languages, **Foi** takes the very unusual step of combining a prefix-Lisp form in the same language as an prefix function call form.
-
-And because of the strong familiarity (from non-Lisp languages) of function calls looking like `whatever(42)`, the `( )` must be used for delimiting the argument list, with the function callee prefixed on the outside. Moreover, `(    )` is extremely common (in prefix language form) for expression grouping, providing yet another complication.
-
-Syntactically/grammatically, it's thus challenging to support variations like `whatever(42)` (prefix function call form), `(whatever 42)` (prefix Lisp form), and `(42 + whatever())` (infix expression grouping)... all in the same language, especially as these expressions nest inside each other in complicated ways.
-
-Simpler Lisp languages are free to use `(    )` for their S-expressions mostly because they don't really use `(    )` for any of these other purposes. However, **Foi** must address the conflation issue.
-
-Even if it wasn't grammatically hard for all these forms to co-exist in **Foi**, I believe it would be a significant readability barrier for authors and readers of such code, to be encountering frequent `(    )` conflation (use for different purposes) in the same program.
-
-As such, I've chosen for **Foi** to use something other than `(    )` for delimiting its evaluation-expression (Lisp) form.
-
-----
-
-Unfortunately, `[    ]`, `<    >`, and (especially!) `{    }` pairs are already reserved for other important purposes, so they're out of consideration.
-
-There's no more standard character pairs that have visually-obvious opening and closing characters (`/` and `\` have obvious conflicts). We've also [explored a variety of other options](https://github.com/getify/foi-lang/discussions/4), including arbitrary forms like `$    |`, or multi-character delimiters (`[|    |]`, etc).
-
-Ultimately, it seems to me like the best option is just bare `|    |`, given their "tall" visual distinctiveness.
-
-Regrettably, this choice doesn't provide any distinction between opening and closing characters in a pair. It means that in some cases, sequences where a `|` appears adjacent to another `|` may be a bit confusing/visually ambiguous; they could be two opening or two closing characters (most likely), or it could be a closing followed by an opening, or the reverse.
-
-Still, there's some visual ambiguity downsides to `|` being used as an enclosing pair this way.
-
-----
-
-Let's consider a particularly nasty looking (albeit contrived/pathological) example:
+When you need to specify three or more operands (aka, "n-ary") to an operator, you need to invoke the operator as a function (herein referred to as *operator-as-function* form). To do so, wrap the operator in `( )` parentheses (no whitespace within), then invoke with arguments like a normal function:
 
 ```java
-||defn(x,y)^x+y| |+ 1,2,whatever(3)|,|* |+ 1,2,|/ 1,2||,3||;
-```
-
-That's a bit tough to visually parse out, right!?
-
-Indentation/new-lines are often used in Lisp-style to aid readability:
-
-```java
-|defn(x,y)^x+y
-    |+ 1,2,whatever(3)|,
-    |* |+ 1,2,
-        |/ 1,2||,
-        3||;
-```
-
-**Note:** with this formatting, the `defn ..` expression can visually stand alone on the first line, without *needing* its own `|    |` (or `(    )`) wrapping around it.
-
-Better? A bit.
-
-Here's what the typical Lisp-style version with `(    )` would look like (but still with **Foi** commas between arguments, instead of only whitespace):
-
-```java
-(defn(x,y)^x+y
-    (+ 1,2,whatever(3)),
-    (* (+ 1,2,
-        (/ 1,2)),
-        3));
-
-// without newlines/indentation:
-((defn(x,y)^x+y) (+ 1,2,whatever(3)),(* (+ 1,2,(/ 1,2)), 3));
-```
-
-**Note:** In the single-line form, I added `(    )` around the `defn ..` just for a bit of extra clarity.
-
-TBH, I'm not sure canonical `(    )` Lisp form is *significantly* more readable. But at least it's clear what's opening `(`, and what's closing `)`.
-
-----
-
-Let's finally look at what I'm proposing as **Foi**'s readability compromise. In any case where two or more `|` characters might appear adjacent to each other, and there's a concern that it's not clear what each one means, use `(    )` grouping around each `|    |` expression -- always valid grammatically -- to visually disambiguate.
-
-Consider:
-
-```java
-(|defn(x,y)^x+y
-    (|+ 1,2,whatever(3)|),
-    (|* (|+ 1,2,
-        (|/ 1,2|)|),
-        3|)|);
-
-// without newlines/indentation:
-(|(defn(x,y)^x+y) (|+ 1,2,whatever(3)|),(|* (|+ 1,2,(|/ 1,2|)|),3|)|);
-```
-
-Take a few moments for that to sink in.
-
-This approach essentially means `(|    |)` is an optional evaluation-expression form, as opposed to the bare `|    |` form.
-
-Even though it's more characters to type and read, I honestly kind of like it; I find it a bit easier to scan. It's not only clear where opening and closing are happening, but *also* clear where evaluation-expression is happening separate from any other use of `(    )`.
-
-You could even just think of `(|` as the opening tag and `|)` as the closing tag -- perhaps even "requiring" them in your own code/style guide/linting -- if you favor the consistency and don't mind the double-character delimiters.
-
-That's probably what I will do, personally. Given the above analysis and constraints, I think this is a reasonable compromise for **Foi** to make.
-
-### Motivations
-
-So... why does **Foi** even include this optional Lisp-like form? It adds complexity to the language -- for implementers, authors, and readers! -- but for what purpose?
-
-The primary reason for the `|    |` evaluation-expression form in **Foi** is that it allows quite a bit of additional flexibility/capability at the call-site that isn't possible with the traditional prefix call-site form (e.g., `whatever(1,2,3)`). In particular, it allows operators to be treated as more general function calls.
-
-We'll cover many of those capabilities over several following sub-sections.
-
-### Reversing Argument Order
-
-One such flexibility is that we can control the treatment of input arguments in various ways.
-
-Some operators like `+` are commutative, so the operand/argument order doesn't matter. But other operators, like `-`, are not commutative, so the order matters.
-
-To reverse the order of applied arguments of the operator-function in question, we can use the `'` prime operator, applied first to the function:
-
-```java
-| | ' - | 1, 6 |;               // 5
-```
-
-Yes, with `| ' - |`, we just applied one operator against another operator!
-
-**Note:** The `'` prime operator has no prefix-operator form (like `'something(42)` or `1 '- 6`); that sort of syntax could cause chaos for readability. Thus, it can only be used inside an evaluation-expression form, as shown above.
-
-Since this operation will be extremely common, a special sugar short-hand is available. The `'` prime operator may appear immediately preceding (no whitespace) the operator/function (or expression) it's modifying:
-
-```java
-| '- 1, 6 |;                    // 5
-```
-
-This short-hand form of `'` should be preferred for readability sake wherever practical.
-
-### Partial Application
-
-It's common in functional programming to produce more specialized functions by applying only some inputs to a more generalized (higher-arity) function; the result is a another function that expects the subsequent arguments.
-
-This is referred to as partial application, and is another flexible capability afforded by the evaluation-expression form.
-
-Consider the `+` mathematical operator, which has a minimum arity of 2. If we provide it only one argument, the result is a partially applied function that's still waiting for the second argument:
-
-```java
-| | + 6 | 12 |;                 // 18
-```
-
-Here, the `| + 6 |` creates the partially applied (operator) function, which is then provided a second argument `12` in the outer `|    12 |` expression.
-
-**Note:** As with the traditional call form, arguments can be skipped with successive `,` commas with nothing (except optional whitespace) between them. Also trailing comma(s) are allowed (but ignored). As such, an expression like `| myFn 1, 2, |` will be treated (for partial application argument counting purposes) as 2 arguments, not 3. To specify a third affirmative empty argument at the end of the list, add an additional trailing `,` comma (e.g., `| myFn 1, 2,, |`) or specify `empty` explicitly (e.g., `| myFn 1, 2, empty |`).
-
-Partial application operates according to the default argument ordering, which is left-to-right. However, it's quite common (especially with operators) to want to reverse the partial application order (right-to-left). This is most useful for producing point-free expressions.
-
-For example, let's say we want to produce a function (from the `-` operator) that will subtract `1` from its next input value. How do we partially apply the `1` when it's the second/right-most argument?
-
-To accomplish this, recall the `'` prime operator, which reverses the argument ordering:
-
-```java
-| | '- 1 | 6 |;                 // 5
-```
-
-The `| '- 1 |` evaluation-expression applies `1` as the right-most argument to `-`, and since that's the only argument provided, the result is a right-partially applied function.
-
-*That* function -- which is back to regular left-to-right ordering, by the way -- is then expecting its final argument, which is then provided by the outer `|    6 |` evaluation-expression.
-
-### N-Ary Operators
-
-Another advantage of this form is that it allows n-ary operators -- operators accepting 3 or more operand inputs -- where typically prefix/infix/suffix operators would be limited to unary (single operand) or binary (two operands) usage.
-
-Many operators in **Foi** are n-ary, such as the `+` operator, `+>` flow (composition) operator, and `?<=>` range-check operator.
-
-For example, say you want to add 5 numbers together. You can obviously do:
-
-```java
-1 + 2 + 3 + 4 + 5;
-```
-
-But because `+` is an n-ary operator, you can also do:
-
-```java
-| + 1, 2, 3, 4, 5 |;
+(+)(1,2,3,4,5);         // 15
 ```
 
 It's nice to only need to list the operator once instead of 4 times!
 
-Still, as the `+` operator is a single symbol, this example (including padded whitespace) yields a slightly longer expression, which may seem disfavorable.
+Many operators in **Foi** are n-ary, such as the `+` operator, `+>` flow (composition) operator, and `?<=>` range-check operator.
 
-However, other operators are comprised of two or more symbols, so the length of the evaluation-expression form will likely end up shorter depending on how many arguments are provided.
+The `+` operator is a single symbol, so the preceding example yields a longer expression than just repeating the `+` operator between each value, which may seem disfavorable.
+
+However, other operators are comprised of two or more symbols, so the length of the operator-as-function form will likely end up shorter depending on how many arguments are provided.
 
 Also, some operators may result in a change of value-type from the operand(s) to the result. In those cases, you cannot simply combine multiple infix operator usages like we did with `+`.
 
-For example, say you wanted to test 3 variables as all being equal to each other. The `?=` infix operator can only accept two operands (left and right), so we're forced to do multiple expressions, and combine their results with the logical-AND `?and` operator:
+For example, say you wanted to test 3 variables as all being equal to each other. The `?=` operator used with two operands (left and right), requires multiple expressions, and combining their results with the logical-AND `?and` operator:
 
 ```java
 (x ?= y) ?and (y ?= z) ?and (x ?= z);
@@ -555,38 +353,161 @@ For example, say you wanted to test 3 variables as all being equal to each other
 
 **Note:** The `?=` equality comparison may not be transitive, depending on the types being compared, hence why we included the `x ?= z` check for good measure.
 
-But since the `?=` operator is n-ary, we can provide it 3 or more arguments using the evaluation-expression form, resulting in a much shorter/nicer-to-read expression:
+But since the `?=` operator is also n-ary, we can invoke it as a function and provide it 3 or more arguments, resulting in a much shorter/nicer-to-read expression:
 
 ```java
-| ?= x, y, z |;
+(?=)(x, y, z);
 ```
 
-It should be clear how much more preferable n-ary operator evaluation can be!
+It should be clear how much more preferable the n-ary operator-as-function form can be!
+
+If you only want to capture (or pass) a function reference for an operator, without invoking it:
+
+```java
+def add: (+);
+def subtract: (-);
+
+add(2,5);           // 7
+subtract(8,5);      // 3
+```
 
 ### Apply (aka Spread)
 
-Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator (only available in the evaluation-expression form):
+Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator:
 
 ```java
-| + ...numbers |;
-| + 0, ...numbers, 1000 |;
+add(...numbers);
+add(0, ...numbers, 1000);
+(+)(...numbers);
+(+)(0, ...numbers, 1000);
 ```
 
 OK, that's useful. But what about modifying an operator/function to automatically accept its inputs as a list?
 
 ```java
-| | ... + | numbers |;
+def addNumsList: (...)(+);
+addNumsList(numbers);
 ```
 
-Since `...` is an operator, when applied against an operator/function like `+`, it produces a new function that will expect a single (Tuple) argument that's then *spread out* to the underlying operator/function.
+Since `...` is an operator, when passed an operator/function like `+`, instead of a Tuple, it produces a new function (above, `addNumsList()`) that will expect a single (Tuple) argument that's then *spread out* to the underlying operator/function when invoked.
 
-----
+### Reversing Argument Order
 
-As you can see from the last several sections, there's lots of additional power in the evaluation-expression form, but there are yet still other capabilities that we'll encounter later in this guide.
+Some operators like `+` are commutative, so the operand/argument order doesn't matter (e.g., `3 + 4` is the same as `4 + 3`). But for most functions and operators, like `-`, arguments are not commutative, so the order matters.
+
+It happens often, especially when spreading a list of arguments, that the expected order is the opposite of what we want. Instead of reversing the order of the Tuple list of arguments, you can reverse the order that a function will apply its supplied arguments.
+
+To do so, use the postfix (immediately after!) `'` prime operator on the function/operator reference:
+
+```java
+myFunc'(...nums);               // aka, myFunc(...numsReversed)
+
+(-)'(1,6);                      // 5 :: 6 - 1
+```
+
+Since `'` is an operator, you can also use invoke it as a function, passing to it another function or operator:
+
+```java
+def subtrRev: (')(-);
+
+subtrRev(1,6);                  // 5
+```
+
+Yes, with `(')(-)`, we just applied one operator against another operator, producing a new function.
+
+Since this operation will be extremely common, a special sugar short-hand is available. Inside a `( )` operator-as-function reference, the `'` prime operator may appear immediately after (no whitespace) the operator it's modifying:
+
+```java
+(-')(1,6);                      // 5
+```
+
+This short-hand form `(-')` should be preferred over the more verbose `(')(-)` form, for readability sake, wherever practical. Thus these are all equivalent, but the final one is generally preferable:
+
+```java
+(')(-)(1,6);                    // 5
+(-)'(1,6);                      // 5
+(-')(1,6);                      // 5
+```
+
+### Partial Application
+
+It's common in functional programming to produce more specialized functions by applying only some inputs to a more generalized (higher-arity) function; the result is a another function that expects the subsequent arguments.
+
+This is referred to as partial application.
+
+To signify a partial application, use `|    |` (pipes) to delimit the arguments list, instead of the traditional `(    )` parentheses:
+
+```java
+def add6: (+)|6|;
+
+add6(12);                       // 18
+```
+
+Regardless of the arity (expected number of arguments) of the function or operator, and no matter how many arguments you pass, the `|    |` will always *partially apply*, meaning the arguments are remembered for later, but the function is not yet invoked:
+
+```java
+def add37: (+)|6,12,19|;
+
+add37(5);                       // 42
+```
+
+Partial application is also useful when you need to skip specific positional arguments (and thus provide them on the final invocation):
+
+```java
+defn xyz(x,y,z)^log(`"x: `x`, y: `y`, z: `z`");
+
+xyz(2,4,6);                     // x: 2, y: 4, z: 6
+
+def fn: xyz|3,,7|;
+
+fn(5);                          // x: 3, y: 5, z: 7
+```
+
+Reversing argument order with the `'` prime operator combines with the partial application form, as expected:
+
+```java
+def sub1: (-')|1|;
+
+sub1(6);                        // 5 :: 6 - 1
+```
+
+The `...` spread operator is allowed inside the partial application arguments list:
+
+```java
+defn xyz(x,y,z)^log(`"x: `x`, y: `y`, z: `z`");
+
+def nums: < 9, 8, 7 >;
+def fn: xyz'|...nums|;
+
+fn();                           // x: 7, y: 8, z: 9
+```
+
+### Named Arguments
+
+To override positional argument->parameter binding at a function call-site, an argument can specify which parameter name it corresponds to (in any order):
+
+```java
+defn add(x: 0, y) ^x + y;
+
+add(x:3, y:4);                  // 7
+add(y:5);                       // 5
+
+add|x:4|(y:5);                  // 9
+```
+
+**Warning:** Be careful in relying on this capability, as it creates an additional refactoring dependency burden between the function definition and its call-site(s). If you change the name of a parameter in a function definition, any named-argument references at all call-sites must be updated.
+
+This code style means that function parameter naming has readability implications at call-sites. If you are using this code style at call-sites, consider "standardizing" certain generic variable naming conventions in your function definitions, to make using such functions predictable.
+
+For example:
+
+* a general value parameter might always be named `v` or `val`
+* a function-value parameter might always be named `cb` or `fn`
+* a list/array parameter might always be named `list`, `arr`, or even `vs` (i.e., the plural of `v`)
 
 ## Defining Variables
 
-To define variables, use the `def` keyword (not an operator/function).
+To define variables, use the `def` keyword (not an operator/function):
 
 ```java
 def age: 42;
@@ -611,8 +532,6 @@ Multiple re-assignments (of the same value) can also be chained:
 
 ```java
 x := y := z := 0;
-
-| := x, y, z, 0 |;
 ```
 
 `def` definitions attach to the nearest enclosing scope, whether that be module, function, or block. A block-scoped variable definition is thus:
@@ -735,7 +654,7 @@ def isSuccess: false;
 isValid ?and isComplete;                    // true
 isValid ?and isComplete ?and isSuccess;     // false
 
-| ?and isValid, isComplete, isSuccess |;    // false
+(?and)(isValid, isComplete, isSuccess);     // false
 ```
 
 And for logical-OR (`?or`):
@@ -747,10 +666,10 @@ def isSuccess: false;
 
 isValid ?or isComplete ?or isSuccess;       // true
 
-| ?or isValid, isComplete, isSuccess |;     // true
+(?or)(isValid, isComplete, isSuccess);      // true
 ```
 
-**Note:** As you can see, the `?and` and `?or` operators are n-ary, meaning they can take 2 or more arguments -- but only in the evaluation-expression form.
+**Note:** As you can see, the `?and` and `?or` operators are n-ary, meaning they can take 2 or more arguments.
 
 Any `?`-prefixed logical boolean operator can be flipped/negated by swapping the `?` character with `!` in the operator. For example, `!and` is *NAND* (not-and) and `!or` is *NOR* (not-or):
 
@@ -787,10 +706,10 @@ def z: 100;
 
 x ?= 42;                    // true
 
-| ?= x, y, z |;             // false
+(?=)(x, y, z);              // false
 ```
 
-**Note:** `?=` is another n-ary operator in the evaluation-expression form. Keep in mind, equality comparison in **Foi** is not necessarily transitive.
+**Note:** `?=` is another n-ary operator in the operator-as-function form. Keep in mind, equality comparison in **Foi** is not necessarily transitive.
 
 The `empty` value semantically means *absence of a value*. As such, checking for equality with `empty` is somewhat of a confusing construct. It's valid to do so (`x ?= empty`), but a dedicated `?empty` prefix boolean operator is provided to reduce confusion:
 
@@ -805,8 +724,8 @@ y ?= empty;                 // true  -- but a bit confusing!
 ?empty x;                   // false
 ?empty y;                   // true  -- clearer!
 
-| ?empty x, y, z |;         // false
-| ?empty y, z |;            // true
+(?empty)(x, y, z);          // false
+(?empty)(y, z);             // true
 ```
 
 ----
@@ -831,7 +750,7 @@ x ?<= x;                    // true
 y ?>= y;                    // true
 ```
 
-**Note:** These four operators are also n-ary operator in the evaluation-expression form. They compare the first operand against all other operands/inputs. For example, `| ?< x, y, z |` is the equivalent of `(x ?< y) ?and (x ?< z)`, but *does not* compare `y ?< z`.
+**Note:** These four operators are also n-ary operators. They compare the first operand against all other operands/inputs. For example, `(?<)(x, y, z)` is the equivalent of `(x ?< y) ?and (x ?< z)`, but *does not* compare `y ?< z`.
 
 A very common task is to check if a value is in a range between two other values:
 
@@ -841,16 +760,16 @@ def x: 100;
 (x ?> 0) ?and (x ?< 500);   // true
 ```
 
-However, this can be done more idiomatically with the range-check operators, `?<>` (non-inclusive) and `?<=>` (inclusive):
+However, this can be done more idiomatically with the n-ary range-check operators, `?<>` (non-inclusive) and `?<=>` (inclusive):
 
 ```java
 def x: 100;
 
-| ?<>  0,   x, 500 |;   // true
-| ?<=> 100, x, 100 |;   // true
+(?<>)( 0,   x, 500);     // true
+(?<=>)(100, x, 100);     // true
 ```
 
-**Note:** Because these two operators have an arity of exactly 3, they cannot be used in the typical infix expression form, which would only allow two operands (left and right).
+**Note:** Because these two operators have an arity of (exactly) 3, they cannot be used in the typical infix expression form, which would only allow two operands (left and right).
 
 ----
 
@@ -877,10 +796,10 @@ x !< y;                 // false
 x ?<= y;                // true
 x !<= y;                // false
 
-| ?<>  40,  x, 50  |;   // true
-| !<>  40,  x, 50  |;   // false
-| ?<=> 100, y, 100 |;   // true
-| !<=> 100, y, 100 |;   // false
+(?<>)( 40,  x, 50  );   // true
+(!<>)( 40,  x, 50  );   // false
+(?<=>)(100, y, 100 );   // true
+(!<=>)(100, y, 100 );   // false
 ```
 
 ## Pattern Matching
@@ -1045,7 +964,7 @@ person[prop];                   // "Simpson"
 
 Above, Record/Tuple fields are accessed with `.` operator, whether numeric or lexical-identifier. `[    ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
 
-Since `.` is an operator, Record/Tuple field access can also be performed in the evaluation-expression form, in which case it evaluates the second argument as an expression (like the `[    ]` form does):
+Since `.` is an operator, Record/Tuple field access can also be performed in the operator-as-function form, in which case it evaluates the second argument as an expression (like the `[    ]` form does):
 
 ```java
 def idx: 2;
@@ -1053,28 +972,14 @@ def prop: "last";
 
 def numbers: < 4, 5, 6 >;
 
-| . numbers, 1 |;               // 5
-| . numbers, idx |;             // 6
+(.)(numbers, 1);                // 5
+(.)(numbers, idx);              // 6
 
 def person: < first: "Kyle", last: "Simpson" >;
 
-| . person, "first" |;          // "Kyle"
-| . person, prop |;             // "Simpson"
+(.)(person, "first");           // "Kyle"
+(.)(person, prop);              // "Simpson"
 ```
-
-To define Records/Tuples using arbitrary expressions (other than simple identifiers) for the values, use the evaluation-expression form:
-
-```java
-def < :String.uppercase >: import "#Std";
-
-def five: 5;
-def numbers: < 4, five, 6 >;
-
-def surname: "Simpson";
-def person: < first: "Kyle", last: |uppercase surname| >;
-```
-
-**Note:** To keep Record/Tuple syntax complexity to a minimum, *only* the `|    |` form of evaluation-expression (function invocation, operators, etc) is allowed inside the `<    >` literal definition.
 
 Strings are just syntax sugar for Tuples of characters. Once defined, a string and a Tuple of characters will behave the same.
 
@@ -1160,10 +1065,10 @@ You can determine if a value is *in* a Tuple with the `?in` / `!in` operator:
 def numbers: < 4, 5, 6 >;
 
 7 ?in numbers;                  // false
-| ?in 4 numbers |;              // true
+(?in)(4,numbers);               // true
 
 7 !in numbers;                  // true
-| !in 4 numbers |;              // false
+(!in)(4,numbers);               // false
 ```
 
 **Note:** The `in` operator only inspects numerically indexed fields.
@@ -1181,16 +1086,16 @@ person !has "nickname";         // true
 
 ### Generating Sequences (Ranges)
 
-If you want to generate a list (Tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or evaluation-expression form).
+If you want to generate a list (Tuple) of sequential ([aka "interval"](https://www.graphpad.com/support/faq/what-is-the-difference-between-ordinal-interval-and-ratio-variables-why-should-i-care/)) data, you can use the binary `..` range operator (either infix or operator-as-function form).
 
-This usage of the `..` operator is valid with naturally sequential (ordered, fixed interval) values, such as integers and characters:
+This usage of the `..` range operator is valid with naturally sequential (ordered, fixed interval) values, such as integers and characters:
 
 ```java
 def someInts: 2..13;
 
 someInts.5;                     // 7
 
-def alphabet: | .. "a", "z" |;
+def alphabet: (..)("a", "z");
 
 alphabet.5;                     // "e"
 ```
@@ -1230,14 +1135,14 @@ def numbers: < 3, 4, 5, 6, 7 >;
 def evenDigits: numbers.<1,3>;
 // < 4, 6 >
 
-| .<1,3> numbers |;
+(.<1,3>)(numbers);
 // < 4, 6 >
 
 def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
 def profile: person.<first,nickname>;
 // < first: "Kyle", nickname: "getify" >
 
-| .<first,nickname> person |;
+(.<first,nickname>)(person);
 // < first: "Kyle", nickname: "getify" >
 ```
 
@@ -1258,7 +1163,7 @@ def tail: numbers.[1..];            // < 4, 5, 6, 7 >
 
 def middle: numbers.[1..3];         // < 4, 5, 6 >
 
-| .[1..3] numbers |;                // < 4, 5, 6 >
+(.[1..3])(numbers);                 // < 4, 5, 6 >
 ```
 
 **Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols, nor can the `1..3` expression have whitespace; however, whitespace is allowed *around* the range (`.[ 1..3 ]`).
@@ -1281,7 +1186,7 @@ def friend: < &person, first: "Jenny" >;
 // < first: "Jenny", last: "Simpson" >
 ```
 
-**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a static `<    >` Record/Tuple definition; it cannot be used in a `<{    }>` *def-block* or the evaluation-expression `|    |`.
+**Note:** `&` (*pick*) is a sigil, not an operator, and only has meaning inside a static `<    >` Record/Tuple definition.
 
 The annotations `&numbers` and `&person` *pick* the entire contents of `numbers` and `person`, respectively, to be included in the new Tuple and Record values. The order of field definitions is always left-to-right, so subsequent field definitions override previous ones; thus, `first: "Kyle"` is reassigned to `first: "Jenny"` above.
 
@@ -1383,7 +1288,7 @@ Since Records and Tuples are immutable, if you need to define them bit by bit --
 
     record := <
         &record,
-        orderTotal: |~fold orders, (total,order) { total + order.total }|
+        orderTotal: (~fold)(orders, (total,order) { total + order.total })
     >;
     ```
 
@@ -1462,7 +1367,7 @@ set1 !$= set3;                  // true
 
 **Note:** Unordered (Set equality) comparison is slower than ordered comparison (Tuple equality). This cost is worth paying if you really need to compare two Sets, but it may be worth examining if a different approach is feasible.
 
-## Functions
+## Defining Functions
 
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
@@ -1474,7 +1379,6 @@ Function definitions are always hoisted to their enclosing scope:
 
 ```java
 add(6,12);                          // 18
-| add 6, 12 |;                      // 18
 
 defn add(x,y) { ^x + y; }
 ```
@@ -1490,24 +1394,18 @@ add(6,12);                          // 18
 somethingElse(myFn);
 ```
 
-Function definition expressions can also be immediately invoked, using the evaluation-expression:
+Function definition expressions can also be immediately invoked, a so-called (IIFE: Immediately Invoked Function Expression):
 
 ```java
-|
-    |defn add(x,y) { ^x + y; }| 6, 12
-|;                                  // 18
+(defn add(x,y){ ^x + y; })(6, 12);  // 18
 ```
-
-**Note:** In the above example, the `|` pair surrounding the `defn` expression is technically optional. But it's recommended for readability sake, to visually disambiguate where the inline function expression begins and ends.
 
 Concise function definitions may omit the name and/or the `{    }` around the body, but the concise body must be an expression marked by the initial `^` return sigil:
 
 ```java
-def myFn: defn(x,y) ^x + y;
+def myFn: defn(x,y)^x + y;
 
-|
-    |defn(x,y) ^x + y| 6, 12
-|;                                  // 18
+(defn add(x,y)^x + y)(6, 12);       // 18
 ```
 
 ### Default Parameter Values
@@ -1522,15 +1420,13 @@ The default is applied if the corresponding argument supplied has the `empty` va
 
 ### Gathering Arguments
 
-To specify a function that collects all individual/positional arguments into a single list (Tuple):
+To specify a function that collects all individual/positional arguments into a single parameter (as a list/Tuple):
 
 ```java
-defn add(*nums) ^| + ...nums |;
+defn add(*nums) ^(+)(...nums);
 ```
 
-The `*` must immediately precede a single identifier (with no default value), and must be the only listed parameter in the function definition. All arguments passed to this function will be gathered in a single `nums` value.
-
-**Note:** Functions with this variadic parameter gathering in the signature cannot be partially applied.
+The `*` sigil (not an operator) must immediately precede a single identifier (with no default value), and must be the only listed parameter in the function definition. So in the above snippet, all arguments passed will be gathered in a single value assigned to the `nums` parameter.
 
 ### Negating A Predicate
 
@@ -1546,10 +1442,10 @@ It can be quite useful to negate a predicate; this can be expressed with the una
 def isEven: !isOdd;
 
 // or:
-def isEven: | ! isOdd |;
+def isEven: (!)(isOdd);
 ```
 
-**Note:** `!` is overloaded to produce a negated (aka, complement) function if used against a function value. Otherwise, it acts to flip/negate a boolean value.
+**Note:** As shown here, `!` is overloaded to produce a negated (aka, complement) function if used against a function (or operator) value. Otherwise, it acts to flip/negate a boolean value.
 
 ### Function Pre-conditions
 
@@ -1648,27 +1544,6 @@ result1;            // 3
 result2;            // 0
 ```
 
-### Named Arguments
-
-To override positional argument-parameter binding at a function call-site, the evaluation-expression form can specify which parameter name each argument corresponds to (in any order):
-
-```java
-defn add(x: 0, y) ^x + y;
-
-| add x:3, y:4 |;               // 7
-| add y:5 |;                    // 5
-```
-
-**Warning:** Be careful in relying on this capability, as it creates an additional refactoring dependency burden between the function definition and its call-sites. If you change the name of a parameter in a function definition, any named-argument references at call-sites must be updated.
-
-This code style means that function parameter naming has readability implications at call-sites. If you are using this code style at call-sites, consider "standardizing" certain generic variable naming conventions in your function definitions, to make using such functions predictable.
-
-For example:
-
-* a general value parameter might always be named `v` or `val`
-* a function parameter might always be named `cb` or `fn`
-* a list/array parameter might always be named `list`, `arr`, or even `vs` (i.e., the plural of `v`)
-
 ### Function Recursion
 
 Function recursion is supported:
@@ -1739,7 +1614,7 @@ defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
 def compute1: inc +> triple +> half;
-def compute2: | +> inc, triple, half |;
+def compute2: (+>)(inc, triple, half);
 
 compute1(11);           // 18
 compute2(11);           // 18
@@ -1749,15 +1624,15 @@ compute2(11);           // 18
 
 It's also very common in FP to prefer right-to-left style composition. Probably the most obvious reason is the visual-ordering coherency between `half(triple(inc(v)))` and a composition argument list like `half, triple, inc`.
 
-The `<+` compose-right operator is equivalent to using the `'` prime operator to reverse the order of the `+>` operator's arguments, as `'+>`:
+The `<+` compose-right operator is equivalent to using the `'` prime operator to reverse the order of the `+>` operator's arguments, as `+>'`:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def compute1: | <+ half, triple, inc |;
-def compute2: | '+> half, triple, inc |;
+def compute1: (<+)(half, triple, inc);
+def compute2: (+>')(half, triple, inc);
 
 compute1(11);           // 18
 compute2(11);           // 18
@@ -1774,19 +1649,19 @@ defn half(v) ^v / 2;
 
 11 #> inc #> triple #> half;        // 18
 
-11 #> | +> inc, triple, half |;     // 18
+11 #> (+>)(inc, triple, half);      // 18
 ```
 
 The first expression in a pipeline must be a value (or an expression that produces a value). Each subsequent step must resolve to a function, which when invoked produces a value to pass on to the next step.
 
-Since the `#>` operator is n-ary, multiple steps can also be used in the evaluation-expression form:
+Since the `#>` operator is n-ary, multiple steps can also be used in the operator-as-function form:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-| #> 11, inc, triple, half |;       // 18
+(#>)(11, inc, triple, half);        // 18
 ```
 
 Recall that we can reverse the order of arguments with the `'` prime operator, allowing us to do right-to-left pipelining (if we wanted to for some reason):
@@ -1796,7 +1671,7 @@ defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-| '#> half, triple, inc, 11 |;       // 18
+(#>')(half, triple, inc, 11);       // 18
 ```
 
 The *topic* of a pipeline step is the result of the previous step, and is implicitly passed as the single argument to the step's function. But the *topic* (i.e., the previous step's result value) can be explicitly referred to with the `#` sigil:
@@ -1807,7 +1682,6 @@ defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
 11 #> add(1,#) #> triple #> half;        // 18
-11 #> | add 1, # | #> triple #> half;    // 18
 ```
 
 Of course, if the `add()` function is curried, we can get back to point-free style (no need for the explicit `#` topic):
@@ -1818,7 +1692,6 @@ defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
 11 #> add(1) #> triple #> half;        // 18
-11 #> | add 1 | #> triple #> half;     // 18
 ```
 
 A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
@@ -1852,7 +1725,7 @@ defn add(x)(y) ^x + y;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def compute: | +> add(1), triple, half |;
+def compute: (+>)(add(1), triple, half);
 
 compute(11);    // 18
 ```
@@ -1875,7 +1748,7 @@ defn identity(v) ^v;
 identity(42);       // 42
 ```
 
-However, this utility is so commonly needed that **Foi** provides it built-in, as well as its shorthand:
+However, this utility is so commonly needed that **Foi** provides it built-in, as well as its `@` shorthand:
 
 ```java
 Value@42;           // 42
@@ -1885,8 +1758,6 @@ Value@(42);         // 42
 @42;                // 42
 @ 42;               // 42
 @(42);              // 42
-
-| @ 42 |;           // 42
 ```
 
 Both `Value@` and the abbreviated `@` are defined as the identity function. They are interchangeable, so the choice between them is primarily a readability/style preference.
@@ -1944,12 +1815,14 @@ hello();                // "Hello!"
 yes();                  // true
 ```
 
-The name of this utility (`Function@`) is a nod to the fact that it's a unit constructor for a function, specifically a null-application function. But `Function@` is a little verbose, so there's also a shorthand: `@@`.
+The name of this utility (`Function@`) is a nod to the fact that it's a unit constructor for a function, specifically a null-application function.
+
+But `Function@` is a little verbose, so the same thing can be accomplished by partially-applying the `@` value identity function:
 
 ```java
-def fortyTwo: @@42;
-def hello: @@ "Hello!";
-def yes: @@(true);
+def fortyTwo: @|42|;
+def hello: @|"Hello!"|;
+def yes: @|true|;
 
 fortyTwo();             // 42
 hello();                // "Hello!"
@@ -1959,12 +1832,12 @@ yes();                  // true
 Here's an example of how you might use this utility:
 
 ```java
-defn getName(record,getLabel: @@"Default") {
+defn getName(record,getLabel: @|"Default"|) {
     ^(`"`getLabel(record)`: `record.name`");
 };
 ```
 
-The `@@` here constructs a default `getLabel` function that just returns the value `"Default"`.
+**Note:** The `@|"Default"|` form here constructs a default `getLabel` function that just returns the value `"Default"` when invoked.
 
 ## Loops
 
@@ -1984,7 +1857,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 // Hello!
 ```
 
-`~each` is a operator/function that can be used either in the infix form (shown above) or the evaluation-expression form. The first operand to `~each` defines the *range*, and the second operand defines the *iteration* operation(s).
+`~each` is a operator/function that can be used either in the infix form (shown above) or the operator-as-function form. The first operand to `~each` defines the *range*, and the second operand defines the *iteration* operation(s).
 
 1. The *range* is an expression that determines the *bounds* of the loop processing; this expression can take two forms:
 
@@ -2055,7 +1928,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // Hello!
         ```
 
-In general, the result of the `~each` operation is another *range* (e.g., Record/Tuple), such that multiple `~each` expressions can be chained together. For example, `a ~each b ~each c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~each` operation. The same would be true of `| ~each a, b, c |`.
+In general, the result of the `~each` operation is another *range* (e.g., Record/Tuple), such that multiple `~each` expressions can be chained together. For example, `a ~each b ~each c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~each` operation. The same would be true of `(~each)(a, b, c)`.
 
 **Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be the final boolean `false` that terminated the *range*.
 
@@ -2117,31 +1990,27 @@ def odds: < 1, 3, 5, 7, 9 >;
 odds ~map inc ~map triple ~map half;
 // < 3, 6, 9, 12, 15 >
 
-| ~map odds, inc, triple, half |;
+(~map)(odds, inc, triple, half);
 // < 3, 6, 9, 12, 15 >
 
-odds ~map | +> inc, triple, half |;
+odds ~map (+>)(inc, triple, half);
 // < 3, 6, 9, 12, 15 >
 ```
 
-Further, we can take advantage of omitting the *range* to create a function out of the comprehension composition:
+Further, we can take advantage of omitting the *range* (via `|    |` partial application invocation) to create a function out of the comprehension composition:
 
 ```java
 defn inc(v) ^v + 1;
 defn triple(v) ^v * 3;
 defn half(v) ^v / 2;
 
-def compute1: ~map inc ~map triple ~map half;
-def compute2: | ~map , inc, triple, half |;
+def compute: (~map)|, inc, triple, half|;
 
-compute1(< 1, 3, 5, 7, 9 >);
-// < 3, 6, 9, 12, 15 >
-
-compute2(< 1, 3, 5, 7, 9 >);
+compute(< 1, 3, 5, 7, 9 >);
 // < 3, 6, 9, 12, 15 >
 ```
 
-**Note:** In the evaluation-expression form (for the `compute2` definition), the leading `,` in the arguments list indicates explicitly omitting the *range*, thereby producing a right-partially-applied function that expects the *range*.
+**Note:** In `compute` definition, the leading `,` in the arguments list indicates explicitly omitting the *range*, thereby producing a partially-applied function that expects the *range* on its invocation.
 
 ----
 
@@ -2388,11 +2257,9 @@ For example:
 ```java
 defn sub(x,y) ^x - y;
 
-| ~fold 1..5, 100, sub |;
+(~fold)(1..5, 100, sub);
 // 85   (100 - 1 - 2 - 3 - 4 - 5)
 ```
-
-**Note:** As shown, 3 or more operands require the evaluation-expression form.
 
 When an initial value is provided to a fold/reduce, it is set as the *accumulator* argument to the first *iteration*, and the first value in the list (Tuple) is the *iteration-value* argument.
 
@@ -2415,7 +2282,7 @@ defn onlyOdds(list,v)
     ![mod(v,2) ?= 1]: list
         ^list + < v >
 
-| ~fold 0..9, <>, onlyOdds |;
+(~fold)(0..9, <>, onlyOdds);
 // < 1, 3, 5, 7, 9 >
 ```
 
@@ -2435,14 +2302,12 @@ defn sub(x,y) ^x - y;
 
 The identity monad in **Foi** is called `Id`, and the empty monad is called `None`. These two are actually paired in the [`Maybe` monad type](#maybe-monad), as discussed later.
 
-The `@` operator applies the "unit constructor" for any monad type, thus a monadic value can be constructed like this:
+The `@` sigil applies the "unit constructor" for any monad type, thus a monadic value can be constructed like this:
 
 ```java
 def m: Id@ 42;          // Id{42}
-| @ Id, 42 |;           // Id{42}
 
 def nil: None@;         // None
-| @ None |;             // None
 ```
 
 A monadic value is a primitive, immutable value type in **Foi**, meaning equality comparison is structural (just like Records/Tuples). As such:
@@ -2800,7 +2665,7 @@ We briefly mentioned Foldable earlier, with the `~fold` comprehension on lists (
 
 Sum type monads in **Foi** have Foldable behavior built-in, expressed with the `~fold` / `~cata` (catamorphism) comprehensions.
 
-For a monadic value *range*, the `~fold` / `~cata` comprehensions require multiple *iteration* expressions, one for each component of the Sum type; again, because this means 3 or more operands, the evaluation-expression form is required.
+For a monadic value *range*, the `~fold` / `~cata` comprehensions require multiple *iteration* expressions, one for each component of the Sum type; again, because this means 3 or more operands, the operator must be invoked as a function.
 
 The difference between monadic `~fold` and `~cata` is with the *default iteration* operand. For `~fold`, this operand is an already computed *default-value*, whereas for `~cata` it's a function that computes a value. In either case, this operand is evaluated/used when the first/left-most component of the Sum type is encountered.
 
@@ -2809,13 +2674,13 @@ Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), wh
 For example:
 
 ```java
-def defaultMsg: @@"default!";
+def defaultMsg: @|"Default!"|;
 
 def m: Maybe._@ 42;                 // Id{42}
 def g: Maybe._@ empty;              // None
 
-| ~fold m, defaultMsg(), @ |;       // 42
-| ~cata g, defaultMsg,   @ |;       // default!
+(~fold)(m, defaultMsg(), @);        // 42
+(~cata)(g, defaultMsg,   @);        // Default!
 ```
 
 As shown, for the `~fold` comprehension, we provide the already-computed result of the `defaultMsg()` function for the *default iteration* operand. With `~cata`, we provide that `defaultMsg` function reference, for it to be invoked only if needed.
@@ -2833,10 +2698,10 @@ defn mult(x,y) ^x * y;
 def list: < 1, 3, 7 >;
 def m: Maybe._ @ 42;
 
-| ~fold list,  two(), mult |;    // 42
+(~fold)(list,  two(), mult);    // 42
 
-| ~fold m,     two(), @    |;    // 42
-| ~fold None@, two(), @    |;    // 2
+(~fold)(m,     two(), @   );    // 42
+(~fold)(None@, two(), @   );    // 2
 ```
 
 For the list (Tuple) `~fold`, the `two()` function is eagerly invoked to provide the *initial-value* operand for the folding.
@@ -2877,15 +2742,15 @@ defn halve(v)
 
 // natural transformation utilities
 defn maybeFromEither(e)
-    ^| ~fold e, None@, Id@ |;
+    ^(~fold)(e, None@, Id@);
 defn eitherFromMaybe(m)
-    ^| ~fold m, Left@ "Missing!", Right@ |;
+    ^(~fold)(m, Left@ "Missing!", Right@);
 
 def m1: halve(0) #> maybeFromEither;    // None
 def m2: halve(4) #> maybeFromEither;    // Id{2}
 
-| ~cata eitherFromMaybe(m1), @, @ |;    // "Missing!"
-| ~cata eitherFromMaybe(m2), @, @ |;    // 2
+(~cata)(eitherFromMaybe(m1), @, @);     // "Missing!"
+(~cata)(eitherFromMaybe(m2), @, @);     // 2
 ```
 
 Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right{2}`, which is transformed to `Id{2}`.
@@ -2965,10 +2830,10 @@ We've already seen a number of value types in **Foi** that are concatable. For e
 
 ```java
 1 + 2 + 3 + 4 + 5;                  // 15
-| + 1, 2, 3, 4, 5 |;                // 15
+(+)(1, 2, 3, 4, 5);                 // 15
 
 "Hello" + " " + "world";            // "Hello world"
-| + "Hello", " ", "world" |;        // "Hello world"
+(+)("Hello", " ", "world");         // "Hello world"
 ```
 
 Most monadic values in **Foi** also implement Concatable, meaning that if used with `+`, they will delegate concatenation to their underlying value (if it is also Concatable):
@@ -2977,7 +2842,7 @@ Most monadic values in **Foi** also implement Concatable, meaning that if used w
 (Id@ 30) + (Id@ 12);
 // Id{42}
 
-| + Id@ "Hello", Id@ " ", Id@ "world" |;
+(+)(Id@"Hello", Id@" ", Id@"world");
 // Id{"Hello world"}
 ```
 
@@ -2992,14 +2857,14 @@ Monoid is a Semigroup plus an "empty value" -- such that when concatenated with,
 Revisiting concatenation from the previous section, a concatenation is a specialized type of fold, so we can use the list (Tuple) `~fold` comprehension together with the `+` operator:
 
 ```java
-| ~fold < "Hello", " ", "world" >, + |;
+(~fold)(< "Hello", " ", "world" >, (+));
 // "Hello world"
 ```
 
 We can do the same with a list (Tuple) of monadic (monoidal) values:
 
 ```java
-| ~fold < Id@ "Hello", Id@ " ", Id@ "world" >, + |;
+(~fold)(< Id@ "Hello", Id@ " ", Id@ "world" >, (+));
 // Id{"Hello world"}
 ```
 
@@ -3027,7 +2892,7 @@ For the list (Tuple) `~fold` comprehension, recall that:
 Thankfully, this familiar behavior is defined the same for `~foldMap`. Thus, if the list (Tuple) only has one element, the "empty value" of a monoid (`""` below) is a useful candidate to provide as the *default-value*, to ensure a *fold* actually occurs:
 
 ```java
-| ~foldMap < "Hello" >, "", Id@ |;
+(~foldMap)(< "Hello" >, "", Id@);
 // Id{"Hello"}
 ```
 
@@ -3040,8 +2905,8 @@ For example, we could define a monoid as the boolean-AND (`?and`) *concatenation
 Consider:
 
 ```java
-defn all(bools) ^| ~fold bools, true, ?and |;
-defn any(bools) ^| ~fold bools, false, ?or |;
+defn all(bools) ^(~fold)(bools, true, (?and));
+defn any(bools) ^(~fold)(bools, false, (?or));
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
@@ -3055,8 +2920,8 @@ any(b);     // true
 The above is a nice application of a monoid, but the `?and` and `?or` operators are already n-ary, thus we could have done:
 
 ```java
-defn all(bools) ^| ~fold bools, true, ?and |;
-defn any(bools) ^| ~fold bools, false, ?or |;
+defn all(bools) ^(~fold)(bools, true, (?and));
+defn any(bools) ^(~fold)(bools, false, (?or));
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
@@ -3079,8 +2944,8 @@ So, let's instead define custom, monad-aware concatenation logic (`andM()` and `
 defn andM(x,y) ^x ~map (xv) { xv ?and y; };
 defn orM(x,y) ^x ~map (xv) { xv ?or y; };
 
-defn all(bools) ^| ~fold bools, Id@ true, andM |;
-defn any(bools) ^| ~fold bools, Id@ false, orM |;
+defn all(bools) ^(~fold)(bools, Id@ true, andM);
+defn any(bools) ^(~fold)(bools, Id@ false, orM);
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
@@ -3163,7 +3028,7 @@ defn getCacheData(key)
 
 getCacheData("customers")
 ~< (resE) {
-    (| ~cata resE, fetchCustomers, Promise@ |);
+    (~cata)(resE, fetchCustomers, Promise@);
 }
 ~map printRecords;
 // Promise{..pending..}
@@ -3180,9 +3045,9 @@ Instead of constructing multi-step `~<` / `~map` chains, `Promise` also supports
 ```java
 Promise ~<< {
     def resE:: getCacheData("customers");
-    def customers:: (| ~cata
+    def customers:: (~cata)(
         resE, fetchCustomers, Promise@
-    |);
+    );
     printRecords(customers);
 };
 // Promise{..pending..}
@@ -4097,7 +3962,7 @@ defn printValue(v) ^IO@ (defn(){
 
 def task: IO ~<< {
     def ev:: getValue();
-    ::(| ~cata ev, IOof@, printValue |);
+    ::(~cata)(ev, IOof@, printValue);
 };
 
 task.run();
@@ -4249,7 +4114,7 @@ def it: fib.run();
 // print the first 10 Fibonacci numbers
 0..9 ~<* {
     def ev:: it.next();
-    (| ~cata ev, Left@, log |);
+    (~cata)(ev, Left@, log);
 };
 // 0
 // 1
@@ -4281,7 +4146,7 @@ def it: someNums.run(< start: 4, end: 7 >);
 // consume all the values from this
 // iterator
 def pr: it ~<* (ev) {
-    (| ~cata ev, Left@, log |);
+    (~cata)(ev, Left@, log);
 };
 // Promise{..pending..}
 // 4
@@ -4343,7 +4208,7 @@ A type annotation always begins with the `:as` keyword:
 ```java
 def age: 42 :as int;
 
-def cost: | * getQty(order,item), getPrice(item) | :as float;
+def cost: (*)(getQty(order,item), getPrice(item)) :as float;
 ```
 
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:

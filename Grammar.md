@@ -30,7 +30,7 @@ BlockComment            := "///" #"[^]*?///";
 Op                      := ComprOpNamed | NamedBoolOp | SymbolicBoolOp | SymbolicOp;
 NamedBoolOp             := #"[?!](?:empty|has|and|in|as|or)";
 SymbolicBoolOp          := "?<=>" | "!<=>" | #"[?!](?:>=|<=|<>|\$=)" | #"[?!][=<>]";
-SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!.]";
+SymbolicOp              := "~<<" | "~<*" | "..." | ".." | "+>" | "<+" | "#>" | "~<" | "$+" | #"[+\-*/?!.']";
 
 ReservedWord            := Empty | Boolean | NamedKeywordNoEmpty | NativeTypeNoEmpty | BuiltIn;
 Empty                   := "empty";
@@ -120,7 +120,7 @@ OperandExpr             := BareOperandExpr | UnaryExpr | BinaryExpr | GroupedOpe
 GroupedOperandExpr      := "(" WhSp* OperandExpr WhSp* ")";
 BareOperandExpr         := Empty | BareOperandExprNoEmpty | GroupedBareOperandExpr;
 GroupedBareOperandExpr  := "(" WhSp* BareOperandExpr WhSp* ")";
-BareOperandExprNoEmpty  := Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | CallExpr | GroupedBareOpExprNoEmp;
+BareOperandExprNoEmpty  := Boolean | NumberLit | StrLit | DataStructLit | ClosedRangeExpr | IdentifierExpr | OpFuncExpr | CallExpr | GroupedBareOpExprNoEmp;
 GroupedBareOpExprNoEmp  := "(" WhSp* BareOperandExprNoEmpty WhSp* ")";
 
 ExprAsOpt               := Expr | ExprNoBlockAsOpt | ((BlockExpr | GroupedExpr | ("(" WhSp* (ComprExpr | DoComprExpr | DoLoopComprExpr) WhSp* ")")) WhSp* AsAnnotationExpr) | GroupedExprAsOpt;
@@ -138,12 +138,14 @@ ExprNoBlockGroupedAsOpt := ExprNoBlock | GroupedExprNoBlockAsOpt;
 
 AsAnnotationExpr        := ":as" WhSp+ NamedType;
 
+OpFuncExpr              := "(" Op "'"? ")";
+
 ExprAccessExpr          := (ExprNoBlock | GroupedExprAsOpt) (SingleAccessExpr | MultiAccessExpr);
 AssignmentExpr          := (Identifier | IdentifierSingleExpr) WhSp* ":=" WhSp* ExprAsOpt;
 
 UnaryExpr               := SymbolicUnaryExpr | NamedUnaryExpr | GroupedUnaryExpr;
 GroupedUnaryExpr        := "(" WhSp* UnaryExpr WhSp* ")";
-SymbolicUnaryExpr       := (("?" | "!") (BareOperandExprNoEmpty | BareOpExprNoEmptyAsOpt | GroupedExprAsOpt)) | (("?" | "!") WhSp+ (OperandExpr | GroupedExprAsOpt));
+SymbolicUnaryExpr       := (("?" | "!") (BareOperandExprNoEmpty | BareOpExprNoEmptyAsOpt | GroupedExprAsOpt)) | (("?" | "!") WhSp+ (OperandExpr | GroupedExprAsOpt)) | ((BareOperandExpr | GroupedExprAsOpt) "'");
 NamedUnaryExpr          := (("?empty" | "!empty") GroupedExprAsOpt) | (("?empty" | "!empty") WhSp+ (OperandExpr | GroupedExprAsOpt));
 
 BinaryExpr              := SymbolicBinaryExpr | NamedBoolBinaryExpr | GroupedBinaryExpr;
@@ -170,7 +172,7 @@ Identifier              := (#"(?!(?:[0-9]+|~each|~map|~filter|~fold|~foldR|~cata
 IdentifierExpr          := "#" | "@" | Identifier | BuiltIn | IdentifierSingleExpr | IdentifierMultiExpr | AtExpr;
 IdentifierSingleExpr    := ("#" | Identifier | BuiltIn) SingleAccessExpr;
 IdentifierMultiExpr     := ("#" | Identifier | BuiltIn) MultiAccessExpr;
-AtExpr                  := ("@" | Identifier | BuiltIn | IdentifierSingleExpr) "@";
+AtExpr                  := (Identifier | BuiltIn | IdentifierSingleExpr) "@";
 
 SingleAccessExpr        := (WhSp* (DotSingleIdentifier | BracketExpr))+;
 MultiAccessExpr         := (WhSp* (DotMultiIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr))+;
@@ -213,7 +215,7 @@ VarDefInitOptList       := ("," WhSp*)* (VarDefInitOpt (WhSp* "," WhSp* VarDefIn
 VarDefInitOpt           := (Identifier (WhSp* ":" WhSp* ExprNoBlockAsOpt)?) | DestructureTarget;
 
 
-(*************** Decision Making -- Guard, Pattern Matching ***************)
+(*************** Decision Making: Guard, Pattern Matching ***************)
 
 CondClause              := ("?" | "!") BracketExpr;
 GuardedExpr             := CondClause ":" WhSp* ExprAsOpt;
@@ -286,14 +288,13 @@ FuncBodyStmt            := Stmt | ("^" WhSp* ExprAsOpt);
 
 (*************** Function Calls ***************)
 
-CallExpr                := PrefixCallExpr | LispCallExpr | AtCallExpr;
-PrefixCallExpr          := ExprNoBlockGroupedAsOpt WhSp* "(" WhSp* CallArgList? WhSp* ")";
+CallExpr                := PrefixCallExpr | PartialCallExpr | AtCallExpr;
+PrefixCallExpr          := ExprNoBlockGroupedAsOpt WhSp* "(" CallArgs ")";
+PartialCallExpr         := ExprNoBlockGroupedAsOpt WhSp* "|" CallArgs "|";
+CallArgs                := (WhSp* CallArgList? WhSp*) | (Op "'"?);
 CallArgList             := ("," WhSp*)* (CallArgExpr (WhSp* "," WhSp* CallArgExpr?)*)?;
-CallArgExpr             := ExprAsOpt | NamedArgExpr;
+CallArgExpr             := ExprAsOpt | NamedArgExpr | (("..." WhSp*)? CallArgExpr);
 NamedArgExpr            := ((":" Identifier) | (Identifier WhSp* ":" WhSp* ExprAsOpt)) | ("(" WhSp* NamedArgExpr WhSp* ")");
-LispCallExpr            := "|" WhSp* (("'"? ExprNoBlockGroupedAsOpt (WhSp+ LispCallArgList)?) | (("'" | ("'"? Op) | DotBracketExpr | DotAngleExpr)) WhSp+ LispCallArgList) WhSp* "|";
-LispCallArgList         := ("," WhSp*)* (LispCallArgExpr (WhSp* "," WhSp* LispCallArgExpr?)*)?;
-LispCallArgExpr         := (("..." WhSp*)? CallArgExpr) | Op;
 AtCallExpr              := "None@" | (("@" | AtExpr | ((Identifier | BuiltIn | IdentifierSingleExpr) WhSp+ "@")) WhSp* ExprNoBlockGroupedAsOpt);
 
 
@@ -426,10 +427,10 @@ defn a~each() ^empty;
 < a: 1, b: "ok" >;
 <
     ,,&v.x.[3..].<a,b> , "Hello" , 3,,4, :foo,
-    yes: empty, (|fn 1|),
+    yes: empty, fn(1),
     %x.y.z: false,
     %"Hello World": 2,
-    %\\`" this
+    %\`" this
     is `adverb` ""crazy""!": 42,
     %bar:<1>,,
 >;
@@ -482,13 +483,13 @@ defn add(x)(y,<:z>)
     ?{?: 42;};
     ?{
         ?[z]: fn(g);
-        [w]: w;
+        ?[w]: w;
         ![x]: { fn(g) };
         ?[y]: (v, <:z>) { fn(g); }
         ?: 42
     };
     ?( fn(g) ){
-        [?> y]: g;
+        ?[?> y]: g;
         ?[ x, z . y [3] ]: g
     };
     ?{ ?[x]: x };
@@ -498,9 +499,12 @@ defn add(x)(y,<:z>)
     ?[z]: (g: z) { fn(g) };
     x.[y..z];
     y.<first,last>;
-    |+ 1,2,3,...nums|;
-    |myFn x:2,3|;
+    (+)(1,2,3,...nums);
+    (+')'(1,,3);
+    (')(+)(1,,3);
+    myFn|2,,3|;
     myFn(3,x:2);
+    myFn'|3,x:2|;
     ^42
 };
 
@@ -553,12 +557,6 @@ f(@ 2);
 f(@(2));
 f(@ (2));
 
-f(@@);
-f(@@2);
-f(@@ 2);
-f(@@(2));
-f(@@ (2));
-
 f(Id@);
 f(Id@2);
 f(Id @2);
@@ -579,7 +577,7 @@ f(Either.Right @ (2));
 ```
 
 ```java
-| * getQty(order,item), getPrice(item) | :as float;
+(*)(getQty(order,item), getPrice(item)) :as float;
 ?3 :as bool;
 ?(3) :as bool;
 ?(3):as bool;

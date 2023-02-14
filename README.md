@@ -31,13 +31,13 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
         movieIDs ~map (movieID) {
             fetch(`"/movie/`movieID`")
         }
-        ~map |. ,"title"|
+        ~map (.)|,"title"|
     );
-    def itemsHTML: |~fold
+    def itemsHTML: (~fold)(
         movieTitles,
         "",
         (html,title) { `"`html`<li>`title`</li>" }
-    |;
+    );
     document.body.innerHTML := `"<ul>`itemsHTML`</ul>";
 });
 
@@ -118,17 +118,11 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     As mentioned previously, `^` points upward, to semantically hint "return value up/out".
 
-* **Prefix/Infix + Lisp** For function calls and expressions, pretty much all programming languages use prefix/infix form or lisp form.
+* **Operators As Functions** If an operator has one or two operands (e.g., `!x`, `y + z`), it can be used in traditional infix/prefix form.
 
-    The prefix/infix form (`x + 3`, `myFn(1,2,3)`) is extremely common and familiar. The lisp form (`(+ x 3)`, `(myFn 1 2 3)`) is much more powerful/flexible. But why do we have to choose? I believe we should be able to combine these capabilities into a single language.
+    But if the operand needs three or more operands, it must be invoked as a typical function call, with a `( .. )` delimited arguments list. This can be done by surrounding the operator in its own `( )`, such as `(*)(2,4,6,8)` (i.e., `2 * 4 * 6 * 8`); there must be no whitespace between the `( )` and the operator inside it.
 
-    In **Foi**, an optional lisp-like form, denoted with `| .. |` (pipes) instead of `( .. )` (parentheses) lets you opt into lisp expression semantics, treating all operators and functions alike.
-
-    In infix form, a single operator symbol can only ever have at most two operands (left and right). Ternary `? :` is a special trick that has 3 operands, but has to split up two symbols.
-
-    Lisp lets us express n-ary operators with 3 or more operands. For example, `| +> fn1, fn2, fn3, fn4 |` is cleaner than repeating the operator `fn1 +> fn2 +> fn3 +> fn4`.
-
-    In some usages, a `| .. |` expression can benefit readability-wise from optional parentheses: `(| .. |)`.
+    In the same way, operators can be referenced as function values like any other identifiers, such as `def minus: (-); minus(3,1);`.
 
 * **Immutable Objects** In **Foi**, Records / Tuples (both use `< .. >` syntax) are immutable.
 
