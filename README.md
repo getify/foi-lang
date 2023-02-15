@@ -38,7 +38,7 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
         "",
         (html,title) { `"`html`<li>`title`</li>" }
     );
-    document.body.innerHTML := `"<ul>`itemsHTML`</ul>";
+    ::document.body.setHTML(`"<ul>`itemsHTML`</ul>")
 });
 
 getFavoriteMovies(123).run()
