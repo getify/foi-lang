@@ -193,6 +193,10 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     I believe we'll get most of the benefits of "typing" with much less syntactic and mental overhead compared to traditional language static types.
 
+    **Foi** employs [gradual typing](https://en.wikipedia.org/wiki/Gradual_typing), meaning that type annotations (and implied typings from inferences) are validated at compile-time if possible; but if some typing assertions cannot be validated, they're left to be checked at run-time.
+
+    The **Foi** compiler will be configurable, to specify if you want to leave the run-time type assertions in, or strip them. For example, you may leave the run-time type assertions in for runs of your test suite, but not for your production distribution code.
+
 This is not an exhaustive list of design persuasions, but it should help set the right perspective for evaluating/analyzing **Foi** code.
 
 ### Original Design Motivations
