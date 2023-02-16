@@ -820,7 +820,7 @@ Consider:
 def myName: "Kyle";
 
 ?(myName){
-    ?["Kyle"]: log("Hello!")
+    ?["Kyle"]: log("Hello!");
     !["Kyle"]: log("Goodbye!")
 }
 // Hello!
@@ -834,7 +834,7 @@ Dependent pattern matching expressions *should be* determinate, in that all poss
 def myName: "Kyle";
 
 def greeting: ?(myName){
-    ?["Kyle"]: "Hello!"
+    ?["Kyle"]: "Hello!";
     !["Kyle"]: "Goodbye!"
 };
 
@@ -851,7 +851,7 @@ To explicitly define a default pattern -- like an "else" clause, that matches if
 def myName: "Kyle";
 
 def greeting: ?(myName){
-    ?["Kyle"]: "Hello!"
+    ?["Kyle"]: "Hello!";
     ?: "Goodbye!"
 };
 
@@ -866,7 +866,7 @@ A dependent style pattern can include a `,` comma separated list of multiple val
 def myName: "Kyle";
 
 def greeting: ?(myName){
-    ?["Kyle","Fred"]: "Hello!"
+    ?["Kyle","Fred"]: "Hello!";
     ?: "Goodbye!"
 };
 
@@ -879,7 +879,7 @@ It may also be useful to access the topic of a pattern matching expression insid
 def myName: "Kyle";
 
 def greeting: ?(myName){
-    ?["Kyle"]: `"Hello `#`!"
+    ?["Kyle"]: `"Hello `#`!";
     ?: "Goodbye!"
 };
 
@@ -898,7 +898,7 @@ In this form, each clause matches only if the pattern is a conditional that eval
 def myName: "Kyle";
 
 def greeting: ?{
-    ?[myName ?= "Kyle"]: "Hello!"
+    ?[myName ?= "Kyle"]: "Hello!";
     ![myName ?= "Kyle"]: "Goodbye!"
 };
 
@@ -913,7 +913,7 @@ Just as with dependent pattern matching, it's preferable for the overall indepen
 def myName: "Kyle";
 
 def greeting: ?{
-    ?[myName ?= "Kyle"]: "Hello!"
+    ?[myName ?= "Kyle"]: "Hello!";
     ?: "Goodbye!"
 };
 
@@ -921,6 +921,38 @@ greeting;               // "Hello!"
 ```
 
 **Note:** Again comparing this example to the previous one, `?:` is equivalent to the previous snippet's `![myName ?= "Kyle"]` conditional, or even `?[myName != "Kyle"]`. Moreover, `?:` is also equivalent to `?[true]`, which clearly would *always match*. Readability preferences may dictate any of those style options, depending on the circumstances, but generally the shorter `?:` form is most idiomatic.
+
+----
+
+Pattern-matching conditional clauses may optionally skip the leading `?` type-specifier, for visual brevity, if you so choose:
+
+```java
+?{
+    [isLoggedIn()]: showDashboard();
+    [isRegistered()]: showLogin();
+    default: showRegistration()
+};
+```
+
+Here, the two `[ .. ]: ..` clauses skip the leading type-signifier (a `?` is assumed). However, the `!` type signifier is never assumed, and therefore must be explicitly stated for clauses.
+
+In cases where both affirmative and negative clauses are present, it may be desirable (for visual consistency) to specify both the `?` and `!` signifiers on the respective clauses, rather than only the `!` being present and the `?` being omitted. For example:
+
+```java
+// style 1
+?{
+     [isLoggedIn()]: showDashboard();
+    ![isRegistered()]: showRegistration()
+};
+
+// style 2
+?{
+    ?[isLoggedIn()]: showDashboard();
+    ![isRegistered()]: showRegistration();
+}
+```
+
+While *style 1* above may be preferable (for brevity) to some, *style 2* may be seen as more consistent for readability sake. Use your best judgement.
 
 ### Guard Expressions
 
