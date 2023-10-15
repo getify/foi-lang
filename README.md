@@ -27,14 +27,13 @@ Hopefully, without too much heavy orientation, code like this will settle into f
 ```java
 defn getFavoriteMovies(userID) ^(IO ~<< {
     def movieIDs:: fetch(`"/movies/`userID`");
-    def movieTitles:: all(
+    def movieData:: all(
         movieIDs ~map (movieID) {
             fetch(`"/movie/`movieID`")
         }
-        ~map (.)|,"title"|
     );
     def itemsHTML: (~fold)(
-        movieTitles,
+        movieData ~map (.)|,"title"|,
         "",
         (html,title) { `"`html`<li>`title`</li>" }
     );
@@ -252,9 +251,9 @@ For implementers or language design enthusiasts, a [formal grammar specification
 
 However, [Foi-Toy](foi-toy/README.md) is an experimental CLI tool for playing around with **Foi** code, prior to there being an official compiler.
 
-Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS) as shown in the above screenshots. Foi-Toy can also validate code against the formal language grammar.
+Foi-Toy currently supports tokenizing **Foi** code, and syntax highlighting (via HTML/CSS). Foi-Toy can also validate code against the formal language grammar.
 
-Additionally, there's an [online version of Foi-Toy](https://toy.foi-lang.com) to play around with tokenization, syntax highlighting, and validation.
+Additionally, there's an [online version of Foi-Toy](https://toy.foi-lang.com) to play around with tokenization, validation, and syntax highlighting.
 
 ## License
 
