@@ -44,17 +44,17 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>!=</code></td><td><code>!=</code></td><td>Inequality</td></tr>
     <tr><td><code>v == null</code></td><td><code>?empty v</code></td><td>Is <code>null</code> (Foi <code>empty</code>)</td></tr>
     <tr><td><code>v != null</code></td><td><code>!empty v</code></td><td>Is Not <code>null</code> (Foi <code>!= empty</code>)</td></tr>
-    <tr><td><code>x &gt; y</code></td><td><code>x ?&gt;y</code></td><td>Greater Than</td></tr>
-    <tr><td><code>x &gt;= y</code></td><td><code>x ?&gt;= y</code></td><td>Greater Than / Equal</td></tr>
-    <tr><td><code>x &lt; y</code></td><td><code>x ?&lt; y</code></td><td>Less Than</td></tr>
-    <tr><td><code>x &lt;= y</code></td><td><code>x ?&lt;= y</code></td><td>Less Than / Equal</td></tr>
+    <tr><td><code>x &gt; y</code></td><td><code>x ?&gt; y</code></td><td>Greater Than</td></tr>
     <tr><td><code>!(x &gt; y)</code></td><td><code>x !&gt; y</code></td><td>Not Greater Than</td></tr>
+    <tr><td><code>x &gt;= y</code></td><td><code>x ?&gt;= y</code></td><td>Greater Than / Equal</td></tr>
     <tr><td><code>!(x &gt;= y)</code></td><td><code>x !&gt;= y</code></td><td>Not Greater Than / Equal</td></tr>
+    <tr><td><code>x &lt; y</code></td><td><code>x ?&lt; y</code></td><td>Less Than</td></tr>
     <tr><td><code>!(x &lt; y)</code></td><td><code>x !&lt; y</code></td><td>Not Less Than</td></tr>
+    <tr><td><code>x &lt;= y</code></td><td><code>x ?&lt;= y</code></td><td>Less Than / Equal</td></tr>
     <tr><td><code>!(x &lt;= y)</code></td><td><code>x !&lt;= y</code></td><td>Not Less Than / Equal</td></tr>
     <tr><td><code>y &gt; x &amp;&amp; y &lt; z</code></td><td><code>(?&lt;&gt;)(x,y,z)</code></td><td>In Between, Not Inclusive </td></tr>
-    <tr><td><code>y &lt; x || y &gt; z</code></td><td><code>(!&lt;&gt;)(x,y,z)</code></td><td>Not In Between, Not Inclusive </td></tr>
     <tr><td><code>y &gt;= x &amp;&amp; y &lt;= z</code></td><td><code>(?&lt;=&gt;)(x,y,z</code></td><td>In Between, Inclusive</td></tr>
+    <tr><td><code>y &lt; x || y &gt; z</code></td><td><code>(!&lt;&gt;)(x,y,z)</code></td><td>Not In Between, Not Inclusive </td></tr>
     <tr><td><code>y &lt;= x || y &gt;= z</code></td><td><code>(!&lt;=&gt;)(x,y,z)</code></td><td>Not In Between, Inclusive</td></tr>
     <tr><td><code>+</code></td><td><code>+</code></td><td>Plus/Concatenation</td></tr>
     <tr><td><code>-</code></td><td><code>-</code></td><td>Minus</td></tr>
@@ -66,6 +66,7 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td><code>return</code> <code>=> ..</code></td><td><code>^</code></td><td>Function Return</td></tr>
     <tr><td><code>function myFunc(x = 0) ..</code></td><td><code>defn myFunc(x: 0) ..</code></td><td>Function Parameter Default</td></tr>
     <tr><td><code>function myFunc(...params) ..</code></td><td><code>defn myFunc(*params) ..</code></td><td>Function Rest Parameter</td></tr>
+    <tr><td><code>myFunc = x => y => x * y</code></td><td><code>defn myFunc(x) ^defn(y) ^x * y</code></td><td>(Strict) Curried Function Declaration</td></tr>
     <tr><td><code>myFunc(1,2,3)</code></td><td><code>myFunc(1,2,3)</code></td><td>Function Call</td></tr>
     <tr><td><code>myFunc(...args)</code></td><td><code>myFunc(...args)</code></td><td>Function Call Argument Spread</td></tr>
     <tr><td><code>myFunc({ x: 1, y: 2 })</code></td><td><code>myFunc(x:1, y:2)</code></td><td>"Named Arguments" (at call-site) Idiom</td></tr>
@@ -97,7 +98,6 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td>(not in JS)</td><td><code>(*)(2,3,4)</code></td><td>N-Ary Operator (as function) Invocation</td></tr>
     <tr><td>(proposed for JS)</td><td><code>myFn|1|</code> <code>myFn|1,,3|</code></td><td>Function Partial Application</td></tr>
     <tr><td>(not in JS)</td><td><code>myFn'(3,2,1)</code></td><td>Function Reverse Application</td></tr>
-    <tr><td>(not in JS)</td><td><code>(#&gt;)(42,...fns)</code></td><td>Dynamic Pipeline</td></tr>
     <tr><td>(not in JS)</td><td><code>arr.<0,2,3></code> <code>obj.&lt;first,last,email&gt;</code></td><td>Record/Tuple Subset Selection</td></tr>
     <tr><td>(not in JS)</td><td><code>2..5</code> <code>"a".."f"</code></td><td>Range Of Sequential Values</td></tr>
     <tr><td>(not in JS)</td><td><code>:over (..)</code></td><td>Closure Side Effect Declaration</td></tr>
@@ -105,7 +105,8 @@ The following (incomplete) is a **Foi** cheatsheet: a list of comparisons betwee
     <tr><td>(not in JS)</td><td><code>Promise ~&lt;* { .. }</code></td><td>Promise Looping</td></tr>
     <tr><td>(not in JS)</td><td><code>def myFunc: incVal +&gt; doubleVal +&gt; formatNum</code><br><code>def myFunc: formatNum &lt;+ doubleVal &lt;+ incVal</code></td><td>Function Composition</td></tr>
     <tr><td>(not in JS)</td><td><code>defn myFunc(v) #&gt; incVal #&gt; doubleVal #&gt; formatNum</code></td><td>Pipeline Function</td></tr>
-    <tr><td>(not in JS)</td><td><code>defn add(x)(y) ^x + y</code></td><td>Curried Function Declaration</td></tr>
+    <tr><td>(not in JS)</td><td><code>(#&gt;)(42,...fns)</code></td><td>Dynamic Pipeline</td></tr>
+    <tr><td>(not in JS)</td><td><code>defn add(x)(y) ^x + y</code></td><td>(Loose) Curried Function Declaration</td></tr>
     <tr><td>(not in JS)</td><td><code>Id</code> <code>Value</code> <code>Number</code> <code>None</code> <code>Maybe</code> <code>Either</code> <code>Left</code> <code>Right</code> <code>List</code> <code>IO</code> <code>Gen</code> <code>PushStream</code> <code>PullStream</code> <code>Channel</code> (CSP) <code>~ap</code> <code>~foldMap</code> <code>~cata</code> <code>~&lt;&lt;</td><td>Monads, Monadic Comprehensions</td></tr>
   </tbody>
 </table>
