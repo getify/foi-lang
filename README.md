@@ -33,9 +33,9 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
         }
     );
     def itemsHTML: (~fold)(
-        movieData ~map (.)|,"title"|,
+        movieData ~map (.)|, "title"|,
         "",
-        (html,title) { `"`html`<li>`title`</li>" }
+        (html, title) { `"`html`<li>`title`</li>" }
     );
     ::document.body.setHTML(`"<ul>`itemsHTML`</ul>")
 });
@@ -74,13 +74,13 @@ The syntax and design decisions attempt to diverge enough from familiar language
 ```java
 defn factorial(n)
     ![n ?> 1]: 1
-    ^(n*factorial(n-1));
+    ^(n * factorial(n - 1));
 
 // or (tail-recursive):
 
-defn factorial(n,total:1)
+defn factorial(n, total: 1)
     ![n ?> 1]: total
-    ^factorial(n-1,n*total);
+    ^factorial(n-1, n * total);
 ```
 
 Programming language design is a delicate balance, and inevitably will be judged both on subjective aesthetics and on empirical outcomes. And it's impossible to design a perfect language that everyone loves at first glance. Some will appreciate **Foi**, others will dislike it.
@@ -115,11 +115,13 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     For example, `+>` (compose left-to-right operator) has two semantic signals in it. First, the `+` signifies a concatenation of functions (aka "composition"). Secondly, the `>` symbol is pointing in the direction of data-flow through the functions. By contrast, `<+` is the compose-right (right-to-left), meaning the data flows in the opposite direction.
 
-    As mentioned previously, `^` points upward, to semantically hint "return value up/out".
+    The `~<` chain operator similarly uses the `<` to signify the relationship from the right-operand being chained to/from the left-operand. And the `~<<` do-comprehension, paired with the special `::` syntax on `def` definitions inside the do blocks, is the "chain" operation with arbitrary nesting. The `~<*` is similarly the iterator consumption, where `*` signals the do-comprehension looping 0 or more times (where the semantic for `*` is being borrowed from regular expressions).
 
-* **Operators As Functions** If an operator has one or two operands (e.g., `!x`, `y + z`), it can be used in traditional infix/prefix form.
+    Finally, as mentioned previously, `^` points upward, to semantically hint "return value up/out".
 
-    But if the operand needs three or more operands, it must be invoked as a typical function call, with a `( .. )` delimited arguments list. This can be done by surrounding the operator in its own `( )`, such as `(*)(2,4,6,8)` (i.e., `2 * 4 * 6 * 8`); there must be no whitespace between the `( )` and the operator inside it.
+* **Operators As N-Ary Functions** If an operator has one or two operands (e.g., `!x`, `y + z`), it can be used in traditional infix/prefix form.
+
+    But if the operand will be passed three or more operands, it's invoked as a typical function call, with a `( .. )` delimited arguments list. To facilitate this syntactically, the operator is surrounded in its own `( )`, such as `(*)(2,4,6,8)` (i.e., `2 * 4 * 6 * 8`); there must be no whitespace inside the `( )` around the operator.
 
     In the same way, operators can be referenced as function values like any other identifiers, such as `def minus: (-); minus(3,1);`.
 
