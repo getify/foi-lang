@@ -115,7 +115,9 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     For example, `+>` (compose left-to-right operator) has two semantic signals in it. First, the `+` signifies a concatenation of functions (aka "composition"). Secondly, the `>` symbol is pointing in the direction of data-flow through the functions. By contrast, `<+` is the compose-right (right-to-left), meaning the data flows in the opposite direction.
 
-    The `~<` chain operator similarly uses the `<` to signify the relationship from the right-operand being chained to/from the left-operand. And the `~<<` do-comprehension, paired with the special `::` syntax on `def` definitions inside the do blocks, is the "chain" operation with arbitrary nesting. The `~<*` is similarly the iterator consumption, where `*` signals the do-comprehension looping 0 or more times (where the semantic for `*` is being borrowed from regular expressions).
+    The `#>` pipeline operator -- whose `>` also signifies left-to-right data flow direction -- additionally uses the `#` because that is the placeholder sigil for value interpolation into the function call arguments; example: `20 #> inc #> mul(#, 2)` (result: `42`).
+
+    The `~<` chain operator similarly uses the `<` to signify the directional relationship from the right-operand being chained to/from the left-operand. And the `~<<` do-comprehension, paired with the special `::` syntax on `def` definitions inside the do blocks, is the "chain" operation with arbitrary nesting. The `~<*` is similarly the iterator consumption, where `*` signals the do-comprehension looping 0 or more times (where the semantic for `*` is being borrowed from regular expressions).
 
     Finally, as mentioned previously, `^` points upward, to semantically hint "return value up/out".
 
