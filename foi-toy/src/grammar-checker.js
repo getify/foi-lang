@@ -20,7 +20,7 @@ elems.grammar.value = "S := '';";
 function initChecker(context) {
 	elems.output.addEventListener("_className",evt => {
 		if (elems.grammar.value != "" && elems.input.value != "") {
-			context.postMessage({ [evt.target.className]: evt.target.innerHTML, });
+			context.postMessage({ [evt.target.className]: evt.target.innerText, });
 		}
 	});
 
@@ -47,6 +47,7 @@ function onMessage(message) {
 function elem(_id) {
 	var _value = "";
 	var _html = "";
+	var _text = "";
 	var _className = "valid";
 	var cbs = {};
 	var publicAPI = {
@@ -81,6 +82,14 @@ function elem(_id) {
 		set innerHTML(v) {
 			_html = v;
 			publicAPI.dispatchEvent({ type: "_innerHTML", target: publicAPI });
+			return v;
+		},
+		get innerText() {
+			return _text;
+		},
+		set innerText(v) {
+			_text = v;
+			publicAPI.dispatchEvent({ type: "_innerText", target: publicAPI });
 			return v;
 		},
 		get className() {
