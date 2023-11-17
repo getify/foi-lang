@@ -43,7 +43,7 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
 getFavoriteMovies(123).run(document)
 ```
 
-### TL;DR
+## TL;DR
 
 If you're already convinced and ready to jump in, you may want to check these out next:
 
@@ -64,6 +64,18 @@ But if you're still skeptical, please read on for more about the [intent](#missi
 The *right*&trade; things should be intuitive, the *risky* things should be apparent, and the *problematic* things should be difficult or impossible.
 
 **Foi** is a language you write for other humans to read first. It's only a secondary benefit that the computer can understand the code and execute the desired operations.
+
+## Meaning
+
+What does the name **Foi** mean?
+
+First of all, [take your pick of meanings](https://en.wiktionary.org/wiki/foi) from various human languages. I personally like "faith" / "belief" (French).
+
+It also might be an acronym: *F*unctional *O*n *I*mperative.
+
+If you're more poetic, it could mean: *F*reedom *O*f... *I*dentity (or: *I*magination, *I*mpact, *I*nspiration, *I*nterest, *I*ntent, *I*llustration, etc etc). Or, maybe *F*uture *O*f ...
+
+Ultimately, **Foi** means whatever you need it to mean.
 
 ## Design Philosophy
 
