@@ -858,6 +858,8 @@ def greeting: ?(myName){
 greeting;               // "Hello!"
 ```
 
+The `?:` else-clause can also be abbreviated as `:` if preferred. More on that in a bit.
+
 **Note:** Comparing this example to the previous one, `?:` is equivalent to the `!["Kyle"]` pattern. Readability preferences may dictate either style, depending on the circumstances.
 
 A dependent style pattern can include a `,` comma separated list of multiple values, any of which may match the topic:
@@ -907,7 +909,7 @@ greeting;               // "Hello!"
 
 **Note:** The pattern-match conditional `![myName ?= "Kyle"]` is equivalent to `?[myName != "Kyle"]`. Readability preferences may dictate either style, depending on the circumstances.
 
-Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default (final) clause, `?:` may be used:
+Just as with dependent pattern matching, it's preferable for the overall independent pattern matching expression to be determinate, in that all conditional branches are covered. Again, to define a default (final) clause, `?:` (or abbreviated `:`) may be used:
 
 ```java
 def myName: "Kyle";
@@ -930,13 +932,13 @@ Pattern-matching conditional clauses may optionally skip the leading `?` type-sp
 ?{
     [isLoggedIn()]: showDashboard();
     [isRegistered()]: showLogin();
-    default: showRegistration()
+    : showRegistration()
 };
 ```
 
-Here, the two `[ .. ]: ..` clauses skip the leading type-signifier (a `?` is assumed). However, the `!` type signifier is never assumed, and therefore must be explicitly stated for clauses.
+Here, the two `[ .. ]: ..` clauses skip the leading type-signifier (a `?` is assumed). However, the `!` type signifier is never assumed, and therefore must be explicitly stated for clauses. As mentioned earlier, the `:` by itself on the third line illustrates an abbreviated `?:` else-clause.
 
-In cases where both affirmative and negative clauses are present, it may be desirable (for visual consistency) to specify both the `?` and `!` signifiers on the respective clauses, rather than only the `!` being present and the `?` being omitted. For example:
+In cases where both affirmative and negative clauses are present, it may be desirable (for visual consistency) to specify both the `?` and `!` signifiers on the respective clauses, rather than only the `!` being present and the `?` being assumed. For example:
 
 ```java
 // style 1
@@ -965,15 +967,17 @@ def myName: "Kyle";
 
 // full pattern matching expression:
 ?{
-    ?[!empty myName]: printGreeting(myName)
+    [!empty myName]: printGreeting(myName)
 }
 
 // standalone guard expression:
 ?[!empty myName]: printGreeting(myName);
 
-// or:
+// equivalent, if you prefer:
 ![?empty myName]: printGreeting(myName);
 ```
+
+The leading `?` is required on standalone guard expressions, unlike the optional abbreviated form in pattern matching.
 
 ## Records And Tuples
 

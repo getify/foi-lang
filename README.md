@@ -20,9 +20,42 @@ defn greetings(who) {
 
 The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
 
-An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently/fully learn **Foi** in a few days. It also shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**.
+An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently or fully learn **Foi** in several days.
 
-Hopefully, without too much heavy orientation, code like this will settle into familiarity for you:
+In the following code snippet, you'll might recognize familiar mechanisms like function calls and pattern recognition. There's also some standard FP idioms like partial application and composition (and a monad!). You might also spot a fun trick (operators-as-functions)!
+
+```java
+def adder: arithmetic("add");
+def subtractor: arithmetic("subtract");
+def tripler: (*)|3|;
+def add3: adder|3|;
+def sub5: subtractor|,5|;
+def compute: tripler +> add3 +> sub5;
+
+adder(3, 4);                            // 7
+add3(4);                                // 7
+subtractor(12, 5);                      // 7
+sub5(12);                               // 7
+
+3 #> tripler #> adder(3, #) #> sub5;    // 7
+
+compute(3);                             // 7
+(<+)(sub5, add3, tripler)(3);           // 7
+
+// ***********************
+
+defn arithmetic(op) ^(
+  ?(op){
+    ["add"]: (+);
+    ["subtract"]: (-);
+    ["multiply"]: (*);
+    ["divide"]: (/);
+    : Left@ "Invalid"
+  }
+)
+```
+
+It shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**. Hopefully, without too much learning and practice, even more advanced code like this will brighten into clarity:
 
 ```java
 defn getFavoriteMovies(userID) ^(IO ~<< {
@@ -42,6 +75,8 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
 
 getFavoriteMovies(123).run(document)
 ```
+
+**Hint:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions are monadic chain operations. But if that's just a bowl of word-soup, don't worry for now; you'll *get it* before too long!
 
 ## TL;DR
 
