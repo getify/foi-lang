@@ -55,6 +55,12 @@ defn arithmetic(op) ^(
 )
 ```
 
+----
+
+**Note:** [Here is this snippet alongside its JS equivalent](https://gist.github.com/getify/faedec7c918a09820fef91519a9d1b69), in case it's helpful to compare and to understand the **Foi** code better.
+
+----
+
 It shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**. Hopefully, without too much learning and practice, even more advanced code like this will brighten into clarity:
 
 ```java
@@ -76,7 +82,13 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
 getFavoriteMovies(123).run(document)
 ```
 
-**Hint:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions are monadic chain operations. But if that's just a bowl of word-soup, don't worry for now; you'll *get it* before too long!
+Don't worry for now if that example is just a bowl of symbol-soup; you'll *get it* before too long!
+
+----
+
+**Note:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions are monadic chain operations. [Here is that snippet alongside its JS equivalent](https://gist.github.com/getify/3542996ab54b5be2a648ecfcb6bb6bc8), in case it's helpful to compare and to understand the **Foi** code better.
+
+----
 
 ## TL;DR
 
