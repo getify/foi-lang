@@ -25,6 +25,15 @@ An important design goal is that a somewhat experienced developer -- especially 
 In the following code snippet, you'll might recognize familiar mechanisms like function calls and pattern recognition. There's also some standard FP idioms like partial application and composition (and a monad!). You might also spot a fun trick (operators-as-functions)!
 
 ```java
+defn arithmetic(op) ^(
+  ?(op){
+    ["add"]: (+);
+    ["subtract"]: (-);
+    ["multiply"]: (*);
+    ["divide"]: (/);
+    : Left@ "Invalid"
+  }
+);
 def adder: arithmetic("add");
 def subtractor: arithmetic("subtract");
 def tripler: (*)|3|;
@@ -40,19 +49,7 @@ sub5(12);                               // 7
 3 #> tripler #> adder(3, #) #> sub5;    // 7
 
 compute(3);                             // 7
-(<+)(sub5, add3, tripler)(3);           // 7
-
-// ***********************
-
-defn arithmetic(op) ^(
-  ?(op){
-    ["add"]: (+);
-    ["subtract"]: (-);
-    ["multiply"]: (*);
-    ["divide"]: (/);
-    : Left@ "Invalid"
-  }
-)
+(<+)(sub5, add3, tripler)(3)            // 7
 ```
 
 ----
@@ -196,7 +193,7 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
     The `&` capability also allows selective picking/linking, like `< &two.3 >` `< &one.something >`.
 
-    Computed property names in JS again overload the `[ .. ]` syntax, like `{ [someProp]: 42 }`. But in **Foi**, we simplify this with a single `%` symbol: `< %someProp: 42 >`. This is also how Records act as Maps (non-primitive keys): `< %otherObj: .. >`.
+    Computed property names in JS again overload the `[ .. ]` syntax, like `{ [someProp]: 42 }`. But in **Foi**, we simplify this with a single `%` symbol: `< %someProp: 42 >`. This is also how Records act as Maps (non-primitive keys): `< %otherObjAsKey: .. >`.
 
     **Foi** treats a "Set" as just a filtered construction (removing duplicates) of a Tuple.
 
