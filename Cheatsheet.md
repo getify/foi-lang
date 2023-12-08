@@ -1,6 +1,6 @@
 # Foi-vs-JS Cheatsheet
 
-The following (incomplete) is a **Foi** cheatsheet: a list of comparisons between JS operators/keywords/features and the somewhat-equivalents in **Foi**.
+If you're familiar with JS and want to understand how to do something in **Foi** instead, the following is a lookup list of  JS features/idioms and their (somewhat) equivalents in **Foi**:
 
 <table>
   <thead>
@@ -135,6 +135,338 @@ Here are some screenshots showing typical JS code (on top or left, in each image
 The syntax highlighting of the **Foi** code in these screenshots is produced by the [Foi-Toy tool](foi-toy/README.md) included in this repository.
 
 You can find some [more examples of **Foi** code here](foi-toy/test).
+
+## Syntax Weight/Density
+
+**Foi** more strongly favors the usage of symbolic operators over generic keywords (e.g. **Foi** `^` vs JS `return`). Symbol re-use in compound (multi-character) operators is also prioritized for creating a visual symmetry between related features (e.g., the common `?` in boolean operators like `?>`, `?<`, and `?=`). And **Foi** uses symbol visual semantics to signal behavior (e.g. `+>` pointing in left-to-right direction to indicate the flow of data). Lastly, **Foi** makes some choices in its operators (especially compound operators) that are unique/rare compared to other languages (e.g., `~<*`), and will thus be less familiar at first glance.
+
+As such, **Foi** code may indeed appear to be more heavy/dense in its syntax when you first start reading it.
+
+While it's important to admit the intentionality in these design decisions, it's also important to keep a full context for such analysis and opinion forming.
+
+The following table is a comprehensive list of all non-alphanumeric symbols in JS, as well as in **Foi**, presented respectively in side-by-side columns. In many cases, the row pairings in this table attempt to match like features, but there are many JS or **Foi** features that are distinct and don't match up; those "random" row pairings are only to slot things into a table for counting purposes.
+
+As a summary of the symbol counts below:
+
+* JS has **79** distinct symbol sequences (single-character, or compound multi-character); there are another 12 proposed JS symbols (Stage 2 or 3 proposals, somewhat likely to happen).
+
+    - 28 of them are single-character (plus 1 proposed)
+    - 30 of them are double-character (plus 2 proposed)
+    - 12 of them are triple-character (plus 3 proposed)
+    - 9 of them are four+ characters (plus 6 proposed)
+    - 182 total characters (plus 71 proposed characters)
+    - Regular expression literals can't be length-analyzed
+
+* **Foi** has **88** distinct symbol sequences.
+
+    - 26 of them are single-character
+    - 21 of them are double-character
+    - 21 of them are triple-character
+    - 20 of them are four+ characters
+    - 260 total characters
+
+As you can see, JS has **79** distinct symbols (**91** including likely-to-land future proposals), whereas **Foi** has **88** distinct symbols. Overall character count of all symbols is **253** in JS (proposals included) versus **260** for **Foi**.
+
+So, is **Foi** more syntactically heavy/verbose than JS? Perhaps a little bit, yes. But probably not significantly moreso, no.
+
+Of course, these symbol/character counts don't tell the whole story. It's also important to understand the usage frequency of each type and length of symbol/operator. Moreover, the "symbol density" of a code base depends on how many of these symbols would appear near/adjacent to each other, with other intervening alphanumeric characters "spreading" them out or not.
+
+Both of these factors are highly dependent on the code base/style, so can't be objectively compared in a universal sense.
+
+<table>
+    <tr>
+        <td>JS Symbol/Operator</td><td>Description</td>
+        <td></td>
+        <td>Foi Symbol/Operator</td><td>Description</td>
+    </tr>
+    <tr>
+        <td><code>@</code></td><td>Decorator (proposed)</td>
+        <td></td>
+        <td><code>@</code></td><td>Monad Constructor</td>
+    </tr>
+    <tr>
+        <td><code>#</code></td><td>Private Member</td>
+        <td></td>
+        <td><code>#</code></td><td>Pipeline Topic</td>
+    </tr>
+    <tr>
+        <td><code>_</code></td><td>Identifier Character</td>
+        <td></td>
+        <td><code>_</code></td><td>Identifier Character</td>
+    </tr>
+    <tr>
+        <td><code>$</code></td><td>Identifier Character</td>
+        <td></td>
+        <td><code>$+</code></td><td>Set Append</td>
+    </tr>
+    <tr>
+        <td><code>,</code></td><td>Comma</td>
+        <td></td>
+        <td><code>,</code></td><td>Comma</td>
+    </tr>
+    <tr>
+        <td><code>.</code></td><td>Property Access</td>
+        <td></td>
+        <td><code>.</code></td><td>Property Access</td>
+    </tr>
+    <tr>
+        <td><code>;</code></td><td>Statement End Semicolon</td>
+        <td></td>
+        <td><code>;</code></td><td>Statement End Semicolon</td>
+    </tr>
+    <tr>
+        <td><code>:</code></td><td>Property Definition</td>
+        <td></td>
+        <td><code>:</code></td><td>Initial Assignment, Property Definition</td>
+    </tr>
+    <tr>
+        <td><code>`</code></td><td>Template String Delimiter</td>
+        <td></td>
+        <td><code>`</code></td><td>Interpolated String Delimiter, Interpolated Expression Delimiter</td>
+    </tr>
+    <tr>
+        <td><code>"</code></td><td>String Delimiter</td>
+        <td></td>
+        <td><code>"</code></td><td>String Delimiter</td>
+    </tr>
+    <tr>
+        <td><code>'</code></td><td>String Delimiter</td>
+        <td></td>
+        <td><code>'</code></td><td>Function Call Argument Reversal</td>
+    </tr>
+    <tr>
+        <td><code>\</code></td><td>Escape</td>
+        <td></td>
+        <td><code>\</code></td><td>Escape</td>
+    </tr>
+    <tr>
+        <td><code>~</code></td><td>Bitwise Negate (1's complement)</td>
+        <td></td>
+        <td><code>\@</code></td><td>Large Number Escape (monadic)</td>
+    </tr>
+    <tr>
+        <td><code>!!</code> <code>!</code></td><td>Boolean Cast / Negate</td>
+        <td></td>
+        <td><code>?</code> <code>!</code></td><td>Boolean Cast / Negate</td>
+    </tr>
+    <tr>
+        <td><code>%</code> <code>%=</code></td><td>Remainder / Assignment</td>
+        <td></td>
+        <td><code>%</code></td><td>Computed Property Name</td>
+    </tr>
+    <tr>
+        <td><code>^</code> <code>^=</code></td><td>Bitwise Negate / Assignment</td>
+        <td></td>
+        <td><code>^</code></td><td>Return (function value)</td>
+    </tr>
+    <tr>
+        <td><code>&</code> <code>&=</code></td><td>Bitwise And / Assignment</td>
+        <td></td>
+        <td><code>&</code></td><td>Pick (record/tuple value)</td>
+    </tr>
+    <tr>
+        <td><code>+</code> <code>+=</code></td><td>Addition / Assignment</td>
+        <td></td>
+        <td><code>+</code></td><td>Addition</td>
+    </tr>
+    <tr>
+        <td><code>-</code> <code>-=</code></td><td>Subtraction / Assignment</td>
+        <td></td>
+        <td><code>-</code></td><td>Subtraction</td>
+    </tr>
+    <tr>
+        <td><code>*</code> <code>*=</code></td><td>Multiplication / Assignment</td>
+        <td></td>
+        <td><code>*</code></td><td>Multiplication</td>
+    </tr>
+    <tr>
+        <td><code>/</code> <code>/=</code></td><td>Divide / Assignment</td>
+        <td></td>
+        <td><code>/</code></td><td>Divide</td>
+    </tr>
+    <tr>
+        <td><code>*</code> <code>*=</code></td><td>Multiplication / Assignment</td>
+        <td></td>
+        <td><code>*</code></td><td>Multiplication</td>
+    </tr>
+    <tr>
+        <td><code>(  )</code></td><td>Expression Grouping, Function Call Arguments</td>
+        <td></td>
+        <td><code>(  )</code></td><td>Expression Grouping, Function Call Arguments</td>
+    </tr>
+    <tr>
+        <td><code>[  ]</code></td><td>Array Literals, Property Access</td>
+        <td></td>
+        <td><code>[  ]</code></td><td>Property Access</td>
+    </tr>
+    <tr>
+        <td><code>{  }</code></td><td>Object Literals, Blocks</td>
+        <td></td>
+        <td><code>{  }</code></td><td>Blocks</td>
+    </tr>
+    <tr>
+        <td><code>|</code> <code>|=</code></td><td>Bitwise Or / Assignment</td>
+        <td></td>
+        <td><code>|  |</code></td><td>Function Call Partial Application</td>
+    </tr>
+    <tr>
+        <td><code>#{  }</code> <code>#[  ]</code></td><td>Record / Tuple (proposed)</td>
+        <td></td>
+        <td><code>&lt;  &gt;</code></td><td>Record, Tuple</td>
+    </tr>
+    <tr>
+        <td><code>**</code> <code>**=</code></td><td>Exponentiation / Assignment</td>
+        <td></td>
+        <td><code>&lt;[  ]&gt;</code></td><td>Set</td>
+    </tr>
+    <tr>
+        <td><code>=</code></td><td>(Re-)Assignment</td>
+        <td></td>
+        <td><code>:=</code></td><td>Re-Assignment</td>
+    </tr>
+    <tr>
+        <td><code>==</code> <code>!=</code></td><td>Equality / Inequality</td>
+        <td></td>
+        <td><code>?=</code> <code>!=</code></td><td>Equality / Inequality</td>
+    </tr>
+    <tr>
+        <td><code>===</code> <code>!==</code></td><td>Strict Equality / Inequality</td>
+        <td></td>
+        <td><code>?$=</code> <code>!$=</code></td><td>Set Equality / Inequality</td>
+    </tr>
+    <tr>
+        <td><code>&lt;</code> <code>!(x < y)</code></td><td>Less Than / Not Less Than</td>
+        <td></td>
+        <td><code>?&lt;</code> <code>!&lt;</code></td><td>Less Than / Not Less Than</td>
+    </tr>
+    <tr>
+        <td><code>&lt;=</code> <code>!(x <= y)</code></td><td>Less Than Or Equal / Not Less Than Or Equal</td>
+        <td></td>
+        <td><code>?&lt;=</code> <code>!&lt;=</code></td><td>Less Than Or Equal / Not Less Than Or Equal</td>
+    </tr>
+    <tr>
+        <td><code>&gt;</code> <code>!(x > y)</code></td><td>Greater Than / Not Greater Than</td>
+        <td></td>
+        <td><code>?&gt;</code> <code>!&gt;</code></td><td>Greater Than / Not Greater Than</td>
+    </tr>
+    <tr>
+        <td><code>&gt;=</code> <code>!(x >= y)</code></td><td>Greater Than Or Equal / Not Greater Than Or Equal</td>
+        <td></td>
+        <td><code>?&gt;=</code> <code>!&gt;=</code></td><td>Greater Than Or Equal / Not Greater Than Or Equal</td>
+    </tr>
+    <tr>
+        <td><code>=></code></td><td>Arrow Function</td>
+        <td></td>
+        <td><code>?&lt;=&gt;</code> <code>!&lt;=&gt;</code></td><td>Between (inclusive) / Not Between</td>
+    </tr>
+    <tr>
+        <td><code>&&</code> <code>&&=</code></td><td>Boolean And / Assignment</td>
+        <td></td>
+        <td><code>?&lt;&gt;</code> <code>!&lt;&gt;</code></td><td>Between (non-inclusive) / Not Between</td>
+    </tr>
+    <tr>
+        <td><code>||</code> <code>||=</code></td><td>Boolean Or / Assignment</td>
+        <td></td>
+        <td><code>..</code></td><td>Range / Slice</td>
+    </tr>
+    <tr>
+        <td><code>//</code> <code>/*</code> <code>*/</code></td><td>Line Comment / Multiline Comment</td>
+        <td></td>
+        <td><code>//</code> <code>///</code></td><td>Line Comment / Multiline Comment</td>
+    </tr>
+    <tr>
+        <td><code>...</code></td><td>Spread / Rest</td>
+        <td></td>
+        <td><code>...</code></td><td>Spread / Gather</td>
+    </tr>
+    <tr>
+        <td><code>\u</code></td><td>Unicode Escape</td>
+        <td></td>
+        <td><code>\u</code></td><td>Unicode Escape</td>
+    </tr>
+    <tr>
+        <td><code>0o</code> <code>0O</code></td><td>Octal Number Prefix</td>
+        <td></td>
+        <td><code>\o</code></td><td>Octal Number Prefix</td>
+    </tr>
+    <tr>
+        <td><code>0b</code> <code>0B</code></td><td>Binary Number Prefix</td>
+        <td></td>
+        <td><code>\b</code></td><td>Binary Number Prefix</td>
+    </tr>
+    <tr>
+        <td><code>0x</code> <code>0X</code></td><td>Hexadecimal Number Prefix</td>
+        <td></td>
+        <td><code>\h</code></td><td>Hexadecimal Number Prefix</td>
+    </tr>
+    <tr>
+        <td><code>|&gt;</code></td><td>Pipeline (proposed)</td>
+        <td></td>
+        <td><code>#&gt;</code></td><td>Pipeline</td>
+    </tr>
+    <tr>
+        <td><code>%%</code></td><td>Pipeline Topic Marker (proposed)</td>
+        <td></td>
+        <td><code>::</code></td><td>Do-Style Chain Assignment</td>
+    </tr>
+    <tr>
+        <td><code>?</code></td><td>Ternary Conditional</td>
+        <td></td>
+        <td><code>?{  }</code></td><td>Pattern Match Expression (Independent)</td>
+    </tr>
+    <tr>
+        <td><code>?.</code> <code>?.[</code> <code>?.(</code></td><td>Optional Property Access</td>
+        <td></td>
+        <td><code>?(  ){  }</code></td><td>Pattern Match Expression (Dependent)</td>
+    </tr>
+    <tr>
+        <td><code>??</code> <code>??=</code></td><td>Nullish-Coalescing / Assignment</td>
+        <td></td>
+        <td><code>?[  ]</code></td><td>Guard Clause, Pattern Match Conditional, Function Precondition</td>
+    </tr>
+    <tr>
+        <td><code>&gt;&gt;</code> <code>&gt;&gt;=</code></td><td>Bitwise Shift Right / Assignment</td>
+        <td></td>
+        <td><code>~&lt;</code></td><td>Chain/Bind/FlatMap Comprehension (Terse)</td>
+    </tr>
+    <tr>
+        <td><code>&gt;&gt;&gt;</code> <code>&gt;&gt;&gt;=</code></td><td>Bitwise Shift Right (Zero Padded) / Assignment</td>
+        <td></td>
+        <td><code>~&lt;*</code></td><td>Looping Do-Syntax (monadic)</td>
+    </tr>
+    <tr>
+        <td><code>&lt;&lt;</code> <code>&lt;&lt;=</code></td><td>Bitwise Shift Left / Assignment</td>
+        <td></td>
+        <td><code>~&lt;&lt;</code></td><td>Do-Syntax (monadic)</td>
+    </tr>
+    <tr>
+        <td><code>++</code></td><td>(Pre, Post) Increment</td>
+        <td></td>
+        <td><code>+&gt;</code></td><td>Compose (left-to-right)</td>
+    </tr>
+    <tr>
+        <td><code>--</code></td><td>(Pre, Post) Decrement</td>
+        <td></td>
+        <td><code>&lt;+</code></td><td>Compose (right-to-left)</td>
+    </tr>
+    <tr>
+        <td><code>function*</code> <code>yield*</code> <code>import.meta</code> <code>new.target</code><hr>(proposed) <code>!in</code> <code>!instanceof</code> <code>function.sent</code> <code>await.all</code> <code>await.race</code> <code>await.allSettled</code> <code>await.any</code></td><td>Keyword+Symbol (hybrid)</td>
+        <td></td>
+        <td><code>~each</code> <code>~map</code> <code>~filter</code> <code>~fold ~foldMap</code> <code>~foldR</code> <code>~chain</code> <code>~bind</code> <code>~flatMap</code> <code>~ap</code> <code>~cata</code> <code>:as</code> <code>:over</code> <code>?empty</code> <code>!empty</code> <code>?and</code> <code>!and</code> <code>?or</code> <code>!or</code> <code>?as</code> <code>!as</code> <code>?in</code> <code>!in</code> <code>?has</code> <code>!has</code></td><td>Keyword+Symbol (hybrid)</td>
+    </tr>
+    <tr>
+        <td><code>${  }</code></td><td>Interpolated Expression Delimiter</td>
+        <td></td>
+        <td></td><td></td>
+    </tr>
+    <tr>
+        <td><code>/p*[^a](?&lt;tt&gt;er){1,3}n/</code></td><td>Regular Expression Literals</td>
+        <td></td>
+        <td></td><td></td>
+    </tr>
+</table>
+
+The question that matters the most is: "Does Foi allow me to express and understand programs better?" And you'll only be able to judge that properly once you learn and practice with it, so don't rush to judgement at first glance!
 
 ## Further Details
 
