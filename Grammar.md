@@ -138,7 +138,7 @@ ExprNoBlockGroupedAsOpt := ExprNoBlock | GroupedExprNoBlockAsOpt;
 
 AsAnnotationExpr        := ":as" WhSp+ NamedType;
 
-OpFuncExpr              := "(" Op "'"? ")";
+OpFuncExpr              := "(" (Op | DotAngleExpr | DotBracketExpr | "[]") "'"? ")";
 
 ExprAccessExpr          := (ExprNoBlock | GroupedExprAsOpt) (SingleAccessExpr | MultiAccessExpr);
 AssignmentExpr          := (Identifier | IdentifierSingleExpr) WhSp* ":=" WhSp* ExprAsOpt;
