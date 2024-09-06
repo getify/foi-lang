@@ -241,7 +241,7 @@ DepCondBinaryBoolExpr   := NamedBoolRightExpr | SymbolicBoolRightExpr | ("(" WhS
 (*************** Loops/Comprehensions ***************)
 
 ComprExpr               := (((ComprRangeNoEachExpr WhSp+ ComprOpNoEach) | (ComprRangeEachExpr WhSp+ ComprOpEach) | (ComprExpr WhSp+ ComprOp)) WhSp+ ComprIterationExpr) | ("(" WhSp* ComprExpr WhSp* ")");
-ComprRangeNoEachExpr    := IdentifierExpr | CallExpr | DataStructLit | ClosedRangeExpr | ExprAccessExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* ComprRangeNoEachExpr WhSp* ")");
+ComprRangeNoEachExpr    := IdentifierExpr | CallExpr | DataStructLit | ClosedRangeExpr | ExprAccessExpr | DoComprExpr | DoLoopComprExpr | ("(" WhSp* (ComprRangeNoEachExpr | MatchExpr) WhSp* ")");
 ComprRangeEachExpr      := CondClause | ComprRangeNoEachExpr | ("(" WhSp* ComprRangeEachExpr WhSp* ")");
 ComprOp                 := ComprOpNoEach | ComprOpEach;
 ComprOpNamed            := ComprOpEach | ComprOpNamedNoEach;
