@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # Runs a set of commands using the runners shell
       - name: install deps and build foi-toy web
@@ -38,12 +38,12 @@ jobs:
           npm install
           npm run build:foi-toy-web
       - name: Setup Pages
-        uses: actions/configure-pages@v2
+        uses: actions/configure-pages@v5
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+        uses: actions/upload-pages-artifact@v3
         with:
           # Upload entire repository
           path: './foi-toy/web'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v1
+        uses: actions/deploy-pages@v4
