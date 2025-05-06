@@ -2,7 +2,7 @@
 
 importScripts(
 	"grammar-checker.js",
-	"https://rawgit.com/mdkrajnak/ebnftest/gh-pages/js/ebnftest.js"
+	"ebnftest.js"
 );
 
 initChecker(self);
