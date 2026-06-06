@@ -1,0 +1,569 @@
+# Foi Lexer — Implementation Notes
+
+Companion document to the Foi Lexical Grammar (EBNF). The grammar
+specifies *what* the lexer matches; this document specifies *how* the
+combinator-form lexer in `foi-lex.js` implements it, with enough
+detail to reproduce the implementation choices, tree shape, and event
+stream byte-for-byte.
+
+Assumes familiarity with the parser combinator library in
+`parser.js` (constructs: `production`, `terminal`, `and`, `or`,
+`optional`, `any`, `many`, `not`, `lookahead`, `gate`, `dispatch`,
+`eof`, `until`, `sepBy`, `sepBy1`, `delim`, `delimWSReq`).
+
+
+## 1. Architectural Posture
+
+The lexer is a streaming PEG parser over character input. Tokens are
+emitted as `commit` events on depth-1 frames; the top-level `Tokens`
+production is the only depth-0 frame. Subscribers using
+`presets.parseTokens` receive `matched`/`rollback`/`commit` events
+for each token as it is recognized.
+
+**Token grain.** Each named production whose name matches a tokenizer
+type string (e.g., `"WHITESPACE"`, `"COMMENT"`, `"NUMBER"`, the
+single-char operator names) corresponds to exactly one emitted
+token. The `production()` wrapper is what turns a grammar fragment
+into a frame; anonymous `and(...)` / `or(...)` wrappers do not emit
+their own frames, so their inner productions appear at the same
+depth as their parent would.
+
+**No cross-token state.** The lexer maintains no mutable state that
+persists across token boundaries. The hyphen-as-sign disambiguation
+is handled per-token via the `expressionEnding` wrapper rather than
+via a global flag.
+
+**Async streaming input.** The lexer accepts an async or sync
+iterable of characters. Buffering is unbounded for v1 (no GC of
+consumed prefix); fine for source-file-sized inputs.
+
+
+## 2. Library Construct Choices
+
+For each EBNF construct, the corresponding combinator construct:
+
+| EBNF | Combinator |
+| --- | --- |
+| sequence `A B` | `and(A, B)` |
+| ordered choice `A \| B` | `or(A, B)` |
+| optional `A?` | `optional(A)` |
+| zero-or-more `A*` | `any(A)` |
+| one-or-more `A+` | `many(A)` |
+| positive lookahead `&(A)` | `lookahead(A)` |
+| negative lookahead `!(A)` | `not(A)` |
+| regex char class `#"[...]"` | `terminal(c => /[...]/u.test(c))` |
+| literal `"x"` | `ch("x")` (helper for `terminal(c => c === "x")`) |
+| EOF | `eof()` |
+| named non-terminal | `production("NAME", body)` |
+| anonymous group | bare `and(...)` / `or(...)` |
+
+The `ch(c, onMatch?)` helper in `foi-lex.js` wraps `terminal()` with
+a single-character equality check and accepts an optional `onMatch`
+callback. The two-argument form is critical and easy to break; see
+§9.
+
+
+## 3. What Becomes a Production
+
+A grammar rule becomes a `production("NAME", ...)` if and only if its
+name appears in the emitted token stream. Token types in the lexer's
+output:
+
+```
+WHITESPACE, COMMENT, NUMBER, GENERAL,
+KEYWORD, NATIVE, BUILTIN, COMPREHENSION, BOOLEAN_OPER,
+STRING, STRING_ESCAPED_CHAR, DOUBLE_QUOTE,
+BACKTICK, ESCAPE, HYPHEN,
+TRIPLE_PERIOD, DOUBLE_PERIOD, DOUBLE_COLON,
+<all single-char operator names: TILDE, EXMARK, ..., BACKTICK>
+```
+
+Each gets a corresponding `production(...)`. Helper rules in the
+grammar (`IdentBody`, `BareNumBody`, `MonadNumBody`, `DigitsWithSep`,
+`HexDigitsWithSep`, `NumberBody`, `EscapedNumberBody`, the various
+`*Content` and `*Chars` rules inside strings) are NOT productions —
+they are `var` bindings to anonymous `and(...)`/`or(...)` fragments
+that are reused by name within the file but do not create frames.
+
+The EBNF grammar now marks this distinction explicitly: hidden rules carry angle brackets on the LHS (`<Name> := ...`) and emit no node — their content splices into the parent. Unbracketed names emit a node. The mapping is mechanical: angle-bracketed ⟺ bare `and(...)` / `or(...)` here; unbracketed ⟺ `production(NAME, ...)`. One subtlety: a few unbracketed names are *aliases* for productions whose token type differs from the EBNF name. `EscapeBacktick`, `EscapeSpacingBacktick`, and `EscapePlain` all emit `ESCAPE` tokens (distinguished by value). `InterpStrChars`, `SpacingInterpStrChars`, and `SpacingEscapedStrChars` all emit `STRING` tokens (distinguished by which characters the content predicate accepts). These exist because the grammar reads more clearly when the role of a STRING-emitter is named at its use site; the impl collapses them to their shared token type at emission. Inline EBNF comments flag each alias.
+
+All four string-form rules (`StringLit`, `InterpStr`, `SpacingInterpStr`, `SpacingEscapedStr`) are bare `and(...)` expressions, not productions. The token stream for each contains the individual `DOUBLE_QUOTE` (or `ESCAPE` + `DOUBLE_QUOTE` for the three escape-bearing forms), content tokens (`STRING`, `STRING_ESCAPED_CHAR`, `WHITESPACE`, `BACKTICK`, etc.), and closing `DOUBLE_QUOTE` as separate depth-1 emissions. Wrapping any of them as a production would add an extra frame layer that no consumer wants.
+
+Similarly, `EscapedNumber` is a bare `or(...)` of `and(ESCAPE, NUMBER)` pairs — six alternatives covering `\h`, `\u`, `\o`, `\b`, `\@`, and bare `\` openers. Each emits two tokens: a multi-char `ESCAPE` carrying the opener (e.g., `"\h"`) and a `NUMBER` carrying the digits.
+
+## 4. The IdentBody sawNonDigit Gate
+
+The grammar's IdentBody is a syntactic over-approximation. The
+combinator enforces "at least one non-digit character was seen" via
+frame-local state mutated by `onMatch` callbacks:
+
+```js
+var IdentBody = and(
+    or(
+        terminal(isIdentStart, (c, f) => {
+            if (!isDigit(c)) f.state.sawNonDigit = true;
+        }),
+        and(
+            terminal(c => c === "~", (_, f) => { f.state.sawNonDigit = true; }),
+            terminal(isAlpha,        (_, f) => { f.state.sawNonDigit = true; })
+        )
+    ),
+    any(terminal(isIdentCont, (c, f) => {
+        if (!isDigit(c)) f.state.sawNonDigit = true;
+    })),
+    gate(f => f.state.sawNonDigit === true)
+);
+```
+
+Critical implementation choices:
+
+- The `onMatch` callback fires after the character is consumed and
+  receives the innermost named frame `f`. Mutating `f.state.X` is
+  how frame-local state is built up during matching.
+- The trailing `gate(f => f.state.sawNonDigit === true)` is the
+  validation point. Without it, pure-digit runs would match
+  IdentBody and shadow Number.
+- `IdentBody` is itself an anonymous `and(...)`, not a production —
+  so `f` in the callbacks refers to whichever named frame is
+  innermost at the call site (General, Keyword, Native, etc.). This
+  is intentional: each typed-identifier production gets its own
+  fresh `sawNonDigit` state on each open.
+
+`onMatch` callbacks are the general mechanism for any frame-state
+accumulation during character consumption. The `ch(c, onMatch)`
+helper exists specifically to make this ergonomic for single-char
+matches.
+
+
+## 5. Reserved-Set Membership Gates
+
+The five typed-identifier productions each match a broader form than
+their semantics permit, then apply a `gate()` over the matched
+characters:
+
+```js
+export const NATIVE = production("NATIVE",
+    and(IdentBody, gate(f => NATIVES.includes(f.matched.join(""))))
+);
+```
+
+Implementation choices:
+
+- The gate reads `f.matched`, which is the array of consumed
+  characters since the frame opened. This is populated by
+  `terminal()` automatically when `config.preserveTerminals` is on
+  (which it is for the lexer).
+- `f.matched.join("")` materializes the matched span as a string for
+  set-membership testing. Cheap because token-length strings are
+  short.
+- On gate failure, the entire production fails — the frame is
+  rolled back, the consumed characters are restored to the buffer
+  position, and the next Token alternative is tried.
+- `KEYWORD` has a slight variation: the gate strips the leading
+  `:` for the extension form before checking:
+
+  ```js
+  gate(f => KEYWORDS.includes(":" + f.matched.slice(1).join("")))
+  ```
+
+  Two arms in the outer `or()`: one for `:`-prefixed, one bare.
+- `BOOLEAN_OPER` similarly skips the leading `?` or `!`:
+
+  ```js
+  gate(f => BOOLEAN_NAMED_OPERATORS.includes(f.matched.slice(1).join("")))
+  ```
+
+
+## 6. The Comment Production: dispatch vs. Ordered Choice
+
+The grammar shows `Comment := BlockComment | LineComment`. The
+combinator could implement this as straight ordered choice; instead
+it uses `dispatch()` on frame state after committing the `//` prefix:
+
+```js
+export const COMMENT = production("COMMENT",
+    and(
+        ch("/"),
+        ch("/", (_, f) => { f.state.kind = "line"; }),
+        optional(ch("/", (_, f) => { f.state.kind = "block"; })),
+        dispatch(f => f.state.kind, {
+            line:  any(terminal(c => c !== "\n")),
+            block: and(
+                any(and(not(lookahead(BlockClose)), terminal(_ => true))),
+                or(BlockClose, eof())
+            ),
+        })
+    )
+);
+
+var BlockClose = and(ch("/"), ch("/"), ch("/"));
+```
+
+Why dispatch instead of `or(BlockComment, LineComment)`:
+
+- The `//` prefix is shared. Dispatch lets us commit it once and
+  then branch on whether a third `/` follows, rather than
+  backtracking the `//` if BlockComment fails.
+- Frame state captures the decision (`kind: "line"` or
+  `kind: "block"`), which is then used by `dispatch()` to pick the
+  body grammar.
+- The block body uses `any(and(not(lookahead(BlockClose)), terminal(_ => true)))`
+  to consume any char until `BlockClose` would match, then
+  `or(BlockClose, eof())` to require either the close or end-of-input.
+  EOF-tolerant block comments are a deliberate behavior.
+
+This is the canonical example of `dispatch()` usage in the lexer.
+
+
+## 7. The Four String Forms
+
+All four string forms emit at the same grain: an opening `DOUBLE_QUOTE` (preceded by `ESCAPE` for the three escape-bearing forms), zero or more content tokens, and a closing `DOUBLE_QUOTE`. None of the four are themselves productions — they are bare `and(...)` expressions.
+
+The content alternatives vary by form:
+
+```js
+StringLit:           any(or(StringEscapedCharDQ, StringLitChars))
+InterpStr:           any(or(STRING_ESCAPED_CHAR, InterpExpr, InterpStrChars))
+SpacingInterpStr:    any(or(STRING_ESCAPED_CHAR, InterpExpr, WHITESPACE, SpacingInterpStrChars))
+SpacingEscapedStr:   any(or(StringEscapedCharDQ, WHITESPACE, SpacingEscapedStrChars))
+```
+
+The differences encode each form's syntactic features along two independent axes:
+
+- **Embeds** (the two interp forms): `InterpExpr` is in the alternatives, allowing nested expressions via `` `...` ``. The chars predicates exclude `` ` `` so the content matcher yields to `InterpExpr` or `STRING_ESCAPED_CHAR` at backtick positions.
+- **Spacing** (the two spacing forms): `WHITESPACE` is in the alternatives, and the chars predicates exclude whitespace, so the content matcher yields to `WHITESPACE` at whitespace positions.
+
+The two non-interp forms (`StringLit`, `SpacingEscapedStr`) reference the narrow `StringEscapedCharDQ` escape variant; the two interp forms reference the broad `STRING_ESCAPED_CHAR`. See §8 for the split.
+
+
+## 8. STRING_ESCAPED_CHAR — Two Combinator Bindings
+
+Two combinator bindings, both emitting the same `STRING_ESCAPED_CHAR` token type, differing only in which doubled-character escape is reachable:
+
+```js
+var StringEscapedCharDQ = production("STRING_ESCAPED_CHAR",
+    and(ch('"'), ch('"'))
+);
+
+export const STRING_ESCAPED_CHAR = production("STRING_ESCAPED_CHAR",
+    or(
+        and(ch('"'), ch('"')),
+        and(ch("`"), ch("`"))
+    )
+);
+```
+
+The split tracks which string forms have a syntactic role for `` ` ``:
+
+- `StringLit` and `SpacingEscapedStr` use `StringEscapedCharDQ`. In these forms `` ` `` has no syntactic significance — it's literal STRING content.
+- `InterpStr` and `SpacingInterpStr` use the broad `STRING_ESCAPED_CHAR`. In these forms `` ` `` opens embedded expressions, so escaping it via `` `` `` is meaningful.
+
+Both productions emit the same token type, so downstream consumers see no difference; only the reachability of the `` `` `` alternative differs per form.
+
+Placement in each content loop is the same: the STRING_ESCAPED_CHAR variant is the first alternative, before any chars matcher. The chars matcher's predicate excludes `"` (and, in the interp forms, `` ` ``); if STRING_ESCAPED_CHAR were tried after the chars matcher, the chars matcher would greedily consume characters before STRING_ESCAPED_CHAR could try matching the doubled-character escape. Trying STRING_ESCAPED_CHAR first ensures the escape is recognized.
+
+
+## 9. ESCAPE Token Emission
+
+The lexer emits `ESCAPE` tokens with one of seven values, distinguishing their syntactic role:
+
+```
+"\"            single-char ESCAPE operator (where \ has no specific role)
+"`"            opener of InterpStr
+"\"            opener of SpacingEscapedStr
+"\`"           opener of SpacingInterpStr
+"\h" / "\u"
+"\o" / "\b"    opener of EscapedNumber (followed by a NUMBER token)
+"\@"
+```
+
+The string-form openers (`InterpStr`, `SpacingEscapedStr`, `SpacingInterpStr`) are recognized when followed by `"`. The escaped-number openers require a valid `NUMBER` to follow, in the appropriate digit class for the opener (`HexDigit+` after `\h`/`\u`, `OctDigit+` after `\o`, etc.). If a candidate opener fails to find what it expects to follow, the whole sequence rolls back to a single-char `ESCAPE("\")` plus subsequent tokens — the lexer never emits a multi-char `ESCAPE` value as a standalone token.
+
+
+## 10. The ch() Helper and the Two-Argument Form
+
+```js
+var ch = (c, onMatch) => terminal(x => x === c, onMatch);
+```
+
+Critical: the helper MUST forward both arguments. An earlier version
+defined it as `c => terminal(x => x === c)` (one arg). JS silently
+drops extra arguments to arrow functions, so callers passing
+`ch("/", onMatch)` saw the `onMatch` silently discarded. The frame
+state intended to be set by the callback was never set, downstream
+gates and dispatches saw `undefined`, and productions rolled back
+for invisible reasons.
+
+The lesson: any helper that wraps a callback-accepting primitive
+must forward callbacks explicitly. Adding parameters to such helpers
+silently is one of the few places this lexer can break in ways that
+grammar-tracing alone won't catch. Always dump actual combinator
+output (via `presets.parseTrace`) when debugging.
+
+
+## 11. The ExpressionEnding Wrapper
+
+```js
+var EXPRESSION_ENDING_OP_NAMES = new Set([
+    "CLOSE_PAREN", "CLOSE_BRACE", "HASH", "PIPE",
+]);
+
+function expressionEnding(p) {
+    return and(
+        p,
+        optional(and(
+            any(or(WHITESPACE, COMMENT)),
+            lookahead(and(ch("-"), terminal(isDigit))),
+            production("HYPHEN", ch("-"))
+        ))
+    );
+}
+```
+
+Implementation specifics:
+
+- `expressionEnding(p)` returns an anonymous `and(...)`, not a
+  production. The wrapper's structure doesn't get a frame of its
+  own — the wrapped production `p` keeps its own frame, and the
+  wrapper's trailing matches emit at the same depth.
+- The trailing `optional(...)` contains three pieces in sequence:
+  1. `any(or(WHITESPACE, COMMENT))` — zero or more trivia tokens.
+     These ARE productions; each one emits as its own depth-1 token.
+  2. `lookahead(and(ch("-"), terminal(isDigit)))` — non-consuming
+     positive lookahead for `-` followed by a digit.
+  3. `production("HYPHEN", ch("-"))` — consume the `-` as a HYPHEN
+     token.
+- The `optional()` wrapper provides the speculative-rollback
+  semantics. If the lookahead fails (no `-Digit` ahead), the
+  trivia consumed in step 1 is rolled back via the savepoint
+  mechanism in the parser library. Those WHITESPACE/COMMENT tokens
+  were emitted as `matched` events but receive `rollback` events
+  when the savepoint restores. They will be re-matched (and this
+  time committed) by the next outer iteration.
+- The wrapper is applied at the Token alternation level:
+
+```js
+BaseTokenOr = or(
+    WHITESPACE,
+    COMMENT,
+    InterpStr,
+    SpacingInterpStr,
+    SpacingEscapedStr,
+    STRING_LIT,
+    ESCAPED_NUMBER,
+    expressionEnding(KEYWORD),
+    expressionEnding(NATIVE),
+    expressionEnding(BUILTIN),
+    expressionEnding(COMPREHENSION),
+    expressionEnding(BOOLEAN_OPER),
+    expressionEnding(NUMBER),
+    expressionEnding(GENERAL),
+    TRIPLE_PERIOD,
+    DOUBLE_PERIOD,
+    DOUBLE_COLON,
+    ...Object.entries(ops).map(([name, prod]) =>
+        EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
+    )
+);
+```
+
+The single-char ops are wrapped selectively via the
+`EXPRESSION_ENDING_OP_NAMES` set; the rest are inlined unwrapped.
+
+**Subscriber-visible side effect.** A subscriber filtering for
+`matched` events will see WHITESPACE/COMMENT events that are later
+rolled back when the speculative tail fails. Consumers using
+`presets.parseTokens` (which includes `commit` events but treats
+`matched` as provisional) handle this correctly. Consumers that only
+listen to `matched` and ignore `rollback` will see spurious
+trivia events.
+
+
+## 12. InterpExpr and the Lazy Forward Reference
+
+```js
+var BaseTokenOr;   // forward declaration; assigned after Tokens is built
+
+var BaseTokenLazy = async function baseTokenLazy(pctx) {
+    return BaseTokenOr(pctx);
+};
+
+var InterpExprStop = and(ch("`"), or(eof(), not(ch('"'))));
+
+var InterpExpr = and(
+    production("BACKTICK", ch("`")),
+    any(and(not(InterpExprStop), BaseTokenLazy)),
+    production("BACKTICK", ch("`"))
+);
+```
+
+The recursion shape:
+
+- `BaseTokenOr` is the top-level `or(...)` of all Token alternatives.
+- `InterpExpr` lives inside `InterpStr` content alternatives, which
+  are inside `BaseTokenOr`. Direct reference would be a circular
+  dependency at file-evaluation time.
+- The workaround: `BaseTokenOr` is `var`-declared early (hoisted)
+  but not assigned. `BaseTokenLazy` is an async function that
+  dereferences `BaseTokenOr` at parse time, by which point it has
+  been assigned. `InterpExpr`'s body references `BaseTokenLazy`,
+  not `BaseTokenOr` directly.
+- `BaseTokenOr` is assigned at the bottom of the productions block,
+  just before `Tokens` is defined.
+
+`InterpExprStop` is the closing-backtick detector: a backtick NOT
+followed by `"`. The `or(eof(), not(ch('"')))` form handles both
+"backtick at end of input" and "backtick followed by something
+other than quote." If the next char is `"`, we're entering a nested
+interp string, not closing the expression; the loop continues.
+
+
+## 13. Single-Char Operators as a Dynamic Map
+
+```js
+var SINGLE_CHAR_OPS_DEF = {
+    TILDE: "~", EXMARK: "!", HASH: "#", DOLLAR: "$",
+    /* ... full list ... */
+    BACKTICK: "`",
+};
+
+export const ops = {};
+for (let [name, c] of Object.entries(SINGLE_CHAR_OPS_DEF)) {
+    ops[name] = production(name, ch(c));
+}
+```
+
+The single-char ops are generated programmatically rather than
+declared one-by-one. The resulting `ops` object is exported and
+referenced by name (`ops.HYPHEN`, `ops.OPEN_PAREN`, etc.) where
+needed inside the file.
+
+In `BaseTokenOr`, the ops are spread at the tail with selective
+wrapping:
+
+```js
+...Object.entries(ops).map(([name, prod]) =>
+    EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
+)
+```
+
+This makes adding a new single-char op a one-line change to
+`SINGLE_CHAR_OPS_DEF`, with no separate `BaseTokenOr` entry needed.
+
+
+## 14. Production Ordering in BaseTokenOr
+
+The order in `BaseTokenOr`'s `or(...)` is load-bearing — PEG ordered
+choice means the first match wins, and several productions have
+overlapping prefixes. The exact order, top to bottom:
+
+```
+WHITESPACE
+COMMENT                              (* before single-char FORWARD_SLASH *)
+InterpStr                            (* before single-char BACKTICK *)
+SpacingInterpStr                     (* before single-char ESCAPE *)
+SpacingEscapedStr                    (* before EscapedNumber and ESCAPE *)
+StringLit                            (* anonymous and(...) — see §7 *)
+EscapedNumber                        (* before single-char ESCAPE *)
+expressionEnding(KEYWORD)            (* before GENERAL via Note 1 *)
+expressionEnding(NATIVE)
+expressionEnding(BUILTIN)
+expressionEnding(COMPREHENSION)
+expressionEnding(BOOLEAN_OPER)
+expressionEnding(NUMBER)
+expressionEnding(GENERAL)
+TRIPLE_PERIOD                        (* before DOUBLE_PERIOD before single PERIOD *)
+DOUBLE_PERIOD
+DOUBLE_COLON                         (* before single COLON *)
+...(ops with selective expressionEnding wrap)
+```
+
+Why each non-obvious ordering matters:
+
+- `COMMENT` before `FORWARD_SLASH`: a leading `/` could be either.
+  Trying COMMENT first commits to comment if a second `/` follows;
+  otherwise COMMENT fails and FORWARD_SLASH catches the standalone `/`.
+- `InterpStr` / `SpacingInterpStr` / `SpacingEscapedStr` before `StringLit`: `` `" ``, `\"`, and `` \` `` `"` start escape-bearing forms. `StringLit` only handles bare `"..."`.
+- `EscapedNumber` before single-char `ESCAPE`: a `\` followed by a digit (or `h`/`o`/`b`/`u`/`@`) should open an escaped-number sequence, not emit a standalone `ESCAPE` followed by un-escape-aware tokens.
+- The five typed identifiers before `GENERAL`: each typed form is a
+  semantic specialization of GENERAL; trying them first lets the
+  gate select the right type. GENERAL is the catch-all.
+- `TRIPLE_PERIOD` before `DOUBLE_PERIOD` before single PERIOD (in
+  the ops spread): longest match first.
+- `DOUBLE_COLON` before single COLON: same.
+
+
+## 15. Configuration: preserveTerminals and preserveDelim
+
+The lexer creates its parse handle with `preserveTerminals: true`:
+
+```js
+var handle = parse(Tokens, input, { preserveTerminals: true });
+```
+
+This causes every `terminal()` match to push the consumed character
+into `frame.matched` of the innermost named frame. The gates in
+typed-identifier productions read this to validate reserved-set
+membership.
+
+`preserveDelim` is NOT set (defaults to false). This means
+`delim()` and `delimWSReq()` consume tokens without recording them
+in `matched`. The lexer doesn't currently use these helpers (they're
+for the syntactic layer that consumes tokens, not chars); but the
+configuration would matter if a future implementation choice
+introduced them.
+
+
+## 16. The Diff Harness
+
+The diff harness (in `test.js`) compares the new tokenizer's output against the legacy hand-written tokenizer (`orig-tokenizer.js`). It is not part of the tokenizer proper but is the test-of-record for grain parity.
+
+Components:
+
+- `tokenize(input)`: from `tokenizer.js`. Async generator yielding committed tokens.
+- `origTokenize(input)`: from `orig-tokenizer.js`. Async generator yielding tokens.
+- `diffStream(input)`: async generator walking both streams in lockstep, yielding `{kind: "match"|"diff", index, ...}` events.
+- `diff(input)`: convenience accumulator over `diffStream` for callers wanting a summary object.
+
+No intermediate normalization is needed: the new tokenizer emits at the same grain as the legacy (basic strings as `DOUBLE_QUOTE` + STRING content + `DOUBLE_QUOTE`; escaped numbers as `ESCAPE` + `NUMBER`; etc.). The harness is a direct lockstep walk.
+
+The diff harness is the source of truth for "does the new tokenizer match the legacy." A change to either side must preserve diff-cleanliness on the smoke-test suite.
+
+
+## 17. Streaming-Output Semantics
+
+The lexer subscribes are async iterables (`for await (let ev of
+handle.subscribe(filter))`). Token emission is interleaved with
+parsing:
+
+- `open` event when a frame opens. Subscribers see the production
+  name and start position.
+- `matched` event when a frame closes successfully. The frame's
+  full content (matched chars, end position, children frames) is
+  populated by this point.
+- `rollback` event when a previously-matched frame is rolled back
+  due to a parent's backtrack. Cascades top-down through children.
+- `commit` event when a frame's match is finalized — no further
+  rollback is possible. Cascades top-down from a top-level frame
+  when the parse completes successfully.
+
+For lexer use, the practical pattern is:
+
+```js
+for await (let ev of handle.subscribe(presets.parseTokens)) {
+    if (ev.kind === "commit") {
+        // emit token
+    }
+}
+```
+
+`presets.parseTokens` filters to depth-1 frames and to
+`matched`/`rollback`/`commit` event kinds. Consumers can listen
+to all three and treat `matched` as provisional (rollback may
+follow), or wait for `commit` only.
+
+A subscriber consuming the stream while parsing is still in flight
+receives tokens as they are recognized, with one caveat: the
+expression-ending wrapper (§10) can cause WHITESPACE/COMMENT tokens
+to be emitted as `matched` and then rolled back. Consumers that
+treat `matched` as final will see ephemeral trivia events.
