@@ -275,6 +275,22 @@ export const MonadNumber   = production("Number", MonadNumBody);
 export const BareNumber    = production("Number", BareNumBody);
 
 
+// PositiveIntegerLit variants — bare top-level (no separators) and
+// escaped form (separators allowed). Both emit as PositiveIntegerLit
+// token type (alias pattern). The !("." Digit) lookahead avoids
+// swallowing the integer part of decimals while letting through "."
+// followed by non-digits (range op, property access, spread).
+var NotDotDigit = not(lookahead(and(ch(C.Period), terminal(isDigit))));
+
+export const PositiveIntegerLit = production("PositiveIntegerLit",
+	and(many(terminal(isDigit)), NotDotDigit)
+);
+
+export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
+	and(DigitsWithSep, NotDotDigit)
+);
+
+
 // EscapedNumber: dispatch over the six (Escape variant, Number
 // variant) pairs. Hidden — emits the Escape and Number tokens as
 // direct children of the parent frame, not under an own node.
@@ -284,6 +300,7 @@ export const EscapedNumber = or(
 	and(EscapeOctal,   OctalNumber),
 	and(EscapeBinary,  BinaryNumber),
 	and(EscapeMonadic, MonadNumber),
+	and(EscapePlain,   PositiveIntegerLitWithSep),
 	and(EscapePlain,   BareNumber)
 );
 
@@ -410,9 +427,6 @@ export const StringLit = and(
 // INTERPOLATED STRING:  `"..."   (opens `", closes ")
 // =============================================================
 
-// Forward decl — assigned just before Tokens is defined below.
-var BaseTokenOr;
-
 // Lazy bridge so InterpExpr can reach BaseTokenOr before it's built;
 // resolved at parse time, by which point it exists.
 var BaseTokenLazy = async function baseTokenLazy(pctx) {
@@ -534,7 +548,7 @@ function expressionEnding(p) {
 // (SpacingInterpStr, SpacingEscapedStr, EscapedNumber).
 // =============================================================
 
-BaseTokenOr = or(
+var BaseTokenOr = or(
 	Whitespace,
 	Comment,
 	InterpStr,
@@ -547,6 +561,7 @@ BaseTokenOr = or(
 	expressionEnding(Builtin),
 	expressionEnding(Comprehension),
 	expressionEnding(BooleanOper),
+	expressionEnding(PositiveIntegerLit),
 	expressionEnding(NumberLit),
 	expressionEnding(General),
 	TriplePeriod,

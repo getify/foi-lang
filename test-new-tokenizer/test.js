@@ -37,6 +37,17 @@ async function *normalizeOrigStream(legacyStream) {
 	}
 }
 
+async function *normalizeNewStream(newStream) {
+	for await (let tok of newStream) {
+		if (tok.type === "PositiveIntegerLit") {
+			yield { ...tok, type: "Number" };
+		}
+		else {
+			yield tok;
+		}
+	}
+}
+
 
 // Streaming diff. Walks the legacy stream and the new tokenizer
 // stream in lockstep, yielding one event per position:
@@ -45,7 +56,7 @@ async function *normalizeOrigStream(legacyStream) {
 // Generator returns when both streams are exhausted.
 export async function *diffStream(input) {
 	var origIter = normalizeOrigStream(origTokenize(input));
-	var newIter  = tokenize(input);
+	var newIter  = normalizeNewStream(tokenize(input));
 
 	var i = 0;
 	while (true) {

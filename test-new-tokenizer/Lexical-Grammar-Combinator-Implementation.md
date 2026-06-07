@@ -70,7 +70,7 @@ name appears in the emitted token stream. Token types in the lexer's
 output:
 
 ```
-Whitespace, Comment, Number, General,
+Whitespace, Comment, Number, PositiveIntegerLit, General,
 Keyword, Native, Builtin, Comprehension, BooleanOper,
 String, StringEscapedChar, DoubleQuote,
 Backtick, Escape, Hyphen,
@@ -104,6 +104,10 @@ productions whose emitted token type differs from the EBNF name:
   tokens, each paired with its corresponding Escape variant inside
   `EscapedNumber`. The standalone source-level decimal Number production
   (JS binding `NumberLit`, EBNF name `Number`) also emits `Number`.
+- **Two PositiveIntegerLit variants** — `PositiveIntegerLit` (bare
+  top-level, no underscore separators) and `PositiveIntegerLitWithSep`
+  (paired with `EscapePlain` inside `EscapedNumber`, separators allowed)
+  — both emit `PositiveIntegerLit` tokens. See §3.1.
 - **Four String content emitters** — `PlainStrChars`, `InterpStrChars`,
   `SpacingInterpStrChars`, `SpacingEscapedStrChars` — all emit `String`
   tokens, distinguished by which characters their content predicate
@@ -125,15 +129,87 @@ them as a production would add an extra frame layer that no consumer
 wants.
 
 **`EscapedNumber` as bare `or(...)`.** `EscapedNumber` is a bare
-`or(...)` of six (Escape variant, Number variant) pairs:
-`and(EscapeHex, HexNumber)`, `and(EscapeUnicode, UnicodeNumber)`,
-`and(EscapeOctal, OctalNumber)`, `and(EscapeBinary, BinaryNumber)`,
-`and(EscapeMonadic, MonadNumber)`, `and(EscapePlain, BareNumber)`.
-Each emits two tokens — an `Escape` carrying the opener value (e.g.
-`"\h"`) and a `Number` carrying the digit content. Because both
-sides of each pair are named productions and the dispatch itself is
-hidden, the syntactic grammar can reference `EscapedNumber` and get
-exactly the (Escape, Number) child pair spliced into the parent.
+`or(...)` of seven (Escape variant, Number-or-PositiveIntegerLit
+variant) pairs: `and(EscapeHex, HexNumber)`,
+`and(EscapeUnicode, UnicodeNumber)`, `and(EscapeOctal, OctalNumber)`,
+`and(EscapeBinary, BinaryNumber)`, `and(EscapeMonadic, MonadNumber)`,
+`and(EscapePlain, PositiveIntegerLitWithSep)`,
+`and(EscapePlain, BareNumber)`. Each emits two tokens — an `Escape`
+carrying the opener value (e.g. `"\h"`) and a `Number` or
+`PositiveIntegerLit` carrying the digit content. Because both sides
+of each pair are named productions and the dispatch itself is hidden,
+the syntactic grammar can reference `EscapedNumber` and get exactly
+the (Escape, content) child pair spliced into the parent.
+
+Note the two `EscapePlain` arms: the first (paired with
+`PositiveIntegerLitWithSep`) is PEG-tried before the second (paired
+with `BareNumber`), so `\5_000` lexes as
+`Escape("\") + PositiveIntegerLit("5_000")` rather than
+`Escape("\") + Number("5_000")`. The `!("." Digit)` lookahead inside
+`PositiveIntegerLitWithSep` forces fallthrough to `BareNumber` when
+the digits are followed by a decimal point.
+
+### 3.1 The PositiveIntegerLit token type
+
+This is a deliberate divergence from the legacy hand-written
+tokenizer, which classifies all positive-integer-shaped digit runs
+as `Number` tokens. The motivation is round-trippability of the
+syntactic grammar.
+
+The syntactic grammar restricts a few positions to positive integer
+literals only — property indexes (`<.foo, 5>`), DotIdentifier
+indices (`arr.5`), etc. The shape constraint is "digit run, no
+leading `-`, no fractional part." Three options were considered for
+how to express this:
+
+1. **Inline char-level shape in the syn EBNF.** Verbose; the syn
+   grammar reaches into char-level fragments where it should be
+   operating on tokens. Rejected.
+2. **Hidden lex helper named `<PositiveIntLit>` referenced from
+   syn under concat, with the syn impl applying a value-shape
+   regex predicate to a Number token.** Round-trippable as EBNF
+   but the syn impl needs an out-of-band "gate on token value"
+   step that isn't expressible as pure combinator composition.
+   Rejected.
+3. **Emit `PositiveIntegerLit` as its own token type at the lex
+   layer.** The shape restriction is encoded by the token type
+   directly; the syn grammar references the type with no gate.
+   Adopted.
+
+Cost: the legacy-tokenizer diff harness sees `PositiveIntegerLit`
+where the legacy side emits `Number`. The harness normalizes
+`PositiveIntegerLit` → `Number` on the new side (see §16) so the
+divergence is documented and the rest of the stream still validates
+against the ground truth.
+
+Benefit: the syntactic EBNF in `Syntactic-Grammar.md` has no
+value-shape gates anywhere. Every visible production maps to a
+combinator form by direct textual translation. The `PositiveIntegerLit`
+token type is load-bearing for the project goal of mechanical
+round-trippability of the syntactic grammar.
+
+The implementation uses two productions emitting the same token
+type (alias pattern):
+
+```js
+var NotDotDigit = not(lookahead(and(ch(C.Period), terminal(isDigit))));
+
+export const PositiveIntegerLit = production("PositiveIntegerLit",
+    and(many(terminal(isDigit)), NotDotDigit)
+);
+
+export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
+    and(DigitsWithSep, NotDotDigit)
+);
+```
+
+`PositiveIntegerLit` is the bare top-level form (no separators);
+`PositiveIntegerLitWithSep` is the escaped form reachable only via
+`EscapedNumber` paired with `EscapePlain`. The shared `NotDotDigit`
+helper enforces the `!("." Digit)` lookahead so a decimal point
+followed by digits doesn't get split into a positive int + a
+fractional `Number` — the dispatch falls through to `NumberLit`
+(bare) or to the `BareNumber` arm of `EscapedNumber` (escaped).
 
 
 ## 4. The IdentBody sawNonDigit Gate
@@ -351,7 +427,8 @@ JS binding              value    context
 EscapeBacktick          "`"      opener of InterpStr
 EscapePlain             "\"      opener of SpacingEscapedStr;
                                  bare-\ opener of EscapedNumber's
-                                 BareNumber arm;
+                                 PositiveIntegerLitWithSep and
+                                 BareNumber arms;
                                  standalone Escape for a lone "\"
 EscapeSpacingBacktick   "\`"     opener of SpacingInterpStr
 EscapeHex               "\h"     opener of EscapedNumber's HexNumber arm
@@ -364,10 +441,10 @@ EscapeMonadic           "\@"     opener of EscapedNumber's MonadNumber arm
 The string-form openers (`EscapeBacktick`, `EscapeSpacingBacktick`,
 `EscapePlain` for the three escape-bearing string forms) are
 recognized when followed by `symb.DoubleQuote`. The escaped-number
-openers each pair with a specific Number-variant production inside
-`EscapedNumber`; the Number variant requires digit content in the
-appropriate class (HexDigit after `\h`/`\u`, OctDigit after `\o`,
-etc.).
+openers each pair with a specific content production inside
+`EscapedNumber`; the content production requires digit content in
+the appropriate class (HexDigit after `\h`/`\u`, OctDigit after
+`\o`, etc.).
 
 If a candidate opener fails to find its expected followup, the whole
 pair fails atomically and the dispatch falls through; eventually
@@ -458,6 +535,7 @@ BaseTokenOr = or(
     expressionEnding(Builtin),
     expressionEnding(Comprehension),
     expressionEnding(BooleanOper),
+    expressionEnding(PositiveIntegerLit),
     expressionEnding(NumberLit),
     expressionEnding(General),
     TriplePeriod,
@@ -619,6 +697,7 @@ expressionEnding(Native)
 expressionEnding(Builtin)
 expressionEnding(Comprehension)
 expressionEnding(BooleanOper)
+expressionEnding(PositiveIntegerLit) (* before NumberLit — see below *)
 expressionEnding(NumberLit)
 expressionEnding(General)
 TriplePeriod                         (* before DoublePeriod before single Period *)
@@ -645,6 +724,15 @@ Why each non-obvious ordering matters:
 - The five typed identifiers before `General`: each typed form is a
   semantic specialization of General; trying them first lets the
   gate select the right type. General is the catch-all.
+- `PositiveIntegerLit` before `NumberLit`: a digit run with no
+  decimal point and no leading sign is a positive integer literal;
+  the legacy tokenizer would emit this as `Number`, but the new
+  lexer emits the more specific `PositiveIntegerLit` type. The
+  `!("." Digit)` lookahead inside `PositiveIntegerLit` causes
+  fallthrough to `NumberLit` for decimals (`5.5`) and the
+  expression-ending tail handles signed forms (`-5`) via NumberLit's
+  own leading-sign rule. See §3.1 for the round-trippability
+  rationale driving this divergence.
 - `TriplePeriod` before `DoublePeriod` before single `Period` (via
   the symb spread): longest match first.
 - `DoubleColon` before single `Colon` (via the symb spread): same.
@@ -688,20 +776,31 @@ Components:
   `token.type` from UPPERCASE_SNAKE to PascalCase via a mechanical
   pass (`OPEN_PAREN` → `OpenParen`, etc.); leaves `value` / `start`
   / `end` untouched.
+- `normalizeNewStream(newStream)`: adapter that folds
+  `PositiveIntegerLit` → `Number` on the new side. The legacy
+  tokenizer has no `PositiveIntegerLit` type — it classifies all
+  positive-integer-shaped digit runs as `Number`. The new lexer
+  emits `PositiveIntegerLit` deliberately (see §3.1); the harness
+  normalizes so the divergence is documented at one site and the
+  rest of the token stream still validates against ground truth.
 - `diffStream(input)`: async generator walking the normalized legacy
-  stream and the new tokenizer stream in lockstep, yielding
-  `{kind: "match"|"diff", index, ...}` events.
+  stream and the normalized new tokenizer stream in lockstep,
+  yielding `{kind: "match", index, ...}` or `{kind: "diff", ...}`
+  events.
 - `diff(input)`: convenience accumulator over `diffStream` for
   callers wanting a summary object.
 
 Token grain matches on both sides — basic strings as `DoubleQuote` +
 `String` content + `DoubleQuote`; escaped numbers as `Escape` +
-`Number`; etc. — so the harness is a direct lockstep walk after
-type-name normalization. No content coalescing is needed.
+`Number` (with `PositiveIntegerLit` normalized to `Number`); etc. —
+so the harness is a direct lockstep walk after type-name
+normalization on both sides. No content coalescing is needed.
 
 The diff harness is the source of truth for "does the new tokenizer
 match the legacy." A change to either side must preserve diff-
 cleanliness on the smoke-test suite (88 inputs as of last sweep).
+The `PositiveIntegerLit` normalization is the only known
+intentional divergence; any other diff is a regression.
 
 
 ## 17. Streaming-Output Semantics

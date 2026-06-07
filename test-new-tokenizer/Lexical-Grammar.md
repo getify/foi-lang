@@ -26,6 +26,10 @@ The same convention applies in the syntactic grammar
 
 - Eight Escape variants — `EscapeBacktick`, `EscapePlain`, `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`, `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit `Escape` tokens with distinguishing values.
 - Six Number variants — `HexNumber`, `UnicodeNumber`, `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` — all emit `Number` tokens, paired with their corresponding Escape variant in `<EscapedNumber>` dispatch. The standalone `Number` (decimal source-level numbers) emits its own type.
+- Two `PositiveIntegerLit` variants — `PositiveIntegerLit` (bare top-level) and `PositiveIntegerLitWithSep` (paired with `EscapePlain` in
+`<EscapedNumber>` dispatch) — both emit `PositiveIntegerLit` tokens
+with distinguishing content shapes (bare disallows the underscore
+separator that the escaped form allows).
 - Four String content emitters — `PlainStrChars`, `InterpStrChars`, `SpacingInterpStrChars`, `SpacingEscapedStrChars` — all emit `String` tokens with context-specific char predicates.
 
 **Concat compatibility note.** Four string-form productions and their content helpers carry a `Lex` prefix (`<LexStringLit>`, `<LexInterpStr>`, `<LexSpacingInterpStr>`, `<LexSpacingEscapedStr>`, `<LexInterpStrContent>`, `<LexSpacingInterpStrContent>`, `<LexSpacingEscapedStrContent>`, `<LexInterpExpr>`) to avoid collision with same-named visible productions in `Syntactic-Grammar.md`. The lex versions describe char-level token assembly; the syn versions describe token-level assembly into AST. The lex versions are hidden and reachable from the lex `<Token>` start (which is itself unreachable from the syn `Program` start under concat).
@@ -47,7 +51,8 @@ Tokens                  := Token*;
                          | (Builtin ExprEndingTail)        (* Note 1, Note 9 *)
                          | (Comprehension ExprEndingTail)  (* Note 1, Note 9 *)
                          | (BooleanOper ExprEndingTail)    (* Note 1, Note 9 *)
-                         | (Number ExprEndingTail)         (* Note 5, Note 9 *)
+                         | (PositiveIntegerLit ExprEndingTail)  (* Note 6, Note 9 *)
+                         | (Number ExprEndingTail)              (* Note 5, Note 9 *)
                          | (General ExprEndingTail)        (* Note 9 *)
                          | TriplePeriod
                          | DoublePeriod
@@ -113,6 +118,17 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
 Number                  := "-"? NumberBody;            (* Note 5 *)
 <NumberBody>            := (Digit+ "." Digit+) | Digit+;
 
+(* PositiveIntegerLit: bare positive integer (no sign, no fractional
+   part, no underscores). PEG-ordered before Number in <Token> with
+   negative lookahead for "." Digit to avoid swallowing the integer
+   part of decimals. Emits PositiveIntegerLit token. *)
+PositiveIntegerLit        := Digit+ !("." Digit);
+
+(* PositiveIntegerLitWithSep: positive integer with optional underscore
+   separators. Fires from inside <EscapedNumber>, paired with
+   EscapePlain. Emitted as PositiveIntegerLit. *)
+PositiveIntegerLitWithSep := DigitsWithSep !("." Digit);   (* emitted as PositiveIntegerLit *)
+
 (* Number variant aliases — each emits a Number token with content
    shape matching the Escape opener's digit class. *)
 HexNumber               := "-"? HexDigit+;             (* emitted as Number *)
@@ -137,6 +153,7 @@ BareNumber              := "-"? DigitsWithSep ("." DigitsWithSep)?;         (* e
                          | (EscapeOctal   OctalNumber)
                          | (EscapeBinary  BinaryNumber)
                          | (EscapeMonadic MonadNumber)
+                         | (EscapePlain   PositiveIntegerLitWithSep)
                          | (EscapePlain   BareNumber);
 
 
@@ -310,11 +327,18 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     "5-3" from re-lexing as Number(5) Number(-3) — is handled by
     ExprEndingTail (Note 9).
 
-6. UnicodeNumber rejects leading sign:
+6. UnicodeNumber and PositiveIntegerLit variants reject leading sign:
 
     Unicode-char escapes (`\u`) produce a character/string from a hex
     codepoint and carry no sign. UnicodeNumber accepts hex digits only,
     without the optional leading "-" that other Number variants allow.
+
+    PositiveIntegerLit and PositiveIntegerLitWithSep similarly accept
+    no leading sign — the "Positive" in the name. The bare form also
+    rejects underscore separators; the WithSep form accepts them. Both
+    use !("." Digit) lookahead to avoid swallowing the integer part of
+    decimals; a "." followed by a non-digit (range op, property access,
+    spread) is fine.
 
 7. Escape token values:
 
@@ -376,9 +400,7 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
 
 ### Known Divergences From Legacy Tokenizer
 
-The combinator lexer is not bug-for-bug compatible with the legacy
-hand-written tokenizer.js. All known differences are confined to
-malformed inputs:
+The combinator lexer is *not exactly* compatible with the legacy hand-written tokenizer.js. For one, the handling of malformed inputs:
 
 ```
 Input        Legacy tokenizer                     Combinator lexer
@@ -395,3 +417,14 @@ not complete with a valid number. The combinator lexer commits
 fully or not at all; it never emits an Escape variant unless its
 expected following content (Number variant for EscapedNumber, or
 DoubleQuote for string-form openers) is present.
+
+PositiveIntegerLit emission is a deliberate divergence from the legacy
+tokenizer, which emits Number for these char shapes. The new lexer
+emits PositiveIntegerLit wherever chars match `Digit+ !("." Digit)`
+(bare) or `EscapePlain DigitsWithSep !("." Digit)` (escaped). The diff
+harness normalizes PositiveIntegerLit → Number on the new side to
+preserve parity validation for all other token shapes. Motivation: the
+syntactic grammar restricts property-index positions to positive-int
+literals, and pushing that restriction down to a token type makes the
+syntactic EBNF mechanically round-trippable to combinator code.
+

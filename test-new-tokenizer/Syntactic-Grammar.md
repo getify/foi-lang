@@ -26,7 +26,7 @@ to reserved-word values that resolve through their lex type production.
   production names from `Lexical-Grammar.md`; the syntactic grammar
   consumes them whole. Token-emitting productions referenced this
   way include: `General`, `Number`, `Builtin`, `Whitespace`,
-  `Comment`, `String`, `StringEscapedChar`, `Hyphen`, `DoubleColon`,
+  `Comment`, `StringEscapedChar`, `Hyphen`, `DoubleColon`,
   `DoublePeriod`, `TriplePeriod`, all single-char operator
   productions (`Semicolon`, `OpenParen`, `Colon`, `Hash`, `At`, …),
   and the eight Escape variants (`EscapeBacktick`, `EscapePlain`,
@@ -51,6 +51,10 @@ to reserved-word values that resolve through their lex type production.
     `"export"`, `":as"`, `":over"`, `"int"`, `"integer"`,
     `"float"`, `"bool"`, `"boolean"`, `"string"`
   - `Native` values: `"true"`, `"false"`, `"empty"`
+  - `Builtin` values: `"Id"`, `"None"`, `"Maybe"`, `"Left"`, `"Right"`,
+  `"Either"`, `"Promise"`, `"PromiseSubject"`, `"PushStream"`,
+  `"PushSubject"`, `"PullStream"`, `"PullSubject"`, `"Channel"`,
+  `"Gen"`, `"IO"`, `"Value"`, `"Number"`, `"List"`
   - `BooleanOper` values: `"?and"`, `"!and"`, `"?or"`, `"!or"`,
     `"?as"`, `"!as"`, `"?in"`, `"!in"`, `"?has"`, `"!has"`,
     `"?empty"`, `"!empty"`
@@ -76,15 +80,12 @@ splice into the parent. Use for alternation dispatchers and
 punctuation wrappers. Maps onto impl as bare `and(...)` / `or(...)`.
 
 **Visible productions** correspond to `production(NAME, ...)` in the
-combinator impl — they appear as named nodes in the AST.
-
-A few visible productions emit AST nodes whose type differs from the
-EBNF name (aliases). Inline comments flag each one. Two alias families
-appear repeatedly:
-- `Grouped*` productions all emit `GroupedExpr` (different inner
-  grammars enforce context-specific restrictions on what's allowed
-  inside parens; AST shape is uniform).
-- `SingleAccessExpr` and `MultiAccessExpr` both emit `AccessExpr`.
+combinator impl — they appear as named nodes in the AST. Every
+visible production emits an AST node whose type matches the
+production name exactly — no aliasing, no name-rewriting. Where
+multiple productions share structural shape but differ in inner
+content (e.g. the five paren-grouping variants), each is its own
+distinct AST node, named to reflect its inner content.
 
 **Trivia is explicit.** Two hidden helpers:
 
@@ -95,7 +96,9 @@ appear repeatedly:
 
 **`:as` annotations** attach as a final optional child of the thing
 they modify. Productions carrying `(_ AsAnnotationExpr)?`:
-- `GroupedExpr` family
+- All five paren-grouping productions (`GroupedExpr`,
+  `GroupedExprNoBlock`, `GroupedOpExpr`, `GroupedBareOpExpr`,
+  `GroupedBareOpExprNoEmpty`)
 - `BlockExpr`
 - All literal leaves (`EmptyLit`, `BooleanLit`, `NumberLit`, four
   `StringLit` variants, `DataStructLit`'s two forms, `ClosedRangeExpr`)
@@ -132,10 +135,11 @@ PipelineTopic       := Hash;
 ```ebnf
 <Literal>          := NumberLit | StringLit | BooleanLit | EmptyLit;
 
-(* NumberLit: either a bare decimal Number token or an Escape+Number
+(* NumberLit: either a bare decimal Number token, an Escape+Number
    pair (via lex's hidden EscapedNumber dispatch, which splices its
-   six (Escape variant, Number variant) pairs as direct children). *)
-NumberLit          := (EscapedNumber | Number) (_ AsAnnotationExpr)?;
+   six (Escape variant, Number variant) pairs as direct children), or
+   a positive integer literal. *)
+NumberLit          := (EscapedNumber | Number | PositiveIntegerLit) (_ AsAnnotationExpr)?;
 
 BooleanLit         := ("true" | "false") (_ AsAnnotationExpr)?;
 EmptyLit           := "empty" (_ AsAnnotationExpr)?;
@@ -195,27 +199,28 @@ DestructureCapture    := Hash Identifier;
 ## §5 Expression Scaffolding
 
 ```ebnf
-(* Vertical dispatchers hidden — pure parser routing. Paren-grouping
-   productions are visible, all aliased to GroupedExpr (preserves
-   user-written parens; inner grammar varies by context). *)
+(* Vertical dispatchers hidden — pure parser routing. Each
+   paren-grouping production is a distinct visible AST node, named
+   for its inner content. Call sites reference the variant whose
+   inner content they allow. *)
 
 <Expr>                 := ExprNoBlock | BlockExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
-GroupedExpr            := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 
 <ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | ExprAccessExpr | OperandExpr | GroupedExprNoBlock;
-GroupedExprNoBlock     := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;        (* emitted as GroupedExpr *)
 
 <OperandExpr>          := BinaryExpr;
 
-<BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOperandExpr;
-GroupedBareOperandExpr := OpenParen _ BareOperandExpr _ CloseParen (_ AsAnnotationExpr)?;    (* emitted as GroupedExpr *)
+<BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 
-<BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit | ClosedRangeExpr | CallExpr | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmp;
-GroupedBareOpExprNoEmp := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;  (* emitted as GroupedExpr *)
+<BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit | ClosedRangeExpr | CallExpr | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
 
-GroupedOperandExpr     := OpenParen _ OperandExpr _ CloseParen (_ AsAnnotationExpr)?;        (* emitted as GroupedExpr *)
+GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
+GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
+GroupedOpExpr            := OpenParen _ OperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExpr        := OpenParen _ BareOperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;
 
-AsAnnotationExpr       := ":as" _ NamedType;        (* NamedType — forward ref to §19 *)
+AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```
 
 PEG ordering note: in `<BareOperandExprNoEmpty>`, `CallExpr` precedes
@@ -240,13 +245,18 @@ BareIdentifier       := IdentBase (_ AsAnnotationExpr)?;
 
 <IdentBase>          := PipelineTopic | Identifier | BuiltIn;
 
-SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;     (* emitted as AccessExpr *)
+(* SingleAccessExpr and MultiAccessExpr are distinct visible AST
+   nodes — Single omits the multi-only segment forms
+   (DotBracketExpr, DotAngleExpr); Multi accepts all four. Call
+   sites reference whichever they require. *)
+
+SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;
 <SingleAccessSeg>    := DotIdentifier | BracketExpr;
 
-MultiAccessExpr      := MultiAccessSeg (_ MultiAccessSeg)*;       (* emitted as AccessExpr *)
+MultiAccessExpr      := MultiAccessSeg (_ MultiAccessSeg)*;
 <MultiAccessSeg>     := DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
 
-DotIdentifier        := Period _ (Identifier | BuiltIn | Number);
+DotIdentifier        := Period _ (Identifier | BuiltIn | PositiveIntegerLit);
 BracketExpr          := OpenBracket _ ExprNoBlock _ CloseBracket;
 DotBracketExpr       := Period OpenBracket _ RangeExpr _ CloseBracket;
 DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
@@ -254,10 +264,10 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 <AnglePropertyList>  := PropertyExpr (_ Comma _ PropertyExpr)* (_ Comma)?;
 <PropertyExpr>       := Identifier | PositiveIntLit;
 
-(* PositiveIntLit: same structure as NumberLit but no :as tail and
-   constrained to positive integers (no leading "-"). The gate is
-   impl-level — checks the Number child's value. *)
-PositiveIntLit       := EscapedNumber | Number;    (* gated: positive integers only *)
+(* Pure token-level assembly — round-trippable to combinator code
+   without value-shape predicates. The lex layer's PositiveIntegerLit
+   token already encodes "no sign, no fractional part." *)
+<PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
 <RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
 ClosedRangeExpr      := (ExprNoBlock | GroupedExpr) _ DoublePeriod _ (ExprNoBlock | GroupedExpr) (_ AsAnnotationExpr)?;
@@ -335,7 +345,8 @@ PostfixUnaryExpr  := (BareOperandExpr | GroupedExpr) SingleQuote (_ AsAnnotation
    the flat iteration into nested BinaryExpr nodes.
    `2 + 3 - 4` → BinaryExpr{-, BinaryExpr{+, 2, 3}, 4}.
 
-   All iters emit BinaryExpr. No `:as` on any tier — parenthesize.
+   All iters are visible AST nodes. No `:as` on any tier —
+   parenthesize.
 
    Flow tier extensions: LHS may be a CondClause (for `~each`-style
    range-as-conditional); RHS may be a BlockExpr (for
@@ -345,33 +356,37 @@ PostfixUnaryExpr  := (BareOperandExpr | GroupedExpr) SingleQuote (_ AsAnnotation
 
 <BinaryExpr>     := <FlowDispatch>;
 
-<FlowDispatch>   := FlowExpr | <OrDispatch>;
-FlowExpr         := <FlowLHS> (_ FlowOp _ <FlowRHS>)+;             (* emitted as BinaryExpr *)
+<FlowDispatch>   := FlowBinExpr | <OrDispatch>;
+FlowBinExpr      := <FlowLHS> (_ FlowOp _ <FlowRHS>)+;
 <FlowLHS>        := CondClause | <OrDispatch>;
 <FlowRHS>        := BlockExpr | <OrDispatch>;
 
 <OrDispatch>     := OrBinExpr | <AndDispatch>;
-OrBinExpr        := <AndDispatch> (_ OrOp _ <AndDispatch>)+;       (* emitted as BinaryExpr *)
+OrBinExpr        := <AndDispatch> (_ OrOp _ <AndDispatch>)+;
 
 <AndDispatch>    := AndBinExpr | <CompareDispatch>;
-AndBinExpr       := <CompareDispatch> (_ AndOp _ <CompareDispatch>)+;  (* emitted as BinaryExpr *)
+AndBinExpr       := <CompareDispatch> (_ AndOp _ <CompareDispatch>)+;
 
 <CompareDispatch>:= CompareBinExpr | <AddDispatch>;
-CompareBinExpr   := <AddDispatch> (_ CompareOp _ <AddDispatch>)+;  (* emitted as BinaryExpr *)
+CompareBinExpr   := <AddDispatch> (_ CompareOp _ <AddDispatch>)+;
 
 <AddDispatch>    := AddBinExpr | <MulDispatch>;
-AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;      (* emitted as BinaryExpr *)
+AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;
 
 <MulDispatch>    := MulBinExpr | BinaryAtom;
-MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;            (* emitted as BinaryExpr *)
+MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
 
-<BinaryAtom>     := UnaryExpr | BareOperandExpr | GroupedOperandExpr;
+<BinaryAtom>     := UnaryExpr | BareOperandExpr | GroupedOpExpr;
 ```
 
 **Precedence (tightest → loosest):** Unary → Mul (`*`, `/`) →
 Add (`+`, `-`, `$+`) → Compare/Membership/Type → And (`?and`, `!and`)
 → Or (`?or`, `!or`) → Flow (`+>`, `<+`, `#>`, all `~`-comprehensions,
 `~<`). All tiers left-associative.
+
+Tier iter names: `FlowBinExpr`, `OrBinExpr`, `AndBinExpr`,
+`CompareBinExpr`, `AddBinExpr`, `MulBinExpr`. Each is a distinct
+visible AST node.
 
 ## §10 Operator Family
 
@@ -478,7 +493,7 @@ IndepMatchExpr         := Qmark OpenBrace _ IndepMatchStmts _ CloseBrace;
                         | IndepPatternStmtNoSemi
                         | ElseStmt;
 IndepPatternStmt       := IndepCondClause _ MatchConsequent (_ Semicolon)*;
-IndepPatternStmtNoSemi := IndepCondClause _ MatchConsequentNoSemi;     (* emitted as IndepPatternStmt *)
+IndepPatternStmtNoSemi := IndepCondClause _ MatchConsequentNoSemi;
 <IndepCondClause>      := (Qmark | Exmark)? BracketExpr;
 
 DepMatchExpr           := Qmark OpenParen _ ExprNoBlock _ CloseParen _ OpenBrace _ DepMatchStmts _ CloseBrace;
@@ -486,7 +501,7 @@ DepMatchExpr           := Qmark OpenParen _ ExprNoBlock _ CloseParen _ OpenBrace
                         | DepPatternStmtNoSemi
                         | ElseStmt;
 DepPatternStmt         := DepCondClause _ MatchConsequent (_ Semicolon)*;
-DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;       (* emitted as DepPatternStmt *)
+DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;
 <DepCondClause>        := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
 <DepCondExprList>      := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
@@ -498,6 +513,12 @@ ElseStmt               := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
 <MatchConsequent>      := (Colon _ Expr _ Semicolon) | BlockExpr;
 <MatchConsequentNoSemi>:= (Colon _ Expr) | BlockExpr;
 ```
+
+`IndepPatternStmt` / `IndepPatternStmtNoSemi` and
+`DepPatternStmt` / `DepPatternStmtNoSemi` are distinct visible AST
+nodes. The `NoSemi` variant differs only in trailing-semicolon
+handling for the final clause; downstream code treats them
+uniformly.
 
 ## §16 Do-Comprehensions
 
@@ -546,7 +567,7 @@ SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket Cl
 <SetEntry>             := PickValue | RecordTupleValue;
 ```
 
-## §19 Type Definitions
+## §18 Type Definitions
 
 ```ebnf
 (* Deferred — own sub-grammar pass. Placeholder. *)
@@ -559,10 +580,6 @@ NamedType              := ???;     (* TBD *)
 
 ## Filed Open Concerns
 
-- **`PositiveIntLit` gate** (`§6`). "Number value doesn't start
-  with `-`" is impl-level; EBNF can't express it. The gate now has
-  to inspect the Number child's value regardless of which arm
-  (EscapedNumber pair or bare Number) matched.
 - **PEG ordering in `<ExprAccessBase>`, `<CallBase>`,
   `<ExprNoBlock>`** — written approximate; firm up during
   implementation against real source.
@@ -570,8 +587,14 @@ NamedType              := ???;     (* TBD *)
   `:as`-bearing forms. May revisit if `x := (3 :as int)` vs
   `(x := 3) :as int` ambiguity has a strongly preferred
   interpretation in practice.
-- **§18 numbering gap** — Type defs is §19; nothing at §18. Renumber
-  during the next pass once §19 is drafted.
+- **`GroupedExpr` (full-Expr) at non-Expr call sites** — several
+  productions reference `GroupedExpr` where a more restrictive
+  variant might be more appropriate: `PostfixUnaryExpr` (§8),
+  `FuncBodyPipeline` (§13), the three Range exprs (§6),
+  `DoLoopComprExpr` (§16), `ExprAccessBase` (§6), `CallBase` (§7).
+  Preserved as-is from the prior grammar; review during the
+  §1–§17 audit pass against real Foi source to decide whether
+  each should narrow.
 - **`DefTypeStmt` deferred** — own sub-grammar pass after the rest
   of the grammar is verified against real Foi source.
 - **Performance**: bare atoms traverse 7 tier dispatchers (§9). No
