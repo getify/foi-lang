@@ -6,15 +6,36 @@
 // orig-tokenizer.js). Fully streaming: tokens flow through the
 // pipeline as they're recognized.
 //
-// The legacy tokenizer emits at a finer grain than the new one
-// (basic strings as DQ+STRING+DQ; escaped numbers as ESCAPE+NUMBER).
-// normalizeOrigStream coalesces the legacy output up to the new
-// tokenizer's grain so the streams can be compared position-for-
-// position.
+// The new tokenizer emits PascalCase token types ("OpenParen");
+// the legacy tokenizer emits UPPERCASE_SNAKE ("OPEN_PAREN").
+// normalizeOrigStream renames type on the legacy side via a
+// mechanical UPPERCASE_SNAKE → PascalCase pass before lockstep
+// comparison. Grain already matches on both sides (basic strings
+// as DQ+STRING+DQ; escaped numbers as ESCAPE+NUMBER; etc.).
 // =============================================================
 
 import { tokenize as origTokenize } from "./orig-tokenizer.js";
 import { tokenize } from "./new-tokenizer.js";
+
+
+// Mechanical rename: UPPERCASE_SNAKE → PascalCase. Lowercase the
+// input, split on underscores, capitalize each piece, rejoin.
+function pascalize(s) {
+	return s
+		.toLowerCase()
+		.split("_")
+		.map(part => part.charAt(0).toUpperCase() + part.slice(1))
+		.join("");
+}
+
+// Adapter over the legacy tokenizer's async-iterable output:
+// renames token.type from UPPERCASE_SNAKE to PascalCase, leaves
+// value / start / end untouched.
+async function *normalizeOrigStream(legacyStream) {
+	for await (let tok of legacyStream) {
+		yield { ...tok, type: pascalize(tok.type) };
+	}
+}
 
 
 // Streaming diff. Walks the legacy stream and the new tokenizer
@@ -23,8 +44,7 @@ import { tokenize } from "./new-tokenizer.js";
 //   { kind: "diff",  index, orig, new }
 // Generator returns when both streams are exhausted.
 export async function *diffStream(input) {
-	// var origIter = normalizeOrigStream(origTokenize(input));
-	var origIter = origTokenize(input);
+	var origIter = normalizeOrigStream(origTokenize(input));
 	var newIter  = tokenize(input);
 
 	var i = 0;

@@ -21,7 +21,7 @@ production is the only depth-0 frame. Subscribers using
 for each token as it is recognized.
 
 **Token grain.** Each named production whose name matches a tokenizer
-type string (e.g., `"WHITESPACE"`, `"COMMENT"`, `"NUMBER"`, the
+type string (e.g., `"Whitespace"`, `"Comment"`, `"Number"`, the
 single-char operator names) corresponds to exactly one emitted
 token. The `production()` wrapper is what turns a grammar fragment
 into a frame; anonymous `and(...)` / `or(...)` wrappers do not emit
@@ -60,7 +60,7 @@ For each EBNF construct, the corresponding combinator construct:
 The `ch(c, onMatch?)` helper in `foi-lex.js` wraps `terminal()` with
 a single-character equality check and accepts an optional `onMatch`
 callback. The two-argument form is critical and easy to break; see
-§9.
+§10.
 
 
 ## 3. What Becomes a Production
@@ -70,26 +70,71 @@ name appears in the emitted token stream. Token types in the lexer's
 output:
 
 ```
-WHITESPACE, COMMENT, NUMBER, GENERAL,
-KEYWORD, NATIVE, BUILTIN, COMPREHENSION, BOOLEAN_OPER,
-STRING, STRING_ESCAPED_CHAR, DOUBLE_QUOTE,
-BACKTICK, ESCAPE, HYPHEN,
-TRIPLE_PERIOD, DOUBLE_PERIOD, DOUBLE_COLON,
-<all single-char operator names: TILDE, EXMARK, ..., BACKTICK>
+Whitespace, Comment, Number, General,
+Keyword, Native, Builtin, Comprehension, BooleanOper,
+String, StringEscapedChar, DoubleQuote,
+Backtick, Escape, Hyphen,
+TriplePeriod, DoublePeriod, DoubleColon,
+<all single-char operator names: Tilde, Exmark, ..., Backtick>
 ```
 
-Each gets a corresponding `production(...)`. Helper rules in the
-grammar (`IdentBody`, `BareNumBody`, `MonadNumBody`, `DigitsWithSep`,
-`HexDigitsWithSep`, `NumberBody`, `EscapedNumberBody`, the various
-`*Content` and `*Chars` rules inside strings) are NOT productions —
-they are `var` bindings to anonymous `and(...)`/`or(...)` fragments
-that are reused by name within the file but do not create frames.
+Each emitted type corresponds to one or more `production("Name", ...)`
+call sites in the impl. Helper rules in the grammar (`IdentBody`,
+`DigitsWithSep`, `HexDigitsWithSep`, `NumberBody`, the various
+`*Content` rules inside strings, the various `*Body` digit helpers
+inlined into Number variants) are NOT productions — they are `var`
+bindings to anonymous `and(...)` / `or(...)` fragments that are
+reused by name within the file but do not create frames.
 
-The EBNF grammar now marks this distinction explicitly: hidden rules carry angle brackets on the LHS (`<Name> := ...`) and emit no node — their content splices into the parent. Unbracketed names emit a node. The mapping is mechanical: angle-bracketed ⟺ bare `and(...)` / `or(...)` here; unbracketed ⟺ `production(NAME, ...)`. One subtlety: a few unbracketed names are *aliases* for productions whose token type differs from the EBNF name. `EscapeBacktick`, `EscapeSpacingBacktick`, and `EscapePlain` all emit `ESCAPE` tokens (distinguished by value). `InterpStrChars`, `SpacingInterpStrChars`, and `SpacingEscapedStrChars` all emit `STRING` tokens (distinguished by which characters the content predicate accepts). These exist because the grammar reads more clearly when the role of a STRING-emitter is named at its use site; the impl collapses them to their shared token type at emission. Inline EBNF comments flag each alias.
+The EBNF grammar marks this distinction explicitly: hidden rules
+carry angle brackets on the LHS (`<Name> := ...`) and emit no node —
+their content splices into the parent. Unbracketed names emit a node.
+The mapping is mechanical: angle-bracketed ⟺ bare `and(...)` /
+`or(...)` here; unbracketed ⟺ `production(NAME, ...)`.
 
-All four string-form rules (`StringLit`, `InterpStr`, `SpacingInterpStr`, `SpacingEscapedStr`) are bare `and(...)` expressions, not productions. The token stream for each contains the individual `DOUBLE_QUOTE` (or `ESCAPE` + `DOUBLE_QUOTE` for the three escape-bearing forms), content tokens (`STRING`, `STRING_ESCAPED_CHAR`, `WHITESPACE`, `BACKTICK`, etc.), and closing `DOUBLE_QUOTE` as separate depth-1 emissions. Wrapping any of them as a production would add an extra frame layer that no consumer wants.
+**Alias families.** A number of unbracketed names are aliases for
+productions whose emitted token type differs from the EBNF name:
 
-Similarly, `EscapedNumber` is a bare `or(...)` of `and(ESCAPE, NUMBER)` pairs — six alternatives covering `\h`, `\u`, `\o`, `\b`, `\@`, and bare `\` openers. Each emits two tokens: a multi-char `ESCAPE` carrying the opener (e.g., `"\h"`) and a `NUMBER` carrying the digits.
+- **Eight Escape variants** — `EscapeBacktick`, `EscapePlain`,
+  `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`, `EscapeOctal`,
+  `EscapeBinary`, `EscapeMonadic` — all emit `Escape` tokens
+  distinguished by value. See §9.
+- **Six Number variants** — `HexNumber`, `UnicodeNumber`, `OctalNumber`,
+  `BinaryNumber`, `MonadNumber`, `BareNumber` — all emit `Number`
+  tokens, each paired with its corresponding Escape variant inside
+  `EscapedNumber`. The standalone source-level decimal Number production
+  (JS binding `NumberLit`, EBNF name `Number`) also emits `Number`.
+- **Four String content emitters** — `PlainStrChars`, `InterpStrChars`,
+  `SpacingInterpStrChars`, `SpacingEscapedStrChars` — all emit `String`
+  tokens, distinguished by which characters their content predicate
+  accepts. Each fires from inside exactly one string form.
+
+These exist because the grammar reads more clearly when the role of
+an emitter is named at its use site; the impl collapses each family
+to its shared emitted token type. Inline EBNF comments flag each
+alias.
+
+**String forms as bare `and(...)`.** All four string-form rules
+(`StringLit`, `InterpStr`, `SpacingInterpStr`, `SpacingEscapedStr`)
+are bare `and(...)` expressions, not productions. The token stream
+for each contains the individual `DoubleQuote` (or `Escape` +
+`DoubleQuote` for the three escape-bearing forms), content tokens
+(`String`, `StringEscapedChar`, `Whitespace`, `Backtick`, etc.), and
+closing `DoubleQuote` as separate depth-1 emissions. Wrapping any of
+them as a production would add an extra frame layer that no consumer
+wants.
+
+**`EscapedNumber` as bare `or(...)`.** `EscapedNumber` is a bare
+`or(...)` of six (Escape variant, Number variant) pairs:
+`and(EscapeHex, HexNumber)`, `and(EscapeUnicode, UnicodeNumber)`,
+`and(EscapeOctal, OctalNumber)`, `and(EscapeBinary, BinaryNumber)`,
+`and(EscapeMonadic, MonadNumber)`, `and(EscapePlain, BareNumber)`.
+Each emits two tokens — an `Escape` carrying the opener value (e.g.
+`"\h"`) and a `Number` carrying the digit content. Because both
+sides of each pair are named productions and the dispatch itself is
+hidden, the syntactic grammar can reference `EscapedNumber` and get
+exactly the (Escape, Number) child pair spliced into the parent.
+
 
 ## 4. The IdentBody sawNonDigit Gate
 
@@ -104,8 +149,8 @@ var IdentBody = and(
             if (!isDigit(c)) f.state.sawNonDigit = true;
         }),
         and(
-            terminal(c => c === "~", (_, f) => { f.state.sawNonDigit = true; }),
-            terminal(isAlpha,        (_, f) => { f.state.sawNonDigit = true; })
+            terminal(c => c === C.Tilde, (_, f) => { f.state.sawNonDigit = true; }),
+            terminal(isAlpha,             (_, f) => { f.state.sawNonDigit = true; })
         )
     ),
     any(terminal(isIdentCont, (c, f) => {
@@ -142,7 +187,7 @@ their semantics permit, then apply a `gate()` over the matched
 characters:
 
 ```js
-export const NATIVE = production("NATIVE",
+export const Native = production("Native",
     and(IdentBody, gate(f => NATIVES.includes(f.matched.join(""))))
 );
 ```
@@ -159,15 +204,15 @@ Implementation choices:
 - On gate failure, the entire production fails — the frame is
   rolled back, the consumed characters are restored to the buffer
   position, and the next Token alternative is tried.
-- `KEYWORD` has a slight variation: the gate strips the leading
+- `Keyword` has a slight variation: the gate strips the leading
   `:` for the extension form before checking:
 
   ```js
-  gate(f => KEYWORDS.includes(":" + f.matched.slice(1).join("")))
+  gate(f => KEYWORDS.includes(C.Colon + f.matched.slice(1).join("")))
   ```
 
   Two arms in the outer `or()`: one for `:`-prefixed, one bare.
-- `BOOLEAN_OPER` similarly skips the leading `?` or `!`:
+- `BooleanOper` similarly skips the leading `?` or `!`:
 
   ```js
   gate(f => BOOLEAN_NAMED_OPERATORS.includes(f.matched.slice(1).join("")))
@@ -181,11 +226,11 @@ combinator could implement this as straight ordered choice; instead
 it uses `dispatch()` on frame state after committing the `//` prefix:
 
 ```js
-export const COMMENT = production("COMMENT",
+export const Comment = production("Comment",
     and(
-        ch("/"),
-        ch("/", (_, f) => { f.state.kind = "line"; }),
-        optional(ch("/", (_, f) => { f.state.kind = "block"; })),
+        ch(C.ForwardSlash),
+        ch(C.ForwardSlash, (_, f) => { f.state.kind = "line"; }),
+        optional(ch(C.ForwardSlash, (_, f) => { f.state.kind = "block"; })),
         dispatch(f => f.state.kind, {
             line:  any(terminal(c => c !== "\n")),
             block: and(
@@ -196,7 +241,7 @@ export const COMMENT = production("COMMENT",
     )
 );
 
-var BlockClose = and(ch("/"), ch("/"), ch("/"));
+var BlockClose = and(ch(C.ForwardSlash), ch(C.ForwardSlash), ch(C.ForwardSlash));
 ```
 
 Why dispatch instead of `or(BlockComment, LineComment)`:
@@ -217,67 +262,124 @@ This is the canonical example of `dispatch()` usage in the lexer.
 
 ## 7. The Four String Forms
 
-All four string forms emit at the same grain: an opening `DOUBLE_QUOTE` (preceded by `ESCAPE` for the three escape-bearing forms), zero or more content tokens, and a closing `DOUBLE_QUOTE`. None of the four are themselves productions — they are bare `and(...)` expressions.
+All four string forms emit at the same grain: an opening `DoubleQuote`
+(preceded by an Escape variant for the three escape-bearing forms),
+zero or more content tokens, and a closing `DoubleQuote`. None of the
+four are themselves productions — they are bare `and(...)` expressions.
 
 The content alternatives vary by form:
 
 ```js
-StringLit:           any(or(StringEscapedCharDQ, StringLitChars))
-InterpStr:           any(or(STRING_ESCAPED_CHAR, InterpExpr, InterpStrChars))
-SpacingInterpStr:    any(or(STRING_ESCAPED_CHAR, InterpExpr, WHITESPACE, SpacingInterpStrChars))
-SpacingEscapedStr:   any(or(StringEscapedCharDQ, WHITESPACE, SpacingEscapedStrChars))
+StringLit:           any(or(StringEscapedCharDQ, PlainStrChars))
+InterpStr:           any(or(StringEscapedChar, InterpExpr, InterpStrChars))
+SpacingInterpStr:    any(or(StringEscapedChar, InterpExpr, Whitespace, SpacingInterpStrChars))
+SpacingEscapedStr:   any(or(StringEscapedCharDQ, Whitespace, SpacingEscapedStrChars))
 ```
 
-The differences encode each form's syntactic features along two independent axes:
+The differences encode each form's syntactic features along two
+independent axes:
 
-- **Embeds** (the two interp forms): `InterpExpr` is in the alternatives, allowing nested expressions via `` `...` ``. The chars predicates exclude `` ` `` so the content matcher yields to `InterpExpr` or `STRING_ESCAPED_CHAR` at backtick positions.
-- **Spacing** (the two spacing forms): `WHITESPACE` is in the alternatives, and the chars predicates exclude whitespace, so the content matcher yields to `WHITESPACE` at whitespace positions.
+- **Embeds** (the two interp forms): `InterpExpr` is in the
+  alternatives, allowing nested expressions via `` `...` ``. The
+  chars predicates exclude `` ` `` so the content matcher yields to
+  `InterpExpr` or `StringEscapedChar` at backtick positions.
+- **Spacing** (the two spacing forms): `Whitespace` is in the
+  alternatives, and the chars predicates exclude whitespace, so the
+  content matcher yields to `Whitespace` at whitespace positions.
 
-The two non-interp forms (`StringLit`, `SpacingEscapedStr`) reference the narrow `StringEscapedCharDQ` escape variant; the two interp forms reference the broad `STRING_ESCAPED_CHAR`. See §8 for the split.
+The two non-interp forms (`StringLit`, `SpacingEscapedStr`) reference
+the narrow `StringEscapedCharDQ` escape variant; the two interp forms
+reference the broad `StringEscapedChar`. See §8 for the split.
+
+The three escape-bearing forms (`InterpStr`, `SpacingInterpStr`,
+`SpacingEscapedStr`) open with one of the named Escape variants —
+`EscapeBacktick`, `EscapeSpacingBacktick`, `EscapePlain` respectively
+(see §9) — followed by `symb.DoubleQuote`. `StringLit` opens with
+just `symb.DoubleQuote`.
 
 
-## 8. STRING_ESCAPED_CHAR — Two Combinator Bindings
+## 8. StringEscapedChar — Two Combinator Bindings
 
-Two combinator bindings, both emitting the same `STRING_ESCAPED_CHAR` token type, differing only in which doubled-character escape is reachable:
+Two combinator bindings, both emitting the same `StringEscapedChar`
+token type, differing only in which doubled-character escape is
+reachable:
 
 ```js
-var StringEscapedCharDQ = production("STRING_ESCAPED_CHAR",
-    and(ch('"'), ch('"'))
+var StringEscapedCharDQ = production("StringEscapedChar",
+    and(ch(C.DoubleQuote), ch(C.DoubleQuote))
 );
 
-export const STRING_ESCAPED_CHAR = production("STRING_ESCAPED_CHAR",
+export const StringEscapedChar = production("StringEscapedChar",
     or(
-        and(ch('"'), ch('"')),
-        and(ch("`"), ch("`"))
+        and(ch(C.DoubleQuote), ch(C.DoubleQuote)),
+        and(ch(C.Backtick), ch(C.Backtick))
     )
 );
 ```
 
 The split tracks which string forms have a syntactic role for `` ` ``:
 
-- `StringLit` and `SpacingEscapedStr` use `StringEscapedCharDQ`. In these forms `` ` `` has no syntactic significance — it's literal STRING content.
-- `InterpStr` and `SpacingInterpStr` use the broad `STRING_ESCAPED_CHAR`. In these forms `` ` `` opens embedded expressions, so escaping it via `` `` `` is meaningful.
+- `StringLit` and `SpacingEscapedStr` use `StringEscapedCharDQ`. In
+  these forms `` ` `` has no syntactic significance — it's literal
+  String content.
+- `InterpStr` and `SpacingInterpStr` use the broad `StringEscapedChar`.
+  In these forms `` ` `` opens embedded expressions, so escaping it
+  via `` `` `` is meaningful.
 
-Both productions emit the same token type, so downstream consumers see no difference; only the reachability of the `` `` `` alternative differs per form.
+Both productions emit the same token type, so downstream consumers
+see no difference; only the reachability of the `` `` `` alternative
+differs per form.
 
-Placement in each content loop is the same: the STRING_ESCAPED_CHAR variant is the first alternative, before any chars matcher. The chars matcher's predicate excludes `"` (and, in the interp forms, `` ` ``); if STRING_ESCAPED_CHAR were tried after the chars matcher, the chars matcher would greedily consume characters before STRING_ESCAPED_CHAR could try matching the doubled-character escape. Trying STRING_ESCAPED_CHAR first ensures the escape is recognized.
+Placement in each content loop is the same: the StringEscapedChar
+variant is the first alternative, before any chars matcher. The
+chars matcher's predicate excludes `"` (and, in the interp forms,
+`` ` ``); if StringEscapedChar were tried after the chars matcher,
+the chars matcher would greedily consume characters before
+StringEscapedChar could try matching the doubled-character escape.
+Trying StringEscapedChar first ensures the escape is recognized.
 
 
-## 9. ESCAPE Token Emission
+## 9. Escape Token Emission
 
-The lexer emits `ESCAPE` tokens with one of seven values, distinguishing their syntactic role:
+The lexer emits `Escape` tokens via eight named productions,
+distinguished by value. Each is a JS binding mapping to
+`production("Escape", ...)`:
 
 ```
-"\"            single-char ESCAPE operator (where \ has no specific role)
-"`"            opener of InterpStr
-"\"            opener of SpacingEscapedStr
-"\`"           opener of SpacingInterpStr
-"\h" / "\u"
-"\o" / "\b"    opener of EscapedNumber (followed by a NUMBER token)
-"\@"
+JS binding              value    context
+----------------------  -------  -----------------------------------
+EscapeBacktick          "`"      opener of InterpStr
+EscapePlain             "\"      opener of SpacingEscapedStr;
+                                 bare-\ opener of EscapedNumber's
+                                 BareNumber arm;
+                                 standalone Escape for a lone "\"
+EscapeSpacingBacktick   "\`"     opener of SpacingInterpStr
+EscapeHex               "\h"     opener of EscapedNumber's HexNumber arm
+EscapeUnicode           "\u"     opener of EscapedNumber's UnicodeNumber arm
+EscapeOctal             "\o"     opener of EscapedNumber's OctalNumber arm
+EscapeBinary            "\b"     opener of EscapedNumber's BinaryNumber arm
+EscapeMonadic           "\@"     opener of EscapedNumber's MonadNumber arm
 ```
 
-The string-form openers (`InterpStr`, `SpacingEscapedStr`, `SpacingInterpStr`) are recognized when followed by `"`. The escaped-number openers require a valid `NUMBER` to follow, in the appropriate digit class for the opener (`HexDigit+` after `\h`/`\u`, `OctDigit+` after `\o`, etc.). If a candidate opener fails to find what it expects to follow, the whole sequence rolls back to a single-char `ESCAPE("\")` plus subsequent tokens — the lexer never emits a multi-char `ESCAPE` value as a standalone token.
+The string-form openers (`EscapeBacktick`, `EscapeSpacingBacktick`,
+`EscapePlain` for the three escape-bearing string forms) are
+recognized when followed by `symb.DoubleQuote`. The escaped-number
+openers each pair with a specific Number-variant production inside
+`EscapedNumber`; the Number variant requires digit content in the
+appropriate class (HexDigit after `\h`/`\u`, OctDigit after `\o`,
+etc.).
+
+If a candidate opener fails to find its expected followup, the whole
+pair fails atomically and the dispatch falls through; eventually
+`EscapePlain` standalone catches the lone `\` after every more-
+specific form has been tried (see §14 ordering). The lexer never
+emits a multi-char Escape value as a standalone token — every
+multi-char Escape commits only as the opener of its associated
+specific form.
+
+`EscapePlain` is the only Escape variant spread into `BaseTokenOr`
+as a standalone-emission slot. The other seven fire only from inside
+their specific contexts.
 
 
 ## 10. The ch() Helper and the Two-Argument Form
@@ -289,10 +391,10 @@ var ch = (c, onMatch) => terminal(x => x === c, onMatch);
 Critical: the helper MUST forward both arguments. An earlier version
 defined it as `c => terminal(x => x === c)` (one arg). JS silently
 drops extra arguments to arrow functions, so callers passing
-`ch("/", onMatch)` saw the `onMatch` silently discarded. The frame
-state intended to be set by the callback was never set, downstream
-gates and dispatches saw `undefined`, and productions rolled back
-for invisible reasons.
+`ch(C.ForwardSlash, onMatch)` saw the `onMatch` silently discarded.
+The frame state intended to be set by the callback was never set,
+downstream gates and dispatches saw `undefined`, and productions
+rolled back for invisible reasons.
 
 The lesson: any helper that wraps a callback-accepting primitive
 must forward callbacks explicitly. Adding parameters to such helpers
@@ -305,16 +407,16 @@ output (via `presets.parseTrace`) when debugging.
 
 ```js
 var EXPRESSION_ENDING_OP_NAMES = new Set([
-    "CLOSE_PAREN", "CLOSE_BRACE", "HASH", "PIPE",
+    "CloseParen", "CloseBrace", "Hash", "Pipe",
 ]);
 
 function expressionEnding(p) {
     return and(
         p,
         optional(and(
-            any(or(WHITESPACE, COMMENT)),
-            lookahead(and(ch("-"), terminal(isDigit))),
-            production("HYPHEN", ch("-"))
+            any(or(Whitespace, Comment)),
+            lookahead(and(ch(C.Hyphen), terminal(isDigit))),
+            production("Hyphen", ch(C.Hyphen))
         ))
     );
 }
@@ -327,16 +429,16 @@ Implementation specifics:
   own — the wrapped production `p` keeps its own frame, and the
   wrapper's trailing matches emit at the same depth.
 - The trailing `optional(...)` contains three pieces in sequence:
-  1. `any(or(WHITESPACE, COMMENT))` — zero or more trivia tokens.
+  1. `any(or(Whitespace, Comment))` — zero or more trivia tokens.
      These ARE productions; each one emits as its own depth-1 token.
-  2. `lookahead(and(ch("-"), terminal(isDigit)))` — non-consuming
+  2. `lookahead(and(ch(C.Hyphen), terminal(isDigit)))` — non-consuming
      positive lookahead for `-` followed by a digit.
-  3. `production("HYPHEN", ch("-"))` — consume the `-` as a HYPHEN
-     token.
+  3. `production("Hyphen", ch(C.Hyphen))` — consume the `-` as a
+     Hyphen token.
 - The `optional()` wrapper provides the speculative-rollback
   semantics. If the lookahead fails (no `-Digit` ahead), the
   trivia consumed in step 1 is rolled back via the savepoint
-  mechanism in the parser library. Those WHITESPACE/COMMENT tokens
+  mechanism in the parser library. Those Whitespace/Comment tokens
   were emitted as `matched` events but receive `rollback` events
   when the savepoint restores. They will be re-matched (and this
   time committed) by the next outer iteration.
@@ -344,34 +446,39 @@ Implementation specifics:
 
 ```js
 BaseTokenOr = or(
-    WHITESPACE,
-    COMMENT,
+    Whitespace,
+    Comment,
     InterpStr,
     SpacingInterpStr,
     SpacingEscapedStr,
-    STRING_LIT,
-    ESCAPED_NUMBER,
-    expressionEnding(KEYWORD),
-    expressionEnding(NATIVE),
-    expressionEnding(BUILTIN),
-    expressionEnding(COMPREHENSION),
-    expressionEnding(BOOLEAN_OPER),
-    expressionEnding(NUMBER),
-    expressionEnding(GENERAL),
-    TRIPLE_PERIOD,
-    DOUBLE_PERIOD,
-    DOUBLE_COLON,
-    ...Object.entries(ops).map(([name, prod]) =>
-        EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
-    )
+    StringLit,
+    EscapedNumber,
+    expressionEnding(Keyword),
+    expressionEnding(Native),
+    expressionEnding(Builtin),
+    expressionEnding(Comprehension),
+    expressionEnding(BooleanOper),
+    expressionEnding(NumberLit),
+    expressionEnding(General),
+    TriplePeriod,
+    DoublePeriod,
+    DoubleColon,
+    EscapePlain,
+    ...Object.entries(symb)
+        .filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))
+        .map(([name, prod]) =>
+            EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
+        )
 );
 ```
 
 The single-char ops are wrapped selectively via the
 `EXPRESSION_ENDING_OP_NAMES` set; the rest are inlined unwrapped.
+`EscapePlain` is not wrapped — `\` is not an expression-ending
+form. See §13 for the `STANDALONE_EXCLUDED_OPS` exclusion mechanism.
 
 **Subscriber-visible side effect.** A subscriber filtering for
-`matched` events will see WHITESPACE/COMMENT events that are later
+`matched` events will see Whitespace/Comment events that are later
 rolled back when the speculative tail fails. Consumers using
 `presets.parseTokens` (which includes `commit` events but treats
 `matched` as provisional) handle this correctly. Consumers that only
@@ -388,12 +495,12 @@ var BaseTokenLazy = async function baseTokenLazy(pctx) {
     return BaseTokenOr(pctx);
 };
 
-var InterpExprStop = and(ch("`"), or(eof(), not(ch('"'))));
+var InterpExprStop = and(ch(C.Backtick), or(eof(), not(ch(C.DoubleQuote))));
 
 var InterpExpr = and(
-    production("BACKTICK", ch("`")),
+    symb.Backtick,
     any(and(not(InterpExprStop), BaseTokenLazy)),
-    production("BACKTICK", ch("`"))
+    symb.Backtick
 );
 ```
 
@@ -412,43 +519,85 @@ The recursion shape:
   just before `Tokens` is defined.
 
 `InterpExprStop` is the closing-backtick detector: a backtick NOT
-followed by `"`. The `or(eof(), not(ch('"')))` form handles both
-"backtick at end of input" and "backtick followed by something
+followed by `"`. The `or(eof(), not(ch(C.DoubleQuote)))` form handles
+both "backtick at end of input" and "backtick followed by something
 other than quote." If the next char is `"`, we're entering a nested
 interp string, not closing the expression; the loop continues.
+
+The two `symb.Backtick` references emit `Backtick` tokens for the
+opening and closing backticks of the embedded expression. Note that
+this is the same `symb.Backtick` production that fires standalone in
+`BaseTokenOr` — InterpExpr just reuses the binding.
 
 
 ## 13. Single-Char Operators as a Dynamic Map
 
-```js
-var SINGLE_CHAR_OPS_DEF = {
-    TILDE: "~", EXMARK: "!", HASH: "#", DOLLAR: "$",
-    /* ... full list ... */
-    BACKTICK: "`",
-};
+The `C` table is the single source of truth for char values:
 
-export const ops = {};
-for (let [name, c] of Object.entries(SINGLE_CHAR_OPS_DEF)) {
-    ops[name] = production(name, ch(c));
+```js
+var C = {
+    Tilde: "~",        Exmark: "!",        Hash: "#",        Dollar: "$",
+    Percent: "%",      Caret: "^",         Ampersand: "&",   Star: "*",
+    Plus: "+",         Equal: "=",         At: "@",          Hyphen: "-",
+    OpenBracket: "[",  CloseBracket: "]",  Pipe: "|",        Qmark: "?",
+    Semicolon: ";",    SingleQuote: "'",   OpenAngle: "<",   CloseAngle: ">",
+    Comma: ",",        Period: ".",        Colon: ":",       ForwardSlash: "/",
+    Escape: "\\",      OpenParen: "(",     CloseParen: ")",  OpenBrace: "{",
+    CloseBrace: "}",   Backtick: "`",      DoubleQuote: '"',
+};
+```
+
+Productions are generated from `C` with two exclusion mechanisms:
+
+```js
+var STANDALONE_EXCLUDED_OPS    = new Set([ "DoubleQuote" ]);
+var SYMB_NAMES_EXCLUDED_FROM_C = new Set([ "Escape" ]);
+
+export const symb = {};
+for (let [name, c] of Object.entries(C)) {
+    if (!SYMB_NAMES_EXCLUDED_FROM_C.has(name)) {
+        symb[name] = production(name, ch(c));
+    }
 }
 ```
 
-The single-char ops are generated programmatically rather than
-declared one-by-one. The resulting `ops` object is exported and
-referenced by name (`ops.HYPHEN`, `ops.OPEN_PAREN`, etc.) where
-needed inside the file.
+The two exclusion sets serve different purposes:
 
-In `BaseTokenOr`, the ops are spread at the tail with selective
+- **`STANDALONE_EXCLUDED_OPS`** — name is in `symb` (so it's defined
+  for inline reuse, e.g. `symb.DoubleQuote` inside the string forms)
+  but is NOT spread into `BaseTokenOr`. A lone occurrence of the
+  character should fail to tokenize rather than emit a standalone
+  token. Currently just `DoubleQuote`.
+
+- **`SYMB_NAMES_EXCLUDED_FROM_C`** — name is in `C` (for char lookup
+  via `C.Escape`, e.g. inside multi-char Escape productions) but no
+  `symb.Name` production is generated. A different binding takes
+  over the standalone role. Currently just `Escape`, which is
+  superseded by `EscapePlain` (defined separately as one of the
+  eight named Escape variants; see §9). `EscapePlain` is spread into
+  `BaseTokenOr` explicitly, just before the `symb` spread, to fill
+  the standalone-`\` slot.
+
+The `symb` object is exported and referenced by name (`symb.Hyphen`,
+`symb.OpenParen`, etc.) where needed inside the file.
+
+In `BaseTokenOr`, the symbols are spread at the tail with selective
 wrapping:
 
 ```js
-...Object.entries(ops).map(([name, prod]) =>
-    EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
-)
+...Object.entries(symb)
+    .filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))
+    .map(([name, prod]) =>
+        EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
+    )
 ```
 
-This makes adding a new single-char op a one-line change to
-`SINGLE_CHAR_OPS_DEF`, with no separate `BaseTokenOr` entry needed.
+Adding a new single-char op is normally a one-line change to `C`.
+Adding one that should be inline-only (not spread into BaseTokenOr)
+also adds an entry to `STANDALONE_EXCLUDED_OPS`. Adding one whose
+standalone slot is filled by a separately-defined binding adds an
+entry to `SYMB_NAMES_EXCLUDED_FROM_C` and an explicit `BaseTokenOr`
+entry for the replacement.
 
 
 ## 14. Production Ordering in BaseTokenOr
@@ -458,39 +607,47 @@ choice means the first match wins, and several productions have
 overlapping prefixes. The exact order, top to bottom:
 
 ```
-WHITESPACE
-COMMENT                              (* before single-char FORWARD_SLASH *)
-InterpStr                            (* before single-char BACKTICK *)
-SpacingInterpStr                     (* before single-char ESCAPE *)
-SpacingEscapedStr                    (* before EscapedNumber and ESCAPE *)
+Whitespace
+Comment                              (* before single-char ForwardSlash *)
+InterpStr                            (* before single-char Backtick *)
+SpacingInterpStr                     (* before EscapePlain *)
+SpacingEscapedStr                    (* before EscapedNumber and EscapePlain *)
 StringLit                            (* anonymous and(...) — see §7 *)
-EscapedNumber                        (* before single-char ESCAPE *)
-expressionEnding(KEYWORD)            (* before GENERAL via Note 1 *)
-expressionEnding(NATIVE)
-expressionEnding(BUILTIN)
-expressionEnding(COMPREHENSION)
-expressionEnding(BOOLEAN_OPER)
-expressionEnding(NUMBER)
-expressionEnding(GENERAL)
-TRIPLE_PERIOD                        (* before DOUBLE_PERIOD before single PERIOD *)
-DOUBLE_PERIOD
-DOUBLE_COLON                         (* before single COLON *)
-...(ops with selective expressionEnding wrap)
+EscapedNumber                        (* before EscapePlain *)
+expressionEnding(Keyword)            (* before General via Note 1 in grammar *)
+expressionEnding(Native)
+expressionEnding(Builtin)
+expressionEnding(Comprehension)
+expressionEnding(BooleanOper)
+expressionEnding(NumberLit)
+expressionEnding(General)
+TriplePeriod                         (* before DoublePeriod before single Period *)
+DoublePeriod
+DoubleColon                          (* before single Colon *)
+EscapePlain                          (* standalone "\" — after all multi-char Escape forms *)
+...(symb spread with STANDALONE_EXCLUDED_OPS filter, EXPRESSION_ENDING_OP_NAMES wrap)
 ```
 
 Why each non-obvious ordering matters:
 
-- `COMMENT` before `FORWARD_SLASH`: a leading `/` could be either.
-  Trying COMMENT first commits to comment if a second `/` follows;
-  otherwise COMMENT fails and FORWARD_SLASH catches the standalone `/`.
-- `InterpStr` / `SpacingInterpStr` / `SpacingEscapedStr` before `StringLit`: `` `" ``, `\"`, and `` \` `` `"` start escape-bearing forms. `StringLit` only handles bare `"..."`.
-- `EscapedNumber` before single-char `ESCAPE`: a `\` followed by a digit (or `h`/`o`/`b`/`u`/`@`) should open an escaped-number sequence, not emit a standalone `ESCAPE` followed by un-escape-aware tokens.
-- The five typed identifiers before `GENERAL`: each typed form is a
-  semantic specialization of GENERAL; trying them first lets the
-  gate select the right type. GENERAL is the catch-all.
-- `TRIPLE_PERIOD` before `DOUBLE_PERIOD` before single PERIOD (in
-  the ops spread): longest match first.
-- `DOUBLE_COLON` before single COLON: same.
+- `Comment` before `ForwardSlash`: a leading `/` could be either.
+  Trying Comment first commits to comment if a second `/` follows;
+  otherwise Comment fails and the spread's `ForwardSlash` catches
+  the standalone `/`.
+- `InterpStr` / `SpacingInterpStr` / `SpacingEscapedStr` before
+  `StringLit`: `` `" ``, `\"`, and `` \` `` `"` start escape-bearing
+  forms. `StringLit` only handles bare `"..."`.
+- `SpacingInterpStr` / `SpacingEscapedStr` / `EscapedNumber` before
+  `EscapePlain`: a `\` followed by `` ` `` (then `"`), or `"`, or
+  one of `h`/`o`/`b`/`u`/`@`/digit, should open the more-specific
+  form rather than emit a standalone `EscapePlain` followed by
+  un-escape-aware tokens.
+- The five typed identifiers before `General`: each typed form is a
+  semantic specialization of General; trying them first lets the
+  gate select the right type. General is the catch-all.
+- `TriplePeriod` before `DoublePeriod` before single `Period` (via
+  the symb spread): longest match first.
+- `DoubleColon` before single `Colon` (via the symb spread): same.
 
 
 ## 15. Configuration: preserveTerminals and preserveDelim
@@ -516,18 +673,35 @@ introduced them.
 
 ## 16. The Diff Harness
 
-The diff harness (in `test.js`) compares the new tokenizer's output against the legacy hand-written tokenizer (`orig-tokenizer.js`). It is not part of the tokenizer proper but is the test-of-record for grain parity.
+The diff harness (in `test.js`) compares the new tokenizer's output
+against the legacy hand-written tokenizer (`orig-tokenizer.js`). It
+is not part of the tokenizer proper but is the test-of-record for
+grain parity.
 
 Components:
 
-- `tokenize(input)`: from `tokenizer.js`. Async generator yielding committed tokens.
-- `origTokenize(input)`: from `orig-tokenizer.js`. Async generator yielding tokens.
-- `diffStream(input)`: async generator walking both streams in lockstep, yielding `{kind: "match"|"diff", index, ...}` events.
-- `diff(input)`: convenience accumulator over `diffStream` for callers wanting a summary object.
+- `tokenize(input)`: from `tokenizer.js`. Async generator yielding
+  committed tokens with PascalCase `type` strings.
+- `origTokenize(input)`: from `orig-tokenizer.js`. Async generator
+  yielding tokens with UPPERCASE_SNAKE `type` strings.
+- `normalizeOrigStream(legacyStream)`: adapter that renames
+  `token.type` from UPPERCASE_SNAKE to PascalCase via a mechanical
+  pass (`OPEN_PAREN` → `OpenParen`, etc.); leaves `value` / `start`
+  / `end` untouched.
+- `diffStream(input)`: async generator walking the normalized legacy
+  stream and the new tokenizer stream in lockstep, yielding
+  `{kind: "match"|"diff", index, ...}` events.
+- `diff(input)`: convenience accumulator over `diffStream` for
+  callers wanting a summary object.
 
-No intermediate normalization is needed: the new tokenizer emits at the same grain as the legacy (basic strings as `DOUBLE_QUOTE` + STRING content + `DOUBLE_QUOTE`; escaped numbers as `ESCAPE` + `NUMBER`; etc.). The harness is a direct lockstep walk.
+Token grain matches on both sides — basic strings as `DoubleQuote` +
+`String` content + `DoubleQuote`; escaped numbers as `Escape` +
+`Number`; etc. — so the harness is a direct lockstep walk after
+type-name normalization. No content coalescing is needed.
 
-The diff harness is the source of truth for "does the new tokenizer match the legacy." A change to either side must preserve diff-cleanliness on the smoke-test suite.
+The diff harness is the source of truth for "does the new tokenizer
+match the legacy." A change to either side must preserve diff-
+cleanliness on the smoke-test suite (88 inputs as of last sweep).
 
 
 ## 17. Streaming-Output Semantics
@@ -564,6 +738,6 @@ follow), or wait for `commit` only.
 
 A subscriber consuming the stream while parsing is still in flight
 receives tokens as they are recognized, with one caveat: the
-expression-ending wrapper (§10) can cause WHITESPACE/COMMENT tokens
+expression-ending wrapper (§11) can cause Whitespace/Comment tokens
 to be emitted as `matched` and then rolled back. Consumers that
 treat `matched` as final will see ephemeral trivia events.

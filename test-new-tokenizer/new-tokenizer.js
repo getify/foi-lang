@@ -4,13 +4,13 @@
 // Foi tokenizer (lexical analyzer). Implements the Foi lexical
 // grammar as productions over the streaming parser combinator
 // library in parser-combinators.js. Exports a streaming tokenize()
-// async generator with the same shape as the legacy hand-written
-// tokenizer in orig-tokenizer.js, so callers can swap one for the
-// other.
+// async generator yielding tokens with PascalCase type strings.
 //
-// Grammar productions are the authoritative source; see
-// foi-lex-grammar.md for the EBNF specification and
-// foi-lex-impl.md for the implementation notes.
+// The legacy hand-written tokenizer (orig-tokenizer.js) emits
+// UPPERCASE_SNAKE type strings; the diff harness normalizes one
+// side to compare token streams. Grammar productions are the
+// authoritative source; see foi-lex-grammar.md for the EBNF
+// specification and foi-lex-impl.md for the implementation notes.
 // =============================================================
 
 import {
@@ -80,18 +80,115 @@ var isAlpha      = c => /[a-zA-Z]/.test(c);
 
 var ch = (c, onMatch) => terminal(x => x === c, onMatch);
 
+
+// =============================================================
+// SINGLE-CHAR OPERATOR PRODUCTIONS
+//
+// Single source of truth for char values (C) and the
+// corresponding productions (symb). Two exclusions:
+//
+//   STANDALONE_EXCLUDED_OPS: production exists but is NOT spread
+//     into BaseTokenOr — a lone occurrence of the character should
+//     fail to tokenize rather than emit a standalone token.
+//
+//   SYMB_NAMES_EXCLUDED_FROM_C: name is in C (for char lookup via
+//     C.Escape etc.) but no symb.<Name> production is generated —
+//     a different binding handles the production. Currently just
+//     Escape, which is superseded by EscapePlain (one of the eight
+//     Escape variants defined below; see foi-lex-grammar.md).
+// =============================================================
+
+var C = {
+	Tilde:        "~",
+	Exmark:       "!",
+	Hash:         "#",
+	Dollar:       "$",
+	Percent:      "%",
+	Caret:        "^",
+	Ampersand:    "&",
+	Star:         "*",
+	Plus:         "+",
+	Equal:        "=",
+	At:           "@",
+	Hyphen:       "-",
+	OpenBracket:  "[",
+	CloseBracket: "]",
+	Pipe:         "|",
+	Qmark:        "?",
+	Semicolon:    ";",
+	SingleQuote:  "'",
+	OpenAngle:    "<",
+	CloseAngle:   ">",
+	Comma:        ",",
+	Period:       ".",
+	Colon:        ":",
+	ForwardSlash: "/",
+	Escape:       "\\",
+	OpenParen:    "(",
+	CloseParen:   ")",
+	OpenBrace:    "{",
+	CloseBrace:   "}",
+	Backtick:     "`",
+	DoubleQuote:  '"',
+};
+
+var STANDALONE_EXCLUDED_OPS    = new Set([ "DoubleQuote" ]);
+var SYMB_NAMES_EXCLUDED_FROM_C = new Set([ "Escape" ]);
+
+export const symb = {};
+for (let [name, c] of Object.entries(C)) {
+	if (!SYMB_NAMES_EXCLUDED_FROM_C.has(name)) {
+		symb[name] = production(name, ch(c));
+	}
+}
+
+
+// =============================================================
+// ESCAPE VARIANTS
+//
+// Eight productions, all emitting Escape tokens with distinguishing
+// values. EscapePlain is the only one spread standalone into
+// BaseTokenOr (for a lone "\"); the others fire only from inside
+// specific contexts (string-form openers, EscapedNumber dispatch).
+//
+// At the EBNF level these are named aliases (EscapeBacktick,
+// EscapeHex, etc.); the impl emits all eight as Escape tokens
+// (production name "Escape"), distinguished by value. See
+// foi-lex-grammar.md preamble for the alias pattern.
+// =============================================================
+
+export const EscapeBacktick        = production("Escape", ch(C.Backtick));
+export const EscapePlain           = production("Escape", ch(C.Escape));
+export const EscapeSpacingBacktick = production("Escape", and(ch(C.Escape), ch(C.Backtick)));
+export const EscapeHex             = production("Escape", and(ch(C.Escape), ch("h")));
+export const EscapeUnicode         = production("Escape", and(ch(C.Escape), ch("u")));
+export const EscapeOctal           = production("Escape", and(ch(C.Escape), ch("o")));
+export const EscapeBinary          = production("Escape", and(ch(C.Escape), ch("b")));
+export const EscapeMonadic         = production("Escape", and(ch(C.Escape), ch(C.At)));
+
+
+// =============================================================
+// MULTI-CHAR OPERATORS
+// Must be tried before their single-char prefixes.
+// =============================================================
+
+export const TriplePeriod = production("TriplePeriod", and(ch(C.Period), ch(C.Period), ch(C.Period)));
+export const DoublePeriod = production("DoublePeriod", and(ch(C.Period), ch(C.Period)));
+export const DoubleColon  = production("DoubleColon",  and(ch(C.Colon), ch(C.Colon)));
+
+
 // IdentBody: greedy identifier-chars with sawNonDigit gate, plus a
 // tilde-leading variant (so `~foo` parses as one identifier the way
 // the legacy tokenizer's TILDE+GENERAL merge does). The gate rejects
-// pure-digit runs so they fall through to NUMBER.
+// pure-digit runs so they fall through to Number.
 var IdentBody = and(
 	or(
 		terminal(isIdentStart, (c, f) => {
 			if (!isDigit(c)) f.state.sawNonDigit = true;
 		}),
 		and(
-			terminal(c => c === "~", (_, f) => { f.state.sawNonDigit = true; }),
-			terminal(isAlpha,        (_, f) => { f.state.sawNonDigit = true; })
+			terminal(c => c === C.Tilde, (_, f) => { f.state.sawNonDigit = true; }),
+			terminal(isAlpha, (_, f) => { f.state.sawNonDigit = true; })
 		)
 	),
 	any(terminal(isIdentCont, (c, f) => {
@@ -102,22 +199,32 @@ var IdentBody = and(
 
 
 // =============================================================
-// PRODUCTIONS
-// Production names match the legacy tokenizer's type strings
-// exactly so callers can substitute one for the other.
+// WHITESPACE & COMMENT
 // =============================================================
 
-export const WHITESPACE = production("WHITESPACE",
+export const Whitespace = production("Whitespace",
 	many(terminal(isWS))
 );
 
-var BlockClose = and(ch("/"), ch("/"), ch("/"));
+var BlockClose = and(
+	ch(C.ForwardSlash),
+	ch(C.ForwardSlash),
+	ch(C.ForwardSlash)
+);
 
-export const COMMENT = production("COMMENT",
+export const Comment = production("Comment",
 	and(
-		ch("/"),
-		ch("/", (_, f) => { f.state.kind = "line"; }),
-		optional(ch("/", (_, f) => { f.state.kind = "block"; })),
+		ch(C.ForwardSlash),
+		ch(
+			C.ForwardSlash,
+			(_, f) => { f.state.kind = "line"; }
+		),
+		optional(
+			ch(
+				C.ForwardSlash,
+				(_, f) => { f.state.kind = "block"; }
+			)
+		),
 		dispatch(f => f.state.kind, {
 			line: any(terminal(c => c !== "\n")),
 			block: and(
@@ -128,65 +235,73 @@ export const COMMENT = production("COMMENT",
 	)
 );
 
-// Escaped numbers: \h<hex>, \o<oct>, \b<bin>, \u<hex>, \@<num>, \<num>.
-//   - \h, \o, \b accept optional leading - before digit run.
-//   - \u accepts hex digits only (produces a unicode char/string),
-//     with NO leading sign.
-//   - \@ accepts a "monadic number" — hex digits with optional
-//     _ separators and decimal point, optional leading -.
-//   - Bare \ accepts a base-10 number with optional leading -,
-//     _ separators (including trailing), and decimal point.
-var BareDigits        = many(terminal(isDigit));
-var DigitsWithSep     = and(BareDigits, any(or(terminal(isDigit), ch("_"))));
+
+// =============================================================
+// NUMBERS
+// =============================================================
+
+// Char-level digit-body helpers (not productions — combinator
+// bindings reused by the Number variants below).
+var DigitsWithSep     = and(
+	many(terminal(isDigit)),
+	any(or(terminal(isDigit), ch("_")))
+);
 var BareNumBody       = and(
-	optional(ch("-")),
+	optional(ch(C.Hyphen)),
 	DigitsWithSep,
-	optional(and(ch("."), DigitsWithSep))
+	optional(and(ch(C.Period), DigitsWithSep))
 );
 
 var HexDigits         = many(terminal(isHexDigit));
-var HexDigitsWithSep  = and(HexDigits, any(or(terminal(isHexDigit), ch("_"))));
+var HexDigitsWithSep  = and(
+	HexDigits,
+	any(or(terminal(isHexDigit), ch("_")))
+);
 var MonadNumBody      = and(
-	optional(ch("-")),
+	optional(ch(C.Hyphen)),
 	HexDigitsWithSep,
-	optional(and(ch("."), HexDigitsWithSep))
+	optional(and(ch(C.Period), HexDigitsWithSep))
 );
 
+
+// Number variants — six productions emitting Number tokens with
+// content shapes matching the Escape opener's digit class. All
+// emit as Number type (alias pattern). See foi-lex-grammar.md.
+export const HexNumber     = production("Number", and(optional(ch(C.Hyphen)), HexDigits));
+export const UnicodeNumber = production("Number", HexDigits);
+export const OctalNumber   = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isOctDigit))));
+export const BinaryNumber  = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isBinDigit))));
+export const MonadNumber   = production("Number", MonadNumBody);
+export const BareNumber    = production("Number", BareNumBody);
+
+
+// EscapedNumber: dispatch over the six (Escape variant, Number
+// variant) pairs. Hidden — emits the Escape and Number tokens as
+// direct children of the parent frame, not under an own node.
 export const EscapedNumber = or(
-	and(
-		production("ESCAPE", and(ch("\\"), ch("h"))),
-		production("NUMBER", and(optional(ch("-")), HexDigits))
-	),
-	and(
-		production("ESCAPE", and(ch("\\"), ch("u"))),
-		production("NUMBER", HexDigits)
-	),
-	and(
-		production("ESCAPE", and(ch("\\"), ch("o"))),
-		production("NUMBER", and(optional(ch("-")), many(terminal(isOctDigit))))
-	),
-	and(
-		production("ESCAPE", and(ch("\\"), ch("b"))),
-		production("NUMBER", and(optional(ch("-")), many(terminal(isBinDigit))))
-	),
-	and(
-		production("ESCAPE", and(ch("\\"), ch("@"))),
-		production("NUMBER", MonadNumBody)
-	),
-	and(
-		production("ESCAPE", ch("\\")),
-		production("NUMBER", BareNumBody)
-	)
+	and(EscapeHex,     HexNumber),
+	and(EscapeUnicode, UnicodeNumber),
+	and(EscapeOctal,   OctalNumber),
+	and(EscapeBinary,  BinaryNumber),
+	and(EscapeMonadic, MonadNumber),
+	and(EscapePlain,   BareNumber)
 );
 
-// KEYWORD: bare form (def, defn, deft, int, ...) or extension form
+
+// =============================================================
+// TYPED IDENTIFIERS
+// Each gates membership in its reserved set; bare IdentBody fall-
+// through goes to General.
+// =============================================================
+
+// Keyword: bare form (def, defn, deft, int, ...) or extension form
 // (:as, :over). The gate validates membership in the KEYWORDS list.
-export const KEYWORD = production("KEYWORD",
+export const Keyword = production("Keyword",
 	or(
 		and(
-			ch(":"),
+			ch(C.Colon),
 			IdentBody,
-			gate(f => KEYWORDS.includes(":" + f.matched.slice(1).join("")))
+			gate(f => KEYWORDS.includes(C.Colon + f.matched.slice(1).join("")))
 		),
 		and(
 			IdentBody,
@@ -195,97 +310,50 @@ export const KEYWORD = production("KEYWORD",
 	)
 );
 
-export const NATIVE = production("NATIVE",
+export const Native = production("Native",
 	and(IdentBody, gate(f => NATIVES.includes(f.matched.join(""))))
 );
 
-export const BUILTIN = production("BUILTIN",
+export const Builtin = production("Builtin",
 	and(IdentBody, gate(f => BUILTINS.includes(f.matched.join(""))))
 );
 
-// COMPREHENSION: ~name where name is one of the reserved comprehensions.
-export const COMPREHENSION = production("COMPREHENSION",
+// Comprehension: ~name where name is one of the reserved comprehensions.
+export const Comprehension = production("Comprehension",
 	and(
-		ch("~"),
+		ch(C.Tilde),
 		terminal(isAlpha),
 		any(terminal(isIdentCont)),
 		gate(f => COMPREHENSIONS.includes(f.matched.join("")))
 	)
 );
 
-// BOOLEAN_OPER: ?word or !word where word is one of the named ops.
-export const BOOLEAN_OPER = production("BOOLEAN_OPER",
+// BooleanOper: ?word or !word where word is one of the named operators.
+export const BooleanOper = production("BooleanOper",
 	and(
-		or(ch("?"), ch("!")),
+		or(ch(C.Qmark), ch(C.Exmark)),
 		terminal(isAlpha),
 		any(terminal(isIdentCont)),
 		gate(f => BOOLEAN_NAMED_OPERATORS.includes(f.matched.slice(1).join("")))
 	)
 );
 
-// NUMBER: bare digits, optionally with decimal point. Leading sign
-// is handled jointly here (accept `-` if followed by digit) and in
-// the expressionEnding wrapper (which eats a trailing binary `-`).
-export const NUMBER = production("NUMBER",
+// NumberLit: bare decimal number literal (no underscore separators,
+// no escape opener). Leading sign handled jointly here (accept "-"
+// if followed by digit) and in the expressionEnding wrapper (which
+// eats a trailing binary "-"). Emits Number token.
+export const NumberLit = production("Number",
 	and(
-		optional(and(ch("-"), lookahead(terminal(isDigit)))),
+		optional(and(ch(C.Hyphen), lookahead(terminal(isDigit)))),
 		or(
-			and(many(terminal(isDigit)), ch("."), many(terminal(isDigit))),
+			and(many(terminal(isDigit)), ch(C.Period), many(terminal(isDigit))),
 			many(terminal(isDigit))
 		)
 	)
 );
 
-// GENERAL: catch-all identifier (must run AFTER the typed forms).
-export const GENERAL = production("GENERAL", IdentBody);
-
-// Multi-char operators (must be tried before their single-char prefixes).
-export const TRIPLE_PERIOD = production("TRIPLE_PERIOD", and(ch("."), ch("."), ch(".")));
-export const DOUBLE_PERIOD = production("DOUBLE_PERIOD", and(ch("."), ch(".")));
-export const DOUBLE_COLON  = production("DOUBLE_COLON",  and(ch(":"), ch(":")));
-
-
-// =============================================================
-// SINGLE-CHAR OPERATOR PRODUCTIONS
-// =============================================================
-
-var SINGLE_CHAR_OPS_DEF = {
-	TILDE:         "~",
-	EXMARK:        "!",
-	HASH:          "#",
-	DOLLAR:        "$",
-	PERCENT:       "%",
-	CARET:         "^",
-	AMPERSAND:     "&",
-	STAR:          "*",
-	PLUS:          "+",
-	EQUAL:         "=",
-	AT:            "@",
-	HYPHEN:        "-",
-	OPEN_BRACKET:  "[",
-	CLOSE_BRACKET: "]",
-	PIPE:          "|",
-	QMARK:         "?",
-	SEMICOLON:     ";",
-	SINGLE_QUOTE:  "'",
-	OPEN_ANGLE:    "<",
-	CLOSE_ANGLE:   ">",
-	COMMA:         ",",
-	PERIOD:        ".",
-	COLON:         ":",
-	FORWARD_SLASH: "/",
-	ESCAPE:        "\\",
-	OPEN_PAREN:    "(",
-	CLOSE_PAREN:   ")",
-	OPEN_BRACE:    "{",
-	CLOSE_BRACE:   "}",
-	BACKTICK:      "`",
-};
-
-export const ops = {};
-for (let [name, c] of Object.entries(SINGLE_CHAR_OPS_DEF)) {
-	ops[name] = production(name, ch(c));
-}
+// General: catch-all identifier (must run AFTER the typed forms).
+export const General = production("General", IdentBody);
 
 
 // =============================================================
@@ -294,23 +362,23 @@ for (let [name, c] of Object.entries(SINGLE_CHAR_OPS_DEF)) {
 // Inside any string form, " is escaped by doubling: "". Inside the
 // two interp forms (where ` opens an embedded expression), ` is
 // also escaped by doubling: ``. The doubled pair comes out as a
-// single STRING_ESCAPED_CHAR token.
+// single StringEscapedChar token.
 //
-// Two combinator bindings, both emitting the same STRING_ESCAPED_CHAR
+// Two combinator bindings, both emitting the same StringEscapedChar
 // token type; they differ only in which escapes are reachable:
 //
-//   StringEscapedCharDQ  — "" only        (used by StringLit, SpacingEscapedStr)
-//   StringEscapedChar    — "" or ``       (used by InterpStr, SpacingInterpStr)
+//   StringEscapedCharDQ — "" only        (used by StringLit, SpacingEscapedStr)
+//   StringEscapedChar   — "" or ``       (used by InterpStr, SpacingInterpStr)
 // =============================================================
 
-var StringEscapedCharDQ = production("STRING_ESCAPED_CHAR",
-	and(ch('"'), ch('"'))
+var StringEscapedCharDQ = production("StringEscapedChar",
+	and(ch(C.DoubleQuote), ch(C.DoubleQuote))
 );
 
-export const STRING_ESCAPED_CHAR = production("STRING_ESCAPED_CHAR",
+export const StringEscapedChar = production("StringEscapedChar",
 	or(
-		and(ch('"'), ch('"')),
-		and(ch("`"), ch("`"))
+		and(ch(C.DoubleQuote), ch(C.DoubleQuote)),
+		and(ch(C.Backtick), ch(C.Backtick))
 	)
 );
 
@@ -319,18 +387,22 @@ export const STRING_ESCAPED_CHAR = production("STRING_ESCAPED_CHAR",
 // BASIC STRING:  "..."   (opens ", closes ")
 //
 // No embedded expressions, no whitespace collapse. ` has no
-// syntactic significance here — it's literal STRING content.
+// syntactic significance here — it's literal String content.
+//
+// PlainStrChars is the basic-string char-emitter, completing the
+// four-emitter family with InterpStrChars, SpacingInterpStrChars,
+// and SpacingEscapedStrChars. All four emit String tokens with
+// context-specific char predicates.
 // =============================================================
 
+var PlainStrChars = production("String",
+	many(terminal(c => c !== C.DoubleQuote))
+);
+
 export const StringLit = and(
-	production("DOUBLE_QUOTE", ch('"')),
-	any(or(
-		StringEscapedCharDQ,
-		production("STRING",
-			many(terminal(c => c !== '"'))
-		)
-	)),
-	production("DOUBLE_QUOTE", ch('"'))
+	symb.DoubleQuote,
+	any(or(StringEscapedCharDQ, PlainStrChars)),
+	symb.DoubleQuote
 );
 
 
@@ -350,27 +422,30 @@ var BaseTokenLazy = async function baseTokenLazy(pctx) {
 // "Lone backtick": a ` that closes an interp expression rather than
 // opening a nested interp string. (Nested interp strings start with
 // `", so we keep going past those.)
-var InterpExprStop = and(ch("`"), or(eof(), not(ch('"'))));
+var InterpExprStop = and(ch(C.Backtick), or(eof(), not(ch(C.DoubleQuote))));
 
-// `expr`: BACKTICK, any base-mode tokens until a lone closing
-// backtick, BACKTICK.
+// `expr`: Backtick, any base-mode tokens until a lone closing
+// backtick, Backtick.
 var InterpExpr = and(
-	production("BACKTICK", ch("`")),
+	symb.Backtick,
 	any(and(not(InterpExprStop), BaseTokenLazy)),
-	production("BACKTICK", ch("`"))
+	symb.Backtick
 );
 
 // Run of literal string content inside an interp string. Stops at
 // ` (potential expression opener or escape) and at " (string close).
-var InterpStrChars = production("STRING",
-	many(terminal(c => c !== "`" && c !== '"'))
+var InterpStrChars = production("String",
+	many(terminal(c => (
+		c !== C.Backtick &&
+		c !== C.DoubleQuote
+	)))
 );
 
 export const InterpStr = and(
-	production("ESCAPE",       ch("`")),
-	production("DOUBLE_QUOTE", ch('"')),
-	any(or(STRING_ESCAPED_CHAR, InterpExpr, InterpStrChars)),
-	production("DOUBLE_QUOTE", ch('"'))
+	EscapeBacktick,
+	symb.DoubleQuote,
+	any(or(StringEscapedChar, InterpExpr, InterpStrChars)),
+	symb.DoubleQuote
 );
 
 
@@ -378,19 +453,23 @@ export const InterpStr = and(
 // SPACING-FORM INTERPOLATED STRING:  \`"..."
 //
 // Embedded expressions like InterpStr, plus whitespace-collapse:
-// WHITESPACE inside the content is emitted as its own token rather
-// than as part of STRING content.
+// Whitespace inside the content is emitted as its own token rather
+// than as part of String content.
 // =============================================================
 
-var SpacingInterpStrChars = production("STRING",
-	many(terminal(c => c !== "`" && c !== '"' && !isWS(c)))
+var SpacingInterpStrChars = production("String",
+	many(terminal(c => (
+		c !== C.Backtick &&
+		c !== C.DoubleQuote &&
+		!isWS(c)
+	)))
 );
 
 export const SpacingInterpStr = and(
-	production("ESCAPE",       and(ch("\\"), ch("`"))),
-	production("DOUBLE_QUOTE", ch('"')),
-	any(or(STRING_ESCAPED_CHAR, InterpExpr, WHITESPACE, SpacingInterpStrChars)),
-	production("DOUBLE_QUOTE", ch('"'))
+	EscapeSpacingBacktick,
+	symb.DoubleQuote,
+	any(or(StringEscapedChar, InterpExpr, Whitespace, SpacingInterpStrChars)),
+	symb.DoubleQuote
 );
 
 
@@ -398,18 +477,18 @@ export const SpacingInterpStr = and(
 // SPACING ESCAPED STRING:  \"..."
 //
 // No embedded expressions. Whitespace-collapse like SpacingInterpStr.
-// ` has no syntactic significance here — it's literal STRING content.
+// ` has no syntactic significance here — it's literal String content.
 // =============================================================
 
-var SpacingEscapedStrChars = production("STRING",
-	many(terminal(c => c !== '"' && !isWS(c)))
+var SpacingEscapedStrChars = production("String",
+	many(terminal(c => c !== C.DoubleQuote && !isWS(c)))
 );
 
 export const SpacingEscapedStr = and(
-	production("ESCAPE",       ch("\\")),
-	production("DOUBLE_QUOTE", ch('"')),
-	any(or(StringEscapedCharDQ, WHITESPACE, SpacingEscapedStrChars)),
-	production("DOUBLE_QUOTE", ch('"'))
+	EscapePlain,
+	symb.DoubleQuote,
+	any(or(StringEscapedCharDQ, Whitespace, SpacingEscapedStrChars)),
+	symb.DoubleQuote
 );
 
 
@@ -418,25 +497,25 @@ export const SpacingEscapedStr = and(
 // =============================================================
 
 // Tokens whose legacy-tokenizer counterparts set minusOpAllowed = true.
-// Single-char ops in this set are wrapped with expressionEnding;
+// Single-char symbols in this set are wrapped with expressionEnding;
 // the rest stay unwrapped.
 var EXPRESSION_ENDING_OP_NAMES = new Set([
-	"CLOSE_PAREN", "CLOSE_BRACE", "HASH", "PIPE",
+	"CloseParen", "CloseBrace", "Hash", "Pipe",
 ]);
 
 // Wrap a production whose tokens semantically end an expression.
-// After p matches, optionally consume trivia (WHITESPACE / COMMENT
+// After p matches, optionally consume trivia (Whitespace / Comment
 // tokens, emitted as their own depth-1 nodes), then peek for a
-// binary HYPHEN preceding a digit; if present, consume the HYPHEN
+// binary Hyphen preceding a digit; if present, consume the Hyphen
 // too. If the tail check fails, the whole optional rolls back and
-// the trivia/HYPHEN are picked up by the next outer iteration.
+// the trivia/Hyphen are picked up by the next outer iteration.
 function expressionEnding(p) {
 	return and(
 		p,
 		optional(and(
-			any(or(WHITESPACE, COMMENT)),
-			lookahead(and(ch("-"), terminal(isDigit))),
-			production("HYPHEN", ch("-"))
+			any(or(Whitespace, Comment)),
+			lookahead(and(ch(C.Hyphen), terminal(isDigit))),
+			production("Hyphen", ch(C.Hyphen))
 		))
 	);
 }
@@ -445,32 +524,40 @@ function expressionEnding(p) {
 // =============================================================
 // TOP-LEVEL: Tokens
 // Order is important. Try longer/more-specific lexemes before
-// their prefixes; try typed identifiers before the GENERAL
+// their prefixes; try typed identifiers before the General
 // catch-all. See foi-lex-impl.md §13 for the full ordering
 // rationale.
+//
+// EscapePlain appears explicitly (between DoubleColon and the
+// symb spread) to provide the standalone-"\" emission slot —
+// after every form that could consume "\" as a longer match
+// (SpacingInterpStr, SpacingEscapedStr, EscapedNumber).
 // =============================================================
 
 BaseTokenOr = or(
-	WHITESPACE,
-	COMMENT,
+	Whitespace,
+	Comment,
 	InterpStr,
 	SpacingInterpStr,
 	SpacingEscapedStr,
 	StringLit,
 	EscapedNumber,
-	expressionEnding(KEYWORD),
-	expressionEnding(NATIVE),
-	expressionEnding(BUILTIN),
-	expressionEnding(COMPREHENSION),
-	expressionEnding(BOOLEAN_OPER),
-	expressionEnding(NUMBER),
-	expressionEnding(GENERAL),
-	TRIPLE_PERIOD,
-	DOUBLE_PERIOD,
-	DOUBLE_COLON,
-	...Object.entries(ops).map(([name, prod]) =>
-		EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
-	)
+	expressionEnding(Keyword),
+	expressionEnding(Native),
+	expressionEnding(Builtin),
+	expressionEnding(Comprehension),
+	expressionEnding(BooleanOper),
+	expressionEnding(NumberLit),
+	expressionEnding(General),
+	TriplePeriod,
+	DoublePeriod,
+	DoubleColon,
+	EscapePlain,
+	...Object.entries(symb)
+		.filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))
+		.map(([name, prod]) =>
+			EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
+		)
 );
 
 export const Tokens = production("Tokens", any(BaseTokenOr));
@@ -482,8 +569,9 @@ export const Tokens = production("Tokens", any(BaseTokenOr));
 // tokenize(input): async generator yielding lexer tokens as they
 // are recognized. Each token: { type, value, start, end }.
 //
-// Shape matches the legacy tokenizer's tokenize() so callers can
-// substitute one for the other.
+// Token type strings are PascalCase. The legacy tokenizer
+// (orig-tokenizer.js) emits UPPERCASE_SNAKE; the diff harness
+// normalizes one side before lockstep comparison.
 // =============================================================
 
 export async function *tokenize(input) {

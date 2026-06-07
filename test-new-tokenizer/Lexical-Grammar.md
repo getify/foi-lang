@@ -20,14 +20,15 @@ Unbracketed names are *visible* and correspond to
 correspond to bare `and(...)` / `or(...)` fragments. RHS references
 inherit the LHS marking, so re-bracketing on use is unnecessary.
 The same convention applies in the syntactic grammar
-(`foi-syn-grammar.md`).
+(`Syntactic-Grammar.md`).
 
-A few visible productions emit nodes whose token type differs from
-the EBNF name — they are aliases for clarity at the grammar level.
-`EscapeBacktick`, `EscapeSpacingBacktick`, `EscapePlain` all emit
-`ESCAPE` tokens with distinguishing values. `InterpStrChars`,
-`SpacingInterpStrChars`, `EscapedStrChars` all emit `STRING` tokens
-with content-class-specific predicates. Inline comments flag these.
+**Alias pattern.** A few visible productions emit nodes whose token type differs from the EBNF name — they are aliases for clarity at the grammar level. Three families:
+
+- Eight Escape variants — `EscapeBacktick`, `EscapePlain`, `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`, `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit `Escape` tokens with distinguishing values.
+- Six Number variants — `HexNumber`, `UnicodeNumber`, `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` — all emit `Number` tokens, paired with their corresponding Escape variant in `<EscapedNumber>` dispatch. The standalone `Number` (decimal source-level numbers) emits its own type.
+- Four String content emitters — `PlainStrChars`, `InterpStrChars`, `SpacingInterpStrChars`, `SpacingEscapedStrChars` — all emit `String` tokens with context-specific char predicates.
+
+**Concat compatibility note.** Four string-form productions and their content helpers carry a `Lex` prefix (`<LexStringLit>`, `<LexInterpStr>`, `<LexSpacingInterpStr>`, `<LexSpacingEscapedStr>`, `<LexInterpStrContent>`, `<LexSpacingInterpStrContent>`, `<LexSpacingEscapedStrContent>`, `<LexInterpExpr>`) to avoid collision with same-named visible productions in `Syntactic-Grammar.md`. The lex versions describe char-level token assembly; the syn versions describe token-level assembly into AST. The lex versions are hidden and reachable from the lex `<Token>` start (which is itself unreachable from the syn `Program` start under concat).
 
 ```ebnf
 (*************** Top Level ***************)
@@ -36,10 +37,10 @@ Tokens                  := Token*;
 
 <Token>                 := Whitespace
                          | Comment
-                         | InterpStr
-                         | SpacingInterpStr
-                         | SpacingEscapedStr
-                         | StringLit
+                         | LexInterpStr
+                         | LexSpacingInterpStr
+                         | LexSpacingEscapedStr
+                         | LexStringLit
                          | EscapedNumber
                          | (Keyword ExprEndingTail)        (* Note 1, Note 9 *)
                          | (Native ExprEndingTail)         (* Note 1, Note 9 *)
@@ -51,6 +52,7 @@ Tokens                  := Token*;
                          | TriplePeriod
                          | DoublePeriod
                          | DoubleColon
+                         | EscapePlain                     (* standalone "\" *)
                          | (ExprEndingOp ExprEndingTail)   (* Note 9 *)
                          | SingleCharOp;                   (* Note 2 *)
 
@@ -106,26 +108,53 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
 
 (*************** Numbers ***************)
 
+(* Number: bare decimal source-level number (no underscores, no
+   escape opener). Emits Number token. *)
 Number                  := "-"? NumberBody;            (* Note 5 *)
 <NumberBody>            := (Digit+ "." Digit+) | Digit+;
 
-<EscapedNumber>         := "\\" EscapedNumberBody;
-<EscapedNumberBody>     := ("h" "-"? HexDigit+)
-                         | ("u" HexDigit+)             (* Note 6 *)
-                         | ("o" "-"? OctDigit+)
-                         | ("b" "-"? BinDigit+)
-                         | ("@" MonadNumBody)
-                         | BareNumBody;
+(* Number variant aliases — each emits a Number token with content
+   shape matching the Escape opener's digit class. *)
+HexNumber               := "-"? HexDigit+;             (* emitted as Number *)
+UnicodeNumber           := HexDigit+;                  (* emitted as Number; Note 6 *)
+OctalNumber             := "-"? OctDigit+;             (* emitted as Number *)
+BinaryNumber            := "-"? BinDigit+;             (* emitted as Number *)
+MonadNumber             := "-"? HexDigitsWithSep ("." HexDigitsWithSep)?;   (* emitted as Number *)
+BareNumber              := "-"? DigitsWithSep ("." DigitsWithSep)?;         (* emitted as Number *)
 
-<BareNumBody>           := "-"? DigitsWithSep ("." DigitsWithSep)?;
 <DigitsWithSep>         := Digit+ (Digit | "_")*;
-
-<MonadNumBody>          := "-"? HexDigitsWithSep ("." HexDigitsWithSep)?;
 <HexDigitsWithSep>      := HexDigit+ (HexDigit | "_")*;
 
 <HexDigit>              := #"[0-9a-fA-F]";
 <OctDigit>              := #"[0-7]";
 <BinDigit>              := #"[01]";
+
+(* EscapedNumber: dispatch over (Escape variant, Number variant)
+   pairs. Hidden — emits the Escape and Number tokens as direct
+   children of the parent frame. *)
+<EscapedNumber>         := (EscapeHex     HexNumber)
+                         | (EscapeUnicode UnicodeNumber)
+                         | (EscapeOctal   OctalNumber)
+                         | (EscapeBinary  BinaryNumber)
+                         | (EscapeMonadic MonadNumber)
+                         | (EscapePlain   BareNumber);
+
+
+(*************** Escape Variants ***************)
+
+(* Eight productions emitting Escape tokens with distinguishing
+   values. EscapePlain is the only one spread standalone in
+   <Token> (for a lone "\"); the others fire only from inside
+   specific contexts (string-form openers, EscapedNumber). *)
+
+EscapeBacktick          := "`";          (* emitted as Escape, value "`" *)
+EscapePlain             := "\\";         (* emitted as Escape, value "\" *)
+EscapeSpacingBacktick   := "\\" "`";     (* emitted as Escape, value "\`" *)
+EscapeHex               := "\\" "h";     (* emitted as Escape, value "\h" *)
+EscapeUnicode           := "\\" "u";     (* emitted as Escape, value "\u" *)
+EscapeOctal             := "\\" "o";     (* emitted as Escape, value "\o" *)
+EscapeBinary            := "\\" "b";     (* emitted as Escape, value "\b" *)
+EscapeMonadic           := "\\" "@";     (* emitted as Escape, value "\@" *)
 
 
 (*************** Multi-Char Operators ***************)
@@ -141,13 +170,14 @@ DoubleColon             := "::";
    ExprEndingTail at the Token level. See Note 9. *)
 <ExprEndingOp>          := CloseParen | CloseBrace | Hash | Pipe;
 
-(* All other single-char operators. *)
+(* All other single-char operators. Escape ("\") is NOT here —
+   it's covered by EscapePlain in the <Token> alternation. *)
 <SingleCharOp>          := Tilde | Exmark | Dollar | Percent
                          | Caret | Ampersand | Star | Plus | Equal
                          | At | Hyphen | OpenBracket | CloseBracket
                          | Qmark | Semicolon | SingleQuote
                          | OpenAngle | CloseAngle | Comma | Period
-                         | Colon | ForwardSlash | Escape | OpenParen
+                         | Colon | ForwardSlash | OpenParen
                          | OpenBrace | Backtick;
 
 Tilde         := "~";   Exmark      := "!";    Hash         := "#";
@@ -158,70 +188,71 @@ OpenBracket   := "[";   CloseBracket:= "]";    Pipe         := "|";
 Qmark         := "?";   Semicolon   := ";";    SingleQuote  := "'";
 OpenAngle     := "<";   CloseAngle  := ">";    Comma        := ",";
 Period        := ".";   Colon       := ":";    ForwardSlash := "/";
-Escape        := "\\";  OpenParen   := "(";    CloseParen   := ")";
-OpenBrace     := "{";   CloseBrace  := "}";    Backtick     := "`";
+OpenParen     := "(";   CloseParen  := ")";    OpenBrace    := "{";
+CloseBrace    := "}";   Backtick    := "`";
+
+(* DoubleQuote is defined as a production for cross-grammar
+   reference (the syntactic grammar's string-form openers
+   consume DoubleQuote tokens) but is NOT in <SingleCharOp>: it
+   standalone-emits only from inside the four string-form
+   bodies, never as a top-level token. *)
+DoubleQuote   := "\"";
 
 
 (*************** Strings ***************)
 
 (* Basic string literal: doublequote-delimited; "" inside is an
-   escaped doublequote and stays inside. The combinator's
-   StringLit body absorbs the content as STRING tokens between
-   DOUBLE_QUOTE openers/closers. *)
+   escaped doublequote and stays inside. *)
 
-<StringLit>             := "\"" StringContent* "\"";
-<StringContent>         := StringEscapedChar | #"[^\"]";
+<LexStringLit>          := "\"" StringContent* "\"";
+<StringContent>         := StringEscapedChar | PlainStrChars;
+PlainStrChars           := #"[^\"]"+;                     (* emitted as String *)
 StringEscapedChar       := ("\"" "\"") | ("`" "`");
 
 
 (*** Interpolated String:    `"..."   ***)
 
-(* Opens with ESCAPE("`") + DOUBLE_QUOTE; closes with DOUBLE_QUOTE.
-   The leading backtick is emitted as an ESCAPE token (value "`"),
-   not as BACKTICK. See Note 7. *)
+(* Opens with Escape("`") + DoubleQuote; closes with DoubleQuote.
+   The leading backtick is emitted as an Escape token (value "`"),
+   not as Backtick. *)
 
-<InterpStr>             := EscapeBacktick "\"" InterpStrContent* "\"";
-EscapeBacktick          := "`";        (* emitted as ESCAPE, value "`" *)
+<LexInterpStr>          := EscapeBacktick "\"" LexInterpStrContent* "\"";
 
-<InterpStrContent>      := StringEscapedChar
-                         | InterpExpr
+<LexInterpStrContent>   := StringEscapedChar
+                         | LexInterpExpr
                          | InterpStrChars;
-InterpStrChars          := #"[^`\"]"+;    (* emitted as STRING *)
+InterpStrChars          := #"[^`\"]"+;                    (* emitted as String *)
 
-<InterpExpr>            := "`" InterpExprBody* "`";    (* Note 8: recursive Token *)
+<LexInterpExpr>         := "`" InterpExprBody* "`";       (* Note 8: recursive Token *)
 <InterpExprBody>        := !(InterpExprStop) Token;
 <InterpExprStop>        := "`" (EOF | !("\""));
 
 
 (*** Spacing-Form Interpolated String:    \`"..."   ***)
 
-(* Opens with ESCAPE("\`") + DOUBLE_QUOTE. Whitespace inside the
-   content emits as WHITESPACE tokens rather than STRING content.
-   See Note 7. *)
+(* Opens with Escape("\`") + DoubleQuote. Whitespace inside the
+   content emits as Whitespace tokens rather than String content. *)
 
-<SpacingInterpStr>      := EscapeSpacingBacktick "\"" SpacingInterpStrContent* "\"";
-EscapeSpacingBacktick   := "\\" "`";   (* emitted as ESCAPE, value "\`" *)
+<LexSpacingInterpStr>   := EscapeSpacingBacktick "\"" LexSpacingInterpStrContent* "\"";
 
-<SpacingInterpStrContent> := StringEscapedChar
-                           | InterpExpr
-                           | Whitespace
-                           | SpacingInterpStrChars;
-SpacingInterpStrChars   := (!(WsChar) #"[^`\"]")+;    (* emitted as STRING *)
+<LexSpacingInterpStrContent> := StringEscapedChar
+                              | LexInterpExpr
+                              | Whitespace
+                              | SpacingInterpStrChars;
+SpacingInterpStrChars   := (!(WsChar) #"[^`\"]")+;        (* emitted as String *)
 
 
 (*** Spacing Escaped String:    \"..."   ***)
 
-(* Opens with ESCAPE("\") + DOUBLE_QUOTE. Whitespace inside emits
-   as WHITESPACE; backticks are STRING content (no interp). See
-   Note 7. *)
+(* Opens with Escape("\") + DoubleQuote. Whitespace inside emits
+   as Whitespace; backticks are String content (no interp). *)
 
-<SpacingEscapedStr>     := EscapePlain "\"" SpacingEscapedStrContent* "\"";
-EscapePlain             := "\\";
+<LexSpacingEscapedStr>  := EscapePlain "\"" LexSpacingEscapedStrContent* "\"";
 
-<SpacingEscapedStrContent> := StringEscapedChar
-                            | Whitespace
-                            | SpacingEscapedStrChars;
-SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;     (* emitted as STRING *)
+<LexSpacingEscapedStrContent> := StringEscapedChar
+                               | Whitespace
+                               | SpacingEscapedStrChars;
+SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *)
 ```
 
 ## Notes
@@ -240,10 +271,11 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;     (* emitted as STRING *)
     listed before their prefixes. Examples:
 
     ```
-    TriplePeriod  before DoublePeriod  before Period
-    DoubleColon   before Colon
-    BlockComment  before LineComment
-    InterpStr     before the single-char Backtick
+    TriplePeriod      before DoublePeriod      before Period
+    DoubleColon       before Colon
+    BlockComment      before LineComment
+    LexInterpStr      before the single-char Backtick
+    LexSpacingInterpStr / LexSpacingEscapedStr / EscapedNumber  before EscapePlain
     ```
 
     The combinator implementation enforces this ordering directly.
@@ -268,43 +300,51 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;     (* emitted as STRING *)
 
 5. Leading-sign rule (sign half):
 
-    Number accepts a leading "-" only when followed by a Digit. The
-    combinator uses positive lookahead on the digit; the "-" is
-    consumed and becomes part of the Number's value. This handles "-5"
-    at start-of-input and immediately after non-expression-ending
-    operators. The other half of the disambiguation — preventing
+    Number and the Number variants paired with hyphen-accepting
+    Escape openers (HexNumber, OctalNumber, BinaryNumber, MonadNumber,
+    BareNumber) all accept an optional leading "-". For the standalone
+    Number the combinator uses positive lookahead on the digit; the
+    "-" is consumed and becomes part of the Number's value. This
+    handles "-5" at start-of-input and immediately after non-expression-
+    ending operators. The other half of the disambiguation — preventing
     "5-3" from re-lexing as Number(5) Number(-3) — is handled by
     ExprEndingTail (Note 9).
 
-6. `\u` rejects leading sign:
+6. UnicodeNumber rejects leading sign:
 
-    Unicode-char escapes produce a character/string from a hex
-    codepoint and carry no sign. \u accepts hex digits only.
+    Unicode-char escapes (`\u`) produce a character/string from a hex
+    codepoint and carry no sign. UnicodeNumber accepts hex digits only,
+    without the optional leading "-" that other Number variants allow.
 
-7. Multi-char ESCAPE token values:
+7. Escape token values:
 
-    Three string forms open with an ESCAPE token whose value is
-    multi-character:
+    Eight EBNF productions emit Escape tokens, distinguished by value:
 
     ```
-    InterpStr         opens with ESCAPE value "`"   (one char)
-    SpacingEscapedStr opens with ESCAPE value "\"   (one char)
-    SpacingInterpStr  opens with ESCAPE value "\`"  (two chars)
+    EscapeBacktick          value "`"      (one char)
+    EscapePlain             value "\"      (one char)
+    EscapeSpacingBacktick   value "\`"     (two chars)
+    EscapeHex               value "\h"     (two chars)
+    EscapeUnicode           value "\u"     (two chars)
+    EscapeOctal             value "\o"     (two chars)
+    EscapeBinary            value "\b"     (two chars)
+    EscapeMonadic           value "\@"     (two chars)
     ```
 
-    In the lexer's emitted token stream these are single ESCAPE
-    tokens carrying the indicated value. They exist for parity with
-    the legacy hand-written tokenizer (which assembles them via
-    deferred emission). Downstream consumers should treat the value
-    as an opaque discriminator distinguishing the three forms.
+    All eight emit single Escape tokens in the output stream. They
+    exist for parity with the legacy hand-written tokenizer (which
+    assembles them via deferred emission). The split into eight
+    named productions lets the syntactic grammar reference each by
+    name rather than by value-literal discrimination.
 
 8. Recursive forward reference:
 
-    InterpExpr's body recursively contains Tokens — including nested
-    InterpStr, SpacingInterpStr, or further InterpExpr. The combinator
-    handles this via a forward-declared lazy reference resolved at
-    parse time. In EBNF the recursion is direct: InterpExpr → Token
-    (via InterpExprBody) → InterpStr → InterpExpr.
+    LexInterpExpr's body recursively contains Tokens — including
+    nested LexInterpStr, LexSpacingInterpStr, or further LexInterpExpr.
+    The combinator handles this via a forward-declared lazy reference
+    resolved at parse time. In EBNF the recursion is direct:
+    LexInterpExpr → Token (via InterpExprBody) → LexInterpStr →
+    LexInterpExpr.
 
 9. Hyphen-as-sign disambiguation (binary-operator half):
 
@@ -313,8 +353,8 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;     (* emitted as STRING *)
     than carry cross-token state, every production whose tokens can
     end an expression is wrapped with ExprEndingTail. After the main
     production matches, ExprEndingTail optionally consumes trailing
-    WHITESPACE and COMMENT tokens, then peeks for "-" followed by a
-    Digit; if present, it consumes the "-" as a HYPHEN token. This
+    Whitespace and Comment tokens, then peeks for "-" followed by a
+    Digit; if present, it consumes the "-" as a Hyphen token. This
     forces the next outer iteration to see a fresh digit, which
     Number's leading-sign rule (Note 5) then handles correctly.
 
@@ -343,14 +383,15 @@ malformed inputs:
 ```
 Input        Legacy tokenizer                     Combinator lexer
 -----------  -----------------------------------  ---------------------------------
-"\h"         ESCAPE("\h")                         ESCAPE("\") General("h")
-"\u-5"       ESCAPE("\u") Hyphen Number(5)        ESCAPE("\") General("u") Hyphen Number(5)
-"\h_foo"     ESCAPE("\h") General("_foo")         ESCAPE("\") General("h_foo")
-"\@-"        ESCAPE("\@") Number("-")             ESCAPE("\") At Hyphen
+"\h"         Escape("\h")                         Escape("\") General("h")
+"\u-5"       Escape("\u") Hyphen Number(5)        Escape("\") General("u") Hyphen Number(5)
+"\h_foo"     Escape("\h") General("_foo")         Escape("\") General("h_foo")
+"\@-"        Escape("\@") Number("-")             Escape("\") At Hyphen
 ```
 
 The legacy tokenizer "partially commits" to an escape sequence and
-leaves multi-char ESCAPE tokens in the stream when the commit does
+leaves multi-char Escape tokens in the stream when the commit does
 not complete with a valid number. The combinator lexer commits
-fully or not at all; it never emits a multi-char ESCAPE value
-except as a string opener (see Note 7).
+fully or not at all; it never emits an Escape variant unless its
+expected following content (Number variant for EscapedNumber, or
+DoubleQuote for string-form openers) is present.

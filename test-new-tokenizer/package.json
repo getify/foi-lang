@@ -1,4 +1,7 @@
 {
 	"name": "new-tokenizer",
-	"type": "module"
+	"type": "module",
+	"scripts": {
+		"test": "node test.js"
+	}
 }
