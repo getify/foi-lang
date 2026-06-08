@@ -212,7 +212,9 @@ DestructureCapture    := Hash Identifier;
 
 <BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 
-<BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit | ClosedRangeExpr | CallExpr | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
+<BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit
+                          | CallExpr | IdentifierExpr | OpFuncExpr
+                          | GroupedBareOpExprNoEmpty;
 
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
@@ -269,11 +271,11 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
    token already encodes "no sign, no fractional part." *)
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
-<RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
-ClosedRangeExpr      := (ExprNoBlock | GroupedExpr) _ DoublePeriod _ (ExprNoBlock | GroupedExpr) (_ AsAnnotationExpr)?;
-LeadingRangeExpr     := (ExprNoBlock | GroupedExpr) _ DoublePeriod;
-TrailingRangeExpr    := DoublePeriod _ (ExprNoBlock | GroupedExpr);
-
+<RangeExpr>       := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
+ClosedRangeExpr   := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
+LeadingRangeExpr  := RangeOperand _ DoublePeriod;
+TrailingRangeExpr := DoublePeriod _ RangeOperand;
+<RangeOperand> := BareOperandExpr | GroupedOpExpr;
 
 (* Grammar.md's ExprAccessExpr was directly left-recursive through
    ExprNoBlock. Refactored: required trailing MultiAccessExpr beyond
@@ -376,7 +378,8 @@ AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;
 <MulDispatch>    := MulBinExpr | BinaryAtom;
 MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
 
-<BinaryAtom>     := UnaryExpr | BareOperandExpr | GroupedOpExpr;
+<BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
+              | UnaryExpr | BareOperandExpr | GroupedOpExpr;
 ```
 
 **Precedence (tightest → loosest):** Unary → Mul (`*`, `/`) →
@@ -590,8 +593,8 @@ NamedType              := ???;     (* TBD *)
 - **`GroupedExpr` (full-Expr) at non-Expr call sites** — several
   productions reference `GroupedExpr` where a more restrictive
   variant might be more appropriate: `PostfixUnaryExpr` (§8),
-  `FuncBodyPipeline` (§13), the three Range exprs (§6),
-  `DoLoopComprExpr` (§16), `ExprAccessBase` (§6), `CallBase` (§7).
+  `FuncBodyPipeline` (§13), `DoLoopComprExpr` (§16),
+  `ExprAccessBase` (§6), `CallBase` (§7).
   Preserved as-is from the prior grammar; review during the
   §1–§17 audit pass against real Foi source to decide whether
   each should narrow.

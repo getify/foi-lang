@@ -159,6 +159,8 @@ var InterpExpr = production("InterpExpr",
 	and(Backtick, delim(), lazy(() => Expr), delim(), Backtick)
 );
 
+// <StringLit> := PlainStr | SpacingEscapedStr | InterpStr | SpacingInterpStr;
+var StringLit = or(PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr);
 
 // =============================================================
 // §3 IMPORTS / EXPORTS
@@ -261,16 +263,111 @@ var DefVarStmt = production("DefVarStmt",
 
 
 // =============================================================
+// §5 EXPRESSION SCAFFOLDING
+// =============================================================
+
+var OpenParen  = tokType("OpenParen");
+var CloseParen = tokType("CloseParen");
+
+var KwAs = tokVal("Keyword", ":as");
+
+// AsAnnotationExpr := ":as" _ NamedType;
+//
+// NamedType is §18 (deferred). The lazy() ref fails-through until
+// §18 lands; since every AsAnnotationExpr call site wraps it in
+// OptAsAnnotation, missing NamedType just means `:as` annotations
+// don't parse yet.
+export const AsAnnotationExpr = production("AsAnnotationExpr",
+	and(KwAs, delim(), lazy(() => NamedType))
+);
+
+// <Expr> := ExprNoBlock | BlockExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
+var Expr = or(
+	lazy(() => ExprNoBlock),
+	lazy(() => BlockExpr),
+	lazy(() => DoComprExpr),
+	lazy(() => DoLoopComprExpr),
+	lazy(() => GroupedExpr)
+);
+
+// <ExprNoBlock> := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | ExprAccessExpr | OperandExpr | GroupedExprNoBlock;
+var ExprNoBlock = or(
+	lazy(() => DefFuncExpr),
+	lazy(() => AssignmentExpr),
+	lazy(() => MatchExpr),
+	lazy(() => GuardedExpr),
+	lazy(() => ExprAccessExpr),
+	lazy(() => OperandExpr),
+	lazy(() => GroupedExprNoBlock)
+);
+
+// <OperandExpr> := BinaryExpr;
+//
+// TEMP — until §9 lands, OperandExpr drops directly to BareOperandExpr
+// so literals and identifiers remain reachable through Expr. When §9
+// arrives, replace with `lazy(() => BinaryExpr)` and the tier ladder
+// will reach BareOperandExpr via BinaryAtom.
+var OperandExpr = lazy(() => BareOperandExpr);
+
+// <BareOperandExpr> := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
+var BareOperandExpr = or(
+	EmptyLit,
+	lazy(() => BareOperandExprNoEmpty),
+	lazy(() => GroupedBareOpExpr)
+);
+
+// <BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit | CallExpr | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
+//
+// PEG ordering note (per grammar): CallExpr precedes IdentifierExpr
+// so `foo@ 5` (AtCallExpr) is preferred over `foo@` + dangling 5.
+var BareOperandExprNoEmpty = or(
+	BooleanLit,
+	NumberLit,
+	StringLit,
+	lazy(() => DataStructLit),
+	lazy(() => CallExpr),
+	lazy(() => IdentifierExpr),
+	lazy(() => OpFuncExpr),
+	lazy(() => GroupedBareOpExprNoEmpty)
+);
+
+// All five paren-grouping productions are distinct visible AST nodes,
+// each named for its inner content. Call sites reference the variant
+// whose inner content they allow.
+
+// GroupedExpr := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
+export const GroupedExpr = production("GroupedExpr",
+	and(OpenParen, delim(), Expr, delim(), CloseParen, OptAsAnnotation)
+);
+
+// GroupedExprNoBlock := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
+export const GroupedExprNoBlock = production("GroupedExprNoBlock",
+	and(OpenParen, delim(), ExprNoBlock, delim(), CloseParen, OptAsAnnotation)
+);
+
+// GroupedOpExpr := OpenParen _ OperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+export const GroupedOpExpr = production("GroupedOpExpr",
+	and(OpenParen, delim(), OperandExpr, delim(), CloseParen, OptAsAnnotation)
+);
+
+// GroupedBareOpExpr := OpenParen _ BareOperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+export const GroupedBareOpExpr = production("GroupedBareOpExpr",
+	and(OpenParen, delim(), BareOperandExpr, delim(), CloseParen, OptAsAnnotation)
+);
+
+// GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;
+export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
+	and(OpenParen, delim(), BareOperandExprNoEmpty, delim(), CloseParen, OptAsAnnotation)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
 // statement AST nodes. The lex layer streams tokens into the syn
 // parse; each top-level Program child is yielded as it commits.
 // =============================================================
-
-// TEMP — replaced by §5's real Expr dispatcher.
-var Expr = or(NumberLit, BooleanLit, EmptyLit, PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr);
-
 
 export async function *parseFoi(input) {
 	var handle = parse(Program, tokenize(input), {
@@ -297,7 +394,9 @@ export async function *parseFoi(input) {
 
 // var testInput = '`"hi `42`!";';
 // var testInput = "export { a: b, :y };";
-var testInput = "def <a: b, c: d,>: empty;";
+// var testInput = "def <a: b, c: d,>: empty;";
+// var testInput = "def x: ((42)); def y: (empty); 5;";
+var testInput = '(42); (true); ("hi"); (empty);';
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:10}));
