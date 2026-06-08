@@ -102,8 +102,8 @@ they modify. Productions carrying `(_ AsAnnotationExpr)?`:
 - `BlockExpr`
 - All literal leaves (`EmptyLit`, `BooleanLit`, `NumberLit`, four
   `StringLit` variants, `DataStructLit`'s two forms, `ClosedRangeExpr`)
-- `IdentifierExpr`'s four arms, `OpFuncExpr`, `CallChainExpr`,
-  `AtCallExpr`, `ExprAccessExpr`
+- `IdentifierExpr`'s three arms, `OpFuncExpr`, `ChainExpr`,
+  `AtCallExpr`
 - `UnaryExpr`'s three arms, `GuardedExpr`
 
 Productions that do NOT carry `:as` (must be parenthesized to receive
@@ -206,15 +206,14 @@ DestructureCapture    := Hash Identifier;
 
 <Expr>                 := ExprNoBlock | BlockExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
 
-<ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | ExprAccessExpr | OperandExpr | GroupedExprNoBlock;
+<ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
 
 <OperandExpr>          := BinaryExpr;
 
 <BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 
-<BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit
-                          | CallExpr | IdentifierExpr | OpFuncExpr
-                          | GroupedBareOpExprNoEmpty;
+<BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit
+                          | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
 
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
@@ -225,32 +224,32 @@ GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ A
 AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```
 
-PEG ordering note: in `<BareOperandExprNoEmpty>`, `CallExpr` precedes
-`IdentifierExpr` so that `foo@ 5` (an `AtCallExpr`) is preferred
-over `foo@` (an `AtExpr` alone with dangling `5`).
+PEG ordering note: in `<BareOperandExprNoEmpty>`, `CallExpr`
+(= AtCallExpr | ChainExpr) precedes the bare literal and identifier
+forms so `"hi".len` parses as `ChainExpr` rather than `StringLit`
+with dangling `.len`. Within `CallExpr`, `AtCallExpr` precedes
+`ChainExpr` so `foo@ 5` (an `AtCallExpr`) is preferred over a
+bare AtExpr with dangling `5`.
 
 ## §6 Identifier / Access Expressions
 
 ```ebnf
-(* IdentifierSingleExpr / IdentifierMultiExpr collapsed into
-   IdentifierAccessExpr (uses MultiAccessExpr — the superset).
-   DotSingleIdentifier / DotMultiIdentifier collapsed into
-   DotIdentifier (the Grammar.md `-`?-vs-no-`-` distinction was
-   char-level; Number carries its sign at our token level). *)
+(* Access on identifier-led bases is no longer handled by a dedicated
+   IdentifierAccessExpr — the unified ChainExpr in §7 covers all
+   post-base chains. IdentifierExpr is just the bare/at/monad forms. *)
 
-<IdentifierExpr>     := MonadConstructor | AtExpr | IdentifierAccessExpr | BareIdentifier;
+<IdentifierExpr>     := MonadConstructor | AtExpr | BareIdentifier;
 
 MonadConstructor     := At (_ AsAnnotationExpr)?;
 AtExpr               := IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?;
-IdentifierAccessExpr := IdentBase _ MultiAccessExpr (_ AsAnnotationExpr)?;
 BareIdentifier       := IdentBase (_ AsAnnotationExpr)?;
 
 <IdentBase>          := PipelineTopic | Identifier | BuiltIn;
 
-(* SingleAccessExpr and MultiAccessExpr are distinct visible AST
-   nodes — Single omits the multi-only segment forms
-   (DotBracketExpr, DotAngleExpr); Multi accepts all four. Call
-   sites reference whichever they require. *)
+(* SingleAccessExpr and MultiAccessExpr remain — used by special
+   contexts (ExportNamedBinding, DestructureNamedDef,
+   AssignmentExpr LHS, AtExpr's internal access) that take an
+   identifier with an access tail directly, not via ChainExpr. *)
 
 SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;
 <SingleAccessSeg>    := DotIdentifier | BracketExpr;
@@ -266,46 +265,47 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 <AnglePropertyList>  := PropertyExpr (_ Comma _ PropertyExpr)* (_ Comma)?;
 <PropertyExpr>       := Identifier | PositiveIntLit;
 
-(* Pure token-level assembly — round-trippable to combinator code
-   without value-shape predicates. The lex layer's PositiveIntegerLit
-   token already encodes "no sign, no fractional part." *)
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
-<RangeExpr>       := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
-ClosedRangeExpr   := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
-LeadingRangeExpr  := RangeOperand _ DoublePeriod;
-TrailingRangeExpr := DoublePeriod _ RangeOperand;
-<RangeOperand> := BareOperandExpr | GroupedOpExpr;
-
-(* Grammar.md's ExprAccessExpr was directly left-recursive through
-   ExprNoBlock. Refactored: required trailing MultiAccessExpr beyond
-   what the base captured. IdentifierExpr handles its own access
-   chain greedily, so this picks up access on non-identifier bases
-   (grouped exprs, call results, match results, etc.). *)
-
-ExprAccessExpr       := ExprAccessBase _ MultiAccessExpr (_ AsAnnotationExpr)?;
-<ExprAccessBase>     := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExpr;
+<RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
+ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
+LeadingRangeExpr     := RangeOperand _ DoublePeriod;
+TrailingRangeExpr    := DoublePeriod _ RangeOperand;
+<RangeOperand>       := BareOperandExpr | GroupedOpExpr;
 ```
 
 ## §7 Function Calls / Op-as-Function
 
 ```ebnf
-(* Grammar.md's PrefixCallExpr / PartialCallExpr were indirectly
-   left-recursive (callable → ExprNoBlock → ... → CallExpr).
-   Refactored to iterative: CallBase (non-call expression) followed
-   by one or more call suffixes. `foo(a)(b)` parses flat. *)
+(* ChainExpr unifies what was previously split between
+   CallChainExpr and ExprAccessExpr. Any post-base chain — calls,
+   access, or mixed — parses as ChainExpr with a flat suffix
+   list. The shaper layer can fold this into nested
+   MemberAccessExpr / PrefixCallExpr / PartialCallExpr / IndexAccessExpr
+   nodes (JS-style: each suffix wraps the previous expression) when
+   the interp needs the typed-by-suffix-kind AST.
 
-<CallExpr>           := AtCallExpr | CallChainExpr;
+   ChainExpr requires ≥1 ChainSeg — a bare base alone falls
+   through to its non-chained form via BareOperandExprNoEmpty's
+   later alternatives. *)
 
-CallChainExpr        := CallBase (_ CallSuffix)+ (_ AsAnnotationExpr)?;
-<CallBase>           := IdentifierExpr | DefFuncExpr | OpFuncExpr | ExprAccessExpr | GroupedExpr;
+<CallExpr>     := AtCallExpr | ChainExpr;
 
-<CallSuffix>         := PrefixCallSuffix | PartialCallSuffix;
-PrefixCallSuffix     := OpenParen CallArgs CloseParen;
-PartialCallSuffix    := Pipe CallArgs Pipe;
+ChainExpr      := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
 
-AtCallExpr           := "None" At (_ AsAnnotationExpr)?
-                      | (AtExpr | (IdentBase _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+<ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
+                | OpFuncExpr | GroupedExpr
+                | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
+                | IdentifierExpr;
+
+<ChainSeg>     := PrefixCallSuffix | PartialCallSuffix
+                | DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
+
+PrefixCallSuffix  := OpenParen CallArgs CloseParen;
+PartialCallSuffix := Pipe CallArgs Pipe;
+
+AtCallExpr        := "None" At (_ AsAnnotationExpr)?
+                   | (AtExpr | (IdentBase _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
 
 <CallArgs>           := (_ CallArgList? _) | (Op SingleQuote?);
 <CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -318,8 +318,12 @@ ExplicitNamedArg     := Identifier _ Colon _ Expr;
 OpFuncExpr           := OpenParen (Op | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket)) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
 ```
 
-PEG ordering note: `AtCallExpr` precedes `CallChainExpr` in
-`<CallExpr>` so that `foo@ 5` reaches the at-form first.
+PEG ordering notes for `<ChainBase>`:
+- `MatchExpr` / `GuardedExpr` precede `AssignmentExpr` — they have distinctive `?`/`!` openers; AssignmentExpr's identifier-led opener could conflict only with `IdentifierExpr` (handled by ordering AssignmentExpr before IdentifierExpr).
+- `OpFuncExpr` precedes `GroupedExpr` — both open with `(`; OpFuncExpr's stricter inner shape (must be an Op) fails-through cleanly to GroupedExpr.
+- `IdentifierExpr` last among identifier-led arms — AssignmentExpr's longer match wins when `:=` follows.
+
+PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the four access variants (DotIdentifier before DotBracketExpr/DotAngleExpr); call suffixes are disjoint from access suffixes by opening token.
 
 ## §8 Unary Expressions
 
@@ -544,7 +548,7 @@ DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
 DoLoopComprExpr         := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 <DoLoopIterationExpr>   := DoBlockExpr | DoLoopIterNoBlockExpr;
-<DoLoopIterNoBlockExpr> := IdentifierExpr | CallExpr | ExprAccessExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+<DoLoopIterNoBlockExpr> := IdentifierExpr | CallExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 ```
 
 ## §17 Data Structure Literals
@@ -583,9 +587,8 @@ NamedType              := ???;     (* TBD *)
 
 ## Filed Open Concerns
 
-- **PEG ordering in `<ExprAccessBase>`, `<CallBase>`,
-  `<ExprNoBlock>`** — written approximate; firm up during
-  implementation against real source.
+- **PEG ordering in `<ChainBase>`, `<ExprNoBlock>`** — firm up
+  during implementation against real source.
 - **`AssignmentExpr` and `:as` interaction** — `:=` excluded from
   `:as`-bearing forms. May revisit if `x := (3 :as int)` vs
   `(x := 3) :as int` ambiguity has a strongly preferred
@@ -594,10 +597,7 @@ NamedType              := ???;     (* TBD *)
   productions reference `GroupedExpr` where a more restrictive
   variant might be more appropriate: `PostfixUnaryExpr` (§8),
   `FuncBodyPipeline` (§13), `DoLoopComprExpr` (§16),
-  `ExprAccessBase` (§6), `CallBase` (§7).
-  Preserved as-is from the prior grammar; review during the
-  §1–§17 audit pass against real Foi source to decide whether
-  each should narrow.
+  `ChainBase` (§7).
 - **`DefTypeStmt` deferred** — own sub-grammar pass after the rest
   of the grammar is verified against real Foi source.
 - **Performance**: bare atoms traverse 7 tier dispatchers (§9). No

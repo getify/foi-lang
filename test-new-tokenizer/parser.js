@@ -290,13 +290,12 @@ var Expr = or(
 	lazy(() => GroupedExpr)
 );
 
-// <ExprNoBlock> := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | ExprAccessExpr | OperandExpr | GroupedExprNoBlock;
+// <ExprNoBlock> := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
 var ExprNoBlock = or(
 	lazy(() => DefFuncExpr),
 	lazy(() => AssignmentExpr),
 	lazy(() => MatchExpr),
 	lazy(() => GuardedExpr),
-	lazy(() => ExprAccessExpr),
 	lazy(() => OperandExpr),
 	lazy(() => GroupedExprNoBlock)
 );
@@ -316,16 +315,19 @@ var BareOperandExpr = or(
 	lazy(() => GroupedBareOpExpr)
 );
 
-// <BareOperandExprNoEmpty> := BooleanLit | NumberLit | StringLit | DataStructLit | CallExpr | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
+// <BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
 //
-// PEG ordering note (per grammar): CallExpr precedes IdentifierExpr
-// so `foo@ 5` (AtCallExpr) is preferred over `foo@` + dangling 5.
+// PEG ordering: CallExpr (= AtCallExpr | ChainExpr) precedes the
+// bare literal/identifier forms so `"hi".len` parses as a ChainExpr
+// rather than StringLit with dangling `.len`. ChainExpr requires
+// ≥1 chain segment — bare bases (a literal alone, an identifier
+// alone) fall through to the later alternatives via PEG.
 var BareOperandExprNoEmpty = or(
+	lazy(() => CallExpr),
 	BooleanLit,
 	NumberLit,
 	StringLit,
 	lazy(() => DataStructLit),
-	lazy(() => CallExpr),
 	lazy(() => IdentifierExpr),
 	lazy(() => OpFuncExpr),
 	lazy(() => GroupedBareOpExprNoEmpty)
@@ -358,6 +360,308 @@ export const GroupedBareOpExpr = production("GroupedBareOpExpr",
 // GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;
 export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
 	and(OpenParen, delim(), BareOperandExprNoEmpty, delim(), CloseParen, OptAsAnnotation)
+);
+
+
+// =============================================================
+// §6 IDENTIFIER / ACCESS EXPRESSIONS
+// =============================================================
+
+var At                    = tokType("At");
+var Period                = tokType("Period");
+var OpenBracket           = tokType("OpenBracket");
+var CloseBracket          = tokType("CloseBracket");
+var DoublePeriod          = tokType("DoublePeriod");
+var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
+
+// <IdentBase> := PipelineTopic | Identifier | BuiltIn;
+var IdentBase = or(PipelineTopic, Identifier, BuiltIn);
+
+// <PositiveIntLit> := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
+//
+// Escape-paired form first (two tokens, longest match), bare token
+// as fallback.
+var PositiveIntLit = or(
+	and(EscapePlainTok, PositiveIntegerLitTok),
+	PositiveIntegerLitTok
+);
+
+// <PropertyExpr> := Identifier | PositiveIntLit;
+var PropertyExpr = or(Identifier, PositiveIntLit);
+
+// <AnglePropertyList> := PropertyExpr (_ Comma _ PropertyExpr)* (_ Comma)?;
+var AnglePropertyList = and(
+	PropertyExpr,
+	any(and(delim(), Comma, delim(), PropertyExpr)),
+	optional(and(delim(), Comma))
+);
+
+// DotIdentifier := Period _ (Identifier | BuiltIn | PositiveIntegerLit);
+//
+// PositiveIntegerLit here is the lex token type, not NumberLit.
+export const DotIdentifier = production("DotIdentifier",
+	and(Period, delim(), or(Identifier, BuiltIn, PositiveIntegerLitTok))
+);
+
+// BracketExpr := OpenBracket _ ExprNoBlock _ CloseBracket;
+export const BracketExpr = production("BracketExpr",
+	and(OpenBracket, delim(), ExprNoBlock, delim(), CloseBracket)
+);
+
+// DotBracketExpr := Period OpenBracket _ RangeExpr _ CloseBracket;
+//
+// No trivia between Period and OpenBracket (per grammar).
+export const DotBracketExpr = production("DotBracketExpr",
+	and(Period, OpenBracket, delim(), lazy(() => RangeExpr), delim(), CloseBracket)
+);
+
+// DotAngleExpr := Period OpenAngle _ AnglePropertyList _ CloseAngle;
+//
+// No trivia between Period and OpenAngle.
+export const DotAngleExpr = production("DotAngleExpr",
+	and(Period, OpenAngle, delim(), AnglePropertyList, delim(), CloseAngle)
+);
+
+// SingleAccessExpr := SingleAccessSeg (_ SingleAccessSeg)*;
+// <SingleAccessSeg> := DotIdentifier | BracketExpr;
+var SingleAccessSeg = or(DotIdentifier, BracketExpr);
+export const SingleAccessExpr = production("SingleAccessExpr",
+	and(SingleAccessSeg, any(and(delim(), SingleAccessSeg)))
+);
+
+// MultiAccessExpr := MultiAccessSeg (_ MultiAccessSeg)*;
+// <MultiAccessSeg> := DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
+//
+// PEG order: DotIdentifier first (Period + ident/builtin/posint). On
+// `.[` or `.<` it fails at the inner-identifier alternative and
+// backtracks cleanly, so DotBracketExpr / DotAngleExpr reach those.
+var MultiAccessSeg = or(DotIdentifier, BracketExpr, DotBracketExpr, DotAngleExpr);
+export const MultiAccessExpr = production("MultiAccessExpr",
+	and(MultiAccessSeg, any(and(delim(), MultiAccessSeg)))
+);
+
+// MonadConstructor := At (_ AsAnnotationExpr)?;
+export const MonadConstructor = production("MonadConstructor",
+	and(At, OptAsAnnotation)
+);
+
+// AtExpr := IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?;
+//
+// No trivia between IdentBase, the optional SingleAccessExpr, and At
+// (per grammar). DotIdentifier carries its own internal `_`, so
+// `foo.bar@` still works; `foo .bar@` does not.
+export const AtExpr = production("AtExpr",
+	and(IdentBase, optional(SingleAccessExpr), At, OptAsAnnotation)
+);
+
+// BareIdentifier := IdentBase (_ AsAnnotationExpr)?;
+export const BareIdentifier = production("BareIdentifier",
+	and(IdentBase, OptAsAnnotation)
+);
+
+// <IdentifierExpr> := MonadConstructor | AtExpr | BareIdentifier;
+//
+// All identifier-led access is handled by ChainExpr (§7) now —
+// IdentifierExpr is just the bare/at/monad forms.
+//
+// PEG order:
+//   - MonadConstructor (bare @) starts with At — disjoint from IdentBase-led arms.
+//   - AtExpr requires a trailing @ — fails fast on identifier-led input without @.
+//   - BareIdentifier catches the remainder.
+var IdentifierExpr = or(
+	MonadConstructor,
+	AtExpr,
+	BareIdentifier
+);
+
+// <RangeOperand> := BareOperandExpr | GroupedOpExpr;
+//
+// Both alternatives consume tokens before reaching anything that
+// could reach Range — no LR.
+var RangeOperand = or(BareOperandExpr, GroupedOpExpr);
+
+// ClosedRangeExpr   := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
+// LeadingRangeExpr  := RangeOperand _ DoublePeriod;
+// TrailingRangeExpr := DoublePeriod _ RangeOperand;
+export const ClosedRangeExpr = production("ClosedRangeExpr",
+	and(RangeOperand, delim(), DoublePeriod, delim(), RangeOperand, OptAsAnnotation)
+);
+export const LeadingRangeExpr = production("LeadingRangeExpr",
+	and(RangeOperand, delim(), DoublePeriod)
+);
+export const TrailingRangeExpr = production("TrailingRangeExpr",
+	and(DoublePeriod, delim(), RangeOperand)
+);
+
+// <RangeExpr> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
+//
+// Closed first (two-sided, longest); Leading next (LHS + `..`);
+// Trailing last (opens with `..`, doesn't conflict).
+var RangeExpr = or(ClosedRangeExpr, LeadingRangeExpr, TrailingRangeExpr);
+
+
+// =============================================================
+// §7 CHAIN EXPRESSIONS / FUNCTION CALLS / OP-AS-FUNCTION
+// =============================================================
+
+var Pipe         = tokType("Pipe");
+var TriplePeriod = tokType("TriplePeriod");
+var SingleQuote  = tokType("SingleQuote");
+var BuiltinNone  = tokVal("Builtin", "None");
+
+// PrefixCallSuffix  := OpenParen CallArgs CloseParen;
+// PartialCallSuffix := Pipe       CallArgs Pipe;
+export const PrefixCallSuffix = production("PrefixCallSuffix",
+	and(OpenParen, lazy(() => CallArgs), CloseParen)
+);
+
+export const PartialCallSuffix = production("PartialCallSuffix",
+	and(Pipe, lazy(() => CallArgs), Pipe)
+);
+
+// <ChainSeg> := PrefixCallSuffix | PartialCallSuffix
+//             | DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
+//
+// Order: call suffixes first (disjoint openers), then access seg
+// order mirrors MultiAccessSeg — DotIdentifier before DotBracketExpr
+// / DotAngleExpr since `.X` fails fast at the inner-ident alt when X
+// is `[` or `<`.
+var ChainSeg = or(
+	PrefixCallSuffix,
+	PartialCallSuffix,
+	DotIdentifier,
+	BracketExpr,
+	DotBracketExpr,
+	DotAngleExpr
+);
+
+// ConciseNamedArg  := Colon Identifier;
+// ExplicitNamedArg := Identifier _ Colon _ Expr;
+export const ConciseNamedArg = production("ConciseNamedArg",
+	and(Colon, Identifier)
+);
+
+export const ExplicitNamedArg = production("ExplicitNamedArg",
+	and(Identifier, delim(), Colon, delim(), lazy(() => Expr))
+);
+
+// <NamedArgExpr> := ConciseNamedArg | ExplicitNamedArg | (OpenParen _ NamedArgExpr _ CloseParen);
+//
+// The paren-wrap arm consumes `(` before recursing — no LR.
+var NamedArgExpr = or(
+	ConciseNamedArg,
+	ExplicitNamedArg,
+	and(OpenParen, delim(), lazy(() => NamedArgExpr), delim(), CloseParen)
+);
+
+// <CallArgExpr> := (TriplePeriod _)? (NamedArgExpr | Expr);
+var CallArgExpr = and(
+	optional(and(TriplePeriod, delim())),
+	or(NamedArgExpr, lazy(() => Expr))
+);
+
+// <CallArgList> := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
+//
+// Permissive comma handling — leading commas, trailing commas, and
+// gaps between commas are all allowed (per grammar).
+var CallArgList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		CallArgExpr,
+		any(and(delim(), Comma, optional(and(delim(), CallArgExpr))))
+	))
+);
+
+// <CallArgs> := (_ CallArgList? _) | (Op SingleQuote?);
+//
+// The Op-quoted arm requires Op (§10, deferred). Until §10 lands its
+// lazy() ref fails-through and only the CallArgList path is reachable.
+var CallArgs = or(
+	and(delim(), optional(CallArgList), delim()),
+	and(lazy(() => Op), optional(SingleQuote))
+);
+
+// AtCallExpr := "None" At (_ AsAnnotationExpr)?
+//             | (AtExpr | (IdentBase _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+//
+// Arm 1: bare `None@` (None monad constructor, no argument).
+// Arm 2: at-form applied to an ExprNoBlock argument.
+//
+// PEG within arm 2:
+//   - AtExpr first — matches IdentBase+access+adjacent At (no trivia between IdentBase and At).
+//   - `(IdentBase _ At)` — allows trivia between IdentBase and At (AtExpr does not).
+//   - MonadConstructor — bare `@` fallback.
+export const AtCallExpr = production("AtCallExpr",
+	or(
+		and(BuiltinNone, At, OptAsAnnotation),
+		and(
+			or(AtExpr, and(IdentBase, delim(), At), MonadConstructor),
+			delim(),
+			lazy(() => ExprNoBlock),
+			OptAsAnnotation
+		)
+	)
+);
+
+// <ChainBase> := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
+//              | OpFuncExpr | GroupedExpr
+//              | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
+//              | IdentifierExpr;
+//
+// PEG ordering (per grammar):
+// - MatchExpr / GuardedExpr precede AssignmentExpr — distinctive `?`/`!` openers.
+// - AssignmentExpr precedes IdentifierExpr — longer `:=` match wins when it follows.
+// - OpFuncExpr precedes GroupedExpr — both open with `(`, OpFuncExpr's stricter
+//   inner shape (must be Op | DotAngle | DotBracket | `[]`) fails-through cleanly.
+var ChainBase = or(
+	lazy(() => DefFuncExpr),
+	lazy(() => MatchExpr),
+	lazy(() => GuardedExpr),
+	lazy(() => AssignmentExpr),
+	lazy(() => OpFuncExpr),
+	GroupedExpr,
+	EmptyLit,
+	BooleanLit,
+	NumberLit,
+	StringLit,
+	lazy(() => DataStructLit),
+	IdentifierExpr
+);
+
+// ChainExpr := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
+//
+// Requires ≥1 ChainSeg — a bare ChainBase alone (e.g. just an
+// identifier, just a literal) falls through to the later
+// alternatives in BareOperandExprNoEmpty.
+export const ChainExpr = production("ChainExpr",
+	and(ChainBase, many(and(delim(), ChainSeg)), OptAsAnnotation)
+);
+
+// <CallExpr> := AtCallExpr | ChainExpr;
+//
+// PEG: AtCallExpr first so `foo@ 5` reaches the at-form (applied
+// call) rather than parsing as `foo@` (an AtExpr inside ChainExpr)
+// with dangling `5`.
+var CallExpr = or(AtCallExpr, ChainExpr);
+
+// OpFuncExpr := OpenParen (Op | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket)) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
+//
+// Op (§10) is deferred — its lazy() ref fails-through until §10 lands.
+// In the interim, OpFuncExpr only matches via DotAngleExpr,
+// DotBracketExpr, or the bare `[]` arm.
+export const OpFuncExpr = production("OpFuncExpr",
+	and(
+		OpenParen,
+		or(
+			lazy(() => Op),
+			DotAngleExpr,
+			DotBracketExpr,
+			and(OpenBracket, CloseBracket)
+		),
+		optional(SingleQuote),
+		CloseParen,
+		OptAsAnnotation
+	)
 );
 
 
@@ -396,7 +700,13 @@ export async function *parseFoi(input) {
 // var testInput = "export { a: b, :y };";
 // var testInput = "def <a: b, c: d,>: empty;";
 // var testInput = "def x: ((42)); def y: (empty); 5;";
-var testInput = '(42); (true); ("hi"); (empty);';
+// var testInput = '(42); (true); ("hi"); (empty);';
+// var testInput = "def x: foo.bar[42].baz;";
+// var testInput = "def x: foo@; def y: (@); def z: #;";
+// var testInput = "def x: arr.[1..5]; def y: arr.[..10]; def z: arr.[5..];";
+// var testInput = "def x: rec.<a, b, c>;";
+var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
+
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:10}));
