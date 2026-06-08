@@ -21,6 +21,12 @@
 // The thunk is invoked on every parse-time invocation, not
 // memoized — reassigning the referenced binding mid-parse would
 // be visible.
+//
+// Tolerant of two kinds of unresolved references: the thunk's
+// referenced binding being undefined (typeof !== "function"), and
+// the thunk itself throwing ReferenceError (a `var`-hoisted but
+// never-assigned binding). Both cases fail the parser cleanly so
+// PEG ordered choice can fall through to the next alternative.
 export function lazy(getRef) {
 	return async function lazyFn(pctx) {
 		var p;
@@ -33,6 +39,7 @@ export function lazy(getRef) {
 		return await p(pctx);
 	};
 }
+
 
 // Sentinel returned by buffer.peek() past end-of-input.
 export const EOF = Symbol("EOF");
@@ -85,7 +92,11 @@ function makeBufferedInput(source) {
 		return buffer.length;
 	}
 
-	return { peek, bufferedLength };
+	function elementAt(pos) {
+		return pos < buffer.length ? buffer[pos] : null;
+	}
+
+	return { peek, bufferedLength, elementAt };
 }
 
 
@@ -150,12 +161,20 @@ function makeSubscription(filter) {
 
 // -------------------------------------------------------------
 // PARSER CONTEXT
+//
+// `pos` is the current input position; it moves backward on
+// rollback. `maxPos` is the high-water mark — it only advances,
+// never retreats. Useful for error reporting: when a parse fails,
+// `maxPos` points to the furthest position parsing ever reached
+// before the failing alternative caused the cascade of rollbacks
+// back to the call site.
 // -------------------------------------------------------------
 
 function makeContext(buffer, config) {
 	var pctx = {
 		buffer,
 		pos: 0,
+		maxPos: 0,          // monotonic high-water mark; never decreases
 		frameStack: [],     // chain of currently-open named-production frames
 		nextNodeId: 0,
 		config,
@@ -166,6 +185,9 @@ function makeContext(buffer, config) {
 		for (let sub of pctx.subscribers) {
 			if (sub.filter(ev)) sub.push(ev);
 		}
+	};
+	pctx.bumpMaxPos = function bumpMaxPos() {
+		if (pctx.pos > pctx.maxPos) pctx.maxPos = pctx.pos;
 	};
 	return pctx;
 }
@@ -227,6 +249,10 @@ function closeFrameRolledBack(pctx, frame) {
 // number of children the innermost named frame had. On restore,
 // any later-added children are detached & rolled back, the
 // matched array is truncated, and pos is reset.
+//
+// Note: maxPos is NOT captured / restored — it's monotonic and
+// the whole point is to remember the furthest progress regardless
+// of rollback.
 // -------------------------------------------------------------
 
 function savepoint(pctx) {
@@ -296,6 +322,7 @@ export function terminal(predicate, onMatch) {
 		}
 		if (onMatch) onMatch(el, innerFrame);
 		pctx.pos++;
+		pctx.bumpMaxPos();
 		return true;
 	};
 }
@@ -479,6 +506,16 @@ export function production(name, grammar) {
 	};
 }
 
+
+// =============================================================
+// DELIMITER HANDLING (syntactic layer only)
+// Delimiter tokens (whitespace / comments) are recognized by
+// the user's tokenizer. delim() / delimWSReq() consume them
+// directly so the `preserveDelim` config flag can correctly
+// decide whether delimiter tokens are recorded in the innermost
+// frame's `matched` array.
+// =============================================================
+
 function recordDelim(pctx, el) {
 	if (!(pctx.config.preserveTerminals && pctx.config.preserveDelim)) return;
 	var innerFrame = pctx.frameStack[pctx.frameStack.length - 1];
@@ -495,6 +532,7 @@ export function delim() {
 			if (!isWhitespaceTok(el) && !isCommentTok(el)) break;
 			recordDelim(pctx, el);
 			pctx.pos++;
+			pctx.bumpMaxPos();
 		}
 		return true;
 	};
@@ -515,6 +553,7 @@ export function delimWSReq() {
 			if (isWs) sawWs = true;
 			recordDelim(pctx, el);
 			pctx.pos++;
+			pctx.bumpMaxPos();
 		}
 		if (!sawWs) {
 			restoreSavepoint(pctx, sp);
@@ -555,9 +594,14 @@ export function parse(grammar, input, config) {
 			return sub.iterable;
 		},
 
-		// run() -> Promise<{ok, pos, roots}>
+		// run() -> Promise<{ok, pos, maxPos, roots}>
 		// ok: whether the top-level grammar matched.
-		// pos: final input position.
+		// pos: final input position (may have rolled back to 0 on
+		//      total parse failure).
+		// maxPos: monotonic high-water mark — furthest position
+		//         parsing ever reached. Useful for error reporting:
+		//         the input element AT maxPos is the one that caused
+		//         the parse to start failing.
 		// roots: matched (now committed) top-level frames.
 		async run() {
 			if (started) {
@@ -571,7 +615,12 @@ export function parse(grammar, input, config) {
 						cascadeCommit(pctx, root);
 					}
 				}
-				return { ok, pos: pctx.pos, roots: pctx.liveRoots.slice() };
+				return {
+					ok,
+					pos: pctx.pos,
+					maxPos: pctx.maxPos,
+					roots: pctx.liveRoots.slice(),
+				};
 			}
 			finally {
 				// Give subscribers a chance to drain before closing,
@@ -579,6 +628,14 @@ export function parse(grammar, input, config) {
 				// in-flight for-await on next() will resolve to done.
 				for (let sub of pctx.subscribers) sub.close();
 			}
+		},
+
+		// elementAt(pos): synchronous lookup into the buffered input
+		// at the given position. Returns the element if buffered, or
+		// null if past the buffered tail. Useful after run() returns
+		// for error reporting against maxPos.
+		elementAt(pos) {
+			return buffer.elementAt(pos);
 		},
 	};
 }
@@ -599,6 +656,10 @@ export function parse(grammar, input, config) {
 //                 for streaming-lexer use. Subscribe and read tokens
 //                 as they arrive; treat `matched` as provisional
 //                 (rollback may follow); `commit` is final.
+//
+//   parseCommitsAtDepth(n): factory — commit events at the given
+//                 depth. For streaming AST consumers that want
+//                 finalized shaped nodes at a specific tree level.
 // =============================================================
 
 export const presets = {
@@ -618,6 +679,7 @@ export const presets = {
 		};
 	},
 };
+
 
 // shapeNode(frame, shapers?)
 // Recursively transform a committed frame into an AST node.
@@ -650,12 +712,13 @@ export function shapeNode(frame, shapers) {
 	var parts = [];
 	var pos = frame.startPos;
 	var ti = 0;
-	for (var child of frame.children) {
+	for (let i = 0; i < frame.children.length; i++) {
+		let child = frame.children[i];
 		while (pos < child.startPos && ti < tokens.length) {
 			parts.push(tokens[ti++]);
 			pos++;
 		}
-		parts.push(shapedChildren[frame.children.indexOf(child)]);
+		parts.push(shapedChildren[i]);
 		pos = child.endPos;
 	}
 	while (ti < tokens.length) {
