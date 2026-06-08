@@ -596,24 +596,53 @@ export const presets = {
 
 // shapeNode(frame, shapers?)
 // Recursively transform a committed frame into an AST node.
-// shapers: { [productionName]: (frame, shapedChildren) => node }
-// For each frame, looks up shapers[frame.production]:
-//   - present: calls it with (frame, shapedChildren) where
-//     shapedChildren is the recursively-shaped frame.children array.
-//   - absent: returns the default shape
-//       { type, children, tokens, start, end }
-//     where children = shapedChildren, tokens = frame.matched || [],
-//     and start/end are positions in the input stream (token indices
-//     at the syn layer, char indices at the lex layer).
+//
+// Default shape: { type, parts, start, end }
+//   - parts: terminals (tokens) and shaped child nodes, merged in
+//     source order. Tokens are distinguishable from shaped nodes
+//     by having a `value` field (tokens) rather than `parts`
+//     (shaped nodes).
+//   - start, end: input-stream positions (token indices at the syn
+//     layer, char indices at the lex layer).
+//
+// shapers: { [productionName]: (frame, parts) => node }
+//   When a shaper is registered for a production, it receives the
+//   raw frame and the merged `parts` array, and returns a custom
+//   AST node shape.
 export function shapeNode(frame, shapers) {
 	var shapedChildren = frame.children.map(c => shapeNode(c, shapers));
+	var tokens = frame.matched || [];
+
+	// Merge children and tokens in source order. Children have
+	// startPos/endPos in input-stream positions; tokens were
+	// consumed in match order (= source order) by the parent
+	// frame's direct terminal() calls.
+	//
+	// frame.matched only contains terminals consumed DIRECTLY by
+	// this frame — not by descendant frames. So the count of
+	// terminals between consecutive child frames equals the
+	// position-gap (child[i+1].startPos - child[i].endPos).
+	var parts = [];
+	var pos = frame.startPos;
+	var ti = 0;
+	for (var child of frame.children) {
+		while (pos < child.startPos && ti < tokens.length) {
+			parts.push(tokens[ti++]);
+			pos++;
+		}
+		parts.push(shapedChildren[frame.children.indexOf(child)]);
+		pos = child.endPos;
+	}
+	while (ti < tokens.length) {
+		parts.push(tokens[ti++]);
+	}
+
 	var shaper = shapers && shapers[frame.production];
-	if (shaper) return shaper(frame, shapedChildren);
+	if (shaper) return shaper(frame, parts);
 	return {
-		type:     frame.production,
-		children: shapedChildren,
-		tokens:   frame.matched || [],
-		start:    frame.startPos,
-		end:      frame.endPos,
+		type:  frame.production,
+		parts,
+		start: frame.startPos,
+		end:   frame.endPos,
 	};
 }
