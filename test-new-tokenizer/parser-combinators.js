@@ -13,6 +13,10 @@
 export const EOF = Symbol("EOF");
 
 
+var isWhitespaceTok = t => t && t.type === "Whitespace";
+var isCommentTok    = t => t && t.type === "Comment";
+
+
 // -------------------------------------------------------------
 // BUFFERED INPUT
 // Wraps any iterable / async iterable, exposes random-access
@@ -450,28 +454,6 @@ export function production(name, grammar) {
 	};
 }
 
-
-// =============================================================
-// DELIMITER HANDLING (syntactic layer only)
-// Delimiter tokens (whitespace / comments) are recognized by
-// the user's tokenizer; the library lets users configure the
-// predicates. Defaults match tokens with type === "WHITESPACE"
-// or type === "COMMENT". delim()/delimWSReq() consume directly
-// so the `preserveDelim` config flag can correctly decide
-// whether delimiter tokens are recorded in the innermost
-// frame's `matched` array.
-// =============================================================
-
-var delimPredicates = {
-	isWhitespace: function (t) { return t && t.type === "WHITESPACE"; },
-	isComment:    function (t) { return t && t.type === "COMMENT"; },
-};
-
-export function setDelimPredicates(isWhitespace, isComment) {
-	if (typeof isWhitespace === "function") delimPredicates.isWhitespace = isWhitespace;
-	if (typeof isComment === "function") delimPredicates.isComment = isComment;
-}
-
 function recordDelim(pctx, el) {
 	if (!(pctx.config.preserveTerminals && pctx.config.preserveDelim)) return;
 	var innerFrame = pctx.frameStack[pctx.frameStack.length - 1];
@@ -479,16 +461,13 @@ function recordDelim(pctx, el) {
 }
 
 // delim(): zero or more whitespace OR comment tokens, any mix.
-//          Permits any separation at this grammar position,
-//          including none. Pattern: (ws | cmt)*
+//          Pattern: (ws | cmt)*
 export function delim() {
 	return async function delimFn(pctx) {
 		while (true) {
 			let el = await pctx.buffer.peek(pctx.pos);
 			if (el === EOF) break;
-			let isWs = delimPredicates.isWhitespace(el);
-			let isCmt = delimPredicates.isComment(el);
-			if (!isWs && !isCmt) break;
+			if (!isWhitespaceTok(el) && !isCommentTok(el)) break;
 			recordDelim(pctx, el);
 			pctx.pos++;
 		}
@@ -497,9 +476,7 @@ export function delim() {
 }
 
 // delimWSReq(): one-or-more delimiter tokens, at least one of
-//               which is whitespace. Comments may appear
-//               before/after/between, but pure-comment runs fail.
-//               Pattern: (ws | cmt)* ws (ws | cmt)*
+//               which is whitespace. Pattern: (ws | cmt)* ws (ws | cmt)*
 export function delimWSReq() {
 	return async function delimWSReqFn(pctx) {
 		var sp = savepoint(pctx);
@@ -507,8 +484,8 @@ export function delimWSReq() {
 		while (true) {
 			let el = await pctx.buffer.peek(pctx.pos);
 			if (el === EOF) break;
-			let isWs = delimPredicates.isWhitespace(el);
-			let isCmt = delimPredicates.isComment(el);
+			let isWs = isWhitespaceTok(el);
+			let isCmt = isCommentTok(el);
 			if (!isWs && !isCmt) break;
 			if (isWs) sawWs = true;
 			recordDelim(pctx, el);
@@ -610,4 +587,33 @@ export const presets = {
 		if (ev.node.depth !== 1) return false;
 		return ev.kind === "matched" || ev.kind === "rollback" || ev.kind === "commit";
 	},
+	parseCommitsAtDepth(depth) {
+		return function (ev) {
+			return ev.kind === "commit" && ev.node.depth === depth;
+		};
+	},
 };
+
+// shapeNode(frame, shapers?)
+// Recursively transform a committed frame into an AST node.
+// shapers: { [productionName]: (frame, shapedChildren) => node }
+// For each frame, looks up shapers[frame.production]:
+//   - present: calls it with (frame, shapedChildren) where
+//     shapedChildren is the recursively-shaped frame.children array.
+//   - absent: returns the default shape
+//       { type, children, tokens, start, end }
+//     where children = shapedChildren, tokens = frame.matched || [],
+//     and start/end are positions in the input stream (token indices
+//     at the syn layer, char indices at the lex layer).
+export function shapeNode(frame, shapers) {
+	var shapedChildren = frame.children.map(c => shapeNode(c, shapers));
+	var shaper = shapers && shapers[frame.production];
+	if (shaper) return shaper(frame, shapedChildren);
+	return {
+		type:     frame.production,
+		children: shapedChildren,
+		tokens:   frame.matched || [],
+		start:    frame.startPos,
+		end:      frame.endPos,
+	};
+}
