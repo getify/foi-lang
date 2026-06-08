@@ -14,8 +14,7 @@
 // =============================================================
 
 import {
-	parse,
-	production, terminal,
+	lazy, parse, production, terminal,
 	and, or, optional, any, many,
 	not, lookahead, eof, gate, dispatch,
 	presets,
@@ -446,12 +445,6 @@ export const StringLit = and(
 // INTERPOLATED STRING:  `"..."   (opens `", closes ")
 // =============================================================
 
-// Lazy bridge so InterpExpr can reach BaseTokenOr before it's built;
-// resolved at parse time, by which point it exists.
-var BaseTokenLazy = async function baseTokenLazy(pctx) {
-	return BaseTokenOr(pctx);
-};
-
 // "Lone backtick": a ` that closes an interp expression rather than
 // opening a nested interp string. (Nested interp strings start with
 // `", so we keep going past those.)
@@ -461,7 +454,7 @@ var InterpExprStop = lookahead(ch(C.Backtick));
 // backtick, Backtick.
 var InterpExpr = and(
 	symb.Backtick,
-	any(and(not(InterpExprStop), BaseTokenLazy)),
+	any(and(not(InterpExprStop), lazy(() => BaseTokenOr))),
 	symb.Backtick
 );
 

@@ -9,6 +9,31 @@
 // Not designed for performance or production use.
 // =============================================================
 
+
+// lazy(getRef): forward-reference helper. `getRef` is a thunk
+// returning a parser. Useful for recursive grammars where a
+// production references a sibling not yet defined at the point
+// of construction.
+//
+//   var A = or(lazy(() => B), C);   // B defined later
+//   var B = ...;
+//
+// The thunk is invoked on every parse-time invocation, not
+// memoized — reassigning the referenced binding mid-parse would
+// be visible.
+export function lazy(getRef) {
+	return async function lazyFn(pctx) {
+		var p;
+		try { p = getRef(); }
+		catch (e) {
+			if (e instanceof ReferenceError) return false;
+			throw e;
+		}
+		if (typeof p !== "function") return false;
+		return await p(pctx);
+	};
+}
+
 // Sentinel returned by buffer.peek() past end-of-input.
 export const EOF = Symbol("EOF");
 
