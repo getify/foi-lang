@@ -2,8 +2,7 @@
 
 import util from "node:util";
 import {
-	parse,
-	production, terminal,
+	lazy, parse, production, terminal,
 	and, or, optional, any, many,
 	not, lookahead, eof, gate, dispatch,
 	delim, delimWSReq, presets, shapeNode,
@@ -18,34 +17,6 @@ import { tokenize } from "./new-tokenizer.js";
 
 var tokType = name           => terminal(t => t && t.type === name);
 var tokVal  = (name, value)  => terminal(t => t && t.type === name && t.value === value);
-
-
-// =============================================================
-// FORWARD-REF SCAFFOLDING
-//
-// Productions defined in later sections are forward-declared
-// as `var` and bound to FAIL initially. Reassigned to real
-// productions in §3, §4, §11, §18, etc. References use lazy()
-// so the binding is resolved at parse time, not eval time.
-// =============================================================
-
-var DefBlockStmt;
-var DefVarStmt;
-var DefTypeStmt;
-var Expr;
-var ExportExpr;
-
-var FAIL = async function failFn(_pctx) { return false; };
-
-var lazy = getRef => async function lazyFn(pctx) {
-	return await getRef()(pctx);
-};
-
-DefBlockStmt = FAIL;
-DefVarStmt   = FAIL;
-DefTypeStmt  = FAIL;
-Expr         = FAIL;
-ExportExpr   = FAIL;
 
 
 // =============================================================
@@ -94,7 +65,8 @@ export const Program = production("Program",
 	and(
 		delim(),
 		any(and(or(StmtSemi, ExportStmtSemi), delim())),
-		optional(and(or(StmtSemiOpt, ExportStmtSemiOpt), delim()))
+		optional(and(or(StmtSemiOpt, ExportStmtSemiOpt), delim())),
+		eof()
 	)
 );
 
@@ -109,15 +81,6 @@ export const PipelineTopic = production("PipelineTopic", tokType("Hash"));
 // =============================================================
 // §2 LITERALS
 // =============================================================
-
-// Forward ref — InterpExpr embeds a full Expr, reassigned below
-// once string forms are defined. The :as forward-ref pattern same
-// as §1: AsAnnotationExpr is defined in §5 (paren-grouping section).
-var InterpExpr;
-var AsAnnotationExpr;
-
-InterpExpr       = FAIL;
-AsAnnotationExpr = FAIL;
 
 var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
 
@@ -192,10 +155,108 @@ export const SpacingInterpStr = production("SpacingInterpStr",
 );
 
 // InterpExpr := Backtick _ Expr _ Backtick;
-// (Defined here, not earlier — needs the Expr forward ref. Replaces FAIL
-// stub bound above.)
-InterpExpr = production("InterpExpr",
+var InterpExpr = production("InterpExpr",
 	and(Backtick, delim(), lazy(() => Expr), delim(), Backtick)
+);
+
+
+// =============================================================
+// §3 IMPORTS / EXPORTS
+// =============================================================
+
+var OpenBrace  = tokType("OpenBrace");
+var CloseBrace = tokType("CloseBrace");
+var Comma      = tokType("Comma");
+var Colon      = tokType("Colon");
+
+var KwImport = tokVal("Keyword", "import");
+var KwExport = tokVal("Keyword", "export");
+
+// ImportExpr := "import" _ PlainStr;
+var ImportExpr = production("ImportExpr",
+	and(KwImport, delim(), PlainStr)
+);
+
+// ExportNamedBinding   := Identifier _ Colon _ Identifier MultiAccessExpr?;
+// ExportConciseBinding := Colon Identifier SingleAccessExpr?;
+//
+// MultiAccessExpr and SingleAccessExpr are defined in §6.
+var ExportNamedBinding = production("ExportNamedBinding",
+	and(Identifier, delim(), Colon, delim(), Identifier, optional(lazy(() => MultiAccessExpr)))
+);
+
+var ExportConciseBinding = production("ExportConciseBinding",
+	and(Colon, Identifier, optional(lazy(() => SingleAccessExpr)))
+);
+
+// <ExportBinding>      := ExportNamedBinding | ExportConciseBinding;
+// <ExportBindingsList> := ExportBinding (_ Comma _ ExportBinding)* (_ Comma)?;
+var ExportBinding      = or(ExportNamedBinding, ExportConciseBinding);
+var ExportBindingsList = and(
+	ExportBinding,
+	any(and(delim(), Comma, delim(), ExportBinding)),
+	optional(and(delim(), Comma))
+);
+
+// ExportExpr := "export" _ OpenBrace _ ExportBindingsList _ CloseBrace;
+var ExportExpr = production("ExportExpr",
+	and(KwExport, delim(), OpenBrace, delim(), ExportBindingsList, delim(), CloseBrace)
+);
+
+
+// =============================================================
+// §4 VARIABLE DEFINITIONS / DESTRUCTURING
+// =============================================================
+
+var OpenAngle  = tokType("OpenAngle");
+var CloseAngle = tokType("CloseAngle");
+var Hash       = tokType("Hash");
+
+var KwDef = tokVal("Keyword", "def");
+
+// DestructureNamedDef   := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
+// DestructureConciseDef := Colon Identifier SingleAccessExpr?;
+// DestructureCapture    := Hash Identifier;
+//
+// BracketExpr / MultiAccessExpr / SingleAccessExpr are defined in §6.
+var DestructureNamedDef = production("DestructureNamedDef",
+	and(
+		Identifier, delim(), Colon, delim(),
+		or(Identifier, lazy(() => BracketExpr)),
+		optional(lazy(() => MultiAccessExpr))
+	)
+);
+
+var DestructureConciseDef = production("DestructureConciseDef",
+	and(Colon, Identifier, optional(lazy(() => SingleAccessExpr)))
+);
+
+var DestructureCapture = production("DestructureCapture",
+	and(Hash, Identifier)
+);
+
+// <DestructureDef>     := DestructureNamedDef | DestructureConciseDef | DestructureCapture;
+// <DestructureDefList> := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
+var DestructureDef     = or(DestructureNamedDef, DestructureConciseDef, DestructureCapture);
+var DestructureDefList = and(
+	DestructureDef,
+	any(and(delim(), Comma, delim(), DestructureDef)),
+	optional(and(delim(), Comma))
+);
+
+// DestructureTarget := OpenAngle _ DestructureDefList _ CloseAngle;
+var DestructureTarget = production("DestructureTarget",
+	and(OpenAngle, delim(), DestructureDefList, delim(), CloseAngle)
+);
+
+// DefVarStmt := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+var DefVarStmt = production("DefVarStmt",
+	and(
+		KwDef, delim(),
+		or(Identifier, DestructureTarget),
+		delim(), Colon, delim(),
+		or(lazy(() => Expr), ImportExpr)
+	)
 );
 
 
@@ -208,7 +269,7 @@ InterpExpr = production("InterpExpr",
 // =============================================================
 
 // TEMP — replaced by §5's real Expr dispatcher.
-Expr = or(NumberLit, BooleanLit, EmptyLit, PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr);
+var Expr = or(NumberLit, BooleanLit, EmptyLit, PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr);
 
 
 export async function *parseFoi(input) {
@@ -223,10 +284,21 @@ export async function *parseFoi(input) {
 	}
 	var result = await runPromise;
 	if (!result.ok) {
-		throw new Error(`parse failed at token ${result.pos}`);
+		let tok = handle.elementAt(result.maxPos);
+		let loc = tok
+			? `unexpected ${tok.type}(${JSON.stringify(tok.value)}) at char ${tok.start}`
+			: `at end of input`;
+		throw new SyntaxError(`Foi parse failed: ${loc} (token ${result.maxPos})`);
 	}
 }
 
-for await (let node of parseFoi('`"hi `42`!";')) {
+
+//////////////////////////////////////////////////////
+
+// var testInput = '`"hi `42`!";';
+// var testInput = "export { a: b, :y };";
+var testInput = "def <a: b, c: d,>: empty;";
+
+for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:10}));
 }
