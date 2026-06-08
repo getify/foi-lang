@@ -197,6 +197,10 @@ var IdentBody = and(
 	gate(f => f.state.sawNonDigit === true)
 );
 
+// General: catch-all identifier (must run AFTER the typed forms).
+export const General = production("General", IdentBody);
+
+
 
 // =============================================================
 // WHITESPACE & COMMENT
@@ -240,6 +244,8 @@ export const Comment = production("Comment",
 // NUMBERS
 // =============================================================
 
+var NotIdentCont = not(lookahead(terminal(isIdentCont)));
+
 // Char-level digit-body helpers (not productions — combinator
 // bindings reused by the Number variants below).
 var DigitsWithSep     = and(
@@ -267,13 +273,33 @@ var MonadNumBody      = and(
 // Number variants — six productions emitting Number tokens with
 // content shapes matching the Escape opener's digit class. All
 // emit as Number type (alias pattern). See foi-lex-grammar.md.
-export const HexNumber     = production("Number", and(optional(ch(C.Hyphen)), HexDigits));
-export const UnicodeNumber = production("Number", HexDigits);
-export const OctalNumber   = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isOctDigit))));
-export const BinaryNumber  = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isBinDigit))));
-export const MonadNumber   = production("Number", MonadNumBody);
-export const BareNumber    = production("Number", BareNumBody);
-
+export const HexNumber     = production("Number", and(optional(ch(C.Hyphen)), HexDigits, NotIdentCont));
+export const UnicodeNumber = production("Number", and(HexDigits, NotIdentCont));
+export const OctalNumber   = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isOctDigit)), NotIdentCont));
+export const BinaryNumber  = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isBinDigit)), NotIdentCont));
+export const MonadNumber = production("Number",
+	or(
+		and(optional(ch(C.Hyphen)), HexDigitsWithSep, ch(C.Period), HexDigitsWithSep),
+		and(optional(ch(C.Hyphen)), HexDigitsWithSep, NotIdentCont)
+	)
+);
+export const BareNumber = production("Number",
+	or(
+		// Decimal: commits.
+		and(
+			optional(ch(C.Hyphen)),
+			DigitsWithSep,
+			ch(C.Period),
+			DigitsWithSep
+		),
+		// Integer-only: backs off on IdentCont continuation.
+		and(
+			optional(ch(C.Hyphen)),
+			DigitsWithSep,
+			NotIdentCont
+		)
+	)
+);
 
 // PositiveIntegerLit variants — bare top-level (no separators) and
 // escaped form (separators allowed). Both emit as PositiveIntegerLit
@@ -283,28 +309,24 @@ export const BareNumber    = production("Number", BareNumBody);
 var NotDotDigit = not(lookahead(and(ch(C.Period), terminal(isDigit))));
 
 export const PositiveIntegerLit = production("PositiveIntegerLit",
-	and(many(terminal(isDigit)), NotDotDigit)
+	and(many(terminal(isDigit)), NotDotDigit, NotIdentCont)
 );
 
 export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
-	and(DigitsWithSep, NotDotDigit)
+	and(DigitsWithSep, NotDotDigit, NotIdentCont)
 );
-
 
 // EscapedNumber: dispatch over the six (Escape variant, Number
 // variant) pairs. Hidden — emits the Escape and Number tokens as
 // direct children of the parent frame, not under an own node.
 export const EscapedNumber = or(
-	and(EscapeHex,     HexNumber),
-	and(EscapeUnicode, UnicodeNumber),
-	and(EscapeOctal,   OctalNumber),
-	and(EscapeBinary,  BinaryNumber),
-	and(EscapeMonadic, MonadNumber),
-	and(EscapePlain,   PositiveIntegerLitWithSep),
-	and(EscapePlain,   BareNumber)
+	and(EscapeHex,     or(HexNumber,     General)),
+	and(EscapeUnicode, or(UnicodeNumber, General)),
+	and(EscapeOctal,   or(OctalNumber,   General)),
+	and(EscapeBinary,  or(BinaryNumber,  General)),
+	and(EscapeMonadic, or(MonadNumber,   General)),
+	and(EscapePlain,   or(PositiveIntegerLitWithSep, BareNumber, General))
 );
-
-
 // =============================================================
 // TYPED IDENTIFIERS
 // Each gates membership in its reserved set; bare IdentBody fall-
@@ -364,13 +386,10 @@ export const NumberLit = production("Number",
 		optional(and(ch(C.Hyphen), lookahead(terminal(isDigit)))),
 		or(
 			and(many(terminal(isDigit)), ch(C.Period), many(terminal(isDigit))),
-			many(terminal(isDigit))
+			and(many(terminal(isDigit)), NotIdentCont)
 		)
 	)
 );
-
-// General: catch-all identifier (must run AFTER the typed forms).
-export const General = production("General", IdentBody);
 
 
 // =============================================================
@@ -436,7 +455,7 @@ var BaseTokenLazy = async function baseTokenLazy(pctx) {
 // "Lone backtick": a ` that closes an interp expression rather than
 // opening a nested interp string. (Nested interp strings start with
 // `", so we keep going past those.)
-var InterpExprStop = and(ch(C.Backtick), or(eof(), not(ch(C.DoubleQuote))));
+var InterpExprStop = lookahead(ch(C.Backtick));
 
 // `expr`: Backtick, any base-mode tokens until a lone closing
 // backtick, Backtick.
@@ -534,6 +553,15 @@ function expressionEnding(p) {
 	);
 }
 
+// Wrap a number production. After p matches, optionally consume an
+// immediate ".." (no trivia) as DoublePeriod, so a third "." in
+// "5..." surfaces as a separate Period rather than getting swallowed
+// into a TriplePeriod. Better error granularity on range typos —
+// the only multi-dot form valid after a number is "..".
+function numberEnding(p) {
+	return and(p, optional(DoublePeriod));
+}
+
 
 // =============================================================
 // TOP-LEVEL: Tokens
@@ -561,7 +589,7 @@ var BaseTokenOr = or(
 	expressionEnding(Builtin),
 	expressionEnding(Comprehension),
 	expressionEnding(BooleanOper),
-	expressionEnding(PositiveIntegerLit),
+	expressionEnding(numberEnding(PositiveIntegerLit)),
 	expressionEnding(NumberLit),
 	expressionEnding(General),
 	TriplePeriod,

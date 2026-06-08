@@ -129,25 +129,62 @@ them as a production would add an extra frame layer that no consumer
 wants.
 
 **`EscapedNumber` as bare `or(...)`.** `EscapedNumber` is a bare
-`or(...)` of seven (Escape variant, Number-or-PositiveIntegerLit
-variant) pairs: `and(EscapeHex, HexNumber)`,
-`and(EscapeUnicode, UnicodeNumber)`, `and(EscapeOctal, OctalNumber)`,
-`and(EscapeBinary, BinaryNumber)`, `and(EscapeMonadic, MonadNumber)`,
-`and(EscapePlain, PositiveIntegerLitWithSep)`,
-`and(EscapePlain, BareNumber)`. Each emits two tokens — an `Escape`
-carrying the opener value (e.g. `"\h"`) and a `Number` or
-`PositiveIntegerLit` carrying the digit content. Because both sides
-of each pair are named productions and the dispatch itself is hidden,
-the syntactic grammar can reference `EscapedNumber` and get exactly
-the (Escape, content) child pair spliced into the parent.
+`or(...)` of six arms, each pairing an Escape variant with an inner
+`or(...)` that tries the appropriate Number variant first and falls
+back to `General` if the Number variant fails:
 
-Note the two `EscapePlain` arms: the first (paired with
-`PositiveIntegerLitWithSep`) is PEG-tried before the second (paired
-with `BareNumber`), so `\5_000` lexes as
-`Escape("\") + PositiveIntegerLit("5_000")` rather than
-`Escape("\") + Number("5_000")`. The `!("." Digit)` lookahead inside
-`PositiveIntegerLitWithSep` forces fallthrough to `BareNumber` when
-the digits are followed by a decimal point.
+```js
+EscapedNumber = or(
+    and(EscapeHex,     or(HexNumber,     General)),
+    and(EscapeUnicode, or(UnicodeNumber, General)),
+    and(EscapeOctal,   or(OctalNumber,   General)),
+    and(EscapeBinary,  or(BinaryNumber,  General)),
+    and(EscapeMonadic, or(MonadNumber,   General)),
+    and(EscapePlain,   or(PositiveIntegerLitWithSep, BareNumber, General))
+);
+```
+
+Each arm emits two tokens — an `Escape` carrying the opener value
+(e.g. `"\h"`) and the inner production's token (a `Number`,
+`PositiveIntegerLit`, or `General`). Because both sides of each pair
+are named productions and the dispatch itself is hidden, the
+syntactic grammar can reference `EscapedNumber` and get exactly the
+(Escape, content) child pair spliced into the parent.
+
+**General fallback rationale.** When a multi-char Escape opener
+commits but the expected number content doesn't match, the General
+fallback allows the arm to still succeed if the trailing content is
+identifier-shaped. Without this, cases like `\h_foo`, `\h2Axyz`,
+`\b101xyz`, etc. would roll back the entire arm and fall through to
+standalone `EscapePlain`, producing different (and divergent-from-
+legacy) token shapes. See `Lexical-Grammar.md`'s "Known Divergences"
+section for the unresolvable cases (where neither Number variant nor
+General matches because no IdentStart follows).
+
+**The EscapePlain arm.** This single arm has three sub-alternatives
+inside the inner `or`: `PositiveIntegerLitWithSep` first, `BareNumber`
+second, `General` last. PEG order matters:
+
+- `PositiveIntegerLitWithSep` first means `\5_000` lexes as
+  `Escape("\") + PositiveIntegerLit("5_000")` rather than falling
+  through to `BareNumber`.
+- `BareNumber` catches decimal-bearing forms (`\5.5` →
+  `Escape("\") + Number("5.5")`).
+- `General` is the last fallback, firing only when both number
+  variants have failed. So `\1foo` → `Escape("\") + General("1foo")`
+  (both number variants fail their `!IdentCont` guard; General
+  matches the digit-leading identifier).
+
+A two-arm structure with `General` as fallback of just one number
+variant would shadow the other — historically there were two separate
+`EscapePlain` arms (one paired with `PositiveIntegerLitWithSep`, the
+other with `BareNumber`), and a structural bug fix during the audit
+consolidated them into one arm with three sub-alternatives. The
+collapsed structure is what works correctly.
+
+The `!("." Digit)` lookahead inside `PositiveIntegerLitWithSep`
+forces fallthrough to `BareNumber` when the digits are followed by
+a decimal point.
 
 ### 3.1 The PositiveIntegerLit token type
 
@@ -159,8 +196,8 @@ syntactic grammar.
 The syntactic grammar restricts a few positions to positive integer
 literals only — property indexes (`<.foo, 5>`), DotIdentifier
 indices (`arr.5`), etc. The shape constraint is "digit run, no
-leading `-`, no fractional part." Three options were considered for
-how to express this:
+leading `-`, no fractional part, doesn't extend into an identifier."
+Three options were considered for how to express this:
 
 1. **Inline char-level shape in the syn EBNF.** Verbose; the syn
    grammar reaches into char-level fragments where it should be
@@ -192,14 +229,15 @@ The implementation uses two productions emitting the same token
 type (alias pattern):
 
 ```js
-var NotDotDigit = not(lookahead(and(ch(C.Period), terminal(isDigit))));
+var NotDotDigit  = not(lookahead(and(ch(C.Period), terminal(isDigit))));
+var NotIdentCont = not(lookahead(terminal(isIdentCont)));
 
 export const PositiveIntegerLit = production("PositiveIntegerLit",
-    and(many(terminal(isDigit)), NotDotDigit)
+    and(many(terminal(isDigit)), NotDotDigit, NotIdentCont)
 );
 
 export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
-    and(DigitsWithSep, NotDotDigit)
+    and(DigitsWithSep, NotDotDigit, NotIdentCont)
 );
 ```
 
@@ -209,14 +247,106 @@ export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
 helper enforces the `!("." Digit)` lookahead so a decimal point
 followed by digits doesn't get split into a positive int + a
 fractional `Number` — the dispatch falls through to `NumberLit`
-(bare) or to the `BareNumber` arm of `EscapedNumber` (escaped).
+(bare) or to the `BareNumber` arm of `EscapedNumber` (escaped). The
+shared `NotIdentCont` helper enforces digit-leading-identifier
+disambiguation; see §3.2.
+
+### 3.2 The NotIdentCont Guard Family
+
+Foi permits identifiers to start with digits (`1foo`, `5_value`,
+`1_000_000`). The `sawNonDigit` gate (§4) ensures that pure-digit
+runs become Numbers rather than identifiers, but says nothing about
+runs that START with digits and CONTINUE into identifier chars.
+Without an additional guard, the integer-shaped number productions
+would prematurely match the leading digits, leaving the trailing
+identifier-chars as a separate (incoherent) token.
+
+The fix is a uniform `NotIdentCont` guard on every integer-shaped
+number production:
+
+```js
+var NotIdentCont = not(lookahead(terminal(isIdentCont)));
+```
+
+Productions carrying `NotIdentCont`:
+
+```
+PositiveIntegerLit,  PositiveIntegerLitWithSep,
+NumberLit (integer branch only),
+HexNumber,  UnicodeNumber,  OctalNumber,  BinaryNumber,
+MonadNumber (integer branch only),
+BareNumber  (integer branch only)
+```
+
+The decimal branches of `NumberLit`, `MonadNumber`, and `BareNumber`
+do NOT need the guard — once `.` is consumed and a fractional digit
+run follows, the position is unambiguously inside a number. The
+structural split:
+
+```js
+export const NumberLit = production("Number",
+    and(
+        optional(and(ch(C.Hyphen), lookahead(terminal(isDigit)))),
+        or(
+            // Decimal: commits.
+            and(many(terminal(isDigit)), ch(C.Period), many(terminal(isDigit))),
+            // Integer-only: backs off on IdentCont continuation.
+            and(many(terminal(isDigit)), NotIdentCont)
+        )
+    )
+);
+
+export const BareNumber = production("Number",
+    or(
+        and(optional(ch(C.Hyphen)), DigitsWithSep, ch(C.Period), DigitsWithSep),
+        and(optional(ch(C.Hyphen)), DigitsWithSep, NotIdentCont)
+    )
+);
+
+export const MonadNumber = production("Number",
+    or(
+        and(optional(ch(C.Hyphen)), HexDigitsWithSep, ch(C.Period), HexDigitsWithSep),
+        and(optional(ch(C.Hyphen)), HexDigitsWithSep, NotIdentCont)
+    )
+);
+```
+
+Effects on tokenization:
+
+```
+"1foo"      → General("1foo")                  [identifier]
+"5_foo"     → General("5_foo")
+"1_000_000" → General("1_000_000")
+"5.5foo"    → Number("5.5") + General("foo")   [decimal branch commits, no fallback]
+"\1foo"     → Escape("\") + General("1foo")    [General fallback in EscapedNumber]
+"\h2Axyz"   → Escape("\h") + General("2Axyz")
+```
+
+The guard composes with the General fallback in `EscapedNumber` (§3):
+when an integer-shaped Number variant fails its `NotIdentCont` check
+within an EscapedNumber arm, the inner `or` falls through to General,
+which matches the identifier. This is how `\h2Axyz` ends up as
+`Escape + General` rather than `Escape + Number + General`.
+
+**Sign + digit-leading-identifier corner case.** `-5foo` exercises
+the full machinery: `NumberLit` consumes `-` (with digit lookahead),
+then the integer branch's `NotIdentCont` fails on the `f`, the
+decimal branch fails too (no `.`), and the entire `NumberLit` rolls
+back atomically — including the consumed `-`. The standalone Hyphen
+then matches the `-`, and General matches `5foo`. Result: `Hyphen,
+General("5foo")`. This is a documented divergence from legacy; see
+`Lexical-Grammar.md`'s "Known Divergences" section.
 
 
 ## 4. The IdentBody sawNonDigit Gate
 
-The grammar's IdentBody is a syntactic over-approximation. The
-combinator enforces "at least one non-digit character was seen" via
-frame-local state mutated by `onMatch` callbacks:
+The grammar's `IdentBody` is a syntactic over-approximation that
+permits digits anywhere — including as the leading character. Foi
+identifiers may start with digits (`1foo`, `5_value`). The
+combinator additionally requires that at least one non-digit
+character appears in the matched span (so that pure-digit runs
+fall through to `Number` rather than shadow it). This is enforced
+via frame-local state mutated by `onMatch` callbacks:
 
 ```js
 var IdentBody = and(
@@ -254,6 +384,13 @@ Critical implementation choices:
 accumulation during character consumption. The `ch(c, onMatch)`
 helper exists specifically to make this ergonomic for single-char
 matches.
+
+The dual to `sawNonDigit` lives on the Number side: every
+integer-shaped number production carries a `NotIdentCont` negative
+lookahead (§3.2). Together they form the digit-leading-identifier
+disambiguation — `sawNonDigit` keeps pure-digit runs out of
+identifier-land; `NotIdentCont` keeps mixed digit-then-letter runs
+out of number-land.
 
 
 ## 5. Reserved-Set Membership Gates
@@ -427,8 +564,7 @@ JS binding              value    context
 EscapeBacktick          "`"      opener of InterpStr
 EscapePlain             "\"      opener of SpacingEscapedStr;
                                  bare-\ opener of EscapedNumber's
-                                 PositiveIntegerLitWithSep and
-                                 BareNumber arms;
+                                 EscapePlain arm;
                                  standalone Escape for a lone "\"
 EscapeSpacingBacktick   "\`"     opener of SpacingInterpStr
 EscapeHex               "\h"     opener of EscapedNumber's HexNumber arm
@@ -441,18 +577,16 @@ EscapeMonadic           "\@"     opener of EscapedNumber's MonadNumber arm
 The string-form openers (`EscapeBacktick`, `EscapeSpacingBacktick`,
 `EscapePlain` for the three escape-bearing string forms) are
 recognized when followed by `symb.DoubleQuote`. The escaped-number
-openers each pair with a specific content production inside
-`EscapedNumber`; the content production requires digit content in
-the appropriate class (HexDigit after `\h`/`\u`, OctDigit after
-`\o`, etc.).
+openers each pair with a specific content production (or General
+fallback, §3) inside `EscapedNumber`.
 
-If a candidate opener fails to find its expected followup, the whole
-pair fails atomically and the dispatch falls through; eventually
-`EscapePlain` standalone catches the lone `\` after every more-
-specific form has been tried (see §14 ordering). The lexer never
-emits a multi-char Escape value as a standalone token — every
-multi-char Escape commits only as the opener of its associated
-specific form.
+If a candidate opener fails to find any of its valid followups
+(neither Number variant nor General), the whole arm fails atomically
+and the dispatch falls through; eventually `EscapePlain` standalone
+catches the lone `\` after every more-specific form has been tried
+(see §14 ordering). The lexer never emits a multi-char Escape value
+as a standalone token — every multi-char Escape commits only as the
+opener of its associated specific form.
 
 `EscapePlain` is the only Escape variant spread into `BaseTokenOr`
 as a standalone-emission slot. The other seven fire only from inside
@@ -519,36 +653,8 @@ Implementation specifics:
   were emitted as `matched` events but receive `rollback` events
   when the savepoint restores. They will be re-matched (and this
   time committed) by the next outer iteration.
-- The wrapper is applied at the Token alternation level:
-
-```js
-BaseTokenOr = or(
-    Whitespace,
-    Comment,
-    InterpStr,
-    SpacingInterpStr,
-    SpacingEscapedStr,
-    StringLit,
-    EscapedNumber,
-    expressionEnding(Keyword),
-    expressionEnding(Native),
-    expressionEnding(Builtin),
-    expressionEnding(Comprehension),
-    expressionEnding(BooleanOper),
-    expressionEnding(PositiveIntegerLit),
-    expressionEnding(NumberLit),
-    expressionEnding(General),
-    TriplePeriod,
-    DoublePeriod,
-    DoubleColon,
-    EscapePlain,
-    ...Object.entries(symb)
-        .filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))
-        .map(([name, prod]) =>
-            EXPRESSION_ENDING_OP_NAMES.has(name) ? expressionEnding(prod) : prod
-        )
-);
-```
+- The wrapper is applied at the Token alternation level (see §14
+  for the full BaseTokenOr listing).
 
 The single-char ops are wrapped selectively via the
 `EXPRESSION_ENDING_OP_NAMES` set; the rest are inlined unwrapped.
@@ -563,6 +669,62 @@ rolled back when the speculative tail fails. Consumers using
 listen to `matched` and ignore `rollback` will see spurious
 trivia events.
 
+### 11.1 The NumberEnding Wrapper
+
+Companion to `expressionEnding`, applied only to `PositiveIntegerLit`
+at the Token level:
+
+```js
+function numberEnding(p) {
+    return and(p, optional(DoublePeriod));
+}
+```
+
+Used in `BaseTokenOr`:
+
+```js
+expressionEnding(numberEnding(PositiveIntegerLit)),
+expressionEnding(NumberLit),                       // NOT wrapped with numberEnding
+```
+
+Implementation specifics:
+
+- `numberEnding(p)` returns an anonymous `and(...)`, not a
+  production. Like `expressionEnding`, the wrapper's structure
+  doesn't get a frame of its own.
+- The trailing `optional(DoublePeriod)` consumes an immediately-
+  adjacent `..` token (no trivia between the wrapped production
+  and the dots), emitting it as a `DoublePeriod` token at the same
+  depth as the wrapped production.
+- If the `..` isn't there, the `optional` rolls back without
+  consuming anything. The chars at the current position are left
+  for the next outer iteration.
+
+**Composition order.** `expressionEnding(numberEnding(p))` runs
+`numberEnding`'s `..` check first (immediate adjacency), then
+`expressionEnding`'s hyphen tail (which allows trailing trivia).
+Order matters: `..` is adjacency-only and hyphen allows trivia, so
+`..` needs first crack at the position right after the number.
+
+**Rationale.** This wrapper forces a third `.` in `5...` to surface
+as a separate `Period` token rather than getting absorbed into a
+`TriplePeriod` by PEG longest-match. The only multi-dot operator
+valid immediately after a positive integer is the range op `..`,
+so when the user typos `...`, the lexer reports the syntactic
+error at the third `.` (good diagnostic) rather than silently
+committing to a meaningless `TriplePeriod`.
+
+**Scope.** Applies only to `PositiveIntegerLit`. `NumberLit` (decimal
+source-level numbers) is wrapped with just `expressionEnding`, not
+`numberEnding`. This is intentional: applying `numberEnding` to
+`NumberLit` would produce a `DoublePeriod + Period` shape for
+`12.5...` that doesn't match legacy and doesn't represent any
+coherent Foi reading. Leaving it unwrapped yields `TriplePeriod`
+(PEG longest-match), which parses naturally as "decimal + spread"
+when surrounded by appropriate syntactic context. See
+`Lexical-Grammar.md`'s "Known Divergences" section for the
+`12.5...args` case.
+
 
 ## 12. InterpExpr and the Lazy Forward Reference
 
@@ -573,7 +735,7 @@ var BaseTokenLazy = async function baseTokenLazy(pctx) {
     return BaseTokenOr(pctx);
 };
 
-var InterpExprStop = and(ch(C.Backtick), or(eof(), not(ch(C.DoubleQuote))));
+var InterpExprStop = lookahead(ch(C.Backtick));
 
 var InterpExpr = and(
     symb.Backtick,
@@ -582,30 +744,46 @@ var InterpExpr = and(
 );
 ```
 
-The recursion shape:
+**The lazy forward reference.** `BaseTokenOr` is the top-level
+`or(...)` of all Token alternatives. `InterpExpr` lives inside
+`InterpStr` content alternatives, which are inside `BaseTokenOr`.
+Direct reference would be a circular dependency at file-evaluation
+time. The workaround: `BaseTokenOr` is `var`-declared early
+(hoisted) but not assigned. `BaseTokenLazy` is an async function
+that dereferences `BaseTokenOr` at parse time, by which point it
+has been assigned. `InterpExpr`'s body references `BaseTokenLazy`,
+not `BaseTokenOr` directly. `BaseTokenOr` is assigned at the bottom
+of the productions block, just before `Tokens` is defined.
 
-- `BaseTokenOr` is the top-level `or(...)` of all Token alternatives.
-- `InterpExpr` lives inside `InterpStr` content alternatives, which
-  are inside `BaseTokenOr`. Direct reference would be a circular
-  dependency at file-evaluation time.
-- The workaround: `BaseTokenOr` is `var`-declared early (hoisted)
-  but not assigned. `BaseTokenLazy` is an async function that
-  dereferences `BaseTokenOr` at parse time, by which point it has
-  been assigned. `InterpExpr`'s body references `BaseTokenLazy`,
-  not `BaseTokenOr` directly.
-- `BaseTokenOr` is assigned at the bottom of the productions block,
-  just before `Tokens` is defined.
+**The InterpExprStop simplification.** Currently a positive lookahead
+on a bare backtick. Any backtick inside the InterpExpr body closes
+the embed. The body loop exits at that position, and the trailing
+`symb.Backtick` in `InterpExpr` consumes the closing backtick as a
+`Backtick` token.
 
-`InterpExprStop` is the closing-backtick detector: a backtick NOT
-followed by `"`. The `or(eof(), not(ch(C.DoubleQuote)))` form handles
-both "backtick at end of input" and "backtick followed by something
-other than quote." If the next char is `"`, we're entering a nested
-interp string, not closing the expression; the loop continues.
+An earlier form was `and(ch(C.Backtick), or(eof(), not(ch(C.DoubleQuote))))`
+— "backtick not followed by DoubleQuote" — which attempted to
+support plain-in-plain interp nesting (a `` ` `` followed by `"`
+would re-enter LexInterpStr inside the embed). This produced
+incorrect behavior for the canonical case of legitimate cross-form
+nesting (`` \`" this is `\`"my friend, `name`"`!" ``): the embed-
+close backtick before the outer closing `"` was misinterpreted as
+opening a nested plain InterpStr. The simplification fixed that
+case by removing the plain-in-plain support entirely — which is
+acceptable because plain-in-plain nesting creates a genuine grammar
+ambiguity that Foi forbids by design anyway.
 
-The two `symb.Backtick` references emit `Backtick` tokens for the
-opening and closing backticks of the embedded expression. Note that
-this is the same `symb.Backtick` production that fires standalone in
-`BaseTokenOr` — InterpExpr just reuses the binding.
+Cross-form nesting (spacing-in-plain, spacing-in-spacing) still
+works: the nested spacing form opens with `\` followed by `` ` ``
+followed by `"`. The first char (`\`) doesn't trigger
+InterpExprStop, so the body loop continues, BaseTokenLazy matches
+the nested SpacingInterpStr, and tokens emit correctly.
+
+The two `symb.Backtick` references in `InterpExpr` emit `Backtick`
+tokens for the opening and closing backticks of the embedded
+expression. Note that this is the same `symb.Backtick` production
+that fires standalone in `BaseTokenOr` — InterpExpr just reuses
+the binding.
 
 
 ## 13. Single-Char Operators as a Dynamic Map
@@ -697,7 +875,7 @@ expressionEnding(Native)
 expressionEnding(Builtin)
 expressionEnding(Comprehension)
 expressionEnding(BooleanOper)
-expressionEnding(PositiveIntegerLit) (* before NumberLit — see below *)
+expressionEnding(numberEnding(PositiveIntegerLit))  (* before NumberLit *)
 expressionEnding(NumberLit)
 expressionEnding(General)
 TriplePeriod                         (* before DoublePeriod before single Period *)
@@ -725,14 +903,21 @@ Why each non-obvious ordering matters:
   semantic specialization of General; trying them first lets the
   gate select the right type. General is the catch-all.
 - `PositiveIntegerLit` before `NumberLit`: a digit run with no
-  decimal point and no leading sign is a positive integer literal;
-  the legacy tokenizer would emit this as `Number`, but the new
-  lexer emits the more specific `PositiveIntegerLit` type. The
-  `!("." Digit)` lookahead inside `PositiveIntegerLit` causes
-  fallthrough to `NumberLit` for decimals (`5.5`) and the
-  expression-ending tail handles signed forms (`-5`) via NumberLit's
-  own leading-sign rule. See §3.1 for the round-trippability
-  rationale driving this divergence.
+  decimal point and no leading sign that's also not extending into
+  an identifier is a positive integer literal. The new lexer emits
+  the more specific `PositiveIntegerLit` type where the legacy
+  tokenizer would emit `Number`. The `!("." Digit)` lookahead
+  inside `PositiveIntegerLit` causes fallthrough to `NumberLit`
+  for decimals (`5.5`); the `!IdentCont` guard (§3.2) causes
+  fallthrough to `General` for digit-leading identifiers (`1foo`).
+  See §3.1 for the round-trippability rationale driving this
+  divergence.
+- `PositiveIntegerLit` wrapped with `numberEnding` (§11.1):
+  immediate `..` after a positive integer gets consumed as a
+  `DoublePeriod` token, so `5...` splits into `Number(5)`,
+  `DoublePeriod`, `Period` rather than `Number(5)`, `TriplePeriod`.
+  `NumberLit` is NOT wrapped with `numberEnding` — see §11.1 for
+  rationale.
 - `TriplePeriod` before `DoublePeriod` before single `Period` (via
   the symb spread): longest match first.
 - `DoubleColon` before single `Colon` (via the symb spread): same.
@@ -796,11 +981,50 @@ Token grain matches on both sides — basic strings as `DoubleQuote` +
 so the harness is a direct lockstep walk after type-name
 normalization on both sides. No content coalescing is needed.
 
-The diff harness is the source of truth for "does the new tokenizer
-match the legacy." A change to either side must preserve diff-
-cleanliness on the smoke-test suite (88 inputs as of last sweep).
-The `PositiveIntegerLit` normalization is the only known
-intentional divergence; any other diff is a regression.
+**Known divergences and the assertion mechanism.** A `KNOWN_DIVERGENT`
+Map at the top of `test.js` lists inputs where the new tokenizer is
+EXPECTED to diverge from the legacy tokenizer, with a one-line
+reason for each. The smoke-test loop cross-checks each sample against
+this map:
+
+```
+- unmarked + clean   → pass (✓)
+- marked   + dirty   → pass (⚠), reason printed
+- unmarked + dirty   → FAIL (✗), regression
+- marked   + clean   → FAIL (?), divergence resolved — remove from map
+```
+
+The fourth state is the `assert.throws`-equivalent: marking a sample
+as expected-to-diverge means the harness will fail if the divergence
+ever stops occurring, forcing the map to stay in sync with reality.
+This catches both regressions (something started diverging that
+shouldn't) and stale entries (something stopped diverging that should
+be removed from the map).
+
+The `PositiveIntegerLit` normalization handles the across-the-board
+type difference at one site. Beyond that, the known divergences fall
+into several categories:
+
+- Multi-char escape partial commit (`\h`, `\u-5`, `\@-`): legacy emits
+  the multi-char Escape standalone; new commits fully or not at all.
+- Decimal-grammar quirks (`5.5.5`, `12.5...args`): legacy extends
+  decimals past one fractional part / applies a `.` + `..` recovery.
+- Digit-leading identifier + sign (`-5foo`): new is principle-
+  consistent; legacy commits to number context at `-`.
+- Comment-bearing trivia + binary hyphen (`foo //c\n-5` family):
+  legacy's minusOpAllowed flag gets clobbered by Comment tokens;
+  new's expressionEnding tail (§11) handles these correctly.
+- Interp trailing-whitespace bug: legacy emits Whitespace for trailing
+  space after escaped-number embed in plain InterpStr; new emits
+  String per the InterpStrChars predicate.
+
+See `Lexical-Grammar.md`'s "Known Divergences From Legacy Tokenizer"
+section for the full table with token-by-token outputs.
+
+The diff harness with KNOWN_DIVERGENT is the source of truth for
+"does the new tokenizer match the legacy (modulo intentional
+divergences)." Any FAIL state (✗ regression or ? stale mark) must be
+resolved before the lex layer is considered green.
 
 
 ## 17. Streaming-Output Semantics

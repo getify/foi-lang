@@ -24,10 +24,10 @@ export const EOF = Symbol("EOF");
 function makeBufferedInput(source) {
 	var buffer = [];
 	var iter;
-	if (source && typeof source[Symbol.asyncIterator] === "function") {
+	if (typeof source?.[Symbol.asyncIterator] == "function") {
 		iter = source[Symbol.asyncIterator]();
 	}
-	else if (source && typeof source[Symbol.iterator] === "function") {
+	else if (typeof source?.[Symbol.iterator] == "function") {
 		let syncIter = source[Symbol.iterator]();
 		iter = {
 			next() {
