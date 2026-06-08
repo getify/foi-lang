@@ -574,6 +574,24 @@ NOT divergent — both lexers emit `Escape("\h"), General("_foo")`. This
 case was divergent in earlier versions; the General-fallback restructure
 of EscapedNumber (Note 12) resolved it.
 
+#### Negative escaped number + underscore separator
+
+```
+Input                   Legacy tokenizer                                       Combinator lexer
+----------------------  -----------------------------------------------------  -----------------------------------------
+"\-123_456"             Escape("\"), Number(-123), General("_456")             Escape("\"), Number("-123_456")
+"\-123_456.78_9"        Escape("\"), Number(-123), General("_456"),            Escape("\"), Number("-123_456.78_9")
+                        Period, General("78_9")
+```
+
+Legacy's `EscapePlain + negative-number` branch doesn't carry through
+the underscore-separator support that its positive-number branch handles
+correctly — `\123_456` lexes cleanly on both sides, but adding a sign
+makes legacy stop the number at the first underscore. The combinator
+lexer's `BareNumber` handles `DigitsWithSep` uniformly across the sign
+branches, matching `Grammar.md`'s explicit positive examples of these
+forms (block 4 of the test snippets).
+
 #### Legacy decimal-grammar quirks
 
 ```
@@ -600,9 +618,12 @@ spread, identifier).
 #### Sign + digit-leading identifier
 
 ```
-Input    Legacy tokenizer                Combinator lexer
--------  ------------------------------  -----------------------------------
-"-5foo"  Number(-5), General("foo")      Hyphen, General("5foo")
+Input        Legacy tokenizer                          Combinator lexer
+-----------  ----------------------------------------  --------------------------------------------
+"-5foo"      Number(-5), General("foo")                Hyphen, General("5foo")
+"\-5foo"     Escape("\"), Number(-5), General("foo")   Escape("\"), Hyphen, General("5foo")
+"\h-Fxyz"    Escape("\h"), Number(-F), General("xyz")  Escape("\"), General("h"), Hyphen, General("Fxyz")
+"\@-5foo"    Escape("\@"), Number(-5f), General("oo")  Escape("\"), At, Hyphen, General("5foo")
 ```
 
 Following the digit-leading-identifier principle (Note 3, Note 10): `5foo`
@@ -610,7 +631,46 @@ is an identifier on both sides, but legacy commits to number context at
 `-` and emits `Number(-5)` followed by `General("foo")`. The combinator
 lexer treats `-` as a standalone Hyphen and emits `General("5foo")` as a
 single identifier — internally consistent with how it tokenizes bare
-`"5foo"`. Legacy is the outlier here.
+`"5foo"`.
+
+The escape-prefixed analogs follow the same principle inside escaped-
+number contexts. New applies `NotIdentCont` uniformly to every integer-
+shaped number production, so the production fails when an IdentCont char
+follows the digits (or hex digits for `\h`/`\@`). The General fallback
+inside the EscapedNumber arm then fails because `-` is not an IdentStart,
+and the whole arm rolls back atomically. The standalone EscapePlain
+catches the `\`, and the remaining chars tokenize independently. Legacy
+doesn't enforce `NotIdentCont` across all the escaped-number variants,
+so it commits to a partial Number reading, consuming the `-` plus as
+many digit-or-hex chars as it can.
+
+Note legacy's `\@-5foo` reading: it consumes the `f` as a hex digit
+(since MonadNumber accepts hex), producing `Number(-5f) + General("oo")`
+— a particularly awkward split.
+
+#### Digit-trailing tilde identifier
+
+```
+Input                  Legacy tokenizer                     Combinator lexer
+---------------------  -----------------------------------  ----------------------------------
+"123~"                 Number("123"), Tilde                 General("123~")
+"def 123~: empty;"     Keyword("def"), Whitespace,          Keyword("def"), Whitespace,
+                       Number("123"), Tilde, Colon,         General("123~"), Colon,
+                       Whitespace, Native("empty"),         Whitespace, Native("empty"),
+                       Semicolon                            Semicolon
+```
+
+`Grammar.md`'s `Identifier` regex carries `#"[0-9]+~"` as an explicit
+third alternative, after the main `[a-zA-Z0-9_~]+` form and the
+comprehension-prefixed form. The combinator lexer's `IdentBody` accepts
+this shape directly via the sawNonDigit gate (Note 3) — tilde is an
+IdentCont char and counts as non-digit, so a pure-digit run with a
+trailing tilde passes the gate and emits as a single General. Legacy
+commits to number context for the digit prefix and emits the tilde as a
+standalone token.
+
+Grammar.md's test snippets (block 3) use `123~` as a positive identifier
+example, confirming new is correct per spec intent.
 
 #### Comment-bearing trivia + binary hyphen
 
@@ -650,3 +710,42 @@ as plain string content in plain interp forms). The corresponding case
 with a simple-identifier embed (e.g. `` `" `a` "` ``) emits `String(" ")`
 on both sides — the legacy inconsistency depends on what the embed
 contained. Combinator behavior is the consistent one.
+
+#### Legacy string-content bugs
+
+Two distinct legacy bugs surface inside string-form bodies, caught by
+the Grammar.md block 5 audit pass.
+
+**Keyword leak inside spacing-escaped string body.**
+
+```
+Input                                                          Legacy tokenizer                          Combinator lexer
+-------------------------------------------------------------  ----------------------------------------  ----------------------------------------
+"\"A single line\n    string with whitespace collapsing..."    ..., Whitespace, Keyword("string"),       ..., Whitespace, String("string"),
+                                                               Whitespace, ...                           Whitespace, ...
+```
+
+Legacy emits `Keyword("string")` for the substring `string` inside a
+`SpacingEscapedStr` body. The KEYWORDS gate fires against string
+content, which should never happen — once inside a string form, content
+tokens should only be `String`, `Whitespace`, or escape forms. New's
+`SpacingEscapedStrChars` predicate handles the content correctly; the
+typed-identifier productions are not reachable from inside string-form
+bodies in the new lexer.
+
+**InterpExpr closer misclassified as Escape.**
+
+```
+Input                                                          Legacy tokenizer            Combinator lexer
+-------------------------------------------------------------  --------------------------  ---------------------------
+"`\"... `\`"Hello world"` ... `\"Yay!"` ... `"Ok."`\n!"        ..., Escape("`"), ...       ..., Backtick, ...
+                                                               (InterpExpr closer          (InterpExpr closer
+                                                               misclassified)              correctly typed)
+```
+
+When an InterpExpr embed contains a nested escape-bearing string form
+(e.g. `` `\`"Hello world"` `` or `` `\"Yay!"` `` inside the outer
+interp), legacy emits the closing backtick of the *outer* InterpExpr as
+an `Escape("`")` token rather than a `Backtick`. New correctly emits
+`Backtick` for both opener and closer of every InterpExpr — same
+`symb.Backtick` production used at both positions.
