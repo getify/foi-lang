@@ -273,10 +273,8 @@ var KwAs = tokVal("Keyword", ":as");
 
 // AsAnnotationExpr := ":as" _ NamedType;
 //
-// NamedType is §18 (deferred). The lazy() ref fails-through until
-// §18 lands; since every AsAnnotationExpr call site wraps it in
-// OptAsAnnotation, missing NamedType just means `:as` annotations
-// don't parse yet.
+// NamedType is §18; forward-ref via lazy() since §18 appears later
+// in this file.
 export const AsAnnotationExpr = production("AsAnnotationExpr",
 	and(KwAs, delim(), lazy(() => NamedType))
 );
@@ -520,6 +518,13 @@ export const PartialCallSuffix = production("PartialCallSuffix",
 	and(Pipe, lazy(() => CallArgs), Pipe)
 );
 
+// <CallSuffix> := PrefixCallSuffix | PartialCallSuffix;
+//
+// Hidden alias used for the call-suffixes-only tail of the postfix
+// `'` form in ChainExpr (the form where access is terminated but
+// further calls are allowed).
+var CallSuffix = or(PrefixCallSuffix, PartialCallSuffix);
+
 // <ChainSeg> := PrefixCallSuffix | PartialCallSuffix
 //             | DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
 //
@@ -573,30 +578,44 @@ var CallArgList = and(
 	))
 );
 
-// <CallArgs> := (_ CallArgList? _) | (Op SingleQuote?);
+// <CallArgs> := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 //
-// The Op-quoted arm requires Op (§10, deferred). Until §10 lands its
-// lazy() ref fails-through and only the CallArgList path is reachable.
+// PEG ordering: Op-arm first, with CloseParen lookahead. The
+// CallArgList arm can match empty (CallArgList? is optional, both
+// trivia `_` slots optional), so it would shadow the Op-arm if
+// tried first — `(+)` would parse with empty CallArgList and then
+// fail at PrefixCallSuffix's CloseParen vs. `+`, with PEG unable
+// to retry the Op-arm.
+//
+// The CloseParen lookahead ensures the Op-arm only commits when
+// the op is the entire content of the parens. Without it,
+// `(?[x]: y)` would consume `?` as a bare Qmark Op and fail at `[`.
+//
+// Op is §10; forward-ref via lazy().
 var CallArgs = or(
-	and(delim(), optional(CallArgList), delim()),
-	and(lazy(() => Op), optional(SingleQuote))
+	and(lazy(() => Op), optional(SingleQuote), lookahead(CloseParen)),
+	and(delim(), optional(CallArgList), delim())
 );
 
 // AtCallExpr := "None" At (_ AsAnnotationExpr)?
-//             | (AtExpr | (IdentBase _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
 //
 // Arm 1: bare `None@` (None monad constructor, no argument).
 // Arm 2: at-form applied to an ExprNoBlock argument.
 //
 // PEG within arm 2:
 //   - AtExpr first — matches IdentBase+access+adjacent At (no trivia between IdentBase and At).
-//   - `(IdentBase _ At)` — allows trivia between IdentBase and At (AtExpr does not).
+//   - `(IdentBase SingleAccessExpr? _ At)` — allows trivia between IdentBase (with optional access) and At (AtExpr does not).
 //   - MonadConstructor — bare `@` fallback.
 export const AtCallExpr = production("AtCallExpr",
 	or(
 		and(BuiltinNone, At, OptAsAnnotation),
 		and(
-			or(AtExpr, and(IdentBase, delim(), At), MonadConstructor),
+			or(
+				AtExpr,
+				and(IdentBase, optional(SingleAccessExpr), delim(), At),
+				MonadConstructor
+			),
 			delim(),
 			lazy(() => ExprNoBlock),
 			OptAsAnnotation
@@ -629,13 +648,49 @@ var ChainBase = or(
 	IdentifierExpr
 );
 
-// ChainExpr := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
+// ChainExpr := ChainBase
+//              (
+//                  (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
+//                | SingleQuote (_ CallSuffix)*
+//              )
+//              (_ AsAnnotationExpr)?;
 //
-// Requires ≥1 ChainSeg — a bare ChainBase alone (e.g. just an
-// identifier, just a literal) falls through to the later
-// alternatives in BareOperandExprNoEmpty.
+// Requires extension beyond ChainBase — either ≥1 ChainSeg, or a
+// postfix `'` (prime, argument-reversal modifier). A bare ChainBase
+// alone falls through to the later alternatives in
+// BareOperandExprNoEmpty.
+//
+// Postfix `'` is adjacent to the preceding expression (no trivia
+// between), terminates the access chain (no dot/bracket access may
+// follow), and may itself be followed only by zero or more call
+// suffixes — matching its semantics as a function-value modifier.
+// Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
+// `foo.bar'(1,2,3)`, `(+)'(1,2,3)`. Examples that do not: `foo'.bar`,
+// `foo'[0]`, `foo' .bar` (trivia before `'`).
+//
+// PEG arm order: ChainSeg+-first before SingleQuote-only. The
+// ChainSeg+-first arm requires ≥1 ChainSeg via many(); on input
+// where SingleQuote immediately follows ChainBase with no ChainSeg
+// (e.g. `foo'`), the first arm fails at many() and the
+// SingleQuote-only arm fires.
 export const ChainExpr = production("ChainExpr",
-	and(ChainBase, many(and(delim(), ChainSeg)), OptAsAnnotation)
+	and(
+		ChainBase,
+		or(
+			and(
+				many(and(delim(), ChainSeg)),
+				optional(and(
+					SingleQuote,
+					any(and(delim(), CallSuffix))
+				))
+			),
+			and(
+				SingleQuote,
+				any(and(delim(), CallSuffix))
+			)
+		),
+		OptAsAnnotation
+	)
 );
 
 // <CallExpr> := AtCallExpr | ChainExpr;
@@ -647,9 +702,7 @@ var CallExpr = or(AtCallExpr, ChainExpr);
 
 // OpFuncExpr := OpenParen (Op | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket)) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
 //
-// Op (§10) is deferred — its lazy() ref fails-through until §10 lands.
-// In the interim, OpFuncExpr only matches via DotAngleExpr,
-// DotBracketExpr, or the bare `[]` arm.
+// Op is §10; forward-ref via lazy().
 export const OpFuncExpr = production("OpFuncExpr",
 	and(
 		OpenParen,
@@ -669,17 +722,24 @@ export const OpFuncExpr = production("OpFuncExpr",
 // =============================================================
 // §8 UNARY EXPRESSIONS
 // =============================================================
+//
+// Postfix `'` (the prime operator, argument-reversal modifier) is
+// handled as a restricted tail of ChainExpr in §7, not as a UnaryExpr
+// arm. It attaches only where a function value lives, terminates the
+// access chain, and may be followed only by call suffixes.
 
 var Qmark  = tokType("Qmark");
 var Exmark = tokType("Exmark");
 
-var KwQmarkEmpty = tokVal("BooleanOper", "?empty");
+var KwQmarkEmpty  = tokVal("BooleanOper", "?empty");
 var KwExmarkEmpty = tokVal("BooleanOper", "!empty");
 
-// NamedUnaryExpr := ("?empty" | "!empty") _ BinaryAtom (_ AsAnnotationExpr)?;
+// NamedUnaryExpr := NamedUnaryOp _ BinaryAtom (_ AsAnnotationExpr)?;
+//
+// NamedUnaryOp is §10; forward-ref via lazy().
 export const NamedUnaryExpr = production("NamedUnaryExpr",
 	and(
-		or(KwQmarkEmpty, KwExmarkEmpty),
+		lazy(() => NamedUnaryOp),
 		delim(),
 		lazy(() => BinaryAtom),
 		OptAsAnnotation
@@ -696,27 +756,13 @@ export const SymbolicUnaryExpr = production("SymbolicUnaryExpr",
 	)
 );
 
-// PostfixUnaryExpr := (BareOperandExpr | GroupedExpr) SingleQuote (_ AsAnnotationExpr)?;
-//
-// No trivia between operand and SingleQuote (per grammar — the `'`
-// must be adjacent to its operand).
-export const PostfixUnaryExpr = production("PostfixUnaryExpr",
-	and(
-		or(BareOperandExpr, GroupedExpr),
-		SingleQuote,
-		OptAsAnnotation
-	)
-);
-
-// <UnaryExpr> := NamedUnaryExpr | SymbolicUnaryExpr | PostfixUnaryExpr;
+// <UnaryExpr> := NamedUnaryExpr | SymbolicUnaryExpr;
 //
 // PEG order:
 //   - NamedUnaryExpr first: named ?empty/!empty arrive as single
 //     BooleanOper tokens, distinct from bare Qmark/Exmark.
 //   - SymbolicUnaryExpr next: bare ? / ! followed by operand.
-//   - PostfixUnaryExpr last: operand-then-quote shape, disjoint
-//     opener from the prefix forms.
-var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr, PostfixUnaryExpr);
+var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 
 
 // =============================================================
@@ -731,10 +777,8 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr, PostfixUnaryExpr);
 // dispatcher falls through to the next tier. Pure atoms traverse
 // all tiers and resolve at BinaryAtom — no spurious wrappers.
 //
-// All op refs forward to §10 via lazy(). Until §10 lands, every
-// iter fails (no operator can match) and the whole ladder
-// collapses to BinaryAtom — preserving the current OperandExpr
-// behavior (literals / identifiers reachable through Expr).
+// All op refs forward to §10 via lazy() (forward-ref, §10 appears
+// later in this file).
 
 // <BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
 //               | UnaryExpr | BareOperandExpr | GroupedOpExpr;
@@ -797,9 +841,7 @@ var OrDispatch = or(OrBinExpr, AndDispatch);
 // <FlowLHS>   := CondClause | OrDispatch;
 // <FlowRHS>   := BlockExpr  | OrDispatch;
 //
-// CondClause (§14) and BlockExpr (§11) are forward refs that
-// fail-through until those sections land. In the interim, both
-// LHS and RHS resolve to OrDispatch.
+// CondClause (§14) and BlockExpr (§11) are forward-refs via lazy().
 var FlowLHS = or(lazy(() => CondClause), OrDispatch);
 var FlowRHS = or(lazy(() => BlockExpr),  OrDispatch);
 export const FlowBinExpr = production("FlowBinExpr",
@@ -896,36 +938,50 @@ var CompareOp = or(NamedCompareOp, SymbolicCompareOp);
 var AddOp = or(and(Dollar, Plus), Plus, Hyphen);
 var MulOp = or(Star, ForwardSlash);
 
-// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
-var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod);
+// <NamedUnaryOp> := "?empty" | "!empty";
+// <UnaryOpSym>   := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
+var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
+var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod);
 
-// <Op> := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | UnaryOpSym;
+// <Op> := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 //
 // Longest-prefix concerns resolved by this ordering:
 //   - FlowOp (`+>`, `<+`, `#>`) before AddOp (`+`) and before
 //     anything matching bare `<` / `>`.
 //   - CompareOp (?<=, !<>, etc.) before UnaryOpSym (bare ?, !).
+//   - NamedUnaryOp (?empty/!empty) before UnaryOpSym — disjoint at
+//     the lex token level (BooleanOper vs. bare Qmark/Exmark), so
+//     order is mechanical; matches the named-then-symbolic pattern
+//     used elsewhere.
 //   - Within FlowOp, ComprOp's `~<` is disjoint from everything
 //     downstream (Tilde appears nowhere else in Op).
-var Op = or(FlowOp, OrOp, AndOp, CompareOp, AddOp, MulOp, UnaryOpSym);
+var Op = or(FlowOp, OrOp, AndOp, CompareOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
 
 
 // =============================================================
 // §11 BLOCK EXPRESSIONS
 // =============================================================
 
-// VarDefInit := Identifier _ Colon _ ExprNoBlock;
+// VarDefInit := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
+//
+// Required init form — used by DefBlockStmt's BlockDefsInit. Accepts
+// destructure-with-init (e.g., `def (< :x >: getThing()) { ... };`).
 export const VarDefInit = production("VarDefInit",
-	and(Identifier, delim(), Colon, delim(), ExprNoBlock)
+	and(
+		or(Identifier, DestructureTarget),
+		delim(), Colon, delim(),
+		ExprNoBlock
+	)
 );
 
-// <VarDefInitOpt> := (Identifier (_ Colon _ ExprNoBlock)?) | DestructureTarget;
+// <VarDefInitOpt> := (Identifier        (_ Colon _ ExprNoBlock)?)
+//                  | (DestructureTarget (_ Colon _ ExprNoBlock)?);
 //
-// PEG order: Identifier-led first; DestructureTarget's OpenAngle
-// opener is disjoint.
+// Both arms carry the optional `: ExprNoBlock` initializer. Enables
+// destructure-with-init in block-defs clauses.
 var VarDefInitOpt = or(
-	and(Identifier, optional(and(delim(), Colon, delim(), ExprNoBlock))),
-	DestructureTarget
+	and(Identifier,        optional(and(delim(), Colon, delim(), ExprNoBlock))),
+	and(DestructureTarget, optional(and(delim(), Colon, delim(), ExprNoBlock)))
 );
 
 // <VarDefInitList> := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
@@ -1089,9 +1145,9 @@ var FuncBodyStmts = and(
 	optional(FuncBodyStmtSemiOpt)
 );
 
-// FuncBodyExpr := Caret _ ExprNoBlock;
+// FuncBodyExpr := Caret _ (ExprNoBlock | GroupedExpr);
 export const FuncBodyExpr = production("FuncBodyExpr",
-	and(Caret, delim(), ExprNoBlock)
+	and(Caret, delim(), or(ExprNoBlock, GroupedExpr))
 );
 
 // FuncBodyPipeline := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
@@ -1365,27 +1421,26 @@ var DoStmtSemiOpt = and(optional(DoStmt), any (and(delim(), Semicolon)));
 
 // <DoBlockStmts> := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
 //
-// PEG ORDERING — diverges from grammar's textual order. The grammar
-// has `(DoStmtSemiOpt | DoFinalUnwrapExpr)?` but DoStmtSemiOpt is
-// `DoStmt? (_ Semicolon)*` — both halves optional, so it matches
-// empty. If tried first, DoFinalUnwrapExpr would never be reached.
-// Same shape as §15's IndepMatchStmts reordering. Grammar text in
-// Syntactic-Grammar.md needs the same swap for round-trippability.
+// PEG ORDERING: DoFinalUnwrapExpr before DoStmtSemiOpt — DoStmtSemiOpt
+// is `DoStmt? (_ Semicolon)*` with both halves optional, so it
+// matches empty. If tried first, DoFinalUnwrapExpr would never be
+// reached. Same shape as §15's IndepMatchStmts reordering.
 var DoBlockStmts = and(
 	any(and(DoStmtSemi, delim())),
 	optional(or(DoFinalUnwrapExpr, DoStmtSemiOpt))
 );
 
-// <DoVarDefInitOpt> := (Identifier (_ (DoubleColon | Colon) _ ExprNoBlock)?) | DestructureTarget;
-//
-// DoubleColon and Colon are distinct lex token types — order within
-// the inner or() is mechanical.
+// <DoVarDefInitOpt> := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
+//                    | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 var DoVarDefInitOpt = or(
 	and(
 		Identifier,
 		optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))
 	),
-	DestructureTarget
+	and(
+		DestructureTarget,
+		optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))
+	)
 );
 
 // <DoVarDefInitOptList> := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
@@ -1465,11 +1520,11 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 var Ampersand = tokType("Ampersand");
 var Percent   = tokType("Percent");
 
-// PickValue := Ampersand IdentifierExpr;
+// PickValue := Ampersand IdentBase MultiAccessExpr?;
 //
-// No trivia between Ampersand and IdentifierExpr (per grammar).
+// No trivia between Ampersand and IdentBase (per grammar).
 export const PickValue = production("PickValue",
-	and(Ampersand, IdentifierExpr)
+	and(Ampersand, IdentBase, optional(MultiAccessExpr))
 );
 
 // <ComputedPropName> := Percent (PipelineTopic | IdentifierExpr | StringLit);
@@ -1887,95 +1942,99 @@ export async function *parseFoi(input) {
 // 	"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
 // 	"deft D A.B.C; " +                                     // 3-segment dotted NamedType
 // 	"deft H (*int) ^empty;";                               // single-arg gather func (FuncTypeArgList alt-2)
-var testInput = `export {
-  :playlist, :clear, :play, :resume, :pause, :stop,
-  :onPlay, :onTimeUpdate, :onPause, :onStop,
-};
+// var testInput =
+// 	"def t: <0, &nums.<1,3>, &person.last, 8>; " +                      // #4: PickValue with access
+// 	"defn fn() ^(Promise ~<< { def x:: getX(); ::x; }); " +             // #5: ^(DoCompr) return
+// 	"Maybe._ @ 42; " +                                                  // #6: AtCallExpr access-with-trivia
+// 	"def (< :p, capt: items.0 >: getOrder(123)) { p; }; " +             // #8 §11: destructure-with-init in block-defs
+// 	"Maybe ~<< (< :v >:: getMaybe()) { v; };";                          // #8 §16: do-destructure-with-init
+// var testInput = `export {
+//   :playlist, :clear, :play, :resume, :pause, :stop,
+//   :onPlay, :onTimeUpdate, :onPause, :onStop,
+// };
 
-def queue: <>;
-def player: Audio();
+// def queue: <>;
+// def player: Audio();
 
-defn onPlayNext(url) ^<>;
-defn next() ^playlist(queue, false, false, onPlayNext);
-defn nextLoop() ^playlist(queue, false, true, onPlayNext);
+// defn onPlayNext(url) ^<>;
+// defn next() ^playlist(queue, false, false, onPlayNext);
+// defn nextLoop() ^playlist(queue, false, true, onPlayNext);
 
-defn playlist(
-    urls,
-    clear: false,
-    loop: false,
-    onNext: onPlayNext
-  )
-  :over(queue,onPlayNext)
-{
-  def cb: next;
-  ?[loop]: cb := nextLoop;
+// defn playlist(
+//     urls,
+//     clear: false,
+//     loop: false,
+//     onNext: onPlayNext
+//   )
+//   :over(queue,onPlayNext)
+// {
+//   def cb: next;
+//   ?[loop]: cb := nextLoop;
 
-  onPlayNext := onNext;
-  ?[clear]: queue := < &urls >;
+//   onPlayNext := onNext;
+//   ?[clear]: queue := < &urls >;
 
-  ?{
-    ?[size(queue) ?= 0]: {
-      def upcoming: queue.[1..];
-      ?[loop]: queue := < &queue, upcoming >;
+//   ?{
+//     ?[size(queue) ?= 0]: {
+//       def upcoming: queue.[1..];
+//       ?[loop]: queue := < &queue, upcoming >;
 
-      player.src(upcoming);
-      player.removeEventListener("ended", cb);
-      player.addEventListener("ended", cb);
-      player.play();
-      ?[size(queue) ?> 0]: onNext(upcoming)
-    };
-    ?:
-      player.removeEventListener("ended", cb)
-  }
-};
+//       player.src(upcoming);
+//       player.removeEventListener("ended", cb);
+//       player.addEventListener("ended", cb);
+//       player.play();
+//       ?[size(queue) ?> 0]: onNext(upcoming)
+//     };
+//     ?:
+//       player.removeEventListener("ended", cb)
+//   }
+// };
 
-defn clear() :over(queue) {
-  queue := <>;
-  player.removeEventListener("ended", next)
-};
+// defn clear() :over(queue) {
+//   queue := <>;
+//   player.removeEventListener("ended", next)
+// };
 
-defn play(url) {
-  stop();
-  player.src(url);
-  player.play()
-};
+// defn play(url) {
+//   stop();
+//   player.src(url);
+//   player.play()
+// };
 
-defn resume() ^player.play();
+// defn resume() ^player.play();
 
-defn pause() ^player.pause();
+// defn pause() ^player.pause();
 
-defn stop() {
-  player.pause();
-  player.currentTime(0);
-  clear()
-};
+// defn stop() {
+//   player.pause();
+//   player.currentTime(0);
+//   clear()
+// };
 
-defn onPlay(action) {
-  defn cb() ^action(player.src);
-  player.addEventListener("play", cb);
-  ^defn() ^player.removeEventListener("play", cb)
-};
+// defn onPlay(action) {
+//   defn cb() ^action(player.src);
+//   player.addEventListener("play", cb);
+//   ^defn() ^player.removeEventListener("play", cb)
+// };
 
-defn onTimeUpdate(action) {
-  defn cb() ^action(player.src, player.currentTime);
-  player.addEventListener("timeupdate", cb);
-  ^defn() ^player.removeEventListener("timeupdate", cb)
-};
+// defn onTimeUpdate(action) {
+//   defn cb() ^action(player.src, player.currentTime);
+//   player.addEventListener("timeupdate", cb);
+//   ^defn() ^player.removeEventListener("timeupdate", cb)
+// };
 
-defn onPause(action) {
-  defn cb() ^action(player.src);
-  player.addEventListener("pause", cb);
-  ^defn() ^player.removeEventListener("pause", cb)
-};
+// defn onPause(action) {
+//   defn cb() ^action(player.src);
+//   player.addEventListener("pause", cb);
+//   ^defn() ^player.removeEventListener("pause", cb)
+// };
 
-defn onStop(action) {
-  defn cb() ^action(player.src);
-  player.addEventListener("ended", cb);
-  ^defn() ^player.removeEventListener("ended", cb)
-};`;
-
-
-console.log(testInput.slice(800,825));
+// defn onStop(action) {
+//   defn cb() ^action(player.src);
+//   player.addEventListener("ended", cb);
+//   ^defn() ^player.removeEventListener("ended", cb)
+// };`;
+var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
 
 
 for await (let node of parseFoi(testInput)) {

@@ -104,7 +104,7 @@ they modify. Productions carrying `(_ AsAnnotationExpr)?`:
   `StringLit` variants, `DataStructLit`'s two forms, `ClosedRangeExpr`)
 - `IdentifierExpr`'s three arms, `OpFuncExpr`, `ChainExpr`,
   `AtCallExpr`
-- `UnaryExpr`'s three arms, `GuardedExpr`
+- `UnaryExpr`'s two arms, `GuardedExpr`
 
 Productions that do NOT carry `:as` (must be parenthesized to receive
 an annotation): `BinaryExpr` (and all tier iter variants),
@@ -291,13 +291,27 @@ TrailingRangeExpr    := DoublePeriod _ RangeOperand;
    nodes (JS-style: each suffix wraps the previous expression) when
    the interp needs the typed-by-suffix-kind AST.
 
-   ChainExpr requires ≥1 ChainSeg — a bare base alone falls
-   through to its non-chained form via BareOperandExprNoEmpty's
-   later alternatives. *)
+   ChainExpr requires extension beyond ChainBase — either ≥1
+   ChainSeg, or a postfix `'` (prime, argument-reversal modifier).
+   A bare base alone falls through to its non-chained form via
+   BareOperandExprNoEmpty's later alternatives.
+
+   Postfix `'` is adjacent to the preceding expression (no trivia
+   between), terminates the access chain (no dot/bracket access
+   may follow), and may itself be followed only by zero or more
+   call suffixes — matching its semantics as a function-value
+   modifier. Examples that parse: `foo'`, `foo'(1,2,3)`,
+   `foo.bar'`, `foo.bar'(1,2,3)`, `(+)'(1,2,3)`. Examples that
+   do not: `foo'.bar`, `foo'[0]`, `foo' .bar` (trivia before `'`). *)
 
 <CallExpr>     := AtCallExpr | ChainExpr;
 
-ChainExpr      := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
+ChainExpr      := ChainBase
+                  (
+                      (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
+                    | SingleQuote (_ CallSuffix)*
+                  )
+                  (_ AsAnnotationExpr)?;
 
 <ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
                 | OpFuncExpr | GroupedExpr
@@ -307,13 +321,15 @@ ChainExpr      := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
 <ChainSeg>     := PrefixCallSuffix | PartialCallSuffix
                 | DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
 
+<CallSuffix>   := PrefixCallSuffix | PartialCallSuffix;
+
 PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 PartialCallSuffix := Pipe CallArgs Pipe;
 
 AtCallExpr           := "None" At (_ AsAnnotationExpr)?
                       | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
 
-<CallArgs>           := (_ CallArgList? _) | (Op SingleQuote?);
+<CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 <CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
 <CallArgExpr>        := (TriplePeriod _)? (NamedArgExpr | Expr);
 
@@ -335,13 +351,18 @@ PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the fou
 
 ```ebnf
 (* Unary operand restricted to BinaryAtom (tier-1) — `?x + 5` parses
-   as `(?x) + 5`. Use parens for broader operands: `?(x + 5)`. *)
+   as `(?x) + 5`. Use parens for broader operands: `?(x + 5)`.
 
-<UnaryExpr>       := NamedUnaryExpr | SymbolicUnaryExpr | PostfixUnaryExpr;
+   Postfix `'` (the prime operator, argument-reversal modifier) is
+   handled as a restricted tail of ChainExpr in §7, not as a UnaryExpr
+   arm. It attaches only where a function value lives, terminates
+   the access chain, and may be followed only by call suffixes —
+   not by further dot/bracket access. *)
 
-NamedUnaryExpr    := ("?empty" | "!empty") _ BinaryAtom (_ AsAnnotationExpr)?;
+<UnaryExpr>       := NamedUnaryExpr | SymbolicUnaryExpr;
+
+NamedUnaryExpr    := NamedUnaryOp _ BinaryAtom (_ AsAnnotationExpr)?;
 SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
-PostfixUnaryExpr  := (BareOperandExpr | GroupedExpr) SingleQuote (_ AsAnnotationExpr)?;
 ```
 
 ## §9 Binary Expressions (Tier Ladder)
@@ -407,7 +428,7 @@ visible AST node.
 (* Op (used in OpFuncExpr) is the full union of operators —
    anything that can be quoted as a function value. *)
 
-<Op>             := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | UnaryOpSym;
+<Op>             := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 
 <FlowOp>         := ComprOp | PipelineOp | ComposeOp;
 <ComprOp>        := Comprehension | (Tilde OpenAngle);
@@ -424,6 +445,7 @@ visible AST node.
 <AddOp>          := (Dollar Plus) | Plus | Hyphen;
 <MulOp>          := Star | ForwardSlash;
 
+<NamedUnaryOp>   := "?empty" | "!empty";
 <UnaryOpSym>     := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
 ```
 
@@ -649,6 +671,5 @@ FuncTypeFinalArg      := (Star NoUnionTypeExpr) | FuncTypeArg;
   interpretation in practice.
 - **`GroupedExpr` (full-Expr) at non-Expr call sites** — several
   productions reference `GroupedExpr` where a more restrictive
-  variant might be more appropriate: `PostfixUnaryExpr` (§8),
-  `FuncBodyPipeline` (§13), `DoLoopComprExpr` (§16),
-  `ChainBase` (§7).
+  variant might be more appropriate: `FuncBodyPipeline` (§13),
+  `DoLoopComprExpr` (§16), `ChainBase` (§7).
