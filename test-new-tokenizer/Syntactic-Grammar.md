@@ -591,10 +591,48 @@ SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket Cl
 ## §18 Type Definitions
 
 ```ebnf
-(* Deferred — own sub-grammar pass. Placeholder. *)
+(* Type sub-grammar. Used by:
+   - DefTypeStmt (§1) for the body of `deft Name <type>` — accepts the
+     full TypeExpr (union, no-union, or function).
+   - AsAnnotationExpr (§5) for the type after `:as` — accepts only a
+     bare NamedType (matches Foi-Guide usage: `:as int`, `:as Foo`).
 
-DefTypeStmt            := "deft" _ Identifier _ NamedType;
-NamedType              := ???;     (* TBD *)
+   Type forms do NOT carry trailing :as — they are types, not values.
+   Grammar permissive; semantic validation in interp (e.g., interp
+   strings in type position, `int :as bool` chains, etc.). *)
+
+DefTypeStmt           := "deft" _ Identifier _ TypeExpr;
+
+<TypeExpr>            := FuncTypeExpr | NoFuncTypeExpr;
+
+<NoFuncTypeExpr>      := UnionTypeExpr | NoUnionTypeExpr;
+UnionTypeExpr         := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
+
+<NoUnionTypeExpr>     := NestedTypeExpr | NamedType
+                       | EmptyLit | PlainStr | NumberLit | BooleanLit
+                       | DataStructTypeExpr | GroupedTypeExpr;
+
+NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*)
+                       | NativeType;
+<NativeType>          := "int" | "integer" | "float" | "bool" | "boolean" | "string";
+
+NestedTypeExpr        := NamedType _ GroupedTypeExpr;
+
+GroupedTypeExpr       := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
+
+DataStructTypeExpr    := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
+<DataStructTypeList>  := (DataStructTypeEntry (_ Comma _ DataStructTypeEntry)* (_ Comma _ DataStructFinalValType)?)
+                       | DataStructFinalValType;
+<DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
+<DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
+DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
+DataStructFinalValType:= Star NoUnionTypeExpr;
+
+FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ NoUnionTypeExpr;
+<FuncTypeArgList>     := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
+                       | FuncTypeFinalArg;
+FuncTypeArg           := Qmark? NoUnionTypeExpr;
+FuncTypeFinalArg      := (Star NoUnionTypeExpr) | FuncTypeArg;
 ```
 
 ---
@@ -612,8 +650,3 @@ NamedType              := ???;     (* TBD *)
   variant might be more appropriate: `PostfixUnaryExpr` (§8),
   `FuncBodyPipeline` (§13), `DoLoopComprExpr` (§16),
   `ChainBase` (§7).
-- **`DefTypeStmt` deferred** — own sub-grammar pass after the rest
-  of the grammar is verified against real Foi source.
-- **Performance**: bare atoms traverse 7 tier dispatchers (§9). No
-  memoization in the combinator lib. Profile after real source
-  runs through.
