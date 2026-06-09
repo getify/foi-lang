@@ -1017,6 +1017,7 @@ export async function *parseFoi(input) {
 	var handle = parse(Program, tokenize(input), {
 		preserveTerminals: true,
 		preserveDelim: false,
+		memoize: true,
 	});
 	var events = handle.subscribe(presets.parseCommitsAtDepth(1));
 	var runPromise = handle.run();

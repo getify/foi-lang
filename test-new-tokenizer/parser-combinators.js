@@ -168,6 +168,11 @@ function makeSubscription(filter) {
 // `maxPos` points to the furthest position parsing ever reached
 // before the failing alternative caused the cascade of rollbacks
 // back to the call site.
+//
+// `memo` is the packrat memoization table when config.memoize is
+// on. Keyed by "ProductionName@pos"; value is either { ok: false,
+// endPos } (cached failure) or { ok: true, endPos, frame } (cached
+// success with the parsed frame subtree as a clone source).
 // -------------------------------------------------------------
 
 function makeContext(buffer, config) {
@@ -180,6 +185,7 @@ function makeContext(buffer, config) {
 		config,
 		subscribers: [],
 		liveRoots: [],      // matched top-level (parent === null) frames
+		memo: config.memoize ? new Map() : null,
 	};
 	pctx.emit = function emit(ev) {
 		for (let sub of pctx.subscribers) {
@@ -253,6 +259,53 @@ function closeFrameRolledBack(pctx, frame) {
 
 
 // -------------------------------------------------------------
+// MEMO REPLAY
+//
+// cloneFrameSubtree: deep-clone a memoized frame subtree so it
+// can be attached as a child of a different parent. Fresh `id`s
+// from pctx.nextNodeId; new depth/parent pointers; matched arrays
+// shallow-copied; children recursively cloned. Status is forced
+// to "matched" — the memo only stores successful parses, but the
+// original frame's status may have changed to "rolledback" if the
+// outer parse backed out after the original (now-memoed) match.
+//
+// emitClonedSubtree: re-fires open + matched events for the clone
+// in the same order a real parse would (open self, recurse for each
+// child, matched self). Commit events are deferred to cascadeCommit
+// when the parent's parse finalizes — same as for normally-parsed
+// frames.
+// -------------------------------------------------------------
+
+function cloneFrameSubtree(srcFrame, newParent, pctx) {
+	var cloned = {
+		id: pctx.nextNodeId++,
+		production: srcFrame.production,
+		depth: newParent ? newParent.depth + 1 : 0,
+		parent: newParent,
+		children: [],
+		startPos: srcFrame.startPos,
+		endPos: srcFrame.endPos,
+		status: "matched",
+		state: Object.assign({}, srcFrame.state),
+		matched:          srcFrame.matched          ? srcFrame.matched.slice()          : null,
+		matchedPositions: srcFrame.matchedPositions ? srcFrame.matchedPositions.slice() : null,
+	};
+	for (let child of srcFrame.children) {
+		cloned.children.push(cloneFrameSubtree(child, cloned, pctx));
+	}
+	return cloned;
+}
+
+function emitClonedSubtree(pctx, frame) {
+	pctx.emit({ kind: "open", node: frame });
+	for (let child of frame.children) {
+		emitClonedSubtree(pctx, child);
+	}
+	pctx.emit({ kind: "matched", node: frame });
+}
+
+
+// -------------------------------------------------------------
 // SAVEPOINT / ROLLBACK (used by every combinator with backtrack)
 // Captures: input position, the matched-array length of the
 // innermost named frame (if preserving terminals), and the
@@ -262,7 +315,9 @@ function closeFrameRolledBack(pctx, frame) {
 //
 // Note: maxPos is NOT captured / restored — it's monotonic and
 // the whole point is to remember the furthest progress regardless
-// of rollback.
+// of rollback. The memo table is also NOT captured / restored —
+// memoized results are deterministic functions of (name, pos) and
+// remain valid across rollbacks.
 // -------------------------------------------------------------
 
 function savepoint(pctx) {
@@ -463,6 +518,9 @@ export function eof() {
 // gate(predicate): consumes nothing; succeeds iff predicate(innerFrame)
 // returns truthy. Lets state mutations from earlier onMatch callbacks
 // influence flow.
+//
+// NOTE: gate breaks the state-free invariant that packrat memoization
+// relies on. Grammars using gate must NOT enable config.memoize.
 export function gate(predicate) {
 	return async function gateFn(pctx) {
 		var innerFrame = pctx.frameStack[pctx.frameStack.length - 1] || null;
@@ -473,6 +531,9 @@ export function gate(predicate) {
 // dispatch(selector, branches): state-driven alternation.
 // selector(innerFrame) -> key. branches[key] is the chosen sub-parser.
 // Fails iff the key is missing from branches.
+//
+// NOTE: like gate, dispatch is state-dependent and incompatible
+// with config.memoize.
 export function dispatch(selector, branches) {
 	return async function dispatchFn(pctx) {
 		var innerFrame = pctx.frameStack[pctx.frameStack.length - 1] || null;
@@ -503,16 +564,51 @@ export function sepBy1(p, sep) {
 // production(name, grammar): the ONLY way to create a tree node.
 // Opens a frame, runs grammar, closes the frame as matched or
 // rolled-back depending on result. Fresh `state` object on each open.
+//
+// When config.memoize is on, consults pctx.memo at (name, pos)
+// before opening a frame:
+//   - Cached failure → return false immediately. No frame opened,
+//     no events emitted.
+//   - Cached success → clone the memoized frame subtree, attach
+//     under the current parent, advance pos to the cached endPos,
+//     and re-emit open + matched events for the cloned subtree.
+//     Commit events fire later via cascadeCommit, same as for
+//     normally-parsed frames.
+//
+// Memo entries are stored on both success (with the frame as a
+// clone source) and failure (with just the endPos for symmetry,
+// though only the boolean is checked on hit).
 export function production(name, grammar) {
 	return async function prodFn(pctx) {
+		var memoize = !!pctx.memo;
+		var startPos = pctx.pos;
+		var memoKey  = memoize ? (name + "@" + startPos) : null;
+
+		if (memoize && pctx.memo.has(memoKey)) {
+			let entry = pctx.memo.get(memoKey);
+			if (!entry.ok) return false;
+			let parent = pctx.frameStack.length > 0
+				? pctx.frameStack[pctx.frameStack.length - 1]
+				: null;
+			let cloned = cloneFrameSubtree(entry.frame, parent, pctx);
+			if (parent) parent.children.push(cloned);
+			else        pctx.liveRoots.push(cloned);
+			pctx.pos = entry.endPos;
+			pctx.bumpMaxPos();
+			emitClonedSubtree(pctx, cloned);
+			return true;
+		}
+
 		var frame = openFrame(pctx, name);
 		var ok = await grammar(pctx);
 		if (ok) {
 			closeFrameMatched(pctx, frame);
+			if (memoize) pctx.memo.set(memoKey, { ok: true, endPos: pctx.pos, frame });
 			return true;
 		}
 		else {
 			closeFrameRolledBack(pctx, frame);
+			if (memoize) pctx.memo.set(memoKey, { ok: false, endPos: startPos });
 			return false;
 		}
 	};
@@ -587,6 +683,7 @@ export function parse(grammar, input, config) {
 	config = Object.assign({
 		preserveTerminals: false,
 		preserveDelim: false,
+		memoize: false,
 	}, config || {});
 	if (config.preserveDelim && !config.preserveTerminals) {
 		throw new Error("parse(): preserveDelim requires preserveTerminals");
