@@ -1324,6 +1324,141 @@ var MatchExpr = or(IndepMatchExpr, DepMatchExpr);
 
 
 // =============================================================
+// §16 DO-COMPREHENSIONS
+// =============================================================
+
+var DoubleColon = tokType("DoubleColon");
+
+// DoDefVarStmt := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
+//
+// Same opener as DefVarStmt but uses `::` instead of `:`. In <DoStmt>,
+// DoDefVarStmt is tried before Stmt — on a regular `def x:` (Colon, not
+// DoubleColon), DoDefVarStmt backtracks at the DoubleColon match and
+// Stmt's DefVarStmt fires.
+export const DoDefVarStmt = production("DoDefVarStmt",
+	and(
+		KwDef, delim(),
+		or(Identifier, DestructureTarget),
+		delim(), DoubleColon, delim(),
+		lazy(() => Expr)
+	)
+);
+
+// DoFinalUnwrapExpr := DoubleColon _ ExprNoBlock (_ Semicolon)*;
+//
+// Opener `::` is disjoint from any DoStmt — distinguishes the final
+// unwrap form from the rest of a do-block.
+export const DoFinalUnwrapExpr = production("DoFinalUnwrapExpr",
+	and(DoubleColon, delim(), ExprNoBlock, any(and(delim(), Semicolon)))
+);
+
+// <DoStmt> := DoDefVarStmt | Stmt;
+//
+// PEG: DoDefVarStmt first — Stmt's DefVarStmt would otherwise consume
+// `def x:` happily and leave a dangling `:expr` from the user's `::`.
+var DoStmt = or(DoDefVarStmt, Stmt);
+
+// <DoStmtSemi>    := DoStmt? (_ Semicolon)+;
+// <DoStmtSemiOpt> := DoStmt? (_ Semicolon)*;
+var DoStmtSemi    = and(optional(DoStmt), many(and(delim(), Semicolon)));
+var DoStmtSemiOpt = and(optional(DoStmt), any (and(delim(), Semicolon)));
+
+// <DoBlockStmts> := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
+//
+// PEG ORDERING — diverges from grammar's textual order. The grammar
+// has `(DoStmtSemiOpt | DoFinalUnwrapExpr)?` but DoStmtSemiOpt is
+// `DoStmt? (_ Semicolon)*` — both halves optional, so it matches
+// empty. If tried first, DoFinalUnwrapExpr would never be reached.
+// Same shape as §15's IndepMatchStmts reordering. Grammar text in
+// Syntactic-Grammar.md needs the same swap for round-trippability.
+var DoBlockStmts = and(
+	any(and(DoStmtSemi, delim())),
+	optional(or(DoFinalUnwrapExpr, DoStmtSemiOpt))
+);
+
+// <DoVarDefInitOpt> := (Identifier (_ (DoubleColon | Colon) _ ExprNoBlock)?) | DestructureTarget;
+//
+// DoubleColon and Colon are distinct lex token types — order within
+// the inner or() is mechanical.
+var DoVarDefInitOpt = or(
+	and(
+		Identifier,
+		optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))
+	),
+	DestructureTarget
+);
+
+// <DoVarDefInitOptList> := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
+//
+// Permissive comma handling — same shape as CallArgList / VarDefInitOptList.
+var DoVarDefInitOptList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		DoVarDefInitOpt,
+		any(and(delim(), Comma, optional(and(delim(), DoVarDefInitOpt))))
+	))
+);
+
+// <DoBlockDefsInitOpt> := OpenParen _ DoVarDefInitOptList _ CloseParen;
+var DoBlockDefsInitOpt = and(OpenParen, delim(), DoVarDefInitOptList, delim(), CloseParen);
+
+// <DoBareBlockExpr> := OpenBrace _ DoBlockStmts _ CloseBrace;
+var DoBareBlockExpr = and(OpenBrace, delim(), DoBlockStmts, delim(), CloseBrace);
+
+// <DoBlockExpr> := DoBlockDefsInitOpt? _ DoBareBlockExpr;
+var DoBlockExpr = and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr);
+
+// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
+//
+// `~<<` is Tilde + OpenAngle + OpenAngle — three adjacent single-char
+// tokens (no trivia between). Range is bare Identifier or BuiltIn
+// only, not arbitrary expressions.
+export const DoComprExpr = production("DoComprExpr",
+	and(
+		or(Identifier, BuiltIn),
+		delim(),
+		Tilde, OpenAngle, OpenAngle,
+		delim(),
+		DoBlockExpr
+	)
+);
+
+// <DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+//
+// PEG: CallExpr first — IdentifierExpr's bare-identifier match would
+// otherwise shadow ChainExpr. Paren-recursive arm consumes `(` before
+// recursing — no LR.
+var DoLoopIterNoBlockExpr = or(
+	CallExpr,
+	IdentifierExpr,
+	and(OpenParen, delim(), lazy(() => DoLoopIterNoBlockExpr), delim(), CloseParen)
+);
+
+// <DoLoopIterationExpr> := DoBlockExpr | DoLoopIterNoBlockExpr;
+//
+// PEG: DoBlockExpr before DoLoopIterNoBlockExpr — `(x){...}` should
+// parse as DoBlockExpr (defs `x`, body `{...}`) rather than
+// DoLoopIterNoBlockExpr's paren-wrap. Same shape as §5/§13 ordering.
+var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
+
+// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+//
+// `~<*` is Tilde + OpenAngle + Star — three adjacent single-char
+// tokens. PEG ordering for range: ExprNoBlock first; if its
+// GroupedExprNoBlock arm can't reach the inner expr (BlockExpr,
+// DoCompr, etc.), the outer GroupedExpr arm fires.
+export const DoLoopComprExpr = production("DoLoopComprExpr",
+	and(
+		or(ExprNoBlock, GroupedExpr),
+		delim(),
+		Tilde, OpenAngle, Star,
+		delim(),
+		DoLoopIterationExpr
+	)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1381,10 +1516,15 @@ export async function *parseFoi(input) {
 // 	"?[x ?< 5]: x + 1; " +                              // bare GuardedExpr
 // 	"defn clamped(x) ?[x ?< 0]: 0 ^x; " +               // FuncPrecond
 // 	"?[isComplete] ~each { isComplete := true; };";    // FlowLHS as CondClause + FlowRHS as BlockExpr
+// var testInput =
+// 	"?{ [x ?< 0]: -1; [x ?> 0]: 1; ?: 0; }; " +              // Indep with else
+// 	"?(x) { [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
+// 	"?{ [ready]: { go(); }; };";                              // Indep with BlockExpr consequent
 var testInput =
-	"?{ [x ?< 0]: -1; [x ?> 0]: 1; ?: 0; }; " +              // Indep with else
-	"?(x) { [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
-	"?{ [ready]: { go(); }; };";                              // Indep with BlockExpr consequent
+	"List ~<< { def x:: xs; x + 1 }; " +              // basic DoComprExpr + DoDefVarStmt
+	"Id ~<< (x:: foo) { x + 1 }; " +                  // DoBlockDefsInitOpt
+	"Id ~<< { def x:: foo(); ::bar(x); }; " +         // DoFinalUnwrapExpr
+	"Promise ~<* { def r:: get(); };";                // DoLoopComprExpr
 
 
 for await (let node of parseFoi(testInput)) {
