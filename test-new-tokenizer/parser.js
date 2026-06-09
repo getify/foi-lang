@@ -1596,6 +1596,203 @@ var DataStructLit = or(SetLit, RecordTupleLit);
 
 
 // =============================================================
+// §18 TYPE DEFINITIONS
+// =============================================================
+
+var KwDeft = tokVal("Keyword", "deft");
+
+// Native type keyword matchers.
+var KwInt     = tokVal("Keyword", "int");
+var KwInteger = tokVal("Keyword", "integer");
+var KwFloat   = tokVal("Keyword", "float");
+var KwBool    = tokVal("Keyword", "bool");
+var KwBoolean = tokVal("Keyword", "boolean");
+var KwString  = tokVal("Keyword", "string");
+
+// <NativeType> := "int" | "integer" | "float" | "bool" | "boolean" | "string";
+var NativeType = or(KwInt, KwInteger, KwFloat, KwBool, KwBoolean, KwString);
+
+// NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
+//
+// Zero trivia between segments — Period adjacent to both surrounding
+// names (per grammar). PEG: dotted-form first; falls through to
+// NativeType when opener is a Keyword token rather than General/Builtin.
+export const NamedType = production("NamedType",
+	or(
+		and(
+			or(Identifier, BuiltIn),
+			any(and(Period, or(Identifier, BuiltIn)))
+		),
+		NativeType
+	)
+);
+
+// NestedTypeExpr := NamedType _ GroupedTypeExpr;
+export const NestedTypeExpr = production("NestedTypeExpr",
+	and(NamedType, delim(), lazy(() => GroupedTypeExpr))
+);
+
+// <NoUnionTypeExpr> := NestedTypeExpr | NamedType
+//                    | EmptyLit | PlainStr | NumberLit | BooleanLit
+//                    | DataStructTypeExpr | GroupedTypeExpr;
+//
+// PEG: NestedTypeExpr before NamedType (longer; same NamedType opener).
+// Other arms disjoint by opener (literals by token type/value;
+// DataStruct opens with OpenAngle; Grouped opens with OpenBrace).
+var NoUnionTypeExpr = or(
+	NestedTypeExpr,
+	NamedType,
+	EmptyLit,
+	PlainStr,
+	NumberLit,
+	BooleanLit,
+	lazy(() => DataStructTypeExpr),
+	lazy(() => GroupedTypeExpr)
+);
+
+// UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
+export const UnionTypeExpr = production("UnionTypeExpr",
+	and(NoUnionTypeExpr, many(and(delim(), Pipe, delim(), NoUnionTypeExpr)))
+);
+
+// <NoFuncTypeExpr> := UnionTypeExpr | NoUnionTypeExpr;
+//
+// PEG: UnionTypeExpr first; iter requires ≥1 Pipe, backtracks to
+// NoUnionTypeExpr if absent. Same shape as §9 tier dispatchers.
+var NoFuncTypeExpr = or(UnionTypeExpr, NoUnionTypeExpr);
+
+// GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
+//
+// PEG: FuncTypeExpr first (disjoint OpenParen opener). UnionTypeExpr
+// before NoUnionTypeExpr (same backtrack pattern as NoFuncTypeExpr).
+// Optional trailing Pipe on the union arm preserves the legacy's
+// `{int | str |}` permissiveness.
+export const GroupedTypeExpr = production("GroupedTypeExpr",
+	and(
+		OpenBrace, delim(),
+		or(
+			lazy(() => FuncTypeExpr),
+			and(UnionTypeExpr, optional(and(delim(), Pipe))),
+			NoUnionTypeExpr
+		),
+		delim(), CloseBrace
+	)
+);
+
+// DataStructFinalValType := Star NoUnionTypeExpr;
+//
+// No trivia between Star and inner type (per grammar — `*` adjacent
+// to its type, same as GatherParameter in §13).
+export const DataStructFinalValType = production("DataStructFinalValType",
+	and(Star, NoUnionTypeExpr)
+);
+
+// DataStructFieldType := Identifier _ Colon _ DataStructValueType;
+export const DataStructFieldType = production("DataStructFieldType",
+	and(Identifier, delim(), Colon, delim(), lazy(() => DataStructValueType))
+);
+
+// <DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
+//
+// Second arm is dead in PEG — GroupedTypeExpr reaches via
+// NoFuncTypeExpr → NoUnionTypeExpr's last arm — but kept for
+// legacy-grammar fidelity.
+var DataStructValueType = or(NoFuncTypeExpr, lazy(() => GroupedTypeExpr));
+
+// <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
+//
+// PEG: Field first — opens with `Identifier _ Colon`. On bare
+// `Identifier` (no colon follows), backtracks to DataStructValueType,
+// which matches via NoFuncTypeExpr → NamedType.
+var DataStructTypeEntry = or(DataStructFieldType, DataStructValueType);
+
+// <DataStructTypeList> := (DataStructTypeEntry (_ Comma _ DataStructTypeEntry)* (_ Comma _ DataStructFinalValType)?)
+//                       | DataStructFinalValType;
+//
+// PEG: list arm first. FinalValType-only arm (bare `*int`) reached
+// via fallthrough — list arm's DataStructTypeEntry opener doesn't
+// include Star, so `<*int>` falls cleanly to arm 2.
+var DataStructTypeList = or(
+	and(
+		DataStructTypeEntry,
+		any(and(delim(), Comma, delim(), DataStructTypeEntry)),
+		optional(and(delim(), Comma, delim(), DataStructFinalValType))
+	),
+	DataStructFinalValType
+);
+
+// DataStructTypeExpr := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
+export const DataStructTypeExpr = production("DataStructTypeExpr",
+	and(
+		OpenAngle, delim(),
+		optional(DataStructTypeList),
+		delim(),
+		optional(and(Comma, delim())),
+		CloseAngle
+	)
+);
+
+// FuncTypeArg := Qmark? NoUnionTypeExpr;
+export const FuncTypeArg = production("FuncTypeArg",
+	and(optional(Qmark), NoUnionTypeExpr)
+);
+
+// FuncTypeFinalArg := (Star NoUnionTypeExpr) | FuncTypeArg;
+//
+// PEG: gather arm first (distinctive Star opener); bare FuncTypeArg
+// catches the non-gather final-position case.
+export const FuncTypeFinalArg = production("FuncTypeFinalArg",
+	or(
+		and(Star, NoUnionTypeExpr),
+		FuncTypeArg
+	)
+);
+
+// <FuncTypeArgList> := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
+//                    | FuncTypeFinalArg;
+//
+// PEG: list arm first. Single-FinalArg-first would commit on `(int`
+// then fail at unconsumed `, str)` without backtracking past the
+// committed `or` arm. Bare `(*int)` falls through to arm 2.
+var FuncTypeArgList = or(
+	and(
+		FuncTypeArg,
+		any(and(delim(), Comma, delim(), FuncTypeArg)),
+		optional(and(delim(), Comma, delim(), FuncTypeFinalArg))
+	),
+	FuncTypeFinalArg
+);
+
+// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ NoUnionTypeExpr;
+export const FuncTypeExpr = production("FuncTypeExpr",
+	and(
+		OpenParen, delim(),
+		optional(FuncTypeArgList),
+		delim(),
+		optional(and(Comma, delim())),
+		CloseParen,
+		delim(), Caret, delim(),
+		optional(Qmark),
+		delim(),
+		NoUnionTypeExpr
+	)
+);
+
+// <TypeExpr> := FuncTypeExpr | NoFuncTypeExpr;
+//
+// PEG: FuncTypeExpr first (disjoint OpenParen opener). Order mechanical.
+var TypeExpr = or(FuncTypeExpr, NoFuncTypeExpr);
+
+// DefTypeStmt := "deft" _ Identifier _ TypeExpr;
+//
+// <Stmt> orders DefTypeStmt after DefBlockStmt and DefVarStmt —
+// disjoint opener (Keyword "deft" vs "def"). Order mechanical.
+export const DefTypeStmt = production("DefTypeStmt",
+	and(KwDeft, delim(), Identifier, delim(), TypeExpr)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1662,14 +1859,34 @@ export async function *parseFoi(input) {
 // 	"Id ~<< (x:: foo) { x + 1 }; " +                  // DoBlockDefsInitOpt
 // 	"Id ~<< { def x:: foo(); ::bar(x); }; " +         // DoFinalUnwrapExpr
 // 	"Promise ~<* { def r:: get(); };";                // DoLoopComprExpr
+// var testInput =
+// 	"def t: <1, 2, 3>; " +                       // bare tuple via RecordTupleLit
+// 	"def r: <a: 1, b: 2>; " +                    // ExplicitPropDef
+// 	"def c: <:foo, :bar>; " +                    // ConcisePropDef
+// 	"def cp: <%key: 5>; " +                      // ComputedPropName
+// 	"def p: <&existing, c: 3>; " +               // PickValue
+// 	"def s: <[1, 2, 3]>; " +                     // SetLit
+// 	"def n: <<1, 2>, <3, 4>>;";                  // nested RecordTupleLit
 var testInput =
-	"def t: <1, 2, 3>; " +                       // bare tuple via RecordTupleLit
-	"def r: <a: 1, b: 2>; " +                    // ExplicitPropDef
-	"def c: <:foo, :bar>; " +                    // ConcisePropDef
-	"def cp: <%key: 5>; " +                      // ComputedPropName
-	"def p: <&existing, c: 3>; " +               // PickValue
-	"def s: <[1, 2, 3]>; " +                     // SetLit
-	"def n: <<1, 2>, <3, 4>>;";                  // nested RecordTupleLit
+	"deft Status int; " +                                  // bare NativeType
+	"deft Color Red | Green | Blue; " +                    // UnionType (3 arms)
+	"deft Container { Just | Nothing }; " +                // GroupedType containing UnionType
+	"deft Point <x: int, y: int>; " +                      // DataStructType with fields
+	"deft Tuple <int, string, *bool>; " +                  // DataStructType with values + gather
+	"deft Adder (int, int) ^int; " +                       // FuncType
+	"deft Nullary () ^empty; " +                           // empty args + EmptyLit return
+	"deft Optional (?X) ^?Y; " +                           // Qmark args + Qmark return
+	"deft Wrapped List{int}; " +                           // NestedType
+	"deft Dotted Either.Right; " +                         // dotted NamedType (2 segments)
+	"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " + // nested func + string union
+
+	// Edge cases:
+	"deft G <*int>; " +                                    // bare gather as whole list (DataStructTypeList alt-2)
+	"deft V {Red | Green |}; " +                           // trailing | in grouped union
+	"deft P <x: int, y: int,>; " +                         // trailing comma in DataStructType
+	"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
+	"deft D A.B.C; " +                                     // 3-segment dotted NamedType
+	"deft H (*int) ^empty;";                               // single-arg gather func (FuncTypeArgList alt-2)
 
 
 for await (let node of parseFoi(testInput)) {
