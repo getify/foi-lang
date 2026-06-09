@@ -1169,6 +1169,161 @@ export const GuardedExpr = production("GuardedExpr",
 
 
 // =============================================================
+// §15 MATCH EXPRESSIONS
+// =============================================================
+
+// MatchConsequent      := (Colon _ Expr _ Semicolon) | BlockExpr;
+// MatchConsequentNoSemi := (Colon _ Expr) | BlockExpr;
+//
+// PEG: Colon-arm first (disjoint from BlockExpr's OpenBrace opener).
+var MatchConsequent = or(
+	and(Colon, delim(), lazy(() => Expr), delim(), Semicolon),
+	lazy(() => BlockExpr)
+);
+var MatchConsequentNoSemi = or(
+	and(Colon, delim(), lazy(() => Expr)),
+	lazy(() => BlockExpr)
+);
+
+// ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
+//
+// Optional leading `?` distinguishes the bare-else form. PEG-wise
+// the leading-? form must be tried before the bare form at all match-stmt
+// dispatch sites (handled in IndepMatchStmts / DepMatchStmts ordering).
+export const ElseStmt = production("ElseStmt",
+	and(
+		optional(and(Qmark, delim())),
+		MatchConsequentNoSemi,
+		any(and(delim(), Semicolon))
+	)
+);
+
+// --- Independent Match -----------------------------------------
+
+// <IndepCondClause> := (Qmark | Exmark)? BracketExpr;
+//
+// Optional ?/! prefix — bare BracketExpr is the implicit-? form.
+var IndepCondClause = and(optional(or(Qmark, Exmark)), BracketExpr);
+
+// IndepPatternStmt       := IndepCondClause _ MatchConsequent (_ Semicolon)*;
+// IndepPatternStmtNoSemi := IndepCondClause _ MatchConsequentNoSemi;
+export const IndepPatternStmt = production("IndepPatternStmt",
+	and(IndepCondClause, delim(), MatchConsequent, any(and(delim(), Semicolon)))
+);
+
+export const IndepPatternStmtNoSemi = production("IndepPatternStmtNoSemi",
+	and(IndepCondClause, delim(), MatchConsequentNoSemi)
+);
+
+// <IndepMatchStmts> := ((IndepPatternStmt _)+ (ElseStmt | IndepPatternStmtNoSemi)?)
+//                    | IndepPatternStmtNoSemi
+//                    | ElseStmt;
+//
+// PEG ordering within the trailing alt: ElseStmt before
+// IndepPatternStmtNoSemi — ElseStmt opens with optional Qmark+
+// MatchConsequentNoSemi (bare `:expr` or BlockExpr), distinct from
+// IndepPatternStmtNoSemi's required BracketExpr opener. Lead arm
+// (one-or-more IndepPatternStmt) before the single-stmt arms so
+// repeated clauses are gathered.
+var IndepMatchStmts = or(
+	and(
+		many(and(IndepPatternStmt, delim())),
+		optional(or(ElseStmt, IndepPatternStmtNoSemi))
+	),
+	IndepPatternStmtNoSemi,
+	ElseStmt
+);
+
+// IndepMatchExpr := Qmark OpenBrace _ IndepMatchStmts _ CloseBrace;
+//
+// No trivia between Qmark and OpenBrace.
+export const IndepMatchExpr = production("IndepMatchExpr",
+	and(Qmark, OpenBrace, delim(), IndepMatchStmts, delim(), CloseBrace)
+);
+
+// --- Dependent Match -------------------------------------------
+
+// <DepCondBoolOp>   := CompareOp | AndOp | OrOp;
+// <DepCondBoolExpr> := DepCondBoolOp _ CompareDispatch
+//                    | OpenParen _ DepCondBoolExpr _ CloseParen;
+//
+// CompareDispatch is the §9 internal — references the hidden
+// dispatcher directly. Defined in §9 as `var CompareDispatch`.
+var DepCondBoolOp = or(
+	lazy(() => CompareOp),
+	lazy(() => AndOp),
+	lazy(() => OrOp)
+);
+var DepCondBoolExpr = or(
+	and(DepCondBoolOp, delim(), CompareDispatch),
+	and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
+);
+
+// <DepCondExprAtom> := DepCondBoolExpr | ExprNoBlock;
+//
+// DepCondBoolExpr first — operator-led forms are distinct
+// (start with CompareOp/AndOp/OrOp or `(`), but `(` overlaps with
+// ExprNoBlock's GroupedExprNoBlock. The paren form of
+// DepCondBoolExpr requires an inner DepCondBoolExpr (operator-led),
+// so it fails-through cleanly on plain `(expr)`.
+var DepCondExprAtom = or(DepCondBoolExpr, ExprNoBlock);
+
+// <DepCondExprList> := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
+var DepCondExprList = and(
+	DepCondExprAtom,
+	any(and(delim(), Comma, delim(), DepCondExprAtom)),
+	optional(and(delim(), Comma))
+);
+
+// <DepCondClause> := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
+var DepCondClause = and(
+	optional(or(Qmark, Exmark)),
+	OpenBracket, delim(),
+	DepCondExprList,
+	delim(), CloseBracket
+);
+
+// DepPatternStmt       := DepCondClause _ MatchConsequent (_ Semicolon)*;
+// DepPatternStmtNoSemi := DepCondClause _ MatchConsequentNoSemi;
+export const DepPatternStmt = production("DepPatternStmt",
+	and(DepCondClause, delim(), MatchConsequent, any(and(delim(), Semicolon)))
+);
+
+export const DepPatternStmtNoSemi = production("DepPatternStmtNoSemi",
+	and(DepCondClause, delim(), MatchConsequentNoSemi)
+);
+
+// <DepMatchStmts> := ((DepPatternStmt _)+ (ElseStmt | DepPatternStmtNoSemi)?)
+//                  | DepPatternStmtNoSemi
+//                  | ElseStmt;
+var DepMatchStmts = or(
+	and(
+		many(and(DepPatternStmt, delim())),
+		optional(or(ElseStmt, DepPatternStmtNoSemi))
+	),
+	DepPatternStmtNoSemi,
+	ElseStmt
+);
+
+// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen _ OpenBrace _ DepMatchStmts _ CloseBrace;
+//
+// No trivia between Qmark and OpenParen.
+export const DepMatchExpr = production("DepMatchExpr",
+	and(
+		Qmark, OpenParen, delim(), ExprNoBlock, delim(), CloseParen,
+		delim(), OpenBrace, delim(), DepMatchStmts, delim(), CloseBrace
+	)
+);
+
+// <MatchExpr> := IndepMatchExpr | DepMatchExpr;
+//
+// PEG: IndepMatchExpr opens with `?{`, DepMatchExpr opens with `?(`.
+// Disjoint after first two tokens — order by either path works,
+// but IndepMatchExpr first matches grammar order.
+var MatchExpr = or(IndepMatchExpr, DepMatchExpr);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1222,10 +1377,15 @@ export async function *parseFoi(input) {
 // 	"defn typed() :as MyType ^empty; " +
 // 	"defn pipe(x) #> log; " +
 // 	"defn gather(*args) ^args;";
+// var testInput =
+// 	"?[x ?< 5]: x + 1; " +                              // bare GuardedExpr
+// 	"defn clamped(x) ?[x ?< 0]: 0 ^x; " +               // FuncPrecond
+// 	"?[isComplete] ~each { isComplete := true; };";    // FlowLHS as CondClause + FlowRHS as BlockExpr
 var testInput =
-	"?[x ?< 5]: x + 1; " +                              // bare GuardedExpr
-	"defn clamped(x) ?[x ?< 0]: 0 ^x; " +               // FuncPrecond
-	"?[isComplete] ~each { isComplete := true; };";    // FlowLHS as CondClause + FlowRHS as BlockExpr
+	"?{ [x ?< 0]: -1; [x ?> 0]: 1; ?: 0; }; " +              // Indep with else
+	"?(x) { [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
+	"?{ [ready]: { go(); }; };";                              // Indep with BlockExpr consequent
+
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:10}));
