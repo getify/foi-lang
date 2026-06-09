@@ -785,9 +785,8 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 //
 // PEG order: Range first (Closed is two-sided, longest); Unary
 // next (prefix forms consume Qmark/Exmark/?empty/!empty before
-// backtracking, postfix's quote-suffix is disjoint); BareOperandExpr
-// and GroupedOpExpr cover bare atoms and parenthesized op-expressions
-// respectively.
+// backtracking); BareOperandExpr and GroupedOpExpr cover bare atoms
+// and parenthesized op-expressions respectively.
 var BinaryAtom = or(
 	ClosedRangeExpr,
 	LeadingRangeExpr,
