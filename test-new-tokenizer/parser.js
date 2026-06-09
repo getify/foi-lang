@@ -1006,6 +1006,151 @@ export const AssignmentExpr = production("AssignmentExpr",
 
 
 // =============================================================
+// §13 FUNCTION DEFINITIONS
+// =============================================================
+
+var Caret = tokType("Caret");
+
+var KwDefn = tokVal("Keyword", "defn");
+var KwOver = tokVal("Keyword", ":over");
+
+// <ParameterList> := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+//
+// VarDefInitOpt from §11 — Identifier with optional `:` initializer,
+// or DestructureTarget.
+var ParameterList = and(
+	VarDefInitOpt,
+	any(and(delim(), Comma, delim(), VarDefInitOpt))
+);
+
+// GatherParameter := Star Identifier;
+//
+// No trivia between Star and Identifier (per grammar — the `*`
+// must be adjacent to the parameter name).
+export const GatherParameter = production("GatherParameter",
+	and(Star, Identifier)
+);
+
+// FuncPrecond := CondClause _ Colon _ ExprNoBlock;
+//
+// CondClause is §14 (forward-ref via lazy). Until §14 lands,
+// FuncPrecond can't fire — the optional FuncPrecondList slot in
+// DefFuncExpr falls through cleanly.
+export const FuncPrecond = production("FuncPrecond",
+	and(lazy(() => CondClause), delim(), Colon, delim(), ExprNoBlock)
+);
+
+// <FuncPrecondList> := FuncPrecond (_ FuncPrecond)*;
+var FuncPrecondList = and(
+	FuncPrecond,
+	any(and(delim(), FuncPrecond))
+);
+
+// FuncOverClause := ":over" _ OpenParen _ Identifier (_ Comma _ Identifier)* _ CloseParen;
+//
+// No trailing comma in the identifier list (per grammar).
+export const FuncOverClause = production("FuncOverClause",
+	and(
+		KwOver, delim(),
+		OpenParen, delim(),
+		Identifier,
+		any(and(delim(), Comma, delim(), Identifier)),
+		delim(), CloseParen
+	)
+);
+
+// FuncAsClause := ":as" _ Identifier;
+//
+// Identifier, NOT NamedType — FuncAsClause is its own thing,
+// distinct from AsAnnotationExpr's `:as NamedType`.
+export const FuncAsClause = production("FuncAsClause",
+	and(KwAs, delim(), Identifier)
+);
+
+// ReturnExpr := Caret _ Expr;
+export const ReturnExpr = production("ReturnExpr",
+	and(Caret, delim(), lazy(() => Expr))
+);
+
+// <FuncBodyStmt> := ReturnExpr | Stmt;
+//
+// PEG order: ReturnExpr first — opens with Caret, disjoint from
+// all Stmt arms (def/defn/deft/expressions).
+var FuncBodyStmt = or(ReturnExpr, Stmt);
+
+// <FuncBodyStmtSemi>    := FuncBodyStmt (_ Semicolon)+;
+// <FuncBodyStmtSemiOpt> := FuncBodyStmt (_ Semicolon)*;
+var FuncBodyStmtSemi    = and(FuncBodyStmt, many(and(delim(), Semicolon)));
+var FuncBodyStmtSemiOpt = and(FuncBodyStmt, any (and(delim(), Semicolon)));
+
+// <FuncBodyStmts> := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;
+var FuncBodyStmts = and(
+	any(and(FuncBodyStmtSemi, delim())),
+	optional(FuncBodyStmtSemiOpt)
+);
+
+// FuncBodyExpr := Caret _ ExprNoBlock;
+export const FuncBodyExpr = production("FuncBodyExpr",
+	and(Caret, delim(), ExprNoBlock)
+);
+
+// FuncBodyPipeline := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
+//
+// PEG order: BlockExpr before ExprNoBlock so `#> (x){y;}` parses
+// as a BlockExpr (def `x`, body `{y;}`) rather than ExprNoBlock's
+// GroupedExprNoBlock `(x)` with dangling `{y;}` — same shape as §5's
+// Expr ordering fix.
+export const FuncBodyPipeline = production("FuncBodyPipeline",
+	and(
+		PipelineOp, delim(),
+		or(BlockExpr, ExprNoBlock, GroupedExpr)
+	)
+);
+
+// FuncBodyBlock := OpenBrace _ FuncBodyStmts _ CloseBrace;
+export const FuncBodyBlock = production("FuncBodyBlock",
+	and(OpenBrace, delim(), FuncBodyStmts, delim(), CloseBrace)
+);
+
+// <FuncBody> := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
+//
+// Disjoint openers: Caret (Expr), Hash+CloseAngle (Pipeline `#>`),
+// OpenBrace (Block).
+var FuncBody = or(FuncBodyExpr, FuncBodyPipeline, FuncBodyBlock);
+
+// DefFuncExpr := "defn" (_ Identifier At?)?
+//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
+//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+//                _ FuncBody;
+//
+// - Optional name with optional adjacent `@` for naturally-recursive
+//   binding.
+// - One-or-more parameter groups (currying: `defn add(x)(y) …`).
+// - Each clause optional; FuncBody required.
+//
+// PEG inside paren-group: ParameterList | GatherParameter. Openers
+// disjoint (Identifier/OpenAngle vs. Star), so order is mechanical.
+//
+// `:as` on a defn is FuncAsClause, NOT a trailing OptAsAnnotation —
+// DefFuncExpr does not carry the `(_ AsAnnotationExpr)?` tail.
+export const DefFuncExpr = production("DefFuncExpr",
+	and(
+		KwDefn,
+		optional(and(delim(), Identifier, optional(At))),
+		many(and(
+			delim(), OpenParen, delim(),
+			optional(or(ParameterList, GatherParameter)),
+			delim(), CloseParen
+		)),
+		optional(and(delim(), FuncPrecondList)),
+		optional(and(delim(), FuncOverClause)),
+		optional(and(delim(), FuncAsClause)),
+		delim(), FuncBody
+	)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1049,7 +1194,16 @@ export async function *parseFoi(input) {
 // var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
 // var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
 // var testInput = "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };";
-var testInput = "x := 5; foo.bar := 42; foo.bar[0] := y + 1; a.b.c := (1 + 2);";
+// var testInput = "x := 5; foo.bar := 42; foo.bar[0] := y + 1; a.b.c := (1 + 2);";
+var testInput =
+	"defn () ^42; " +
+	"defn add(x, y) ^x + y; " +
+	"defn fact@(n) { n; }; " +
+	"defn curried(x)(y) ^x; " +
+	"defn over_ex(x) :over(y, z) ^x; " +
+	"defn typed() :as MyType ^empty; " +
+	"defn pipe(x) #> log; " +
+	"defn gather(*args) ^args;";
 
 
 for await (let node of parseFoi(testInput)) {
