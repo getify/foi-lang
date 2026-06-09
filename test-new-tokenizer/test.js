@@ -807,7 +807,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		      player.addEventListener("ended", cb);
 		      player.play();
 		      ?[size(queue) ?> 0]: onNext(upcoming)
-		    }
+		    };
 		    ?:
 		      player.removeEventListener("ended", cb)
 		  }
