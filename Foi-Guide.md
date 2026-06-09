@@ -576,12 +576,12 @@ In addition to the definitions-block form just shown, several other expressions 
         // (tmp is block-scoped to the clause)
         ?[mod(x,2) ?= 1]: (tmp) {
             tmp := (x * 3) + 1;
-            ?[tmp ?> 100]: tmp := 100
-            myFn(tmp);
-        }
+            ?[tmp ?> 100]: tmp := 100;
+            myFn(tmp)
+        };
 
         // x is non-zero (and even)?
-        ?[x != 0]: myFn(x)
+        ?[x != 0]: myFn(x);
 
         // otherwise, x must be zero,
         // so skip calling function and
@@ -1914,10 +1914,10 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 
         This loop will keep running as long as `done` is false. The *range* could also have been written as `?[!done]`, but the former should generally be preferred as easier to read.
 
-    - If the `range` expression is omitted, `~each` returns another function that expects a single argument defining the *range*. For example:
+    - To skip the `range` expression (and provide it later), use partial application::
 
         ```java
-        def printAll: ~each log;
+        def printAll: (~each)| , log |;
 
         printAll(< 1, 3, 5, 7, 9 >);
         // 1
