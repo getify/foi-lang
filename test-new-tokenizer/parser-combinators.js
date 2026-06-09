@@ -195,6 +195,15 @@ function makeContext(buffer, config) {
 
 // -------------------------------------------------------------
 // FRAME LIFECYCLE (named productions only)
+//
+// `matched` and `matchedPositions` are kept in lockstep: for
+// each matched terminal (or recorded delim), `matched` holds the
+// element and `matchedPositions` holds its `pctx.pos` at consumption
+// time. shapeNode uses the positions to interleave terminals with
+// child frames in source order — necessary because with
+// `preserveDelim: false` the parent's pos advances over delim
+// tokens that aren't recorded in `matched`, so a naive
+// one-position-per-matched-entry count is wrong.
 // -------------------------------------------------------------
 
 function openFrame(pctx, name) {
@@ -211,7 +220,8 @@ function openFrame(pctx, name) {
 		endPos: null,
 		status: "open",
 		state: {},
-		matched: pctx.config.preserveTerminals ? [] : null,
+		matched:          pctx.config.preserveTerminals ? [] : null,
+		matchedPositions: pctx.config.preserveTerminals ? [] : null,
 	};
 	if (parent) parent.children.push(frame);
 	pctx.frameStack.push(frame);
@@ -272,7 +282,8 @@ function restoreSavepoint(pctx, sp) {
 			cascadeRollback(pctx, detached);
 		}
 		if (sp.innerFrame.matched) {
-			sp.innerFrame.matched.length = sp.matchedLen;
+			sp.innerFrame.matched.length          = sp.matchedLen;
+			sp.innerFrame.matchedPositions.length = sp.matchedLen;
 		}
 	}
 	pctx.pos = sp.pos;
@@ -319,6 +330,7 @@ export function terminal(predicate, onMatch) {
 		if (!predicate(el, innerFrame)) return false;
 		if (innerFrame && innerFrame.matched) {
 			innerFrame.matched.push(el);
+			innerFrame.matchedPositions.push(pctx.pos);
 		}
 		if (onMatch) onMatch(el, innerFrame);
 		pctx.pos++;
@@ -519,7 +531,10 @@ export function production(name, grammar) {
 function recordDelim(pctx, el) {
 	if (!(pctx.config.preserveTerminals && pctx.config.preserveDelim)) return;
 	var innerFrame = pctx.frameStack[pctx.frameStack.length - 1];
-	if (innerFrame && innerFrame.matched) innerFrame.matched.push(el);
+	if (innerFrame && innerFrame.matched) {
+		innerFrame.matched.push(el);
+		innerFrame.matchedPositions.push(pctx.pos);
+	}
 }
 
 // delim(): zero or more whitespace OR comment tokens, any mix.
@@ -696,30 +711,27 @@ export const presets = {
 //   When a shaper is registered for a production, it receives the
 //   raw frame and the merged `parts` array, and returns a custom
 //   AST node shape.
+//
+// Merge logic: each matched terminal carries its input position in
+// frame.matchedPositions (parallel array to frame.matched).
+// Children carry startPos/endPos. We walk children and, before each
+// one, drain any terminals whose recorded position falls before the
+// child's startPos. Robust to `preserveDelim: false` — delim tokens
+// advance pctx.pos without being added to matched, so the position-
+// gap between consecutive matched entries can be > 1.
 export function shapeNode(frame, shapers) {
 	var shapedChildren = frame.children.map(c => shapeNode(c, shapers));
-	var tokens = frame.matched || [];
+	var tokens   = frame.matched          || [];
+	var tokenPos = frame.matchedPositions || [];
 
-	// Merge children and tokens in source order. Children have
-	// startPos/endPos in input-stream positions; tokens were
-	// consumed in match order (= source order) by the parent
-	// frame's direct terminal() calls.
-	//
-	// frame.matched only contains terminals consumed DIRECTLY by
-	// this frame — not by descendant frames. So the count of
-	// terminals between consecutive child frames equals the
-	// position-gap (child[i+1].startPos - child[i].endPos).
 	var parts = [];
-	var pos = frame.startPos;
 	var ti = 0;
 	for (let i = 0; i < frame.children.length; i++) {
 		let child = frame.children[i];
-		while (pos < child.startPos && ti < tokens.length) {
+		while (ti < tokens.length && tokenPos[ti] < child.startPos) {
 			parts.push(tokens[ti++]);
-			pos++;
 		}
 		parts.push(shapedChildren[i]);
-		pos = child.endPos;
 	}
 	while (ti < tokens.length) {
 		parts.push(tokens[ti++]);
