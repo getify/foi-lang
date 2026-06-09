@@ -1202,7 +1202,7 @@ def middle: numbers.[1..3];         // < 4, 5, 6 >
 (.[1..3])(numbers);                 // < 4, 5, 6 >
 ```
 
-**Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols, nor can the `1..3` expression have whitespace; however, whitespace is allowed *around* the range (`.[ 1..3 ]`).
+**Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols; however, whitespace is allowed *around* the range and its parts (`.[ 1 .. 3 ]`).
 
 A ranged Tuple subset such as `.[2..5]` is a shorthand equivalent for `.<2,3,4,5>` -- selecting out specific indices `2`, `3`, `4`, and `5`.
 
@@ -1408,7 +1408,7 @@ set1 !$= set3;                  // true
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
 ```java
-defn add(x,y) { ^x + y; }
+defn add(x,y) { ^x + y; };
 ```
 
 Function definitions are always hoisted to their enclosing scope:
@@ -1416,7 +1416,7 @@ Function definitions are always hoisted to their enclosing scope:
 ```java
 add(6,12);                          // 18
 
-defn add(x,y) { ^x + y; }
+defn add(x,y) { ^x + y; };
 ```
 
 Function definitions are also expressions (first-class values), so they can be assigned and passed around:
@@ -1505,34 +1505,35 @@ These aspects of the function's signature go beyond parameter [type annotations]
 
 Consider a function that returns `1` if its argument is less than or equal to `1`. We might call this a "base condition" or an "early return" in certain styles of programming.
 
-You *could* write it this way:
+You *might have expected* to write it this way:
 
 ```java
 defn myFn(x) {
-    ?{
-        ?[x ?<= 1]: ^1
-        ?: empty
-    }
+    // warning: this is not valid Foi, for
+    // illustration purposes only
+    ?[x ?<= 1]: ^1
 
     // ..
-}
+};
 ```
 
 The problem is, this `^1` "early return" isn't particularly obvious, and requires reading into the body to determine.
 
-**Foi** functions ***can and should do better***.
+**Foi** functions ***must do better***.
 
 Pre-conditions are [guard expressions](#guard-expressions), of the form `?[    ]: expr` or `![    ]: expr`, which are applied to *guard* against the need to run the function. One or more of these pre-conditions may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
 
-Thus, the above `myFn()` function could be more appropriately defined as:
+Thus, the above `myFn()` function *hoists* that early-return guard clause out to the definition, as a pre-condition:
 
 ```java
 defn myFn(x) ?[x ?<= 1]: 1 {
     // ..
-}
+};
 ```
 
-Pre-conditions are evaluated -- hoisted to the call-site -- before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned (no `^` return sigil) and thus the function invocation is skipped.
+**NOTE:** The `^` return sigil is not used in pre-conditions.
+
+Pre-conditions are evaluated -- hoisted to the call-site -- before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned and thus the function invocation is skipped.
 
 ----
 
@@ -1543,7 +1544,7 @@ For example, if you want to define a function that only computes its result when
 ```java
 defn myFn(x) ![x ?> 10]: empty {
     // ..
-}
+};
 ```
 
 You can read/interpret the `![x ?> 10]: empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
@@ -1557,7 +1558,7 @@ If a function has multiple parameters, a pre-condition may imply a *relationship
 ```java
 defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
-}
+};
 ```
 
 Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the result (from the pre-condition) will be `empty`:
@@ -1565,16 +1566,16 @@ Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is ca
 ```java
 defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
-}
+};
 
 def result1: ?(myFn(5,2)){
-    ![empty]: #
+    ![empty]: #;
     ?: 0
 };
 def result2: ?(myFn(2,5)){
-    ![empty]: #
+    ![empty]: #;
     ?: 0
-/?;
+};
 
 result1;            // 3
 result2;            // 0
@@ -1587,7 +1588,7 @@ Function recursion is supported:
 ```java
 defn factorial(v) ![v ?> 1]: 1 {
     ^v * factorial(v - 1);
-}
+};
 
 factorial(5);                   // 120
 ```
@@ -1597,7 +1598,7 @@ Tail-calls (recursive or not) are automatically optimized by the **Foi** compile
 ```java
 defn factorial(v,tot: 1) ![v ?> 1]: tot {
     ^factorial(v - 1,tot * v);
-}
+};
 
 factorial(5);                   // 120
 ```
@@ -1635,7 +1636,7 @@ defn lookupCustomer(id) :over (customerCache) {
     // but this is disallowed because `count`
     // isn't listed in the `:over` clause:
     count := count + 1;
-}
+};
 ```
 
 **Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `:over` clause. The `:over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
@@ -2316,7 +2317,7 @@ Folds *can even* produce another Record/Tuple result. One typical way to accompl
 ```java
 defn onlyOdds(list,v)
     ![mod(v,2) ?= 1]: list
-        ^list + < v >
+        ^list + < v >;
 
 (~fold)(0..9, <>, onlyOdds);
 // < 1, 3, 5, 7, 9 >
@@ -2539,7 +2540,7 @@ Monadic function returns can also be integrated directly into a function's logic
 defn factorialM(v,tot: Id@ 1) ![v ?> 1]: tot {
     tot := tot ~map (t) { t * v; };
     ^factorialM(v - 1,tot);
-}
+};
 
 factorialM(5);                   // Id{120}
 ```
