@@ -310,8 +310,8 @@ ChainExpr      := ChainBase (_ ChainSeg)+ (_ AsAnnotationExpr)?;
 PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 PartialCallSuffix := Pipe CallArgs Pipe;
 
-AtCallExpr        := "None" At (_ AsAnnotationExpr)?
-                   | (AtExpr | (IdentBase _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+AtCallExpr           := "None" At (_ AsAnnotationExpr)?
+                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
 
 <CallArgs>           := (_ CallArgList? _) | (Op SingleQuote?);
 <CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -444,8 +444,9 @@ DefBlockStmt          := "def" _ BlockDefsInit _ BareBlockExpr;
 <VarDefInitList>      := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
 <VarDefInitOptList>   := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
 
-VarDefInit            := Identifier _ Colon _ ExprNoBlock;
-<VarDefInitOpt>       := (Identifier (_ Colon _ ExprNoBlock)?) | DestructureTarget;
+VarDefInit            := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
+<VarDefInitOpt>       := (Identifier        (_ Colon _ ExprNoBlock)?)
+                       | (DestructureTarget (_ Colon _ ExprNoBlock)?);
 ```
 
 ## §12 Assignment
@@ -478,7 +479,7 @@ FuncOverClause        := ":over" _ OpenParen _ Identifier (_ Comma _ Identifier)
 FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
-FuncBodyExpr          := Caret _ ExprNoBlock;
+FuncBodyExpr          := Caret _ (ExprNoBlock | GroupedExpr);
 FuncBodyPipeline      := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
 FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 
@@ -552,7 +553,8 @@ DoComprExpr             := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ 
 <DoBlockDefsInitOpt>    := OpenParen _ DoVarDefInitOptList _ CloseParen;
 
 <DoVarDefInitOptList>   := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
-<DoVarDefInitOpt>       := (Identifier (_ (DoubleColon | Colon) _ ExprNoBlock)?) | DestructureTarget;
+<DoVarDefInitOpt>       := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
+                         | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 
 DoDefVarStmt            := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
 <DoStmt>                := DoDefVarStmt | Stmt;
@@ -577,7 +579,7 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle (_ AsAnn
 <RecordTupleValue>     := CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
                         | IdentifierExpr | (OpenParen _ RecordTupleValue _ CloseParen);
 
-PickValue              := Ampersand IdentifierExpr;
+PickValue              := Ampersand IdentBase MultiAccessExpr?;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
 ConcisePropDef         := Colon PropertyExpr;
 ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;
