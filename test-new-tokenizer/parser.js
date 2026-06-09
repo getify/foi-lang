@@ -301,12 +301,7 @@ var ExprNoBlock = or(
 );
 
 // <OperandExpr> := BinaryExpr;
-//
-// TEMP — until §9 lands, OperandExpr drops directly to BareOperandExpr
-// so literals and identifiers remain reachable through Expr. When §9
-// arrives, replace with `lazy(() => BinaryExpr)` and the tier ladder
-// will reach BareOperandExpr via BinaryAtom.
-var OperandExpr = lazy(() => BareOperandExpr);
+var OperandExpr = lazy(() => BinaryExpr);
 
 // <BareOperandExpr> := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 var BareOperandExpr = or(
@@ -666,6 +661,250 @@ export const OpFuncExpr = production("OpFuncExpr",
 
 
 // =============================================================
+// §8 UNARY EXPRESSIONS
+// =============================================================
+
+var Qmark  = tokType("Qmark");
+var Exmark = tokType("Exmark");
+
+var KwQmarkEmpty = tokVal("BooleanOper", "?empty");
+var KwExmarkEmpty = tokVal("BooleanOper", "!empty");
+
+// NamedUnaryExpr := ("?empty" | "!empty") _ BinaryAtom (_ AsAnnotationExpr)?;
+export const NamedUnaryExpr = production("NamedUnaryExpr",
+	and(
+		or(KwQmarkEmpty, KwExmarkEmpty),
+		delim(),
+		lazy(() => BinaryAtom),
+		OptAsAnnotation
+	)
+);
+
+// SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
+export const SymbolicUnaryExpr = production("SymbolicUnaryExpr",
+	and(
+		or(Qmark, Exmark),
+		delim(),
+		lazy(() => BinaryAtom),
+		OptAsAnnotation
+	)
+);
+
+// PostfixUnaryExpr := (BareOperandExpr | GroupedExpr) SingleQuote (_ AsAnnotationExpr)?;
+//
+// No trivia between operand and SingleQuote (per grammar — the `'`
+// must be adjacent to its operand).
+export const PostfixUnaryExpr = production("PostfixUnaryExpr",
+	and(
+		or(BareOperandExpr, GroupedExpr),
+		SingleQuote,
+		OptAsAnnotation
+	)
+);
+
+// <UnaryExpr> := NamedUnaryExpr | SymbolicUnaryExpr | PostfixUnaryExpr;
+//
+// PEG order:
+//   - NamedUnaryExpr first: named ?empty/!empty arrive as single
+//     BooleanOper tokens, distinct from bare Qmark/Exmark.
+//   - SymbolicUnaryExpr next: bare ? / ! followed by operand.
+//   - PostfixUnaryExpr last: operand-then-quote shape, disjoint
+//     opener from the prefix forms.
+var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr, PostfixUnaryExpr);
+
+
+// =============================================================
+// §9 BINARY EXPRESSIONS (TIER LADDER)
+// =============================================================
+//
+// Tier ladder, tightest → loosest:
+//   Unary → Mul → Add → Compare → And → Or → Flow
+//
+// Each tier has a hidden dispatcher and a visible iter form. The
+// iter requires ≥1 op match at that tier; on no-match the
+// dispatcher falls through to the next tier. Pure atoms traverse
+// all tiers and resolve at BinaryAtom — no spurious wrappers.
+//
+// All op refs forward to §10 via lazy(). Until §10 lands, every
+// iter fails (no operator can match) and the whole ladder
+// collapses to BinaryAtom — preserving the current OperandExpr
+// behavior (literals / identifiers reachable through Expr).
+
+// <BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
+//               | UnaryExpr | BareOperandExpr | GroupedOpExpr;
+//
+// PEG order: Range first (Closed is two-sided, longest); Unary
+// next (prefix forms consume Qmark/Exmark/?empty/!empty before
+// backtracking, postfix's quote-suffix is disjoint); BareOperandExpr
+// and GroupedOpExpr cover bare atoms and parenthesized op-expressions
+// respectively.
+var BinaryAtom = or(
+	ClosedRangeExpr,
+	LeadingRangeExpr,
+	TrailingRangeExpr,
+	UnaryExpr,
+	BareOperandExpr,
+	GroupedOpExpr
+);
+
+// MulBinExpr := BinaryAtom (_ MulOp _ BinaryAtom)+;
+export const MulBinExpr = production("MulBinExpr",
+	and(BinaryAtom, many(and(delim(), lazy(() => MulOp), delim(), BinaryAtom)))
+);
+
+// <MulDispatch> := MulBinExpr | BinaryAtom;
+var MulDispatch = or(MulBinExpr, BinaryAtom);
+
+// AddBinExpr := MulDispatch (_ AddOp _ MulDispatch)+;
+export const AddBinExpr = production("AddBinExpr",
+	and(MulDispatch, many(and(delim(), lazy(() => AddOp), delim(), MulDispatch)))
+);
+
+// <AddDispatch> := AddBinExpr | MulDispatch;
+var AddDispatch = or(AddBinExpr, MulDispatch);
+
+// CompareBinExpr := AddDispatch (_ CompareOp _ AddDispatch)+;
+export const CompareBinExpr = production("CompareBinExpr",
+	and(AddDispatch, many(and(delim(), lazy(() => CompareOp), delim(), AddDispatch)))
+);
+
+// <CompareDispatch> := CompareBinExpr | AddDispatch;
+var CompareDispatch = or(CompareBinExpr, AddDispatch);
+
+// AndBinExpr := CompareDispatch (_ AndOp _ CompareDispatch)+;
+export const AndBinExpr = production("AndBinExpr",
+	and(CompareDispatch, many(and(delim(), lazy(() => AndOp), delim(), CompareDispatch)))
+);
+
+// <AndDispatch> := AndBinExpr | CompareDispatch;
+var AndDispatch = or(AndBinExpr, CompareDispatch);
+
+// OrBinExpr := AndDispatch (_ OrOp _ AndDispatch)+;
+export const OrBinExpr = production("OrBinExpr",
+	and(AndDispatch, many(and(delim(), lazy(() => OrOp), delim(), AndDispatch)))
+);
+
+// <OrDispatch> := OrBinExpr | AndDispatch;
+var OrDispatch = or(OrBinExpr, AndDispatch);
+
+// FlowBinExpr := FlowLHS (_ FlowOp _ FlowRHS)+;
+// <FlowLHS>   := CondClause | OrDispatch;
+// <FlowRHS>   := BlockExpr  | OrDispatch;
+//
+// CondClause (§14) and BlockExpr (§11) are forward refs that
+// fail-through until those sections land. In the interim, both
+// LHS and RHS resolve to OrDispatch.
+var FlowLHS = or(lazy(() => CondClause), OrDispatch);
+var FlowRHS = or(lazy(() => BlockExpr),  OrDispatch);
+export const FlowBinExpr = production("FlowBinExpr",
+	and(FlowLHS, many(and(delim(), lazy(() => FlowOp), delim(), FlowRHS)))
+);
+
+// <FlowDispatch> := FlowBinExpr | OrDispatch;
+var FlowDispatch = or(FlowBinExpr, OrDispatch);
+
+// <BinaryExpr> := FlowDispatch;
+var BinaryExpr = FlowDispatch;
+
+
+// =============================================================
+// §10 OPERATOR FAMILY
+// =============================================================
+//
+// All <Op*> productions are hidden — they match operator tokens
+// in op positions without emitting AST nodes. The visible iter
+// rules in §9 splice them between LHS and RHS. Op (the full
+// union) is consumed by OpFuncExpr (§7) and CallArgs (§7).
+
+var Tilde         = tokType("Tilde");
+var Plus          = tokType("Plus");
+var Hyphen        = tokType("Hyphen");
+var Star          = tokType("Star");
+var ForwardSlash  = tokType("ForwardSlash");
+var Equal         = tokType("Equal");
+var Dollar        = tokType("Dollar");
+var Comprehension = tokType("Comprehension");
+
+// BooleanOper-value matchers for named boolean operators.
+var KwQor    = tokVal("BooleanOper", "?or");
+var KwExor   = tokVal("BooleanOper", "!or");
+var KwQand   = tokVal("BooleanOper", "?and");
+var KwExand  = tokVal("BooleanOper", "!and");
+var KwQin    = tokVal("BooleanOper", "?in");
+var KwExin   = tokVal("BooleanOper", "!in");
+var KwQhas   = tokVal("BooleanOper", "?has");
+var KwExhas  = tokVal("BooleanOper", "!has");
+var KwQasOp  = tokVal("BooleanOper", "?as");
+var KwExasOp = tokVal("BooleanOper", "!as");
+
+// <ComprOp>    := Comprehension | (Tilde OpenAngle);
+// <PipelineOp> := Hash CloseAngle;
+// <ComposeOp>  := (Plus CloseAngle) | (OpenAngle Plus);
+// <FlowOp>     := ComprOp | PipelineOp | ComposeOp;
+//
+// ComprOp's Comprehension arm catches named forms (~map, ~each,
+// etc.) as single tokens; the (Tilde OpenAngle) arm catches the
+// bare `~<` operator as two adjacent tokens. Disjoint — order is
+// per grammar.
+var ComprOp    = or(Comprehension, and(Tilde, OpenAngle));
+var PipelineOp = and(Hash, CloseAngle);
+var ComposeOp  = or(and(Plus, CloseAngle), and(OpenAngle, Plus));
+var FlowOp     = or(ComprOp, PipelineOp, ComposeOp);
+
+// <OrOp>  := "?or"  | "!or";
+// <AndOp> := "?and" | "!and";
+var OrOp  = or(KwQor, KwExor);
+var AndOp = or(KwQand, KwExand);
+
+// <NamedCompareOp>    := "?in" | "!in" | "?has" | "!has" | "?as" | "!as";
+// <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle)
+//                                        | (OpenAngle Equal)
+//                                        | (CloseAngle Equal)
+//                                        | (OpenAngle CloseAngle)
+//                                        | (Dollar Equal)
+//                                        | Equal | OpenAngle | CloseAngle);
+// <CompareOp>         := NamedCompareOp | SymbolicCompareOp;
+//
+// Inner alternation in SymbolicCompareOp is longest-first per
+// grammar: ?<=> before ?<= / ?>= / ?<> / ?$= / ?= / ?< / ?>.
+var NamedCompareOp = or(KwQin, KwExin, KwQhas, KwExhas, KwQasOp, KwExasOp);
+var SymbolicCompareOp = and(
+	or(Qmark, Exmark),
+	or(
+		and(OpenAngle, Equal, CloseAngle),
+		and(OpenAngle, Equal),
+		and(CloseAngle, Equal),
+		and(OpenAngle, CloseAngle),
+		and(Dollar, Equal),
+		Equal,
+		OpenAngle,
+		CloseAngle
+	)
+);
+var CompareOp = or(NamedCompareOp, SymbolicCompareOp);
+
+// <AddOp> := (Dollar Plus) | Plus | Hyphen;
+// <MulOp> := Star | ForwardSlash;
+//
+// AddOp: `$+` first (longest), then bare `+`, then `-`.
+var AddOp = or(and(Dollar, Plus), Plus, Hyphen);
+var MulOp = or(Star, ForwardSlash);
+
+// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
+var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod);
+
+// <Op> := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | UnaryOpSym;
+//
+// Longest-prefix concerns resolved by this ordering:
+//   - FlowOp (`+>`, `<+`, `#>`) before AddOp (`+`) and before
+//     anything matching bare `<` / `>`.
+//   - CompareOp (?<=, !<>, etc.) before UnaryOpSym (bare ?, !).
+//   - Within FlowOp, ComprOp's `~<` is disjoint from everything
+//     downstream (Tilde appears nowhere else in Op).
+var Op = or(FlowOp, OrOp, AndOp, CompareOp, AddOp, MulOp, UnaryOpSym);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -705,7 +944,8 @@ export async function *parseFoi(input) {
 // var testInput = "def x: foo@; def y: (@); def z: #;";
 // var testInput = "def x: arr.[1..5]; def y: arr.[..10]; def z: arr.[5..];";
 // var testInput = "def x: rec.<a, b, c>;";
-var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
+// var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
+var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
 
 
 for await (let node of parseFoi(testInput)) {
