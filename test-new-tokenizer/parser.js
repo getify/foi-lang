@@ -1867,28 +1867,117 @@ export async function *parseFoi(input) {
 // 	"def p: <&existing, c: 3>; " +               // PickValue
 // 	"def s: <[1, 2, 3]>; " +                     // SetLit
 // 	"def n: <<1, 2>, <3, 4>>;";                  // nested RecordTupleLit
-var testInput =
-	"deft Status int; " +                                  // bare NativeType
-	"deft Color Red | Green | Blue; " +                    // UnionType (3 arms)
-	"deft Container { Just | Nothing }; " +                // GroupedType containing UnionType
-	"deft Point <x: int, y: int>; " +                      // DataStructType with fields
-	"deft Tuple <int, string, *bool>; " +                  // DataStructType with values + gather
-	"deft Adder (int, int) ^int; " +                       // FuncType
-	"deft Nullary () ^empty; " +                           // empty args + EmptyLit return
-	"deft Optional (?X) ^?Y; " +                           // Qmark args + Qmark return
-	"deft Wrapped List{int}; " +                           // NestedType
-	"deft Dotted Either.Right; " +                         // dotted NamedType (2 segments)
-	"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " + // nested func + string union
+// var testInput =
+// 	"deft Status int; " +                                  // bare NativeType
+// 	"deft Color Red | Green | Blue; " +                    // UnionType (3 arms)
+// 	"deft Container { Just | Nothing }; " +                // GroupedType containing UnionType
+// 	"deft Point <x: int, y: int>; " +                      // DataStructType with fields
+// 	"deft Tuple <int, string, *bool>; " +                  // DataStructType with values + gather
+// 	"deft Adder (int, int) ^int; " +                       // FuncType
+// 	"deft Nullary () ^empty; " +                           // empty args + EmptyLit return
+// 	"deft Optional (?X) ^?Y; " +                           // Qmark args + Qmark return
+// 	"deft Wrapped List{int}; " +                           // NestedType
+// 	"deft Dotted Either.Right; " +                         // dotted NamedType (2 segments)
+// 	"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " + // nested func + string union
 
-	// Edge cases:
-	"deft G <*int>; " +                                    // bare gather as whole list (DataStructTypeList alt-2)
-	"deft V {Red | Green |}; " +                           // trailing | in grouped union
-	"deft P <x: int, y: int,>; " +                         // trailing comma in DataStructType
-	"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
-	"deft D A.B.C; " +                                     // 3-segment dotted NamedType
-	"deft H (*int) ^empty;";                               // single-arg gather func (FuncTypeArgList alt-2)
+// 	// Edge cases:
+// 	"deft G <*int>; " +                                    // bare gather as whole list (DataStructTypeList alt-2)
+// 	"deft V {Red | Green |}; " +                           // trailing | in grouped union
+// 	"deft P <x: int, y: int,>; " +                         // trailing comma in DataStructType
+// 	"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
+// 	"deft D A.B.C; " +                                     // 3-segment dotted NamedType
+// 	"deft H (*int) ^empty;";                               // single-arg gather func (FuncTypeArgList alt-2)
+var testInput = `export {
+  :playlist, :clear, :play, :resume, :pause, :stop,
+  :onPlay, :onTimeUpdate, :onPause, :onStop,
+};
+
+def queue: <>;
+def player: Audio();
+
+defn onPlayNext(url) ^<>;
+defn next() ^playlist(queue, false, false, onPlayNext);
+defn nextLoop() ^playlist(queue, false, true, onPlayNext);
+
+defn playlist(
+    urls,
+    clear: false,
+    loop: false,
+    onNext: onPlayNext
+  )
+  :over(queue,onPlayNext)
+{
+  def cb: next;
+  ?[loop]: cb := nextLoop;
+
+  onPlayNext := onNext;
+  ?[clear]: queue := < &urls >;
+
+  ?{
+    ?[size(queue) ?= 0]: {
+      def upcoming: queue.[1..];
+      ?[loop]: queue := < &queue, upcoming >;
+
+      player.src(upcoming);
+      player.removeEventListener("ended", cb);
+      player.addEventListener("ended", cb);
+      player.play();
+      ?[size(queue) ?> 0]: onNext(upcoming)
+    };
+    ?:
+      player.removeEventListener("ended", cb)
+  }
+};
+
+defn clear() :over(queue) {
+  queue := <>;
+  player.removeEventListener("ended", next)
+};
+
+defn play(url) {
+  stop();
+  player.src(url);
+  player.play()
+};
+
+defn resume() ^player.play();
+
+defn pause() ^player.pause();
+
+defn stop() {
+  player.pause();
+  player.currentTime(0);
+  clear()
+};
+
+defn onPlay(action) {
+  defn cb() ^action(player.src);
+  player.addEventListener("play", cb);
+  ^defn() ^player.removeEventListener("play", cb)
+};
+
+defn onTimeUpdate(action) {
+  defn cb() ^action(player.src, player.currentTime);
+  player.addEventListener("timeupdate", cb);
+  ^defn() ^player.removeEventListener("timeupdate", cb)
+};
+
+defn onPause(action) {
+  defn cb() ^action(player.src);
+  player.addEventListener("pause", cb);
+  ^defn() ^player.removeEventListener("pause", cb)
+};
+
+defn onStop(action) {
+  defn cb() ^action(player.src);
+  player.addEventListener("ended", cb);
+  ^defn() ^player.removeEventListener("ended", cb)
+};`;
+
+
+console.log(testInput.slice(800,825));
 
 
 for await (let node of parseFoi(testInput)) {
-	console.log(util.inspect(node,{depth:10}));
+	console.log(util.inspect(node,{depth:50}));
 }
