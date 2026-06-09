@@ -328,7 +328,7 @@ if (placeholders.length > 0) {
 	console.log(`Skipped ${placeholders.length} placeholder(s): ${placeholders.join(", ")}`);
 }
 if (parseErrors.length > 0) {
-	console.log(`\nâš ${parseErrors.length} parse error(s):`);
+	console.log(`\n⚠ ${parseErrors.length} parse error(s):`);
 	for (let e of parseErrors) {
 		console.log(`  - ${e.name || "<unknown>"}: ${e.error}`);
 	}
@@ -346,12 +346,12 @@ for (let scc of sccs) {
 
 console.log("\n=== LEFT-RECURSION ANALYSIS ===");
 if (lrCycles.length === 0) {
-	console.log("âœ“ No left-recursion cycles in the first-call graph.");
+	console.log("✓ No left-recursion cycles in the first-call graph.");
 }
 else {
-	console.log(`âœ— Found ${lrCycles.length} LR cycle(s):`);
+	console.log(`✗ Found ${lrCycles.length} LR cycle(s):`);
 	for (let c of lrCycles) {
-		console.log(`\n  Cycle (${c.length} node${c.length === 1 ? "" : "s"}): ${c.join(" â†” ")}`);
+		console.log(`\n  Cycle (${c.length} node${c.length === 1 ? "" : "s"}): ${c.join(" ↔ ")}`);
 		for (let n of c) {
 			let edges = [...firstCalls.get(n)].filter(t => c.includes(t));
 			console.log(`    ${n} first-calls (within cycle): ${edges.join(", ")}`);
