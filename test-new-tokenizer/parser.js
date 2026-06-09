@@ -978,6 +978,34 @@ export const DefBlockStmt = production("DefBlockStmt",
 
 
 // =============================================================
+// §12 ASSIGNMENT
+// =============================================================
+
+// AssignmentExpr := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
+//
+// LHS PEG order: access-form arm (IdentBase + SingleAccessExpr)
+// precedes bare Identifier so `foo.bar := 5` reaches the access
+// form rather than parsing `foo` as bare Identifier with dangling
+// `.bar := 5`.
+//
+// No trivia between Colon and Equal (per grammar — `:=` is a
+// two-token operator at the syn layer, not a lex-level token).
+// No `:as` tail — parenthesize to annotate.
+export const AssignmentExpr = production("AssignmentExpr",
+	and(
+		or(
+			and(IdentBase, SingleAccessExpr),
+			Identifier
+		),
+		delim(),
+		Colon, Equal,
+		delim(),
+		lazy(() => Expr)
+	)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1019,7 +1047,8 @@ export async function *parseFoi(input) {
 // var testInput = "def x: rec.<a, b, c>;";
 // var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
 // var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
-var testInput = "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };";
+// var testInput = "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };";
+var testInput = "x := 5; foo.bar := 42; foo.bar[0] := y + 1; a.b.c := (1 + 2);";
 
 
 for await (let node of parseFoi(testInput)) {
