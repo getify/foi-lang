@@ -281,12 +281,18 @@ export const AsAnnotationExpr = production("AsAnnotationExpr",
 	and(KwAs, delim(), lazy(() => NamedType))
 );
 
-// <Expr> := ExprNoBlock | BlockExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
+// <Expr> := DoComprExpr | DoLoopComprExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+//
+// PEG ordering: BlockExpr precedes ExprNoBlock so `(x){y;}` parses
+// as a BlockExpr (bare-identifier def `x`, body `{y;}`) rather
+// than ExprNoBlock's GroupedExprNoBlock `(x)` with dangling
+// `{y;}`. BlockExpr fails-through to ExprNoBlock when no `{`
+// follows the optional defs-init.
 var Expr = or(
-	lazy(() => ExprNoBlock),
-	lazy(() => BlockExpr),
 	lazy(() => DoComprExpr),
 	lazy(() => DoLoopComprExpr),
+	lazy(() => BlockExpr),
+	lazy(() => ExprNoBlock),
 	lazy(() => GroupedExpr)
 );
 
@@ -905,6 +911,73 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AddOp, MulOp, UnaryOpSym);
 
 
 // =============================================================
+// §11 BLOCK EXPRESSIONS
+// =============================================================
+
+// VarDefInit := Identifier _ Colon _ ExprNoBlock;
+export const VarDefInit = production("VarDefInit",
+	and(Identifier, delim(), Colon, delim(), ExprNoBlock)
+);
+
+// <VarDefInitOpt> := (Identifier (_ Colon _ ExprNoBlock)?) | DestructureTarget;
+//
+// PEG order: Identifier-led first; DestructureTarget's OpenAngle
+// opener is disjoint.
+var VarDefInitOpt = or(
+	and(Identifier, optional(and(delim(), Colon, delim(), ExprNoBlock))),
+	DestructureTarget
+);
+
+// <VarDefInitList> := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
+var VarDefInitList = and(
+	VarDefInit,
+	any(and(delim(), Comma, delim(), VarDefInit)),
+	optional(and(delim(), Comma))
+);
+
+// <VarDefInitOptList> := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
+//
+// Permissive comma handling — same shape as CallArgList in §7.
+var VarDefInitOptList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		VarDefInitOpt,
+		any(and(delim(), Comma, optional(and(delim(), VarDefInitOpt))))
+	))
+);
+
+// <BlockDefsInit>    := OpenParen _ VarDefInitList    _ CloseParen;
+// <BlockDefsInitOpt> := OpenParen _ VarDefInitOptList _ CloseParen;
+var BlockDefsInit    = and(OpenParen, delim(), VarDefInitList,    delim(), CloseParen);
+var BlockDefsInitOpt = and(OpenParen, delim(), VarDefInitOptList, delim(), CloseParen);
+
+// <BlockStmts> := (StmtSemi _)* StmtSemiOpt?;
+var BlockStmts = and(
+	any(and(StmtSemi, delim())),
+	optional(StmtSemiOpt)
+);
+
+// <BareBlockExpr> := OpenBrace _ BlockStmts _ CloseBrace;
+var BareBlockExpr = and(OpenBrace, delim(), BlockStmts, delim(), CloseBrace);
+
+// BlockExpr := BlockDefsInitOpt? _ BareBlockExpr (_ AsAnnotationExpr)?;
+export const BlockExpr = production("BlockExpr",
+	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr, OptAsAnnotation)
+);
+
+// DefBlockStmt := "def" _ BlockDefsInit _ BareBlockExpr;
+//
+// `<Stmt>` orders DefBlockStmt before DefVarStmt — both open with
+// `def`, but DefBlockStmt requires a `(...)` defs-init that
+// DefVarStmt's identifier/destructure-target target can't match,
+// so DefBlockStmt fails-through cleanly to DefVarStmt for the
+// `def x: …` form.
+export const DefBlockStmt = production("DefBlockStmt",
+	and(KwDef, delim(), BlockDefsInit, delim(), BareBlockExpr)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -945,7 +1018,8 @@ export async function *parseFoi(input) {
 // var testInput = "def x: arr.[1..5]; def y: arr.[..10]; def z: arr.[5..];";
 // var testInput = "def x: rec.<a, b, c>;";
 // var testInput = 'foo(1, 2); foo.bar(x); ("hi").len; ((42).foo)|y|;';
-var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
+// var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
+var testInput = "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };";
 
 
 for await (let node of parseFoi(testInput)) {

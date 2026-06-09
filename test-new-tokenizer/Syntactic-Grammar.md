@@ -204,7 +204,7 @@ DestructureCapture    := Hash Identifier;
    for its inner content. Call sites reference the variant whose
    inner content they allow. *)
 
-<Expr>                 := DoComprExpr | DoLoopComprExpr | ExprNoBlock | BlockExpr | GroupedExpr;
+<Expr>                 := DoComprExpr | DoLoopComprExpr | BlockExpr | ExprNoBlock | GroupedExpr;
 
 <ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
 
@@ -224,12 +224,18 @@ GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ A
 AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```
 
-PEG ordering note: in `<BareOperandExprNoEmpty>`, `CallExpr`
-(= AtCallExpr | ChainExpr) precedes the bare literal and identifier
-forms so `"hi".len` parses as `ChainExpr` rather than `StringLit`
-with dangling `.len`. Within `CallExpr`, `AtCallExpr` precedes
-`ChainExpr` so `foo@ 5` (an `AtCallExpr`) is preferred over a
-bare AtExpr with dangling `5`.
+PEG ordering notes:
+- In `<Expr>`, `BlockExpr` precedes `ExprNoBlock` so inputs like
+  `(x){y;}` (a BlockExpr with bare-identifier def) parse as a
+  BlockExpr rather than `(x)` as GroupedExprNoBlock with dangling
+  `{y;}`. BlockExpr fails-through cleanly when no `{` follows the
+  optional defs-init, so bare `(x)` still reaches GroupedExprNoBlock
+  via ExprNoBlock.
+- In `<BareOperandExprNoEmpty>`, `CallExpr` (= AtCallExpr | ChainExpr)
+  precedes the bare literal and identifier forms so `"hi".len`
+  parses as `ChainExpr` rather than `StringLit` with dangling `.len`.
+  Within `CallExpr`, `AtCallExpr` precedes `ChainExpr` so `foo@ 5`
+  (an `AtCallExpr`) is preferred over a bare AtExpr with dangling `5`.
 
 ## §6 Identifier / Access Expressions
 
