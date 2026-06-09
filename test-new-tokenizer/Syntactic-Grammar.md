@@ -479,7 +479,7 @@ FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
 FuncBodyExpr          := Caret _ ExprNoBlock;
-FuncBodyPipeline      := PipelineOp _ (ExprNoBlock | BlockExpr | GroupedExpr);
+FuncBodyPipeline      := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
 FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 
 <FuncBodyStmts>       := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;
@@ -488,6 +488,14 @@ FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 <FuncBodyStmt>        := ReturnExpr | Stmt;
 ReturnExpr            := Caret _ Expr;
 ```
+
+PEG ordering note: in `FuncBodyPipeline`, `BlockExpr` precedes
+`ExprNoBlock` so `#> (x){y;}` parses as a BlockExpr (bare-identifier
+def `x`, body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock
+`(x)` with dangling `{y;}`. Same shape as the `<Expr>` ordering in §5.
+The filed concern about GroupedExpr-at-non-Expr-call-sites for
+FuncBodyPipeline still stands — this fix only addresses arm order,
+not the choice of inner-expression variant.
 
 ## §14 Conditionals / Guards
 
