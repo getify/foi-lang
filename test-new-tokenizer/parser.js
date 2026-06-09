@@ -1151,6 +1151,24 @@ export const DefFuncExpr = production("DefFuncExpr",
 
 
 // =============================================================
+// §14 CONDITIONALS / GUARDS
+// =============================================================
+
+// CondClause := (Qmark | Exmark) BracketExpr;
+//
+// No trivia between the ?/! and the `[` — must be adjacent
+// (per grammar). BracketExpr supplies its own internal trivia.
+export const CondClause = production("CondClause",
+	and(or(Qmark, Exmark), BracketExpr)
+);
+
+// GuardedExpr := CondClause _ Colon _ Expr (_ AsAnnotationExpr)?;
+export const GuardedExpr = production("GuardedExpr",
+	and(CondClause, delim(), Colon, delim(), lazy(() => Expr), OptAsAnnotation)
+);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1195,16 +1213,19 @@ export async function *parseFoi(input) {
 // var testInput = "1 + 2 * 3; x ?<= y ?and ?empty list ?or n ?in arr; 5'; data #> f +> g;";
 // var testInput = "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };";
 // var testInput = "x := 5; foo.bar := 42; foo.bar[0] := y + 1; a.b.c := (1 + 2);";
+// var testInput =
+// 	"defn () ^42; " +
+// 	"defn add(x, y) ^x + y; " +
+// 	"defn fact@(n) { n; }; " +
+// 	"defn curried(x)(y) ^x; " +
+// 	"defn over_ex(x) :over(y, z) ^x; " +
+// 	"defn typed() :as MyType ^empty; " +
+// 	"defn pipe(x) #> log; " +
+// 	"defn gather(*args) ^args;";
 var testInput =
-	"defn () ^42; " +
-	"defn add(x, y) ^x + y; " +
-	"defn fact@(n) { n; }; " +
-	"defn curried(x)(y) ^x; " +
-	"defn over_ex(x) :over(y, z) ^x; " +
-	"defn typed() :as MyType ^empty; " +
-	"defn pipe(x) #> log; " +
-	"defn gather(*args) ^args;";
-
+	"?[x ?< 5]: x + 1; " +                              // bare GuardedExpr
+	"defn clamped(x) ?[x ?< 0]: 0 ^x; " +               // FuncPrecond
+	"?[isComplete] ~each { isComplete := true; };";    // FlowLHS as CondClause + FlowRHS as BlockExpr
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:10}));
