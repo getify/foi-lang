@@ -1459,6 +1459,143 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 
 
 // =============================================================
+// §17 DATA STRUCTURE LITERALS
+// =============================================================
+
+var Ampersand = tokType("Ampersand");
+var Percent   = tokType("Percent");
+
+// PickValue := Ampersand IdentifierExpr;
+//
+// No trivia between Ampersand and IdentifierExpr (per grammar).
+export const PickValue = production("PickValue",
+	and(Ampersand, IdentifierExpr)
+);
+
+// <ComputedPropName> := Percent (PipelineTopic | IdentifierExpr | StringLit);
+//
+// No trivia between Percent and inner. PipelineTopic listed first per
+// grammar; IdentifierExpr's BareIdentifier would also match a bare
+// PipelineTopic via IdentBase, so the order distinguishes the shape
+// of the inner node (bare PipelineTopic vs. BareIdentifier-wrapping).
+var ComputedPropName = and(
+	Percent,
+	or(PipelineTopic, IdentifierExpr, StringLit)
+);
+
+// ConcisePropDef := Colon PropertyExpr;
+//
+// No trivia between Colon and PropertyExpr (per grammar). PropertyExpr
+// is Identifier | PositiveIntLit — note no BuiltIn (per §6).
+export const ConcisePropDef = production("ConcisePropDef",
+	and(Colon, PropertyExpr)
+);
+
+// ExplicitPropDef := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;
+export const ExplicitPropDef = production("ExplicitPropDef",
+	and(
+		or(ComputedPropName, PropertyExpr),
+		delim(), Colon, delim(),
+		lazy(() => RecordTupleValue)
+	)
+);
+
+// <RecordProperty> := ConcisePropDef | ExplicitPropDef;
+//
+// Disjoint openers: ConcisePropDef opens with Colon; ExplicitPropDef
+// opens with Percent (ComputedPropName) or Identifier/PositiveIntegerLit
+// (PropertyExpr). Order is mechanical.
+var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
+
+// <RecordTupleValue> := CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
+//                     | DataStructLit | IdentifierExpr
+//                     | (OpenParen _ RecordTupleValue _ CloseParen);
+//
+// PEG: CallExpr first so `foo.bar` parses as ChainExpr rather than
+// IdentifierExpr with dangling `.bar`. DataStructLit before
+// IdentifierExpr — disjoint openers (`<` vs IdentBase). Paren-recursive
+// arm consumes `(` before recursing — no LR.
+var RecordTupleValue = or(
+	CallExpr,
+	EmptyLit,
+	BooleanLit,
+	NumberLit,
+	StringLit,
+	lazy(() => DataStructLit),
+	IdentifierExpr,
+	and(OpenParen, delim(), lazy(() => RecordTupleValue), delim(), CloseParen)
+);
+
+// <RecordTupleEntry> := PickValue | RecordProperty | RecordTupleValue;
+//
+// PEG:
+//   - PickValue first — opens with `&`, disjoint.
+//   - RecordProperty before RecordTupleValue: ExplicitPropDef's
+//     PropertyExpr opener overlaps with RecordTupleValue's IdentifierExpr
+//     opener (both can start with Identifier) and with NumberLit
+//     (both can start with PositiveIntegerLit). ExplicitPropDef
+//     requires a `_ Colon _ value` tail; missing tail backtracks
+//     cleanly to RecordTupleValue.
+//   - RecordTupleValue last.
+var RecordTupleEntry = or(PickValue, RecordProperty, RecordTupleValue);
+
+// <RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
+//
+// Permissive comma handling — same shape as CallArgList.
+var RecordTupleEntryList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		RecordTupleEntry,
+		any(and(delim(), Comma, optional(and(delim(), RecordTupleEntry))))
+	))
+);
+
+// RecordTupleLit := OpenAngle _ RecordTupleEntryList _ CloseAngle (_ AsAnnotationExpr)?;
+export const RecordTupleLit = production("RecordTupleLit",
+	and(
+		OpenAngle, delim(),
+		RecordTupleEntryList,
+		delim(), CloseAngle,
+		OptAsAnnotation
+	)
+);
+
+// <SetEntry>     := PickValue | RecordTupleValue;
+// <SetEntryList> := (_ Comma)* (SetEntry (_ Comma (_ SetEntry)?)*)?;
+//
+// Sets don't carry RecordProperty entries — sets are unordered
+// collections of values, no keys.
+var SetEntry = or(PickValue, RecordTupleValue);
+var SetEntryList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		SetEntry,
+		any(and(delim(), Comma, optional(and(delim(), SetEntry))))
+	))
+);
+
+// SetLit := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle (_ AsAnnotationExpr)?;
+//
+// `<[` and `]>` are two-token compound openers/closers — no trivia
+// between OpenAngle/OpenBracket or CloseBracket/CloseAngle.
+export const SetLit = production("SetLit",
+	and(
+		OpenAngle, OpenBracket, delim(),
+		SetEntryList,
+		delim(), CloseBracket, CloseAngle,
+		OptAsAnnotation
+	)
+);
+
+// <DataStructLit> := SetLit | RecordTupleLit;
+//
+// PEG: SetLit first — `<[` opens with two adjacent tokens while
+// RecordTupleLit's `<` opens with one. On bare `<...>`, SetLit fails
+// fast at the missing OpenBracket and RecordTupleLit fires.
+var DataStructLit = or(SetLit, RecordTupleLit);
+
+
+// =============================================================
 // PUBLIC API
 //
 // parseFoi(input): async generator yielding shaped top-level
@@ -1520,11 +1657,19 @@ export async function *parseFoi(input) {
 // 	"?{ [x ?< 0]: -1; [x ?> 0]: 1; ?: 0; }; " +              // Indep with else
 // 	"?(x) { [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
 // 	"?{ [ready]: { go(); }; };";                              // Indep with BlockExpr consequent
+// var testInput =
+// 	"List ~<< { def x:: xs; x + 1 }; " +              // basic DoComprExpr + DoDefVarStmt
+// 	"Id ~<< (x:: foo) { x + 1 }; " +                  // DoBlockDefsInitOpt
+// 	"Id ~<< { def x:: foo(); ::bar(x); }; " +         // DoFinalUnwrapExpr
+// 	"Promise ~<* { def r:: get(); };";                // DoLoopComprExpr
 var testInput =
-	"List ~<< { def x:: xs; x + 1 }; " +              // basic DoComprExpr + DoDefVarStmt
-	"Id ~<< (x:: foo) { x + 1 }; " +                  // DoBlockDefsInitOpt
-	"Id ~<< { def x:: foo(); ::bar(x); }; " +         // DoFinalUnwrapExpr
-	"Promise ~<* { def r:: get(); };";                // DoLoopComprExpr
+	"def t: <1, 2, 3>; " +                       // bare tuple via RecordTupleLit
+	"def r: <a: 1, b: 2>; " +                    // ExplicitPropDef
+	"def c: <:foo, :bar>; " +                    // ConcisePropDef
+	"def cp: <%key: 5>; " +                      // ComputedPropName
+	"def p: <&existing, c: 3>; " +               // PickValue
+	"def s: <[1, 2, 3]>; " +                     // SetLit
+	"def n: <<1, 2>, <3, 4>>;";                  // nested RecordTupleLit
 
 
 for await (let node of parseFoi(testInput)) {
