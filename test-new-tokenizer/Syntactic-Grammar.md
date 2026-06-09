@@ -548,7 +548,7 @@ DoComprExpr             := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ 
 
 <DoBlockExpr>           := DoBlockDefsInitOpt? _ DoBareBlockExpr;
 <DoBareBlockExpr>       := OpenBrace _ DoBlockStmts _ CloseBrace;
-<DoBlockStmts>          := (DoStmtSemi _)* (DoStmtSemiOpt | DoFinalUnwrapExpr)?;
+<DoBlockStmts>          := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
 <DoBlockDefsInitOpt>    := OpenParen _ DoVarDefInitOptList _ CloseParen;
 
 <DoVarDefInitOptList>   := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
