@@ -204,7 +204,7 @@ DestructureCapture    := Hash Identifier;
    for its inner content. Call sites reference the variant whose
    inner content they allow. *)
 
-<Expr>                 := ExprNoBlock | BlockExpr | DoComprExpr | DoLoopComprExpr | GroupedExpr;
+<Expr>                 := DoComprExpr | DoLoopComprExpr | ExprNoBlock | BlockExpr | GroupedExpr;
 
 <ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
 
@@ -449,7 +449,7 @@ VarDefInit            := Identifier _ Colon _ ExprNoBlock;
    Grammar.md. Excludes multi-pick assignment and pipeline-topic
    assignment. No :as tail — parenthesize. *)
 
-AssignmentExpr        := (Identifier | (IdentBase SingleAccessExpr)) _ Colon Equal _ Expr;
+AssignmentExpr        := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
 ```
 
 ## §13 Function Definitions
@@ -548,7 +548,7 @@ DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
 DoLoopComprExpr         := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 <DoLoopIterationExpr>   := DoBlockExpr | DoLoopIterNoBlockExpr;
-<DoLoopIterNoBlockExpr> := IdentifierExpr | CallExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+<DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 ```
 
 ## §17 Data Structure Literals
@@ -560,8 +560,8 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle (_ AsAnn
 <RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-<RecordTupleValue>     := EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
-                        | IdentifierExpr | CallExpr | (OpenParen _ RecordTupleValue _ CloseParen);
+<RecordTupleValue>     := CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
+                        | IdentifierExpr | (OpenParen _ RecordTupleValue _ CloseParen);
 
 PickValue              := Ampersand IdentifierExpr;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
