@@ -710,17 +710,24 @@ export const ChainExpr = production("ChainExpr",
 // with dangling `5`.
 var CallExpr = or(AtCallExpr, ChainExpr);
 
-// OpFuncExpr := OpenParen (Op | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket)) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
+// OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
 //
-// Op is §10; forward-ref via lazy().
+// PEG ordering: longer-prefix arms first. DotAngleExpr and
+// DotBracketExpr both open with Period — same as Op's UnaryOpSym
+// Period — but consume more. Trying Op first would short-match
+// the bare Period and then fail at CloseParen (since `<1,3>` or
+// `[1..3]` follows), rolling back the whole OpFuncExpr without
+// retrying the longer arms. `[]` opens with OpenBracket (disjoint
+// from Period). Op last catches bare-operator forms `(.)`, `(+)`,
+// `(..)`, etc.
 export const OpFuncExpr = production("OpFuncExpr",
 	and(
 		OpenParen,
 		or(
-			lazy(() => Op),
 			DotAngleExpr,
 			DotBracketExpr,
-			and(OpenBracket, CloseBracket)
+			and(OpenBracket, CloseBracket),
+			lazy(() => Op)
 		),
 		optional(SingleQuote),
 		CloseParen,
@@ -2045,7 +2052,35 @@ export async function *parseFoi(input) {
 // };`;
 // var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
 // var testInput = "(.)(numbers, 1);";
-var testInput = "def last: numbers.-1;";
+// var testInput = "def last: numbers.-1;";
+var testInput =
+	"def numbers: < 4, 5, 6 >; " +
+	"def person: < first: \"Kyle\", last: \"Simpson\" >; " +
+	"numbers.1; person.first; numbers[idx]; person[\"first\"]; " +
+	"(.)(numbers, 1); (.)(person, \"first\"); " +
+	"str.1; size(< a: 1 >); " +
+	"def nums: < 5, 10, 15, %idx: 20, 25 >; " +
+	"def p2: < %\"favorite number\": 42 >; " +
+	"def p3: < :first, :last >; " +
+	"7 ?in numbers; person ?has \"first\"; person !has \"x\"; " +
+	"def r1: 2..13; def r2: two..thirteen; def r3: \"a\"..\"z\"; " +
+	"def r4: (..)(\"a\", \"z\"); " +
+	"odds + evens; " +
+	"numbers.<1,3>; (.<1,3>)(numbers); " +
+	"numbers.[..0]; numbers.[..-2]; numbers.-1; " +
+	"numbers.[-1..]; numbers.[1..]; numbers.[1..3]; " +
+	"(.[1..3])(numbers); " +
+	"def all: < 0, 1, &numbers, 7, 8 >; " +
+	"def odd: < 1, 3, &numbers.1, 7 >; " +
+	"def fr: < first: \"Jenny\", &person.last >; " +
+	"def ev: < 2, &numbers.<1,3>, 8 >; " +
+	"def fb: < 0, 1, &numbers.[..2] >; " +
+	"def pf: < &person.<first,nickname> >; " +
+	"def fewer: < 0, &numbers, 2: empty, 4: empty >; " +
+	"def dm: < %numbers: \"my favorites\" >; dm[numbers]; " +
+	"def un: <[ &something, &another ]>; " +
+	"def mn: numbers $+ < 6, 7 >; " +
+	"set1 ?$= set2; set1 !$= set3;";
 
 
 for await (let node of parseFoi(testInput)) {

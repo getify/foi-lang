@@ -345,7 +345,15 @@ AtCallExpr           := "None" At (_ AsAnnotationExpr)?
 ConciseNamedArg      := Colon Identifier;
 ExplicitNamedArg     := Identifier _ Colon _ Expr;
 
-OpFuncExpr           := OpenParen (Op | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket)) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
+(* PEG ordering inside the alternation: longer-prefix arms first.
+   DotAngleExpr / DotBracketExpr both open with Period — same as
+   Op's UnaryOpSym(Period) — but require more after the Period.
+   If Op is tried first, it matches the bare Period and commits,
+   then OpFuncExpr's outer `and` fails at CloseParen and rolls
+   back the whole production without giving the longer arms a
+   chance. The `[]` arm is disjoint (OpenBracket opener); Op last
+   catches bare-operator forms like `(.)`, `(+)`, `(..)`. *)
+OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
 ```
 
 PEG ordering notes for `<ChainBase>`:
