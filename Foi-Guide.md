@@ -3783,7 +3783,7 @@ def task: IO@ (defn someTask(){
 Notice that the log message didn't actually happen. `IO` instances are lazy. An `IO` instance (which may be a composed chain of many `IO`s) is run on-demand (one or more times), using the `run()` method on the instance:
 
 ```java
-def task = IO@ (defn someTask(){
+def task: IO@ (defn someTask(){
     log("Log messages are a side effect!");
 });
 
@@ -3794,7 +3794,7 @@ task.run();
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
 ```java
-def specialNumber = IO._@ 42;
+def specialNumber: IO._@ 42;
 
 specialNumber.run();   // 42
 ```
@@ -3809,9 +3809,9 @@ defn finish(v) {
     ^incIO(v);
 };
 
-def num = IO._@ 21;
+def num: IO._@ 21;
 
-def task = num
+def task: num
     ~map doubleIO
     ~< finish;
 
