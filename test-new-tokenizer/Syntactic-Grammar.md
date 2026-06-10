@@ -78,6 +78,9 @@ their production names directly.
 `<Name> := ...`. They match as usual but emit no node; children
 splice into the parent. Use for alternation dispatchers and
 punctuation wrappers. Maps onto impl as bare `and(...)` / `or(...)`.
+RHS references inherit the LHS marking, so re-bracketing on use is
+unnecessary — `<X>` on RHS appears only for non-named hidden
+constructs.
 
 **Visible productions** correspond to `production(NAME, ...)` in the
 combinator impl — they appear as named nodes in the AST. Every
@@ -139,7 +142,7 @@ PipelineTopic       := Hash;
    pair (via lex's hidden EscapedNumber dispatch, which splices its
    six (Escape variant, Number variant) pairs as direct children), or
    a bare integer literal of either sign (PositiveIntegerLit or
-   NegativeIntegerLit, unified via the hidden <IntegerLit> from
+   NegativeIntegerLit, unified via the hidden IntegerLit from
    Lexical-Grammar.md). *)
 NumberLit          := (EscapedNumber | Number | IntegerLit) (_ AsAnnotationExpr)?;
 
@@ -266,11 +269,11 @@ MultiAccessExpr      := MultiAccessSeg (_ MultiAccessSeg)*;
 <MultiAccessSeg>     := DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
 
 (* DotIdentifier: dot-access by name (identifier or builtin) or by
-   bare integer index of either sign (via the hidden <IntegerLit>
+   bare integer index of either sign (via the hidden IntegerLit
    union from Lexical-Grammar.md). The negative-index form `arr.-1`
    accesses from the end of an ordered structure. Property-name
    contexts elsewhere (PropertyExpr, AnglePropertyList, record
-   properties) remain positive-only via <PositiveIntLit>. *)
+   properties) remain positive-only via PositiveIntLit. *)
 DotIdentifier        := Period _ (Identifier | BuiltIn | IntegerLit);
 BracketExpr          := OpenBracket _ ExprNoBlock _ CloseBracket;
 DotBracketExpr       := Period OpenBracket _ RangeExpr _ CloseBracket;
@@ -403,18 +406,18 @@ SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
    neither. Semantic validity for non-`~each`/non-comprehension
    ops with these extensions is checked downstream. *)
 
-<BinaryExpr>     := <FlowDispatch>;
+<BinaryExpr>     := FlowDispatch;
 
-<FlowDispatch>   := FlowBinExpr | <OrDispatch>;
-FlowBinExpr      := <FlowLHS> (_ FlowOp _ <FlowRHS>)+;
-<FlowLHS>        := CondClause | <OrDispatch>;
-<FlowRHS>        := BlockExpr | <OrDispatch>;
+<FlowDispatch>   := FlowBinExpr | OrDispatch;
+FlowBinExpr      := FlowLHS (_ FlowOp _ FlowRHS)+;
+<FlowLHS>        := CondClause | OrDispatch;
+<FlowRHS>        := BlockExpr | OrDispatch;
 
-<OrDispatch>     := OrBinExpr | <AndDispatch>;
-OrBinExpr        := <AndDispatch> (_ OrOp _ <AndDispatch>)+;
+<OrDispatch>     := OrBinExpr | AndDispatch;
+OrBinExpr        := AndDispatch (_ OrOp _ AndDispatch)+;
 
-<AndDispatch>    := AndBinExpr | <CompareDispatch>;
-AndBinExpr       := <CompareDispatch> (_ AndOp _ <CompareDispatch>)+;
+<AndDispatch>    := AndBinExpr | CompareDispatch;
+AndBinExpr       := CompareDispatch (_ AndOp _ CompareDispatch)+;
 
 (* Compare tier has two iter forms:
    - TypeCompareBinExpr handles ?as/!as, whose RHS is a NamedType
@@ -425,15 +428,15 @@ AndBinExpr       := <CompareDispatch> (_ AndOp _ <CompareDispatch>)+;
      ops, with regular expression RHS and left-fold iteration.
 
    PEG ordering: TypeCompareBinExpr before CompareBinExpr — both open
-   with <AddDispatch>; disjoint by operator value (?as/!as vs.
+   with AddDispatch; disjoint by operator value (?as/!as vs.
    ?in/!in/?has/!has/symbolic), so order is mechanical. *)
 
-<CompareDispatch>  := TypeCompareBinExpr | CompareBinExpr | <AddDispatch>;
-TypeCompareBinExpr := <AddDispatch> _ AsTypeOp _ NamedType;
-CompareBinExpr     := <AddDispatch> (_ CompareOp _ <AddDispatch>)+;
+<CompareDispatch>  := TypeCompareBinExpr | CompareBinExpr | AddDispatch;
+TypeCompareBinExpr := AddDispatch _ AsTypeOp _ NamedType;
+CompareBinExpr     := AddDispatch (_ CompareOp _ AddDispatch)+;
 
-<AddDispatch>    := AddBinExpr | <MulDispatch>;
-AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;
+<AddDispatch>    := AddBinExpr | MulDispatch;
+AddBinExpr       := MulDispatch (_ AddOp _ MulDispatch)+;
 
 <MulDispatch>    := MulBinExpr | BinaryAtom;
 MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
@@ -499,7 +502,7 @@ Each is a distinct visible AST node.
 <NamedCompareOp> := "?in" | "!in" | "?has" | "!has";
 (* AsTypeOp is separate from CompareOp because its RHS is a NamedType,
    not a regular expression — handled by TypeCompareBinExpr at the
-   Compare tier (§9). Listed in <Op> so `(?as)` / `(!as)` remain valid
+   Compare tier (§9). Listed in Op so `(?as)` / `(!as)` remain valid
    OpFuncExpr forms. *)
 <AsTypeOp>       := "?as" | "!as";
 <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | (Dollar Equal) | Equal | OpenAngle | CloseAngle);
@@ -612,7 +615,7 @@ DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;
 <DepCondExprList>      := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
 <DepCondBoolExpr>      := AsTypeOp _ NamedType
-                        | DepCondBoolOp _ <CompareDispatch>
+                        | DepCondBoolOp _ CompareDispatch
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 
@@ -736,3 +739,5 @@ FuncTypeFinalArg      := (Star NoUnionTypeExpr) | FuncTypeArg;
   productions reference `GroupedExpr` where a more restrictive
   variant might be more appropriate: `FuncBodyPipeline` (§13),
   `DoLoopComprExpr` (§16), `ChainBase` (§7).
+- **`ComputedPropName` (§17)** accepts only `IdentifierExpr`
+  (bare/at/monad), not full access chains.
