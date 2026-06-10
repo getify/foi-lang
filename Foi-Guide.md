@@ -4283,16 +4283,16 @@ deft SimpleFunc (int) ^empty;
 deft InterestingFunc (int,string) ^empty;
 
 def result1: ?(myFn){
-    ?[?as SimpleFunc]: myFn(42)
-    ?[?as InterestingFunction]: myFn(42,"Kyle")
+    ?[?as SimpleFunc]: myFn(42);
+    ?[?as InterestingFunc]: myFn(42,"Kyle");
     ?: myFn()
 };
 
 // or:
 
 def result2: ?{
-    ?[myFn ?as SimpleFunc]: myFn(42)
-    ?[myFn ?as InterestingFunction]: myFn(42,"Kyle")
+    ?[myFn ?as SimpleFunc]: myFn(42);
+    ?[myFn ?as InterestingFunc]: myFn(42,"Kyle");
     ?: myFn()
 };
 ```
