@@ -10,6 +10,27 @@
 // =============================================================
 
 
+// Sentinel returned by buffer.peek() past end-of-input.
+export const EOF = Symbol("EOF");
+
+var isWhitespaceTok = t => t && t.type === "Whitespace";
+var isCommentTok    = t => t && t.type === "Comment";
+
+
+// isDelim(p): true if p is a delim token (Whitespace or Comment).
+// Returns false for shaped AST nodes (which carry production-name
+// types like "BinExpr") and for null/undefined. Intended for use
+// inside custom shapers that do positional extraction from `parts`
+// and want to skip over delim tokens preserved by
+// `preserveDelim: true`. With `preserveDelim: false` (the default
+// in parseFoi), no delim tokens reach `parts` and the filter is a
+// no-op — but writing shapers with the filter in place keeps them
+// correct under either config.
+export function isDelim(p) {
+	return isWhitespaceTok(p) || isCommentTok(p);
+}
+
+
 // lazy(getRef): forward-reference helper. `getRef` is a thunk
 // returning a parser. Useful for recursive grammars where a
 // production references a sibling not yet defined at the point
@@ -39,14 +60,6 @@ export function lazy(getRef) {
 		return await p(pctx);
 	};
 }
-
-
-// Sentinel returned by buffer.peek() past end-of-input.
-export const EOF = Symbol("EOF");
-
-
-var isWhitespaceTok = t => t && t.type === "Whitespace";
-var isCommentTok    = t => t && t.type === "Comment";
 
 
 // -------------------------------------------------------------
@@ -801,13 +814,20 @@ export const presets = {
 //     source order. Tokens are distinguishable from shaped nodes
 //     by having a `value` field (tokens) rather than `parts`
 //     (shaped nodes).
-//   - start, end: input-stream positions (token indices at the syn
-//     layer, char indices at the lex layer).
+//   - start, end: character-level positions in the original source
+//     text. Tokens carry char positions directly from the lex
+//     layer; shaped nodes derive their positions from the .start
+//     of the leftmost descendant and the .end of the rightmost
+//     descendant. These fields are written after the custom-
+//     shaper branch runs, so custom shapers cannot accidentally
+//     drop or mistype them.
 //
 // shapers: { [productionName]: (frame, parts) => node }
 //   When a shaper is registered for a production, it receives the
 //   raw frame and the merged `parts` array, and returns a custom
-//   AST node shape.
+//   AST node shape. The returned object is mutated to attach
+//   char-level start/end; any start/end the shaper itself wrote
+//   are overwritten.
 //
 // Merge logic: each matched terminal carries its input position in
 // frame.matchedPositions (parallel array to frame.matched).
@@ -816,6 +836,11 @@ export const presets = {
 // child's startPos. Robust to `preserveDelim: false` — delim tokens
 // advance pctx.pos without being added to matched, so the position-
 // gap between consecutive matched entries can be > 1.
+//
+// Empty-parts edge case: a production that retained zero elements
+// (all consumed input was filtered delim) yields start/end of null.
+// Visible productions in practical grammars should not hit this;
+// noted here for completeness.
 export function shapeNode(frame, shapers) {
 	var shapedChildren = frame.children.map(c => shapeNode(c, shapers));
 	var tokens   = frame.matched          || [];
@@ -834,12 +859,18 @@ export function shapeNode(frame, shapers) {
 		parts.push(tokens[ti++]);
 	}
 
+	// Derive char-level start/end from the leftmost and rightmost
+	// descendants. Tokens (from the lex layer) and already-shaped
+	// child nodes (from prior recursion) both carry .start/.end as
+	// char positions, so the same indexing works uniformly.
+	var charStart = parts.length > 0 ? parts[0].start              : null;
+	var charEnd   = parts.length > 0 ? parts[parts.length - 1].end : null;
+
 	var shaper = shapers && shapers[frame.production];
-	if (shaper) return shaper(frame, parts);
-	return {
-		type:  frame.production,
-		parts,
-		start: frame.startPos,
-		end:   frame.endPos,
-	};
+	var node = shaper
+		? shaper(frame, parts)
+		: { type: frame.production, parts };
+	node.start = charStart;
+	node.end   = charEnd;
+	return node;
 }
