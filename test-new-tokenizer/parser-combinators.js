@@ -15,20 +15,7 @@ export const EOF = Symbol("EOF");
 
 var isWhitespaceTok = t => t && t.type === "Whitespace";
 var isCommentTok    = t => t && t.type === "Comment";
-
-
-// isDelim(p): true if p is a delim token (Whitespace or Comment).
-// Returns false for shaped AST nodes (which carry production-name
-// types like "BinExpr") and for null/undefined. Intended for use
-// inside custom shapers that do positional extraction from `parts`
-// and want to skip over delim tokens preserved by
-// `preserveDelim: true`. With `preserveDelim: false` (the default
-// in parseFoi), no delim tokens reach `parts` and the filter is a
-// no-op — but writing shapers with the filter in place keeps them
-// correct under either config.
-export function isDelim(p) {
-	return isWhitespaceTok(p) || isCommentTok(p);
-}
+var isDelim         = p => isWhitespaceTok(p) || isCommentTok(p);
 
 
 // lazy(getRef): forward-reference helper. `getRef` is a thunk
@@ -806,28 +793,42 @@ export const presets = {
 };
 
 
-// shapeNode(frame, shapers?)
+// shapeNode(frame, shapers?, options?)
 // Recursively transform a committed frame into an AST node.
 //
-// Default shape: { type, parts, start, end }
-//   - parts: terminals (tokens) and shaped child nodes, merged in
-//     source order. Tokens are distinguishable from shaped nodes
-//     by having a `value` field (tokens) rather than `parts`
-//     (shaped nodes).
-//   - start, end: character-level positions in the original source
-//     text. Tokens carry char positions directly from the lex
-//     layer; shaped nodes derive their positions from the .start
-//     of the leftmost descendant and the .end of the rightmost
-//     descendant. These fields are written after the custom-
-//     shaper branch runs, so custom shapers cannot accidentally
-//     drop or mistype them.
+// options: { preserveDelim?: boolean }
+//   When `preserveDelim` is truthy, every shaped node carries a
+//   `delims` field. It starts as null and becomes an array on
+//   the first delim token encountered at that node's own level
+//   (delims nested inside child productions belong to those
+//   children, not the parent). When `preserveDelim` is absent
+//   or falsy, the `delims` field is omitted entirely.
+//
+// Default shape:
+//   { type, parts, start, end }                  // preserveDelim off
+//   { type, parts, delims, start, end }          // preserveDelim on
+//   - parts: semantic content only — non-delim terminals and
+//     shaped child nodes, merged in source order. Tokens are
+//     distinguishable from shaped nodes by having a `value`
+//     field (tokens) rather than `parts` (shaped nodes).
+//   - delims: delim tokens (Whitespace, Comment) at this node's
+//     own level, in source order. Only present when
+//     preserveDelim is on. null when this node matched none.
+//   - start, end: character-level positions in the original
+//     source text, spanning the full matched range (delims
+//     included). Tokens carry char positions directly from the
+//     lex layer; shaped nodes derive from the .start of the
+//     leftmost descendant and the .end of the rightmost
+//     descendant. These fields (and `delims`, when applicable)
+//     are written after the custom-shaper branch runs, so
+//     custom shapers cannot accidentally drop or mistype them.
 //
 // shapers: { [productionName]: (frame, parts) => node }
-//   When a shaper is registered for a production, it receives the
-//   raw frame and the merged `parts` array, and returns a custom
-//   AST node shape. The returned object is mutated to attach
-//   char-level start/end; any start/end the shaper itself wrote
-//   are overwritten.
+//   When a shaper is registered for a production, it receives
+//   the raw frame and the semantic `parts` array (delim-free,
+//   regardless of preserveDelim setting). The returned object
+//   is mutated to attach start/end — and `delims`, when
+//   preserveDelim is on — at the standard locations.
 //
 // Merge logic: each matched terminal carries its input position in
 // frame.matchedPositions (parallel array to frame.matched).
@@ -837,34 +838,53 @@ export const presets = {
 // advance pctx.pos without being added to matched, so the position-
 // gap between consecutive matched entries can be > 1.
 //
-// Empty-parts edge case: a production that retained zero elements
-// (all consumed input was filtered delim) yields start/end of null.
-// Visible productions in practical grammars should not hit this;
-// noted here for completeness.
-export function shapeNode(frame, shapers) {
-	var shapedChildren = frame.children.map(c => shapeNode(c, shapers));
+// Empty-merged edge case: a production that retained zero
+// elements yields start/end of null. Visible productions in
+// practical grammars should not hit this; noted for completeness.
+export function shapeNode(frame, shapers, options) {
+	var preserveDelim = options?.preserveDelim === true;
+	var shapedChildren = frame.children.map(c => shapeNode(c, shapers, options));
 	var tokens   = frame.matched          || [];
 	var tokenPos = frame.matchedPositions || [];
 
-	var parts = [];
+	// Merge tokens and shaped children into a single source-
+	// ordered sequence.
+	var merged = [];
 	var ti = 0;
 	for (let i = 0; i < frame.children.length; i++) {
 		let child = frame.children[i];
 		while (ti < tokens.length && tokenPos[ti] < child.startPos) {
-			parts.push(tokens[ti++]);
+			merged.push(tokens[ti++]);
 		}
-		parts.push(shapedChildren[i]);
+		merged.push(shapedChildren[i]);
 	}
 	while (ti < tokens.length) {
-		parts.push(tokens[ti++]);
+		merged.push(tokens[ti++]);
 	}
 
-	// Derive char-level start/end from the leftmost and rightmost
-	// descendants. Tokens (from the lex layer) and already-shaped
-	// child nodes (from prior recursion) both carry .start/.end as
-	// char positions, so the same indexing works uniformly.
-	var charStart = parts.length > 0 ? parts[0].start              : null;
-	var charEnd   = parts.length > 0 ? parts[parts.length - 1].end : null;
+	// Partition into semantic `parts` and (when preserveDelim is
+	// on) a lazily-allocated `delims` array.
+	var parts = [];
+	var delims = null;
+	for (let p of merged) {
+		if (isDelim(p)) {
+			if (preserveDelim) {
+				if (delims === null) delims = [];
+				delims.push(p);
+			}
+			// !preserveDelim: drop. The parser would normally have
+			// filtered these before shaping; defensive no-op if
+			// any slip through.
+		}
+		else {
+			parts.push(p);
+		}
+	}
+
+	// Char-level start/end from the full merged sequence (delim-
+	// inclusive — the matched range covers them).
+	var charStart = merged.length > 0 ? merged[0].start                : null;
+	var charEnd   = merged.length > 0 ? merged[merged.length - 1].end  : null;
 
 	var shaper = shapers && shapers[frame.production];
 	var node = shaper
@@ -872,5 +892,6 @@ export function shapeNode(frame, shapers) {
 		: { type: frame.production, parts };
 	node.start = charStart;
 	node.end   = charEnd;
+	if (preserveDelim) node.delims = delims;
 	return node;
 }

@@ -210,7 +210,9 @@ var failed = [];
 
 for (let i = 0; i < samples.length; i++) {
 	try {
-		for await (let tree of parseFoi(samples[i])) {
+		for await (let tree of parseFoi(samples[i],{
+			// preserveDelim: true,
+		})) {
 			// console.log(util.inspect(tree,{depth:50}));
 		}
 		passed++;

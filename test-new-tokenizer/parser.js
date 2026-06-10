@@ -1930,16 +1930,18 @@ export const DefTypeStmt = production("DefTypeStmt",
 // parse; each top-level Program child is yielded as it commits.
 // =============================================================
 
-export async function *parseFoi(input) {
-	var handle = parse(Program, tokenize(input), {
+export async function *parseFoi(input,opts = {}) {
+	var config = {
 		preserveTerminals: true,
 		preserveDelim: false,
 		memoize: true,
-	});
+		...opts,
+	};
+	var handle = parse(Program, tokenize(input), config);
 	var events = handle.subscribe(presets.parseCommitsAtDepth(1));
 	var runPromise = handle.run();
 	for await (let ev of events) {
-		yield shapeNode(ev.node, shapers);
+		yield shapeNode(ev.node, shapers, config);
 	}
 	var result = await runPromise;
 	if (!result.ok) {
