@@ -938,9 +938,9 @@ var AddOp = or(and(Dollar, Plus), Plus, Hyphen);
 var MulOp = or(Star, ForwardSlash);
 
 // <NamedUnaryOp> := "?empty" | "!empty";
-// <UnaryOpSym>   := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
+// <UnaryOpSym>   := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
-var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod);
+var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 //
@@ -2033,7 +2033,8 @@ export async function *parseFoi(input) {
 //   player.addEventListener("ended", cb);
 //   ^defn() ^player.removeEventListener("ended", cb)
 // };`;
-var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
+// var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
+var testInput = "(.)(numbers, 1);";
 
 
 for await (let node of parseFoi(testInput)) {

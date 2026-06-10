@@ -446,7 +446,7 @@ visible AST node.
 <MulOp>          := Star | ForwardSlash;
 
 <NamedUnaryOp>   := "?empty" | "!empty";
-<UnaryOpSym>     := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod;
+<UnaryOpSym>     := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
 ```
 
 PEG ordering note inside `<SymbolicCompareOp>`: longest sequence first
