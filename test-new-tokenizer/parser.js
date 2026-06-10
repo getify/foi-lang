@@ -84,20 +84,28 @@ export const PipelineTopic = production("PipelineTopic", tokType("Hash"));
 
 var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
 
-// NumberLit := (EscapedNumber | Number | PositiveIntegerLit) (_ AsAnnotationExpr)?;
+// Integer-lit token matchers and the hidden <IntegerLit> union from
+// the lex layer. Used by §2 NumberLit and §6 DotIdentifier. The
+// positive-only form is referenced separately by §6 PositiveIntLit
+// (property-index contexts; sign disallowed).
+var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
+var NegativeIntegerLitTok = tokType("NegativeIntegerLit");
+var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
+
+// NumberLit := (EscapedNumber | Number | IntegerLit) (_ AsAnnotationExpr)?;
 //
 // The lex layer's EscapedNumber is a hidden dispatcher that splices an
 // (Escape variant, Number variant) pair as siblings. From the syn layer
 // we consume it as two adjacent tokens: an Escape followed by a Number.
 // PEG order: try the two-token escaped form first, then bare Number,
-// then bare PositiveIntegerLit (longest first, per Note 2 in the lex
-// grammar).
+// then bare IntegerLit (longest first, per Note 2 in the lex grammar).
+// IntegerLit covers both signs via the hidden union from Lexical-Grammar.md.
 export const NumberLit = production("NumberLit",
 	and(
 		or(
 			and(tokType("Escape"), tokType("Number")),
 			tokType("Number"),
-			tokType("PositiveIntegerLit")
+			IntegerLit
 		),
 		OptAsAnnotation
 	)
@@ -371,7 +379,6 @@ var Period                = tokType("Period");
 var OpenBracket           = tokType("OpenBracket");
 var CloseBracket          = tokType("CloseBracket");
 var DoublePeriod          = tokType("DoublePeriod");
-var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
 
 // <IdentBase> := PipelineTopic | Identifier | BuiltIn;
 var IdentBase = or(PipelineTopic, Identifier, BuiltIn);
@@ -395,11 +402,14 @@ var AnglePropertyList = and(
 	optional(and(delim(), Comma))
 );
 
-// DotIdentifier := Period _ (Identifier | BuiltIn | PositiveIntegerLit);
+// DotIdentifier := Period _ (Identifier | BuiltIn | IntegerLit);
 //
-// PositiveIntegerLit here is the lex token type, not NumberLit.
+// IntegerLit covers both signs at the lex token level; `arr.-1`
+// accesses from the end of an ordered structure. Property-name
+// contexts (PropertyExpr, AnglePropertyList, record properties)
+// remain positive-only via PositiveIntLit.
 export const DotIdentifier = production("DotIdentifier",
-	and(Period, delim(), or(Identifier, BuiltIn, PositiveIntegerLitTok))
+	and(Period, delim(), or(Identifier, BuiltIn, IntegerLit))
 );
 
 // BracketExpr := OpenBracket _ ExprNoBlock _ CloseBracket;
@@ -2034,7 +2044,8 @@ export async function *parseFoi(input) {
 //   ^defn() ^player.removeEventListener("ended", cb)
 // };`;
 // var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
-var testInput = "(.)(numbers, 1);";
+// var testInput = "(.)(numbers, 1);";
+var testInput = "def last: numbers.-1;";
 
 
 for await (let node of parseFoi(testInput)) {

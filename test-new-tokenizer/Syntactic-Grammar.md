@@ -138,8 +138,10 @@ PipelineTopic       := Hash;
 (* NumberLit: either a bare decimal Number token, an Escape+Number
    pair (via lex's hidden EscapedNumber dispatch, which splices its
    six (Escape variant, Number variant) pairs as direct children), or
-   a positive integer literal. *)
-NumberLit          := (EscapedNumber | Number | PositiveIntegerLit) (_ AsAnnotationExpr)?;
+   a bare integer literal of either sign (PositiveIntegerLit or
+   NegativeIntegerLit, unified via the hidden <IntegerLit> from
+   Lexical-Grammar.md). *)
+NumberLit          := (EscapedNumber | Number | IntegerLit) (_ AsAnnotationExpr)?;
 
 BooleanLit         := ("true" | "false") (_ AsAnnotationExpr)?;
 EmptyLit           := "empty" (_ AsAnnotationExpr)?;
@@ -263,7 +265,13 @@ SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;
 MultiAccessExpr      := MultiAccessSeg (_ MultiAccessSeg)*;
 <MultiAccessSeg>     := DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
 
-DotIdentifier        := Period _ (Identifier | BuiltIn | PositiveIntegerLit);
+(* DotIdentifier: dot-access by name (identifier or builtin) or by
+   bare integer index of either sign (via the hidden <IntegerLit>
+   union from Lexical-Grammar.md). The negative-index form `arr.-1`
+   accesses from the end of an ordered structure. Property-name
+   contexts elsewhere (PropertyExpr, AnglePropertyList, record
+   properties) remain positive-only via <PositiveIntLit>. *)
+DotIdentifier        := Period _ (Identifier | BuiltIn | IntegerLit);
 BracketExpr          := OpenBracket _ ExprNoBlock _ CloseBracket;
 DotBracketExpr       := Period OpenBracket _ RangeExpr _ CloseBracket;
 DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
