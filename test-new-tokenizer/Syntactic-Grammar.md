@@ -5,12 +5,12 @@ token stream. Companion to `Lexical-Grammar.md`. Same EBNF dialect
 (instaparse syntax: `:=` for rules, `|` for ordered choice, `&(...)` /
 `!(...)` for lookahead, `(* *)` for comments).
 
-Refactored from the original character-level `Grammar.md` to:
-- Operate over the lexer's token stream rather than raw characters
-- Use PEG-style ordered choice (first match wins) throughout
-- Eliminate left-recursion in favor of iterative forms
-- Encode operator precedence via a tier ladder
-- Preserve concrete syntax that the user wrote (e.g. parentheses,
+Design principles:
+- Operates over the lexer's token stream rather than raw characters
+- Uses PEG-style ordered choice (first match wins) throughout
+- Uses iterative forms in place of left-recursion
+- Encodes operator precedence via a tier ladder
+- Preserves concrete syntax that the user wrote (e.g. parentheses,
   `:as` annotations) as visible AST nodes
 
 This grammar is designed to concatenate cleanly with `Lexical-Grammar.md`
@@ -245,9 +245,9 @@ PEG ordering notes:
 ## §6 Identifier / Access Expressions
 
 ```ebnf
-(* Access on identifier-led bases is no longer handled by a dedicated
-   IdentifierAccessExpr — the unified ChainExpr in §7 covers all
-   post-base chains. IdentifierExpr is just the bare/at/monad forms. *)
+(* ChainExpr (§7) covers all post-base chains (calls, access, or
+   mixed) on any base. IdentifierExpr here is the bare/at/monad
+   forms only. *)
 
 <IdentifierExpr>     := MonadConstructor | AtExpr | BareIdentifier;
 
@@ -257,10 +257,10 @@ BareIdentifier       := IdentBase (_ AsAnnotationExpr)?;
 
 <IdentBase>          := PipelineTopic | Identifier | BuiltIn;
 
-(* SingleAccessExpr and MultiAccessExpr remain — used by special
-   contexts (ExportNamedBinding, DestructureNamedDef,
-   AssignmentExpr LHS, AtExpr's internal access) that take an
-   identifier with an access tail directly, not via ChainExpr. *)
+(* SingleAccessExpr and MultiAccessExpr are used by special contexts
+   (ExportNamedBinding, DestructureNamedDef, AssignmentExpr LHS,
+   AtExpr's internal access) that take an identifier with an access
+   tail directly, not via ChainExpr. *)
 
 SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;
 <SingleAccessSeg>    := DotIdentifier | BracketExpr;
@@ -294,13 +294,11 @@ TrailingRangeExpr    := DoublePeriod _ RangeOperand;
 ## §7 Function Calls / Op-as-Function
 
 ```ebnf
-(* ChainExpr unifies what was previously split between
-   CallChainExpr and ExprAccessExpr. Any post-base chain — calls,
-   access, or mixed — parses as ChainExpr with a flat suffix
-   list. The shaper layer can fold this into nested
-   MemberAccessExpr / PrefixCallExpr / PartialCallExpr / IndexAccessExpr
-   nodes (JS-style: each suffix wraps the previous expression) when
-   the interp needs the typed-by-suffix-kind AST.
+(* Any post-base chain — calls, access, or mixed — parses as
+   ChainExpr with a flat suffix list. The shaper layer can fold this
+   into nested MemberAccessExpr / PrefixCallExpr / PartialCallExpr /
+   IndexAccessExpr nodes (JS-style: each suffix wraps the previous
+   expression) when the interp needs the typed-by-suffix-kind AST.
 
    ChainExpr requires extension beyond ChainBase — either ≥1
    ChainSeg, or a postfix `'` (prime, argument-reversal modifier).
@@ -539,9 +537,9 @@ VarDefInit            := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
 ## §12 Assignment
 
 ```ebnf
-(* LHS restricted to identifier with optional single-access per
-   Grammar.md. Excludes multi-pick assignment and pipeline-topic
-   assignment. No :as tail — parenthesize. *)
+(* LHS restricted to identifier with optional single-access. Excludes
+   multi-pick assignment and pipeline-topic assignment. No :as tail —
+   parenthesize. *)
 
 AssignmentExpr        := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
 ```
