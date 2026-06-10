@@ -1,7 +1,7 @@
 // =============================================================
-// test.js
+// test-tokenizer.js
 //
-// Diff harness comparing the new combinator-based tokenizer (in
+// Diff harness comparing the combinator-based tokenizer (in
 // tokenizer.js) against the legacy hand-written tokenizer (in
 // orig-tokenizer.js). Fully streaming: tokens flow through the
 // pipeline as they're recognized.
@@ -15,8 +15,80 @@
 // =============================================================
 
 import { tokenize as origTokenize } from "./orig-tokenizer.js";
-import { tokenize } from "./new-tokenizer.js";
+import { tokenize } from "./tokenizer.js";
 
+
+// =============================================================
+// KNOWN DIVERGENCES
+//
+// Inputs where the new tokenizer's output is expected to differ
+// from the legacy tokenizer's. Each entry maps the exact input
+// string to a one-line reason explaining why the divergence is
+// intentional / expected.
+//
+// Three-state assertion: a sample is "passing" iff its diff
+// outcome matches its mark here.
+//   - unmarked + clean   → pass (✓)
+//   - marked   + dirty   → pass (⚠), reason printed
+//   - unmarked + dirty   → FAIL (✗), regression
+//   - marked   + clean   → FAIL (?), divergence resolved — remove from map
+// =============================================================
+
+const KNOWN_DIVERGENT = new Map([
+	[ "5.5.5",
+		"Legacy emits single Number('5.5.5'); new splits into Number(5.5) + Period + Number(5). Legacy's decimal grammar extends past one fractional part; new follows the documented NumberBody := (Digit+ '.' Digit+) | Digit+" ],
+	[ "12.5...args",
+		"After a decimal NumberLit followed by '...', new follows PEG longest-match (TriplePeriod); legacy emits Period + DoublePeriod, an artifact of its decimal-grammar's recovery when an extra '.' appears after fractional digits" ],
+	[ "-5foo",
+		"Following the digit-leading-identifier principle, new emits Hyphen + General('5foo') (unary minus on identifier '5foo'). Legacy commits to number context at '-' and emits Number(-5) + General('foo'), which is internally inconsistent with its own behavior on bare '1foo' → identifier" ],
+	[ "foo //c\n-5",
+		"Legacy's minusOpAllowed flag gets clobbered by Comment tokens in trivia; new's expressionEnding tail correctly consumes Hyphen after Comment-bearing trivia" ],
+	[ "foo /// c ///-5",
+		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
+	[ "foo // c1\n  // c2\n  -5",
+		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
+	[ "42 // c\n-3",
+		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
+	[ "`\" `\\h2A` \"",
+		"Legacy bug: emits Whitespace(' ') for trailing space after escaped-number embed in InterpStr; new correctly emits String(' ') per InterpStrChars predicate. Corresponding case with a simple-identifier embed (e.g. `\" `a` \") emits String on both sides — legacy inconsistency depends on what the embed contained" ],
+	[ "\\h",
+		"Documented 'Known Divergences' (Lexical-Grammar.md): new emits Escape('\\') + General('h'); legacy emits Escape('\\h'). Combinator lexer commits fully or not at all on multi-char escapes; legacy partial-commits and emits the multi-char Escape even when no content follows" ],
+	[ "\\u-5",
+		"Documented 'Known Divergences': new emits Escape('\\') + General('u') + Hyphen + Number(5); legacy emits Escape('\\u') + Hyphen + Number(5). Same partial-commit asymmetry — when `-` follows `\\u`, General fallback in EscapedNumber fails (`-` not IdentStart), so the whole arm rolls back" ],
+	[ "\\@-",
+		"Documented 'Known Divergences': new emits Escape('\\') + At + Hyphen; legacy emits Escape('\\@') + Number('-'). Same partial-commit asymmetry. Legacy's bare-hyphen-as-Number value is also dubious in its own right" ],
+	[ "123~",
+		"Following the digit-leading-identifier principle, new emits General('123~') as a single identifier. Legacy splits into Number(123) + Tilde, internally inconsistent with its own behavior on bare '1foo' → identifier" ],
+	[ "def 123~: empty;",
+		"Same as bare '123~' — new emits General('123~') per the [0-9]+~ Identifier alternative; legacy splits Number(123) + Tilde. '123~' is intended to be an identifier" ],
+	[ "\\-123_456",
+		"Legacy splits Escape('\\') + Number('-123') + General('_456'); new emits Escape('\\') + Number('-123_456'). Legacy's hyphen branch of EscapePlain+number doesn't carry through underscore-separator support — an internal asymmetry (legacy handles '\\123_456' fine)." ],
+	[ "\\-123_456.78_9",
+		"Same legacy asymmetry extended to decimals — legacy splits at the first underscore and emits a stray Period; new emits the full BareNumber decimal." ],
+	[ "\\-5foo",
+		"Escaped analog of the documented '-5foo' divergence. New: Escape('\\') + Hyphen + General('5foo') — the whole EscapePlain arm rolls back atomically (BareNumber fails NotIdentCont, General fails IdentStart on '-'). Legacy: Escape('\\') + Number(-5) + General('foo')" ],
+	[ "\\h-Fxyz",
+		"Sign + digit-leading-identifier in escaped hex form. New applies NotIdentCont uniformly to HexNumber, so the whole EscapeHex arm rolls back when an IdentCont follows the hex digits; legacy doesn't enforce it and commits to Escape('\\h') + Number('-F') + General('xyz')" ],
+	[ "\\@-5foo",
+		"Same as \\h-Fxyz but for MonadNumber. New: Escape('\\') + At + Hyphen + General('5foo'). Legacy: Escape('\\@') + Number('-5f') + General('oo') — note legacy consumes the 'f' as a hex digit since MonadNumber accepts hex" ],
+	[ "\\\"A single line\n    string with whitespace collapsing, defined across multiple\n  lines\"",
+		"Legacy bug: emits Keyword('string') for the substring 'string' inside a spacing-escaped string body — the KEYWORDS gate leaks into string content. New correctly emits String('string') per SpacingEscapedStrChars (typed-identifier productions never fire inside string-form bodies)" ],
+	[ "`\"Special number: `-3.1415962`\n   Name: `name`\n   Greeting: `\\`\"Hello world\"`\n   Reaction: `\\\"Yay!\"`\n   Reply: `\"Ok.\"`\n!\"",
+		"Legacy emits Escape('`') for an InterpExpr closing backtick when the embed contains a nested escape-bearing string form; new correctly emits Backtick per InterpExpr's symb.Backtick reference (same production for opener and closer)" ],
+	[ "-1_000",
+		"Same family as existing '-5foo' divergence: new applies NotIdentCont uniformly across integer-shaped productions, so NegInt backs off when followed by IdentCont. New: Hyphen + General('1_000'). Legacy: Number(-1) + General('_000') — partial-commits the integer. New's behavior is consistent with the digit-leading-identifier rules (Note 10)." ],
+	[ "-1foo",
+		"Same family as '-5foo' and '-1_000': uniform NotIdentCont guard prevents partial-commit. New: Hyphen + General('1foo'). Legacy: Number(-1) + General('foo')." ],
+	[ "Function",
+		"Builtin set drift: new tokenizer's BUILTINS includes 'Function' (null-application unit fn, parallel to 'Value'); legacy tokenizer's list does not. New emits Builtin('Function'); legacy emits General('Function'). Resolve by adding 'Function' to legacy BUILTINS." ],
+	[ "Function@42;",
+		"Same Builtin set drift as bare 'Function' — new emits Builtin('Function'); legacy emits General('Function'). All other tokens in the sample match." ],
+]);
+
+
+runTests().catch(console.error);
+
+// **************************
 
 // Mechanical rename: UPPERCASE_SNAKE → PascalCase. Lowercase the
 // input, split on underscores, capitalize each piece, rejoin.
@@ -103,80 +175,11 @@ export async function diff(input) {
 	};
 }
 
+function safeShow(str) {
+	return str.replace(/\n/g, "\\n");
+}
 
-// =============================================================
-// KNOWN DIVERGENCES
-//
-// Inputs where the new tokenizer's output is expected to differ
-// from the legacy tokenizer's. Each entry maps the exact input
-// string to a one-line reason explaining why the divergence is
-// intentional / expected.
-//
-// Three-state assertion: a sample is "passing" iff its diff
-// outcome matches its mark here.
-//   - unmarked + clean   → pass (✓)
-//   - marked   + dirty   → pass (⚠), reason printed
-//   - unmarked + dirty   → FAIL (✗), regression
-//   - marked   + clean   → FAIL (?), divergence resolved — remove from map
-// =============================================================
-
-var KNOWN_DIVERGENT = new Map([
-	[ "5.5.5",
-		"Legacy emits single Number('5.5.5'); new splits into Number(5.5) + Period + Number(5). Legacy's decimal grammar extends past one fractional part; new follows the documented NumberBody := (Digit+ '.' Digit+) | Digit+" ],
-	[ "12.5...args",
-		"After a decimal NumberLit followed by '...', new follows PEG longest-match (TriplePeriod); legacy emits Period + DoublePeriod, an artifact of its decimal-grammar's recovery when an extra '.' appears after fractional digits" ],
-	[ "-5foo",
-		"Following the digit-leading-identifier principle, new emits Hyphen + General('5foo') (unary minus on identifier '5foo'). Legacy commits to number context at '-' and emits Number(-5) + General('foo'), which is internally inconsistent with its own behavior on bare '1foo' → identifier" ],
-	[ "foo //c\n-5",
-		"Legacy's minusOpAllowed flag gets clobbered by Comment tokens in trivia; new's expressionEnding tail correctly consumes Hyphen after Comment-bearing trivia" ],
-	[ "foo /// c ///-5",
-		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
-	[ "foo // c1\n  // c2\n  -5",
-		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
-	[ "42 // c\n-3",
-		"Same: legacy mishandles minus-after-Comment in expressionEnding tail" ],
-	[ "`\" `\\h2A` \"",
-		"Legacy bug: emits Whitespace(' ') for trailing space after escaped-number embed in InterpStr; new correctly emits String(' ') per InterpStrChars predicate. Corresponding case with a simple-identifier embed (e.g. `\" `a` \") emits String on both sides — legacy inconsistency depends on what the embed contained" ],
-	[ "\\h",
-		"Documented 'Known Divergences' (Lexical-Grammar.md): new emits Escape('\\') + General('h'); legacy emits Escape('\\h'). Combinator lexer commits fully or not at all on multi-char escapes; legacy partial-commits and emits the multi-char Escape even when no content follows" ],
-	[ "\\u-5",
-		"Documented 'Known Divergences': new emits Escape('\\') + General('u') + Hyphen + Number(5); legacy emits Escape('\\u') + Hyphen + Number(5). Same partial-commit asymmetry — when `-` follows `\\u`, General fallback in EscapedNumber fails (`-` not IdentStart), so the whole arm rolls back" ],
-	[ "\\@-",
-		"Documented 'Known Divergences': new emits Escape('\\') + At + Hyphen; legacy emits Escape('\\@') + Number('-'). Same partial-commit asymmetry. Legacy's bare-hyphen-as-Number value is also dubious in its own right" ],
-	[ "123~",
-		"Following the digit-leading-identifier principle (and Grammar.md's explicit '[0-9]+~' Identifier alternative), new emits General('123~') as a single identifier. Legacy splits into Number(123) + Tilde, internally inconsistent with its own behavior on bare '1foo' → identifier" ],
-	[ "def 123~: empty;",
-		"Same as bare '123~' — new emits General('123~') per the [0-9]+~ Identifier alternative; legacy splits Number(123) + Tilde. The Grammar.md test snippet block 3 has this exact form as a positive example, confirming '123~' is intended to be an identifier" ],
-	[ "\\-123_456",
-		"Legacy splits Escape('\\') + Number('-123') + General('_456'); new emits Escape('\\') + Number('-123_456'). Legacy's hyphen branch of EscapePlain+number doesn't carry through underscore-separator support — an internal asymmetry (legacy handles '\\123_456' fine). Grammar.md uses this exact form as a positive example, confirming new is correct per spec" ],
-	[ "\\-123_456.78_9",
-		"Same legacy asymmetry extended to decimals — legacy splits at the first underscore and emits a stray Period; new emits the full BareNumber decimal. Grammar.md positive example" ],
-	[ "\\-5foo",
-		"Escaped analog of the documented '-5foo' divergence. New: Escape('\\') + Hyphen + General('5foo') — the whole EscapePlain arm rolls back atomically (BareNumber fails NotIdentCont, General fails IdentStart on '-'). Legacy: Escape('\\') + Number(-5) + General('foo')" ],
-	[ "\\h-Fxyz",
-		"Sign + digit-leading-identifier in escaped hex form. New applies NotIdentCont uniformly to HexNumber, so the whole EscapeHex arm rolls back when an IdentCont follows the hex digits; legacy doesn't enforce it and commits to Escape('\\h') + Number('-F') + General('xyz')" ],
-	[ "\\@-5foo",
-		"Same as \\h-Fxyz but for MonadNumber. New: Escape('\\') + At + Hyphen + General('5foo'). Legacy: Escape('\\@') + Number('-5f') + General('oo') — note legacy consumes the 'f' as a hex digit since MonadNumber accepts hex" ],
-	[ "\\\"A single line\n    string with whitespace collapsing, defined across multiple\n  lines\"",
-		"Legacy bug: emits Keyword('string') for the substring 'string' inside a spacing-escaped string body — the KEYWORDS gate leaks into string content. New correctly emits String('string') per SpacingEscapedStrChars (typed-identifier productions never fire inside string-form bodies)" ],
-	[ "`\"Special number: `-3.1415962`\n   Name: `name`\n   Greeting: `\\`\"Hello world\"`\n   Reaction: `\\\"Yay!\"`\n   Reply: `\"Ok.\"`\n!\"",
-		"Legacy emits Escape('`') for an InterpExpr closing backtick when the embed contains a nested escape-bearing string form; new correctly emits Backtick per InterpExpr's symb.Backtick reference (same production for opener and closer)" ],
-	[ "-1_000",
-		"Same family as existing '-5foo' divergence: new applies NotIdentCont uniformly across integer-shaped productions, so NegInt backs off when followed by IdentCont. New: Hyphen + General('1_000'). Legacy: Number(-1) + General('_000') — partial-commits the integer. New's behavior is consistent with the digit-leading-identifier rules (Note 10)." ],
-	[ "-1foo",
-		"Same family as '-5foo' and '-1_000': uniform NotIdentCont guard prevents partial-commit. New: Hyphen + General('1foo'). Legacy: Number(-1) + General('foo')." ],
-	[ "Function",
-		"Builtin set drift: new tokenizer's BUILTINS includes 'Function' (null-application unit fn, parallel to 'Value'); legacy tokenizer's list does not. New emits Builtin('Function'); legacy emits General('Function'). Resolve by adding 'Function' to legacy BUILTINS." ],
-	[ "Function@42;",
-		"Same Builtin set drift as bare 'Function' — new emits Builtin('Function'); legacy emits General('Function'). All other tokens in the sample match." ],
-]);
-
-
-// =============================================================
-// SMOKE TEST (runs only if this file is invoked directly)
-// =============================================================
-
-if (import.meta.url === `file://${process.argv[1]}`) {
+async function runTests() {
 	let samples = [
 		// Basics
 		"foo",
@@ -346,7 +349,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"\\o0",
 		"\\u0",
 
-		// Grammar.md block 4: negative escaped numbers — full sweep.
 		// EscapePlain + hyphen-leading forms not currently probed:
 		"\\-123_456",                          // EscapePlain + BareNumber(-int with sep) → Escape + Number
 		"\\-123_456.78_9",                     // EscapePlain + BareNumber(-decimal with sep)
@@ -354,7 +356,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"\\-5.5",                              // EscapePlain + BareNumber(-decimal, no sep)
 		"\\-0",                                // EscapePlain + BareNumber(-0)
 
-		// Other Escape variants with negative content (Grammar.md spread):
+		// Other Escape variants with negative content:
 		"\\b-10110",                           // EscapeBinary + BinaryNumber(-)
 		"\\hf123",                             // EscapeHex + HexNumber (positive, full hex span)
 		"\\h-f123",                            // EscapeHex + HexNumber(-)
@@ -395,11 +397,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"IOs",
 		"intx",                                // Keyword gate fails on "intx" → General
 
-		// Grammar.md block 3: identifier shape near-misses (tilde-decorated)
 		// Probes the reserved-set gate fallthrough to General when an
 		// IdentBody match's surface shape *almost* matches a reserved
 		// form but the matched span doesn't pass the gate.
-		"123a",                                // digit-leading General (Grammar.md form)
+		"123a",                                // digit-leading General
 		"a123",                                // alpha + digit tail
 		"123~",                                // digit-leading + trailing tilde
 		"~123",                                // tilde + digits — tilde-alpha arm fails (1 not alpha) → Tilde + PositiveIntegerLit
@@ -506,7 +507,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		'\\`"""b"',
 		'\\`"a""b"',
 
-		// Grammar.md block 10: @-call form variants.
 		// `@` is a standalone SingleCharOp at lex; whether it adheres
 		// to a preceding identifier as part of an AtExpr is a syn-level
 		// concern. At lex we just verify the surrounding tokens come
@@ -543,7 +543,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"None@",
 		"f(None@)",
 
-		// Grammar.md block 11: :as annotation forms.
 		// `:as` is a Keyword(extension form) token at lex. Probes
 		// adjacency with the various AsAnnotationExpr call sites:
 		// after literals, grouped exprs, binary exprs, match results.
@@ -559,7 +558,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"(3 * 2):as int",                      // no-space close-paren + :as
 		"3 ?as bool",                          // NOTE: ?as, not :as — BooleanOper, not Keyword
 
-		// :as on match results (Grammar.md spread):
+		// :as on match results:
 		"(?(x){ ?[?as int]: f(#) :as bool; ?: # :as bool }):as bool",
 
 		// :as variants from across the file:
@@ -576,7 +575,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"x :as\nint",                          // newline after :as
 		"x:as int",                            // no-space (probes Keyword gate behavior on bare identifier + :as)
 
-		// Grammar.md block 5: complex strings.
 		// Stress-tests the four string forms in realistic combinations —
 		// multiline content, deeply nested interps, embedded escapes.
 
@@ -586,11 +584,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		'\\"A single line\n    string with whitespace collapsing, defined across multiple\n  lines"',
 		'\\`"A single line (with\n   whitespace collapsing), and a single `` backtick"',
 
-		// The Grammar.md "kitchen sink" interp string — all four forms
 		// nested across multiple lines with embedded escapes and numbers:
 		'`"Special number: `-3.1415962`\n   Name: `name`\n   Greeting: `\\`"Hello world"`\n   Reaction: `\\"Yay!"`\n   Reply: `"Ok."`\n!"',
 
-		// Grammar.md block 6: data structure literals.
 		// Records / Tuples / Sets at lex are just angle/bracket tokens
 		// around content tokens. Probes that the angle bracket disambiguation
 		// (vs. comparison ops) and the bracket-inside-angle (set form)
@@ -605,7 +601,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"<[]>",                                // empty set
 		"<[ 1, 2, 2 ]>",                       // set with dupes
 
-		// The Grammar.md "kitchen sink" record:
 		"<\n    ,,&v.x.[3..].<a,b> , \"Hello\" , 3,,4, :foo,\n    yes: empty, fn(1),\n    %x.y.z: false,\n    %\"Hello World\": 2,\n    %\\`\" this\n    is `adverb` \"\"crazy\"\"!\": 42,\n    %bar:<1>,,\n>",
 
 		// Computed-property name forms (% prefix):
@@ -628,10 +623,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"x.[1..3]",                            // dot-bracket access with range
 		"v.x.[3..]",                           // chained access ending in range
 
-		// Grammar.md block 12: deft (type definitions).
 		// Syn-deferred (§18) but lex should tokenize cleanly. Probes
 		// the Keyword('deft') + identifier + type-grammar punctuation
-		// across all Grammar.md type-form variants.
 
 		"deft F (?X) ^G",                      // simple func type with optional param
 		"deft X(Y,Z) ^empty",                  // func type → Native('empty')
@@ -647,7 +640,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"deft A { Left | Right }",             // grouped union
 		"deft B(str, *{(int)^int}) ^{\"yes\"|\"no\"}",  // nested func type + string union
 
-		// Standalone import/export forms (Grammar.md block 13) — currently
+		// Standalone import/export forms — currently
 		// unprobed in test.js. Should be uneventful at lex.
 		"def x: import \"X\";",
 		"def < :log >: import \"#Std\";",
@@ -655,25 +648,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"export { :login, :logout };",
 		"export { doLogin: login, doLogout: logout };",
 
-		// Grammar.md block 1: recognized whitespace characters.
 		// The exotic-whitespace blob — U+0085, U+200B-F, U+2028/9, etc.
 		// Probes that every code point in WHITESPACE_CHARS lexes as
 		// Whitespace rather than General or failing outright.
 		"\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u200e\u200f\u2028\u2029\u202f\u205f\u3000\ufeff",
 
-		// Grammar.md block 2 extras: comment-inside-statement forms.
+		// comment-inside-statement forms.
 		"def a: 1;",
 		"def b:1; // hello",                   // line comment trailing
 		"def c  :   1 ; ;;",                   // extra whitespace + extra semis
 		"def d: /// hello\n/// 3;",            // block comment inside def-value position
 		"def /// e: 3;///  f: 4;",             // block comment between def and ident
 
-		// Grammar.md block 8: the kitchen-sink defn with nested matches,
+		// the kitchen-sink defn with nested matches,
 		// guards, assignments, indep + dep match forms, function calls,
 		// dot-access chains, partial calls, op-as-function, range access.
 		"defn add(x)(y,<:z>)\n    ?[x.y]: y(z[2])\n    ![x]: z(3)\n    :over(z, w)\n    :as Whatever\n{\n    z := 2;\n    ?{?: 42;};\n    ?{\n        ?[z]: fn(g);\n        [w]: w;\n        ![x]: { fn(g) };\n        ?[y]: (v, <:z>) { fn(g); }\n        ?: 42\n    };\n    ?( fn(g) ){\n        [?> y]: g;\n        ?[ x, z . y [3] ]: g\n    };\n    ?{ ?[x]: x };\n    ?(x){ ?[x]: x };\n    ?{ ?[x]: x; ?[y]: y };\n    ?(x){ ?[x]: x; ?[y]: y };\n    ?[z]: (g: z) { fn(g) };\n    x.[y..z];\n    y.<first,last>;\n    (+)(1,2,3,...nums);\n    (+')'(1,,3);\n    (')(+)(1,,3);\n    myFn|2,,3|;\n    myFn(3,x:2);\n    myFn'|3,x:2|;\n    ^42\n}",
 
-		// Grammar.md block 8b: comprehensions + pipelines spread.
+		// comprehensions + pipelines spread.
 		"1..3 ~each log",
 		"?[x] ~each (x,y:2) { x }",
 		"foo ~map ![x] ~each foo",             // chained named comprehension ops
@@ -685,7 +677,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"defn myFn(x) #> f(#..3);",            // FuncBodyPipeline with topic + range
 		"2..4 #> { f(#.0) }",                  // range piped to block
 
-		// Grammar.md block 9: do-comprehensions + ~<* loop comprehensions.
+		// do-comprehensions + ~<* loop comprehensions.
 		"List ~<< {\n    def x:: getSomething();\n    def y: uppercase(x);\n    def z:: another(y);\n    z.0\n}",
 		"IO ~<< (x:: getSomething()) {\n    def y: uppercase(x);\n    def z:: another(y);\n    ::prepareValue(z);\n}",
 		"Promise ~<* {\n    def respE:: getSomething();\n    Either ~<< (resp:: respE) {\n        printResp(resp);\n    };\n}",
@@ -738,7 +730,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"foo -x",                              // hyphen + non-digit
 		"foo- 5",                              // hyphen adjacent to ident, digit after space
 
-		// Grammar.md block 7: operator boundary soup.
+		// operator boundary soup.
 		// Probes ExprEndingTail across no-space adjacencies and the
 		// full symbolic comparison spread. Most should be clean —
 		// the named-vs-symbolic boundaries are where surprises lurk.
@@ -784,7 +776,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"x ?< y",
 		"x ?> y",                              // dup of above; second pass catches any ordering issue
 
-		// OpFunc with prime modifiers (Grammar.md):
+		// OpFunc with prime modifiers:
 		"(+)(1,2,3)",                          // op-as-function, prefix call
 		"(+')(1,6)",                           // reversed
 		"(-')(1,6)",
@@ -1100,12 +1092,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		};`,
 	];
 
-	let cleanPass    = 0;   // ✓ unmarked + clean
-	let expectedFail = 0;   // ⚠ marked   + dirty
-	let unexpected   = 0;   // ✗ unmarked + dirty (regression)
-	let staleMark    = 0;   // ? marked   + clean (divergence resolved)
-	let totalMatches = 0;
-	let totalTokens  = 0;
+	var cleanPass    = 0;   // ✓ unmarked + clean
+	var expectedFail = 0;   // ⚠ marked   + dirty
+	var unexpected   = 0;   // ✗ unmarked + dirty (regression)
+	var staleMark    = 0;   // ? marked   + clean (divergence resolved)
+	var totalMatches = 0;
+	var totalTokens  = 0;
 
 	for (let s of samples) {
 		let d = await diff(s);
@@ -1154,8 +1146,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 	else {
 		console.log(`── ${passes} passing, ${fails} failing`);
 	}
-}
-
-function safeShow(str) {
-	return str.replace(/\n/g, "\\n");
 }

@@ -7,10 +7,12 @@ in `new-tokenizer.js` implements it, with enough detail to
 reproduce the implementation choices, tree shape, and event
 stream.
 
-Assumes familiarity with the parser combinator library in
-`parser-combinators.js` (constructs: `lazy`, `parse`,
-`production`, `terminal`, `and`, `or`, `optional`, `any`, `many`,
-`not`, `lookahead`, `eof`, `gate`, `dispatch`, `presets`).
+The combinator constructs used (`lazy`, `parse`, `production`,
+`terminal`, `and`, `or`, `optional`, `any`, `many`, `not`,
+`lookahead`, `eof`, `gate`, `dispatch`, `presets`) are exported
+from `parser-combinators.js`. Their internal mechanics are out
+of scope here; this document only describes how they are
+*composed* to realize the Foi lex grammar.
 
 
 ## 1. Architectural Posture
@@ -18,8 +20,8 @@ Assumes familiarity with the parser combinator library in
 The lexer is a streaming PEG parser over character input. Tokens
 are emitted as `commit` events on depth-1 frames; the top-level
 `Tokens` production is the only depth-0 frame. Subscribers using
-`presets.parseTokens` receive `matched` / `rollback` / `commit`
-events for each token as it is recognized.
+`presets.parseTokens` receive emission events for each token as
+it is recognized.
 
 **Token grain.** Each named production whose name matches a
 tokenizer type string (e.g., `"Whitespace"`, `"Comment"`,
@@ -35,13 +37,14 @@ disambiguation is handled per-token via the `expressionEnding`
 wrapper (§11) rather than via a global flag.
 
 **Async streaming input.** The lexer accepts an async or sync
-iterable of characters. Buffering is unbounded for v1 (no GC of
-consumed prefix); fine for source-file-sized inputs.
+iterable of characters. Buffering is unbounded; sufficient for
+source-file-sized inputs.
 
 
-## 2. Library Construct Choices
+## 2. EBNF-to-Implementation Mapping
 
-For each EBNF construct, the corresponding combinator construct:
+Each EBNF construct in `Lexical-Grammar.md` maps to a fixed
+combinator form:
 
 | EBNF | Combinator |
 | --- | --- |
@@ -53,16 +56,18 @@ For each EBNF construct, the corresponding combinator construct:
 | positive lookahead `&(A)` | `lookahead(A)` |
 | negative lookahead `!(A)` | `not(A)` |
 | regex char class `#"[...]"` | `terminal(c => /[...]/u.test(c))` |
-| literal `"x"` | `ch("x")` (helper for `terminal(c => c === "x")`) |
+| literal `"x"` | `ch("x")` |
 | EOF | `eof()` |
-| named non-terminal | `production("NAME", body)` |
-| anonymous group | bare `and(...)` / `or(...)` |
+| visible non-terminal `Name := …` | `production("Name", body)` |
+| hidden non-terminal `<Name> := …` | bare `and(...)` / `or(...)` bound to a `var` |
 | forward reference | `lazy(() => Name)` |
 
-The `ch(c, onMatch?)` helper in `new-tokenizer.js` wraps
-`terminal()` with a single-character equality check and accepts
-an optional `onMatch` callback. The two-argument form is critical
-and easy to break; see §10.
+The mapping is purely textual: a grammar reader can produce the
+combinator form for any rule by direct substitution. The places
+where the impl reaches outside this table — `gate()`,
+`dispatch()`, `onMatch` callbacks — are flagged in the EBNF with
+inline `(* … *)` notes and expanded in the relevant section
+below.
 
 
 ## 3. What Becomes a Production
@@ -77,23 +82,21 @@ Keyword, Native, Builtin, Comprehension, BooleanOper,
 String, StringEscapedChar, DoubleQuote,
 Backtick, Escape, Hyphen,
 TriplePeriod, DoublePeriod, DoubleColon,
-<all single-char operator names: Tilde, Exmark, ..., Backtick>
+<all single-char operator names: Tilde, Exmark, …, Backtick>
 ```
 
-Each emitted type corresponds to one or more
-`production("Name", ...)` call sites. Helper rules in the grammar
-(`IdentBody`, `DigitsWithSep`, `HexDigitsWithSep`, `NumberBody`,
-the various `*Content` rules inside strings, the digit helpers
-inlined into Number variants) are NOT productions — they are
-`var` bindings to anonymous `and(...)` / `or(...)` fragments
-reused by name within the file but creating no frames.
+Helper rules in the grammar (`IdentBody`, `DigitsWithSep`,
+`HexDigitsWithSep`, `NumberBody`, the various `*Content` rules
+inside strings, the digit helpers inlined into Number variants)
+are NOT productions — they are `var` bindings to anonymous
+`and(...)` / `or(...)` fragments reused by name within the file
+but creating no frames.
 
-The EBNF grammar marks this distinction explicitly: hidden rules
-carry angle brackets on the LHS (`<Name> := ...`) and emit no
-node — their content splices into the parent. Unbracketed names
-emit a node. The mapping is mechanical:
-angle-bracketed ⟺ bare `and(...)` / `or(...)`;
-unbracketed ⟺ `production(NAME, ...)`.
+The EBNF marks this distinction directly: hidden rules carry
+angle brackets on the LHS (`<Name> := ...`) and emit no node —
+their content splices into the parent. Unbracketed names emit a
+node. The mapping is mechanical: angle-bracketed ⟺ bare
+`and(...)` / `or(...)`; unbracketed ⟺ `production(NAME, ...)`.
 
 **Alias families.** Several unbracketed names are aliases for
 productions whose emitted token type differs from the EBNF name:
@@ -108,11 +111,13 @@ productions whose emitted token type differs from the EBNF name:
   Escape variant inside `EscapedNumber`. The standalone
   source-level decimal Number production (JS binding `NumberLit`,
   EBNF name `Number`) also emits `Number`.
-- **Two `PositiveIntegerLit` variants** — `PositiveIntegerLit`
-  (bare top-level, no underscore separators) and
-  `PositiveIntegerLitWithSep` (paired with `EscapePlain` inside
-  `EscapedNumber`, separators allowed) — both emit
-  `PositiveIntegerLit` tokens. See §3.1.
+- **`PositiveIntegerLitWithSep`** is an alias for
+  `PositiveIntegerLit` — separator-bearing form paired with
+  `EscapePlain` inside `EscapedNumber`; emits a
+  `PositiveIntegerLit` token. See §3.1 for the full integer-lit
+  story including the non-alias siblings (bare
+  `PositiveIntegerLit`, `NegativeIntegerLit`, and the hidden
+  `<IntegerLit>` union).
 - **Four String content emitters** — `PlainStrChars`,
   `InterpStrChars`, `SpacingInterpStrChars`,
   `SpacingEscapedStrChars` — all emit `String` tokens,
@@ -178,11 +183,8 @@ last. PEG order matters:
 - `General` is the last fallback, firing only when both number
   variants have failed. So `\1foo` →
   `Escape("\") + General("1foo")` (both number variants fail
-  their `!IdentCont` guard; General matches the digit-leading
+  their `NotIdentCont` guard; General matches the digit-leading
   identifier).
-
-A two-arm structure with `General` as fallback of just one
-number variant would shadow the other.
 
 The `!("." Digit)` lookahead inside `PositiveIntegerLitWithSep`
 forces fallthrough to `BareNumber` when the digits are followed
@@ -203,27 +205,13 @@ Two visible token types encode the restrictions directly:
 (sign required). The hidden `<IntegerLit>` union covers either
 sign and is used at sites that accept both.
 
-Three options were considered for how to express this:
-
-1. **Inline char-level shape in the syn EBNF.** Verbose; the syn
-   grammar reaches into char-level fragments where it should be
-   operating on tokens. Rejected.
-2. **Hidden lex helper named `<PositiveIntLit>` referenced from
-   syn under concat, with the syn impl applying a value-shape
-   regex predicate to a Number token.** Round-trippable as EBNF
-   but the syn impl needs an out-of-band "gate on token value"
-   step that isn't expressible as pure combinator composition.
-   Rejected.
-3. **Emit `PositiveIntegerLit` and `NegativeIntegerLit` as their
-   own token types at the lex layer.** The shape restriction is
-   encoded by the token type directly; the syn grammar references
-   the type with no gate. Adopted.
-
-The syntactic EBNF in `Syntactic-Grammar.md` has no value-shape
-gates anywhere. Every visible production maps to a combinator
-form by direct textual translation. The integer-lit token types
-are load-bearing for the project goal of mechanical
-round-trippability of the syntactic grammar.
+The rationale: encoding the shape restriction as a token type
+keeps the syntactic grammar free of value-shape gates. Every
+visible syn production maps to a combinator form by direct
+textual translation; nowhere does the syn impl need an
+out-of-band "gate on this token's value" step. This is
+load-bearing for the mechanical round-trippability of
+`Syntactic-Grammar.md`.
 
 The implementation uses three productions and a hidden union:
 
@@ -252,10 +240,10 @@ separators); `PositiveIntegerLitWithSep` is the escaped positive
 form reachable only via `EscapedNumber` paired with `EscapePlain`
 (alias pattern — both emit `PositiveIntegerLit` token type).
 `NegativeIntegerLit` is the bare top-level negative form,
-emitting its own distinct token type (no alias — there's no
-separator-bearing escaped negative form; signed integers with
-separators fall through to `BareNumber` instead). The hidden
-`IntegerLit` union covers both signs at sites that accept either.
+emitting its own distinct token type. There's no separator-bearing
+escaped negative form; signed integers with separators fall
+through to `BareNumber` instead. The hidden `IntegerLit` union
+covers both signs at sites that accept either.
 
 The shared `NotDotDigit` helper enforces the `!("." Digit)`
 lookahead so a decimal point followed by digits doesn't get
@@ -295,7 +283,7 @@ BareNumber  (integer branch only)
 The decimal branches of `NumberLit`, `MonadNumber`, and
 `BareNumber` do NOT need the guard — once `.` is consumed and a
 fractional digit run follows, the position is unambiguously
-inside a number. The structural split:
+inside a number. The structural split for `NumberLit`:
 
 ```js
 export const NumberLit = production("Number",
@@ -313,21 +301,21 @@ export const NumberLit = production("Number",
 
 The decimal arm tries first; if it fails (no `.` after the digit
 run), the integer arm with `NotIdentCont` tries. On
-`IdentCont`-leading continuations, NumberLit's integer arm
-itself backs off; an outer Hyphen + General path then consumes
-the input. Result: `-5foo` lexes as `Hyphen, General("5foo")`.
+`IdentCont`-leading continuations, NumberLit's integer arm itself
+backs off; an outer Hyphen + General path then consumes the
+input. Result: `-5foo` lexes as `Hyphen, General("5foo")`.
 
 
 ## 4. The IdentBody sawNonDigit Gate
 
-The grammar's `IdentBody` is a syntactic over-approximation
-that permits digits anywhere — including as the leading
-character. Foi identifiers may start with digits (`1foo`,
-`5_value`). The combinator additionally requires that at least
-one non-digit character appears in the matched span (so that
-pure-digit runs fall through to `Number` rather than shadow it).
-This is enforced via frame-local state mutated by `onMatch`
-callbacks:
+The grammar's `IdentBody` is a syntactic over-approximation that
+permits digits anywhere — including as the leading character.
+Foi identifiers may start with digits (`1foo`, `5_value`). The
+combinator additionally requires that at least one non-digit
+character appears in the matched span (so that pure-digit runs
+fall through to `Number` rather than shadow it). This is
+enforced via frame-local state mutated by `onMatch` callbacks
+attached to the character matchers:
 
 ```js
 var IdentBody = and(
@@ -347,26 +335,13 @@ var IdentBody = and(
 );
 ```
 
-Critical implementation choices:
-
-- The `onMatch` callback fires after the character is consumed
-  and receives the innermost named frame `f`. Mutating
-  `f.state.X` is how frame-local state is built up during
-  matching.
-- The trailing `gate(f => f.state.sawNonDigit === true)` is the
-  validation point. Without it, pure-digit runs would match
-  IdentBody and shadow Number.
-- `IdentBody` is itself an anonymous `and(...)`, not a
-  production — so `f` in the callbacks refers to whichever
-  named frame is innermost at the call site (General, Keyword,
-  Native, etc.). This is intentional: each typed-identifier
-  production gets its own fresh `sawNonDigit` state on each
-  open.
-
-`onMatch` callbacks are the general mechanism for any
-frame-state accumulation during character consumption. The
-`ch(c, onMatch)` helper exists specifically to make this
-ergonomic for single-char matches.
+`IdentBody` is itself an anonymous `and(...)`, not a production —
+so `f.state` in the callbacks refers to whichever named frame is
+innermost at the call site (`General`, `Keyword`, `Native`, etc.).
+This is intentional: each typed-identifier production gets its
+own fresh `sawNonDigit` state on each open. Without the trailing
+`gate()`, pure-digit runs would match `IdentBody` and shadow
+`Number`.
 
 The dual to `sawNonDigit` lives on the Number side: every
 integer-shaped number production carries a `NotIdentCont`
@@ -388,31 +363,24 @@ export const Native = production("Native",
 );
 ```
 
-Implementation choices:
+The gate reads `f.matched`, the array of consumed characters
+since the frame opened; `f.matched.join("")` materializes the
+span as a string for set-membership testing. On gate failure the
+production fails and the next Token alternative is tried.
 
-- The gate reads `f.matched`, the array of consumed characters
-  since the frame opened. This is populated by `terminal()`
-  automatically when `config.preserveTerminals` is on (which it
-  is for the lexer).
-- `f.matched.join("")` materializes the matched span as a
-  string for set-membership testing. Cheap because token-length
-  strings are short.
-- On gate failure, the entire production fails — the frame is
-  rolled back, the consumed characters are restored to the
-  buffer position, and the next Token alternative is tried.
-- `Keyword` has a slight variation: the gate strips the leading
-  `:` for the extension form before checking:
+`Keyword` strips the leading `:` for the extension form before
+checking; two arms in the outer `or()` cover `:`-prefixed and
+bare:
 
-  ```js
-  gate(f => KEYWORDS.includes(C.Colon + f.matched.slice(1).join("")))
-  ```
+```js
+gate(f => KEYWORDS.includes(C.Colon + f.matched.slice(1).join("")))
+```
 
-  Two arms in the outer `or()`: one for `:`-prefixed, one bare.
-- `BooleanOper` similarly skips the leading `?` or `!`:
+`BooleanOper` similarly skips the leading `?` or `!`:
 
-  ```js
-  gate(f => BOOLEAN_NAMED_OPERATORS.includes(f.matched.slice(1).join("")))
-  ```
+```js
+gate(f => BOOLEAN_NAMED_OPERATORS.includes(f.matched.slice(1).join("")))
+```
 
 
 ## 6. The Comment Production: dispatch vs. Ordered Choice
@@ -441,23 +409,19 @@ export const Comment = production("Comment",
 var BlockClose = and(ch(C.ForwardSlash), ch(C.ForwardSlash), ch(C.ForwardSlash));
 ```
 
-Why dispatch instead of `or(BlockComment, LineComment)`:
+Why dispatch instead of `or(BlockComment, LineComment)`: the
+`//` prefix is shared; dispatch commits it once and then branches
+on whether a third `/` follows, rather than backtracking the `//`
+if BlockComment fails. Frame state captures the decision
+(`kind: "line"` or `kind: "block"`), which dispatch then uses to
+pick the body grammar.
 
-- The `//` prefix is shared. Dispatch lets us commit it once and
-  then branch on whether a third `/` follows, rather than
-  backtracking the `//` if BlockComment fails.
-- Frame state captures the decision (`kind: "line"` or
-  `kind: "block"`), which is then used by `dispatch()` to pick
-  the body grammar.
-- The block body uses
-  `any(and(not(lookahead(BlockClose)), terminal(_ => true)))`
-  to consume any char until `BlockClose` would match, then
-  `or(BlockClose, eof())` to require either the close or
-  end-of-input. EOF-tolerant block comments are a deliberate
-  behavior.
-
-This is the canonical example of `dispatch()` usage in the
-lexer.
+The block body uses
+`any(and(not(lookahead(BlockClose)), terminal(_ => true)))` to
+consume any char until `BlockClose` would match, then
+`or(BlockClose, eof())` to require either the close or
+end-of-input. EOF-tolerant block comments are a deliberate
+behavior.
 
 
 ## 7. The Four String Forms
@@ -501,7 +465,7 @@ respectively (see §9) — followed by `symb.DoubleQuote`.
 `StringLit` opens with just `symb.DoubleQuote`.
 
 
-## 8. StringEscapedChar — Two Combinator Bindings
+## 8. StringEscapedChar — Two Bindings
 
 Two combinator bindings, both emitting the same
 `StringEscapedChar` token type, differing only in which
@@ -523,9 +487,9 @@ export const StringEscapedChar = production("StringEscapedChar",
 The split tracks which string forms have a syntactic role for
 `` ` ``:
 
-- `StringLit` and `SpacingEscapedStr` use
-  `StringEscapedCharDQ`. In these forms `` ` `` has no syntactic
-  significance — it's literal String content.
+- `StringLit` and `SpacingEscapedStr` use `StringEscapedCharDQ`.
+  In these forms `` ` `` has no syntactic significance — it's
+  literal String content.
 - `InterpStr` and `SpacingInterpStr` use the broad
   `StringEscapedChar`. In these forms `` ` `` opens embedded
   expressions, so escaping it via `` `` `` is meaningful.
@@ -587,29 +551,19 @@ associated specific form.
 fire only from inside their specific contexts.
 
 
-## 10. The ch() Helper and the Two-Argument Form
+## 10. The ch() Helper
 
 ```js
 var ch = (c, onMatch) => terminal(x => x === c, onMatch);
 ```
 
-Critical: the helper MUST forward both arguments. A one-arg
-form (`c => terminal(x => x === c)`) silently drops `onMatch`
-because JS drops extra arguments to arrow functions. Callers
-passing `ch(C.ForwardSlash, onMatch)` would see the callback
-discarded; the frame state intended to be set by the callback
-would never be set, downstream gates and dispatches would see
-`undefined`, and productions would roll back for invisible
-reasons.
-
-The lesson: any helper that wraps a callback-accepting primitive
-must forward callbacks explicitly. Adding parameters to such
-helpers silently is one of the few places this lexer can break
-in ways that grammar-tracing alone won't catch. Dump actual
-combinator output (via `presets.parseTrace`) when debugging.
+A thin wrapper over `terminal()` specialized to single-character
+equality, accepting the same optional `onMatch` callback that
+`terminal()` does. Used throughout the file for single-char
+literal matches.
 
 
-## 11. The ExpressionEnding Wrapper
+## 11. The expressionEnding Wrapper
 
 ```js
 var EXPRESSION_ENDING_OP_NAMES = new Set([
@@ -628,46 +582,28 @@ function expressionEnding(p) {
 }
 ```
 
-Implementation specifics:
+The wrapper returns an anonymous `and(...)`, not a production —
+the wrapped production `p` keeps its own frame, and the
+wrapper's trailing matches emit at the same depth.
 
-- `expressionEnding(p)` returns an anonymous `and(...)`, not a
-  production. The wrapper's structure doesn't get a frame of its
-  own — the wrapped production `p` keeps its own frame, and the
-  wrapper's trailing matches emit at the same depth.
-- The trailing `optional(...)` contains three pieces in
-  sequence:
-  1. `any(or(Whitespace, Comment))` — zero or more trivia
-     tokens. These ARE productions; each one emits as its own
-     depth-1 token.
-  2. `lookahead(and(ch(C.Hyphen), terminal(isDigit)))` —
-     non-consuming positive lookahead for `-` followed by a
-     digit.
-  3. `production("Hyphen", ch(C.Hyphen))` — consume the `-` as
-     a Hyphen token.
-- The `optional()` wrapper provides the speculative-rollback
-  semantics. If the lookahead fails (no `-Digit` ahead), the
-  trivia consumed in step 1 is rolled back via the savepoint
-  mechanism in the parser library. Those Whitespace/Comment
-  tokens were emitted as `matched` events but receive
-  `rollback` events when the savepoint restores. They will be
-  re-matched (and this time committed) by the next outer
-  iteration.
-- The wrapper is applied at the Token alternation level (see
-  §14 for the full BaseTokenOr listing).
+The trailing `optional(...)` contains three pieces in sequence:
 
-The single-char ops are wrapped selectively via the
-`EXPRESSION_ENDING_OP_NAMES` set; the rest are inlined
-unwrapped. `EscapePlain` is not wrapped — `\` is not an
-expression-ending form. See §13 for the
-`STANDALONE_EXCLUDED_OPS` exclusion mechanism.
+1. `any(or(Whitespace, Comment))` — zero or more trivia tokens.
+   Each one emits as its own depth-1 token.
+2. `lookahead(and(ch(C.Hyphen), terminal(isDigit)))` —
+   non-consuming positive lookahead for `-` followed by a digit.
+3. `production("Hyphen", ch(C.Hyphen))` — consume the `-` as a
+   Hyphen token.
 
-**Subscriber-visible side effect.** A subscriber filtering for
-`matched` events will see Whitespace/Comment events that are
-later rolled back when the speculative tail fails. Consumers
-using `presets.parseTokens` (which includes `commit` events but
-treats `matched` as provisional) handle this correctly.
-Consumers that only listen to `matched` and ignore `rollback`
-will see spurious trivia events.
+If the lookahead fails (no `-Digit` ahead), the trivia consumed
+in step 1 rolls back; those Whitespace/Comment tokens will be
+re-matched and emitted by the next outer iteration.
+
+The wrapper is applied at the Token alternation level (see §14
+for the full BaseTokenOr listing). The single-char ops are
+wrapped selectively via the `EXPRESSION_ENDING_OP_NAMES` set;
+the rest are inlined unwrapped. `EscapePlain` is not wrapped —
+`\` is not an expression-ending form.
 
 ### 11.1 The NumberEnding Wrapper
 
@@ -688,52 +624,42 @@ numberEnding(expressionEnding(IntegerLit)),
 expressionEnding(NumberLit),                       // NOT wrapped with numberEnding
 ```
 
-Implementation specifics:
-
-- `numberEnding(p)` returns an anonymous `and(...)`, not a
-  production. Like `expressionEnding`, the wrapper's structure
-  doesn't get a frame of its own.
-- The trailing `optional(DoublePeriod)` consumes an
-  immediately-adjacent `..` token (no trivia between the
-  wrapped production and the dots), emitting it as a
-  `DoublePeriod` token at the same depth as the wrapped
-  production.
-- If the `..` isn't there, the `optional` rolls back without
-  consuming anything. The chars at the current position are
-  left for the next outer iteration.
+The trailing `optional(DoublePeriod)` consumes an
+immediately-adjacent `..` token (no trivia between the wrapped
+production and the dots), emitting it as a `DoublePeriod` token
+at the same depth as the wrapped production.
 
 **Composition order.** `numberEnding(expressionEnding(p))` runs
 `expressionEnding`'s `-Digit` lookahead first (innermost), then
 `numberEnding`'s `..` check (outermost). Order matters: a `-`
 immediately following an integer is the start of the next
-expression's signed literal, not a binary op. `-2..-1` must
-lex as `NegativeIntegerLit(-2), DoublePeriod, NegativeIntegerLit(-1)`,
-not as `NegativeIntegerLit(-2), DoublePeriod, Hyphen, PositiveIntegerLit(1)`.
-The inner `expressionEnding` declines (the next `-` is followed
-by a digit, but it's at the start of a range-RHS expression
-context — `expressionEnding` only consumes `-Digit` when there's
-preceding trivia or the wrapped production's own emit-ending
-disposition warrants it, see §11). Then `numberEnding` consumes
-the `..`, leaving the `-1` for a fresh `NegativeIntegerLit`
-iteration.
+expression's signed literal, not a binary op. `-2..-1` must lex
+as `NegativeIntegerLit(-2), DoublePeriod, NegativeIntegerLit(-1)`,
+not as `NegativeIntegerLit(-2), DoublePeriod, Hyphen,
+PositiveIntegerLit(1)`. The inner `expressionEnding` declines
+(the next `-` is followed by a digit, but it's at the start of a
+range-RHS expression context — `expressionEnding` only consumes
+`-Digit` when there's preceding trivia). Then `numberEnding`
+consumes the `..`, leaving the `-1` for a fresh
+`NegativeIntegerLit` iteration.
 
 **Rationale.** This wrapper forces a third `.` in `5...` to
-surface as a separate `Period` token rather than getting
-absorbed into a `TriplePeriod` by PEG longest-match. The only
-multi-dot operator valid immediately after an integer is the
-range op `..`, so when the user typos `...`, the lexer reports
-the syntactic error at the third `.` (good diagnostic) rather
-than silently committing to a meaningless `TriplePeriod`.
+surface as a separate `Period` token rather than being absorbed
+into a `TriplePeriod` by PEG longest-match. The only multi-dot
+operator valid immediately after an integer is the range op `..`,
+so when the user typos `...`, the lexer reports the syntactic
+error at the third `.` rather than silently committing to a
+meaningless `TriplePeriod`.
 
 **Scope.** Applies to `IntegerLit` (both `PositiveIntegerLit`
 and `NegativeIntegerLit`). `NumberLit` (decimal source-level
 numbers) is wrapped with just `expressionEnding`, not
-`numberEnding`. This is intentional: applying `numberEnding` to
-`NumberLit` would produce a `DoublePeriod + Period` shape for
-`12.5...` that doesn't represent any coherent Foi reading.
-Leaving it unwrapped yields `TriplePeriod` (PEG longest-match),
-which parses naturally as "decimal + spread" when surrounded by
-appropriate syntactic context.
+`numberEnding`. Applying `numberEnding` to `NumberLit` would
+produce a `DoublePeriod + Period` shape for `12.5...` that
+doesn't represent any coherent Foi reading. Leaving it unwrapped
+yields `TriplePeriod` (PEG longest-match), which parses
+naturally as "decimal + spread" when surrounded by appropriate
+syntactic context.
 
 
 ## 12. InterpExpr and the Lazy Forward Reference
@@ -750,28 +676,26 @@ var InterpExpr = and(
 );
 ```
 
-**The lazy forward reference.** `BaseTokenOr` is the top-level
-`or(...)` of all Token alternatives. `InterpExpr` lives inside
-`InterpStr` content alternatives, which are inside
-`BaseTokenOr`. Direct reference would be a circular dependency
-at file-evaluation time. The `lazy()` helper from
-`parser-combinators.js` takes a thunk that dereferences
-`BaseTokenOr` at parse time, by which point it has been
-assigned. `BaseTokenOr` is assigned at the bottom of the
-productions block, just before `Tokens` is defined.
+`BaseTokenOr` is the top-level `or(...)` of all Token
+alternatives. `InterpExpr` lives inside `InterpStr` content
+alternatives, which are inside `BaseTokenOr`. Direct reference
+would be a circular dependency at file-evaluation time;
+`lazy()` defers the lookup until parse time. `BaseTokenOr` is
+assigned at the bottom of the productions block, just before
+`Tokens` is defined.
 
-**The InterpExprStop simplification.** A positive lookahead on
-a bare backtick. Any backtick inside the InterpExpr body closes
+**The InterpExprStop simplification.** A positive lookahead on a
+bare backtick. Any backtick inside the InterpExpr body closes
 the embed. The body loop exits at that position, and the
 trailing `symb.Backtick` in `InterpExpr` consumes the closing
 backtick as a `Backtick` token.
 
-This means `LexInterpStr` (the plain interp form) CANNOT be
-nested inside an InterpExpr body — its opener begins with a
-bare backtick, which the InterpExprStop lookahead treats as the
+This means `LexInterpStr` (the plain interp form) cannot be
+nested inside an InterpExpr body — its opener begins with a bare
+backtick, which the InterpExprStop lookahead treats as the
 embed-close. Plain-in-plain nesting creates a genuine grammar
-ambiguity that Foi forbids by design; the simplification
-matches the language semantics.
+ambiguity that Foi forbids by design; the simplification matches
+the language semantics.
 
 Cross-form nesting (spacing-in-plain, spacing-in-spacing) still
 works: the nested spacing form opens with `\` followed by
@@ -829,15 +753,10 @@ The two exclusion sets serve different purposes:
   lookup via `C.Escape`, e.g. inside multi-char Escape
   productions) but no `symb.Name` production is generated. A
   different binding takes over the standalone role. Currently
-  just `Escape`, which is superseded by `EscapePlain` (defined
-  separately as one of the eight named Escape variants; see
-  §9). `EscapePlain` is spread into `BaseTokenOr` explicitly,
-  just before the `symb` spread, to fill the standalone-`\`
-  slot.
-
-The `symb` object is exported and referenced by name
-(`symb.Hyphen`, `symb.OpenParen`, etc.) where needed inside the
-file.
+  just `Escape`, whose standalone slot is filled by `EscapePlain`
+  (defined separately as one of the eight named Escape variants;
+  see §9). `EscapePlain` is spread into `BaseTokenOr` explicitly,
+  just before the `symb` spread.
 
 In `BaseTokenOr`, the symbols are spread at the tail with
 selective wrapping:
@@ -855,8 +774,8 @@ Adding a new single-char op is normally a one-line change to
 BaseTokenOr) also adds an entry to `STANDALONE_EXCLUDED_OPS`.
 Adding one whose standalone slot is filled by a
 separately-defined binding adds an entry to
-`SYMB_NAMES_EXCLUDED_FROM_C` and an explicit `BaseTokenOr`
-entry for the replacement.
+`SYMB_NAMES_EXCLUDED_FROM_C` and an explicit `BaseTokenOr` entry
+for the replacement.
 
 
 ## 14. Production Ordering in BaseTokenOr
@@ -901,20 +820,19 @@ Why each non-obvious ordering matters:
 - `SpacingInterpStr` / `SpacingEscapedStr` / `EscapedNumber`
   before `EscapePlain`: a `\` followed by `` ` `` (then `"`),
   or `"`, or one of `h`/`o`/`b`/`u`/`@`/digit, should open the
-  more-specific form rather than emit a standalone
-  `EscapePlain` followed by un-escape-aware tokens.
+  more-specific form rather than emit a standalone `EscapePlain`
+  followed by un-escape-aware tokens.
 - The five typed identifiers before `General`: each typed form
   is a semantic specialization of General; trying them first
-  lets the gate select the right type. General is the
-  catch-all.
+  lets the gate select the right type. General is the catch-all.
 - `IntegerLit` (`PositiveIntegerLit` / `NegativeIntegerLit`)
   before `NumberLit`: a digit run with no decimal point that's
   also not extending into an identifier is an integer literal —
   positive if no leading sign, negative if `-` adjacent. The
   `!("." Digit)` lookahead inside both productions causes
   fallthrough to `NumberLit` for decimals (`5.5`, `-5.5`); the
-  `!IdentCont` guard (§3.2) causes fallthrough for
-  digit-leading identifiers (`1foo`, `-1foo`). See §3.1 for the
+  `!IdentCont` guard (§3.2) causes fallthrough for digit-leading
+  identifiers (`1foo`, `-1foo`). See §3.1 for the
   round-trippability rationale.
 - `IntegerLit` wrapped with
   `numberEnding(expressionEnding(IntegerLit))` (§11.1):
@@ -927,65 +845,34 @@ Why each non-obvious ordering matters:
   trailing `..` is consumed, ensuring `-2..-1` lexes as two
   `NegativeIntegerLit` tokens around a `DoublePeriod` rather
   than consuming the second `-` as a binary `Hyphen`.
-  `NumberLit` is NOT wrapped with `numberEnding` — see §11.1
-  for rationale.
+  `NumberLit` is NOT wrapped with `numberEnding` — see §11.1 for
+  rationale.
 - `TriplePeriod` before `DoublePeriod` before single `Period`
   (via the symb spread): longest match first.
 - `DoubleColon` before single `Colon` (via the symb spread):
   same.
 
 
-## 15. Configuration: preserveTerminals and preserveDelim
+## 15. Parse Configuration
 
-The lexer creates its parse handle with
-`preserveTerminals: true`:
+The lexer creates its parse handle with `preserveTerminals: true`:
 
 ```js
 var handle = parse(Tokens, input, { preserveTerminals: true });
 ```
 
 This causes every `terminal()` match to push the consumed
-character into `frame.matched` of the innermost named frame.
-The gates in typed-identifier productions read this to validate
-reserved-set membership.
+character into `frame.matched` of the innermost named frame. The
+gates in typed-identifier productions (§4, §5) and the
+`sawNonDigit` accumulator (§4) all read from `f.matched`, so this
+config is mandatory.
 
-`preserveDelim` is NOT set (defaults to false). This means
-`delim()` and `delimWSReq()` consume tokens without recording
-them in `matched`. The lexer doesn't currently use these
-helpers (they're for the syntactic layer that consumes tokens,
-not chars); the configuration would matter if a future
-implementation choice introduced them.
-
-`memoize` is NOT set (defaults to false). The lexer doesn't
-need packrat memoization — its grammar is shallow and PEG
-ordered choice rarely backtracks far enough to make memoization
-pay. The syntactic layer does use memoization.
+Memoization is off; the lex grammar is shallow and ordered choice
+rarely backtracks far enough to make it worthwhile. (The
+syntactic layer uses memoization; the lex layer does not.)
 
 
-## 16. Streaming-Output Semantics
-
-The lexer subscribes are async iterables (`for await (let ev of
-handle.subscribe(filter))`). Token emission is interleaved with
-parsing:
-
-- `open` event when a frame opens. Subscribers see the
-  production name and start position.
-- `matched` event when a frame closes successfully. The frame's
-  full content (matched chars, end position, children frames)
-  is populated by this point.
-- `rollback` event when a frame fails after opening. Subscribers
-  should discard any state they accumulated from this frame's
-  `matched`/`open` events.
-- `commit` event when a frame's parent confirms the match
-  cannot be rolled back. For depth-1 frames (tokens), this is
-  the point at which the token is final.
-
-The public `tokenize(input)` async generator subscribes via
-`presets.parseTokens` (filters for depth-1 `commit` events) and
-yields token objects `{ type, value, start, end }` as they
-become committed. Each token has its `value` materialized from
-`matched.join("")` and its `start`/`end` from the frame's
-position tracking.
+## 16. Public API
 
 ```js
 export async function *tokenize(input) {
@@ -1006,6 +893,8 @@ export async function *tokenize(input) {
 }
 ```
 
-The `runPromise` is awaited after the event loop drains to
-surface any parse-level error (e.g., unrecognized input at the
-final position).
+`tokenize(input)` is an async generator yielding token objects
+`{ type, value, start, end }` as they are recognized. The
+`runPromise` is awaited after the event loop drains, so any
+parse-level error (unrecognized input at the final position)
+surfaces from the generator.

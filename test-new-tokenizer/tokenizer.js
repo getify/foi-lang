@@ -9,8 +9,9 @@
 // The legacy hand-written tokenizer (orig-tokenizer.js) emits
 // UPPERCASE_SNAKE type strings; the diff harness normalizes one
 // side to compare token streams. Grammar productions are the
-// authoritative source; see foi-lex-grammar.md for the EBNF
-// specification and foi-lex-impl.md for the implementation notes.
+// authoritative source; see Lexical-Grammar.md for the EBNF
+// specification and Lexical-Grammar-Combinator-Implementation.md
+// for the implementation notes.
 // =============================================================
 
 import {
@@ -94,7 +95,7 @@ var ch = (c, onMatch) => terminal(x => x === c, onMatch);
 //     C.Escape etc.) but no symb.<Name> production is generated —
 //     a different binding handles the production. Currently just
 //     Escape, which is superseded by EscapePlain (one of the eight
-//     Escape variants defined below; see foi-lex-grammar.md).
+//     Escape variants defined below; see Lexical-Grammar.md).
 // =============================================================
 
 var C = {
@@ -153,7 +154,7 @@ for (let [name, c] of Object.entries(C)) {
 // At the EBNF level these are named aliases (EscapeBacktick,
 // EscapeHex, etc.); the impl emits all eight as Escape tokens
 // (production name "Escape"), distinguished by value. See
-// foi-lex-grammar.md preamble for the alias pattern.
+// Lexical-Grammar.md preamble for the alias pattern.
 // =============================================================
 
 export const EscapeBacktick        = production("Escape", ch(C.Backtick));
@@ -198,7 +199,6 @@ var IdentBody = and(
 
 // General: catch-all identifier (must run AFTER the typed forms).
 export const General = production("General", IdentBody);
-
 
 
 // =============================================================
@@ -271,7 +271,7 @@ var MonadNumBody      = and(
 
 // Number variants — six productions emitting Number tokens with
 // content shapes matching the Escape opener's digit class. All
-// emit as Number type (alias pattern). See foi-lex-grammar.md.
+// emit as Number type (alias pattern). See Lexical-Grammar.md.
 export const HexNumber     = production("Number", and(optional(ch(C.Hyphen)), HexDigits, NotIdentCont));
 export const UnicodeNumber = production("Number", and(HexDigits, NotIdentCont));
 export const OctalNumber   = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isOctDigit)), NotIdentCont));
@@ -572,8 +572,8 @@ function numberEnding(p) {
 // TOP-LEVEL: Tokens
 // Order is important. Try longer/more-specific lexemes before
 // their prefixes; try typed identifiers before the General
-// catch-all. See foi-lex-impl.md §13 for the full ordering
-// rationale.
+// catch-all. See Lexical-Grammar-Combinator-Implementation.md
+// §13 for the full ordering rationale.
 //
 // EscapePlain appears explicitly (between DoubleColon and the
 // symb spread) to provide the standalone-"\" emission slot —

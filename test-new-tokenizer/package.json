@@ -2,6 +2,8 @@
 	"name": "new-tokenizer",
 	"type": "module",
 	"scripts": {
-		"test": "node test.js"
+		"test:tokenizer": "node test-tokenizer.js",
+		"test:parser": "node test-parser.js",
+		"test": "npm run test:tokenizer"
 	}
 }
