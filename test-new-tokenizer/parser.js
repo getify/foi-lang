@@ -1437,13 +1437,13 @@ var DepMatchStmts = or(
 	ElseStmt
 );
 
-// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen _ OpenBrace _ DepMatchStmts _ CloseBrace;
+// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen OpenBrace _ DepMatchStmts _ CloseBrace;
 //
 // No trivia between Qmark and OpenParen.
 export const DepMatchExpr = production("DepMatchExpr",
 	and(
 		Qmark, OpenParen, delim(), ExprNoBlock, delim(), CloseParen,
-		delim(), OpenBrace, delim(), DepMatchStmts, delim(), CloseBrace
+		OpenBrace, delim(), DepMatchStmts, delim(), CloseBrace
 	)
 );
 
@@ -1981,7 +1981,7 @@ var samples = [
 		"defn clamped(x) ?[x ?< 0]: 0 ^x; " +               // FuncPrecond
 		"?[isComplete] ~each { isComplete := true; };",    // FlowLHS as CondClause + FlowRHS as BlockExpr
 	"?{ [x ?< 0]: -1; [x ?> 0]: 1; ?: 0; }; " +              // Indep with else
-		"?(x) { [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
+		"?(x){ [1, 2, 3]: \"low\"; [?> 10]: \"high\"; }; " +    // Dep with bare-? compare
 		"?{ [ready]: { go(); }; };",                              // Indep with BlockExpr consequent
 	"List ~<< { def x:: xs; x + 1 }; " +              // basic DoComprExpr + DoDefVarStmt
 		"Id ~<< (x:: foo) { x + 1 }; " +                  // DoBlockDefsInitOpt

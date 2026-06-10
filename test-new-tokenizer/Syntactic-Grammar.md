@@ -602,7 +602,7 @@ IndepPatternStmt       := IndepCondClause _ MatchConsequent (_ Semicolon)*;
 IndepPatternStmtNoSemi := IndepCondClause _ MatchConsequentNoSemi;
 <IndepCondClause>      := (Qmark | Exmark)? BracketExpr;
 
-DepMatchExpr           := Qmark OpenParen _ ExprNoBlock _ CloseParen _ OpenBrace _ DepMatchStmts _ CloseBrace;
+DepMatchExpr           := Qmark OpenParen _ ExprNoBlock _ CloseParen OpenBrace _ DepMatchStmts _ CloseBrace;
 <DepMatchStmts>        := ((DepPatternStmt _)+ (ElseStmt | DepPatternStmtNoSemi)?)
                         | DepPatternStmtNoSemi
                         | ElseStmt;
