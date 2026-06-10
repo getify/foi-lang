@@ -3774,7 +3774,7 @@ The key is, `IO` instances are lazy; these actions **do not run automatically**.
 To construct an `IO` instance, we give it an *executor* function that will perform the action(s) (side effects):
 
 ```java
-def task = IO@ (defn someTask(){
+def task: IO@ (defn someTask(){
     log("Log messages are a side effect!");
 });
 // (nothing)
@@ -3794,7 +3794,7 @@ task.run();
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
 ```java
-def specialNumber = IOof@ 42;
+def specialNumber = IO._@ 42;
 
 specialNumber.run();   // 42
 ```
@@ -3809,7 +3809,7 @@ defn finish(v) {
     ^incIO(v);
 };
 
-def num = IOof@ 21;
+def num = IO._@ 21;
 
 def task = num
     ~map doubleIO
@@ -3881,7 +3881,7 @@ Inside a `~<` chain step, the carried Reader value can be *accessed* as so:
 
 ```java
 def task:
-    IOof@ 42
+    IO._@ 42
     ~< (v) {
         IO@ (defn(env){
             log(`"Value: `v`, Env.x: `env.x`");
@@ -3898,7 +3898,7 @@ This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extrac
 // Recall: Value@ and @ are the identity function
 defn getEnv() ^IO @(Value@);
 
-def fortyTwo: IOof@ 42;
+def fortyTwo: IO._@ 42;
 
 def task: IO ~<< {
     def v:: fortyTwo;
@@ -3913,7 +3913,7 @@ task.run(< x: 3 >);
 In fact, this is even cleaner:
 
 ```java
-def fortyTwo: IOof@ 42;
+def fortyTwo: IO._@ 42;
 
 def task: IO ~<< (env, v:: fortyTwo) {
     log(`"Value: `v`, Env.x: `env.x`");
@@ -3954,7 +3954,7 @@ That's basically the `Promise ~<< {    }` behavior combined automatically into `
 If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
 
 ```java
-defn readValue() ^IOof@ (Promise@ 42);
+defn readValue() ^IO._@ (Promise@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -3972,7 +3972,7 @@ task.run();
 Even in the inverse scenario -- where a `Promise` instance holds an `IO` instance -- the transformation still occurs:
 
 ```java
-defn readValue() ^Promise@ (IOof@ 42);
+defn readValue() ^Promise@ (IO._@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -3999,7 +3999,7 @@ defn printValue(v) ^IO@ (defn(){
 
 def task: IO ~<< {
     def ev:: getValue();
-    ::(~cata)(ev, IOof@, printValue);
+    ::(~cata)(ev, IO._@, printValue);
 };
 
 task.run();
