@@ -416,8 +416,21 @@ OrBinExpr        := <AndDispatch> (_ OrOp _ <AndDispatch>)+;
 <AndDispatch>    := AndBinExpr | <CompareDispatch>;
 AndBinExpr       := <CompareDispatch> (_ AndOp _ <CompareDispatch>)+;
 
-<CompareDispatch>:= CompareBinExpr | <AddDispatch>;
-CompareBinExpr   := <AddDispatch> (_ CompareOp _ <AddDispatch>)+;
+(* Compare tier has two iter forms:
+   - TypeCompareBinExpr handles ?as/!as, whose RHS is a NamedType
+     (allowing NativeType keywords like `int`/`bool` alongside
+     Identifier/BuiltIn). Flat binary, non-iterated — `x ?as int ?as bool`
+     requires parens, semantically unclear without them.
+   - CompareBinExpr handles ?in/!in/?has/!has and all symbolic compare
+     ops, with regular expression RHS and left-fold iteration.
+
+   PEG ordering: TypeCompareBinExpr before CompareBinExpr — both open
+   with <AddDispatch>; disjoint by operator value (?as/!as vs.
+   ?in/!in/?has/!has/symbolic), so order is mechanical. *)
+
+<CompareDispatch>  := TypeCompareBinExpr | CompareBinExpr | <AddDispatch>;
+TypeCompareBinExpr := <AddDispatch> _ AsTypeOp _ NamedType;
+CompareBinExpr     := <AddDispatch> (_ CompareOp _ <AddDispatch>)+;
 
 <AddDispatch>    := AddBinExpr | <MulDispatch>;
 AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;
@@ -463,8 +476,8 @@ Add (`+`, `-`, `$+`) → Compare/Membership/Type → And (`?and`, `!and`)
 `~<`). All tiers left-associative.
 
 Tier iter names: `FlowBinExpr`, `OrBinExpr`, `AndBinExpr`,
-`CompareBinExpr`, `AddBinExpr`, `MulBinExpr`. Each is a distinct
-visible AST node.
+`TypeCompareBinExpr`, `CompareBinExpr`, `AddBinExpr`, `MulBinExpr`.
+Each is a distinct visible AST node.
 
 ## §10 Operator Family
 
@@ -472,7 +485,7 @@ visible AST node.
 (* Op (used in OpFuncExpr) is the full union of operators —
    anything that can be quoted as a function value. *)
 
-<Op>             := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
+<Op>             := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 
 <FlowOp>         := ComprOp | PipelineOp | ComposeOp;
 <ComprOp>        := Comprehension | (Tilde OpenAngle);
@@ -483,7 +496,12 @@ visible AST node.
 <AndOp>          := "?and" | "!and";
 
 <CompareOp>      := NamedCompareOp | SymbolicCompareOp;
-<NamedCompareOp> := "?in" | "!in" | "?has" | "!has" | "?as" | "!as";
+<NamedCompareOp> := "?in" | "!in" | "?has" | "!has";
+(* AsTypeOp is separate from CompareOp because its RHS is a NamedType,
+   not a regular expression — handled by TypeCompareBinExpr at the
+   Compare tier (§9). Listed in <Op> so `(?as)` / `(!as)` remain valid
+   OpFuncExpr forms. *)
+<AsTypeOp>       := "?as" | "!as";
 <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | (Dollar Equal) | Equal | OpenAngle | CloseAngle);
 
 <AddOp>          := (Dollar Plus) | Plus | Hyphen;
@@ -593,7 +611,8 @@ DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;
 <DepCondClause>        := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
 <DepCondExprList>      := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
-<DepCondBoolExpr>      := DepCondBoolOp _ <CompareDispatch>
+<DepCondBoolExpr>      := AsTypeOp _ NamedType
+                        | DepCondBoolOp _ <CompareDispatch>
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 

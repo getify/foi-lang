@@ -850,13 +850,31 @@ export const AddBinExpr = production("AddBinExpr",
 // <AddDispatch> := AddBinExpr | MulDispatch;
 var AddDispatch = or(AddBinExpr, MulDispatch);
 
+// TypeCompareBinExpr := AddDispatch _ AsTypeOp _ NamedType;
+//
+// Carves ?as/!as out of CompareBinExpr — their RHS is a NamedType
+// (allowing NativeType keywords like `int`/`bool`), not the general
+// expression RHS that CompareBinExpr accepts. Flat binary, non-iterated.
+// NamedType is §18 (forward-ref via lazy).
+export const TypeCompareBinExpr = production("TypeCompareBinExpr",
+	and(
+		AddDispatch,
+		delim(), lazy(() => AsTypeOp), delim(),
+		lazy(() => NamedType)
+	)
+);
+
 // CompareBinExpr := AddDispatch (_ CompareOp _ AddDispatch)+;
 export const CompareBinExpr = production("CompareBinExpr",
 	and(AddDispatch, many(and(delim(), lazy(() => CompareOp), delim(), AddDispatch)))
 );
 
-// <CompareDispatch> := CompareBinExpr | AddDispatch;
-var CompareDispatch = or(CompareBinExpr, AddDispatch);
+// <CompareDispatch> := TypeCompareBinExpr | CompareBinExpr | AddDispatch;
+//
+// PEG: TypeCompareBinExpr first. Both open with AddDispatch; disjoint
+// by operator value (?as/!as vs. ?in/!in/?has/!has/symbolic), so order
+// is mechanical.
+var CompareDispatch = or(TypeCompareBinExpr, CompareBinExpr, AddDispatch);
 
 // AndBinExpr := CompareDispatch (_ AndOp _ CompareDispatch)+;
 export const AndBinExpr = production("AndBinExpr",
@@ -941,7 +959,7 @@ var FlowOp     = or(ComprOp, PipelineOp, ComposeOp);
 var OrOp  = or(KwQor, KwExor);
 var AndOp = or(KwQand, KwExand);
 
-// <NamedCompareOp>    := "?in" | "!in" | "?has" | "!has" | "?as" | "!as";
+// <NamedCompareOp> := "?in" | "!in" | "?has" | "!has";
 // <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle)
 //                                        | (OpenAngle Equal)
 //                                        | (CloseAngle Equal)
@@ -952,7 +970,23 @@ var AndOp = or(KwQand, KwExand);
 //
 // Inner alternation in SymbolicCompareOp is longest-first per
 // grammar: ?<=> before ?<= / ?>= / ?<> / ?$= / ?= / ?< / ?>.
-var NamedCompareOp = or(KwQin, KwExin, KwQhas, KwExhas, KwQasOp, KwExasOp);
+var NamedCompareOp = or(
+	tokVal("BooleanOper", "?in"),
+	tokVal("BooleanOper", "!in"),
+	tokVal("BooleanOper", "?has"),
+	tokVal("BooleanOper", "!has")
+);
+
+// <AsTypeOp> := "?as" | "!as";
+//
+// Separate from NamedCompareOp because its RHS is a NamedType, not
+// a regular expression — handled by TypeCompareBinExpr at the Compare
+// tier (§9). Included in Op below so `(?as)` / `(!as)` remain valid
+// OpFuncExpr forms.
+var AsTypeOp = or(
+	tokVal("BooleanOper", "?as"),
+	tokVal("BooleanOper", "!as")
+);
 var SymbolicCompareOp = and(
 	or(Qmark, Exmark),
 	or(
@@ -980,7 +1014,7 @@ var MulOp = or(Star, ForwardSlash);
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
 var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period);
 
-// <Op> := FlowOp | OrOp | AndOp | CompareOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
+// <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 //
 // Longest-prefix concerns resolved by this ordering:
 //   - FlowOp (`+>`, `<+`, `#>`) before AddOp (`+`) and before
@@ -992,7 +1026,7 @@ var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Pe
 //     used elsewhere.
 //   - Within FlowOp, ComprOp's `~<` is disjoint from everything
 //     downstream (Tilde appears nowhere else in Op).
-var Op = or(FlowOp, OrOp, AndOp, CompareOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
+var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
 
 
 // =============================================================
@@ -1337,9 +1371,6 @@ export const IndepMatchExpr = production("IndepMatchExpr",
 // --- Dependent Match -------------------------------------------
 
 // <DepCondBoolOp>   := CompareOp | AndOp | OrOp;
-// <DepCondBoolExpr> := DepCondBoolOp _ CompareDispatch
-//                    | OpenParen _ DepCondBoolExpr _ CloseParen;
-//
 // CompareDispatch is the §9 internal — references the hidden
 // dispatcher directly. Defined in §9 as `var CompareDispatch`.
 var DepCondBoolOp = or(
@@ -1347,8 +1378,16 @@ var DepCondBoolOp = or(
 	lazy(() => AndOp),
 	lazy(() => OrOp)
 );
+// <DepCondBoolExpr> := AsTypeOp _ NamedType
+//                    | DepCondBoolOp _ CompareDispatch
+//                    | OpenParen _ DepCondBoolExpr _ CloseParen;
+//
+// PEG: AsTypeOp arm first — disjoint opener (?as/!as) from
+// DepCondBoolOp (which is CompareOp|AndOp|OrOp, none of which include
+// ?as/!as anymore).
 var DepCondBoolExpr = or(
-	and(DepCondBoolOp, delim(), CompareDispatch),
+	and(AsTypeOp, delim(), lazy(() => NamedType)),
+	and(lazy(() => DepCondBoolOp), delim(), CompareDispatch),
 	and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
 );
 
@@ -2102,13 +2141,27 @@ export async function *parseFoi(input) {
 // 	"def un: <[ &something, &another ]>; " +
 // 	"def mn: numbers $+ < 6, 7 >; " +
 // 	"set1 ?$= set2; set1 !$= set3;";
+// var testInput =
+// 	"(1..3 ~<* yield) ~map { \"done\" };" +
+// 	"(Id ~<< { ::42; }) ~< g;" +
+// 	"(env.start..env.end ~<* yield) ~map { \"Complete.\" };" +
+// 	"(x + 1) ~map f;" +
+// 	"def x: (1..3 ~<* yield) :as Foo;" +
+// 	"(1..3 ~<* yield) :as Foo ~map f;";
 var testInput =
-	"(1..3 ~<* yield) ~map { \"done\" };" +
-	"(Id ~<< { ::42; }) ~< g;" +
-	"(env.start..env.end ~<* yield) ~map { \"Complete.\" };" +
-	"(x + 1) ~map f;" +
-	"def x: (1..3 ~<* yield) :as Foo;" +
-	"(1..3 ~<* yield) :as Foo ~map f;";
+	"age ?as int;" +                                 // headline: ?as + NativeType
+	"age !as bool;" +                                // !as + NativeType
+	"myFn ?as SimpleFunc;" +                         // regression: ?as + Identifier RHS
+	"x ?as List;" +                                  // ?as + BuiltIn
+	"x ?as Either.Right;" +                          // ?as + dotted NamedType
+	"(age ?as int) :as bool;" +                      // GroupedOpExpr wraps TypeCompareBinExpr; :as on the wrap
+	"?(x){ ?[?as int]: 1; ?: 0 };" +                 // DepCondClause: bare ?as + NativeType
+	"?(x){ ?[?as SimpleFunc]: 1; ?: 0 };" +          // DepCondClause: bare ?as + Identifier (regression)
+	"?{ ?[x ?as int]: 1; ?: 0 };" +                  // IndepCondClause: full binary inside BracketExpr
+	"x ?as int ?and y ?as bool;" +                   // tier mix: AndBinExpr wrapping two TypeCompareBinExpr
+	"(?as);" +                                       // OpFuncExpr regression: ?as as op-value
+	"x ?in arr;";                                    // regression: ?in still routes through CompareBinExpr
+
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:50}));
