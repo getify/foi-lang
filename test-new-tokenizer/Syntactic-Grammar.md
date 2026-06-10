@@ -425,8 +425,36 @@ AddBinExpr       := <MulDispatch> (_ AddOp _ <MulDispatch>)+;
 <MulDispatch>    := MulBinExpr | BinaryAtom;
 MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
 
-<BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
-              | UnaryExpr | BareOperandExpr | GroupedOpExpr;
+(* PEG: GroupedOpExpr before GroupedDoExpr — both open with OpenParen.
+   GroupedOpExpr's inner OperandExpr is the common case (`(x + 1)`,
+   `(x ~map f)`); GroupedDoExpr's inner DoComprExpr/DoLoopComprExpr
+   is the niche case. Trying the common case first keeps the hot
+   path cheap; on `(` followed by do-compr content, GroupedOpExpr
+   fails through cleanly. *)
+<BinaryAtom>     := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
+                  | UnaryExpr | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+
+(* GroupedDoExpr: parenthesized DoComprExpr/DoLoopComprExpr usable as a
+   binary operand. Needed so flow-tier chains like
+   `(range ~<* fn) ~map { ... }` and `(Foo ~<< { ... }) ~< g` parse —
+   without this arm, a do-comprehension can never appear on the LHS
+   of a comprehension/pipeline/compose operator because neither
+   BareOperandExpr nor GroupedOpExpr (which wraps only OperandExpr =
+   BinaryExpr) can reach the do-compr forms.
+
+   Parens are mandatory: do-comprehensions don't appear bare as binary
+   operands. Disjoint from GroupedOpExpr by inner content — PEG
+   ordering in <BinaryAtom> tries GroupedOpExpr first; on inner
+   content that isn't an OperandExpr (e.g. starts a DoComprExpr or
+   DoLoopComprExpr), it fails through to GroupedDoExpr cleanly.
+
+   Trailing `:as` allowed for consistency with GroupedOpExpr; semantic
+   validity (whether annotating a monadic do-result is meaningful) is
+   checked downstream. *)
+(* PEG: DoComprExpr before DoLoopComprExpr — matches <Expr> ordering
+   in §5. Disjoint at the third token of their `~<<` / `~<*`
+   signatures, so the order is mechanical, not discriminating. *)
+GroupedDoExpr    := OpenParen _ (DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
 ```
 
 **Precedence (tightest → loosest):** Unary → Mul (`*`, `/`) →

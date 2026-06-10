@@ -369,6 +369,22 @@ export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
 	and(OpenParen, delim(), BareOperandExprNoEmpty, delim(), CloseParen, OptAsAnnotation)
 );
 
+// GroupedDoExpr := OpenParen _ (DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
+//
+// Lets a do-comprehension appear as a binary operand (always
+// parenthesized). Forward refs to §16 via lazy() — DoComprExpr /
+// DoLoopComprExpr are defined later in this file. PEG order inside
+// matches <Expr> ordering in §5; disjoint at the third token of the
+// `~<<` / `~<*` signatures, so the order is mechanical.
+export const GroupedDoExpr = production("GroupedDoExpr",
+	and(
+		OpenParen, delim(),
+		or(lazy(() => DoComprExpr), lazy(() => DoLoopComprExpr)),
+		delim(), CloseParen,
+		OptAsAnnotation
+	)
+);
+
 
 // =============================================================
 // §6 IDENTIFIER / ACCESS EXPRESSIONS
@@ -798,19 +814,24 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 // later in this file).
 
 // <BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
-//               | UnaryExpr | BareOperandExpr | GroupedOpExpr;
+//               | UnaryExpr | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
 //
 // PEG order: Range first (Closed is two-sided, longest); Unary
 // next (prefix forms consume Qmark/Exmark/?empty/!empty before
 // backtracking); BareOperandExpr and GroupedOpExpr cover bare atoms
-// and parenthesized op-expressions respectively.
+// and parenthesized op-expressions respectively. GroupedOpExpr
+// before GroupedDoExpr — both open with OpenParen, but the
+// op-expr inner is the common case; do-compr inner is niche and
+// falls through cleanly when GroupedOpExpr's inner OperandExpr
+// rejects the do-compr opener.
 var BinaryAtom = or(
 	ClosedRangeExpr,
 	LeadingRangeExpr,
 	TrailingRangeExpr,
 	UnaryExpr,
 	BareOperandExpr,
-	GroupedOpExpr
+	GroupedOpExpr,
+	GroupedDoExpr
 );
 
 // MulBinExpr := BinaryAtom (_ MulOp _ BinaryAtom)+;
@@ -2053,35 +2074,41 @@ export async function *parseFoi(input) {
 // var testInput = "foo'(1,2,3); def revFoo: (foo'); (+'); (')(+); (+)'(1,2,3); (?empty)(x, y, z);";
 // var testInput = "(.)(numbers, 1);";
 // var testInput = "def last: numbers.-1;";
+// var testInput =
+// 	"def numbers: < 4, 5, 6 >; " +
+// 	"def person: < first: \"Kyle\", last: \"Simpson\" >; " +
+// 	"numbers.1; person.first; numbers[idx]; person[\"first\"]; " +
+// 	"(.)(numbers, 1); (.)(person, \"first\"); " +
+// 	"str.1; size(< a: 1 >); " +
+// 	"def nums: < 5, 10, 15, %idx: 20, 25 >; " +
+// 	"def p2: < %\"favorite number\": 42 >; " +
+// 	"def p3: < :first, :last >; " +
+// 	"7 ?in numbers; person ?has \"first\"; person !has \"x\"; " +
+// 	"def r1: 2..13; def r2: two..thirteen; def r3: \"a\"..\"z\"; " +
+// 	"def r4: (..)(\"a\", \"z\"); " +
+// 	"odds + evens; " +
+// 	"numbers.<1,3>; (.<1,3>)(numbers); " +
+// 	"numbers.[..0]; numbers.[..-2]; numbers.-1; " +
+// 	"numbers.[-1..]; numbers.[1..]; numbers.[1..3]; " +
+// 	"(.[1..3])(numbers); " +
+// 	"def all: < 0, 1, &numbers, 7, 8 >; " +
+// 	"def odd: < 1, 3, &numbers.1, 7 >; " +
+// 	"def fr: < first: \"Jenny\", &person.last >; " +
+// 	"def ev: < 2, &numbers.<1,3>, 8 >; " +
+// 	"def fb: < 0, 1, &numbers.[..2] >; " +
+// 	"def pf: < &person.<first,nickname> >; " +
+// 	"def fewer: < 0, &numbers, 2: empty, 4: empty >; " +
+// 	"def dm: < %numbers: \"my favorites\" >; dm[numbers]; " +
+// 	"def un: <[ &something, &another ]>; " +
+// 	"def mn: numbers $+ < 6, 7 >; " +
+// 	"set1 ?$= set2; set1 !$= set3;";
 var testInput =
-	"def numbers: < 4, 5, 6 >; " +
-	"def person: < first: \"Kyle\", last: \"Simpson\" >; " +
-	"numbers.1; person.first; numbers[idx]; person[\"first\"]; " +
-	"(.)(numbers, 1); (.)(person, \"first\"); " +
-	"str.1; size(< a: 1 >); " +
-	"def nums: < 5, 10, 15, %idx: 20, 25 >; " +
-	"def p2: < %\"favorite number\": 42 >; " +
-	"def p3: < :first, :last >; " +
-	"7 ?in numbers; person ?has \"first\"; person !has \"x\"; " +
-	"def r1: 2..13; def r2: two..thirteen; def r3: \"a\"..\"z\"; " +
-	"def r4: (..)(\"a\", \"z\"); " +
-	"odds + evens; " +
-	"numbers.<1,3>; (.<1,3>)(numbers); " +
-	"numbers.[..0]; numbers.[..-2]; numbers.-1; " +
-	"numbers.[-1..]; numbers.[1..]; numbers.[1..3]; " +
-	"(.[1..3])(numbers); " +
-	"def all: < 0, 1, &numbers, 7, 8 >; " +
-	"def odd: < 1, 3, &numbers.1, 7 >; " +
-	"def fr: < first: \"Jenny\", &person.last >; " +
-	"def ev: < 2, &numbers.<1,3>, 8 >; " +
-	"def fb: < 0, 1, &numbers.[..2] >; " +
-	"def pf: < &person.<first,nickname> >; " +
-	"def fewer: < 0, &numbers, 2: empty, 4: empty >; " +
-	"def dm: < %numbers: \"my favorites\" >; dm[numbers]; " +
-	"def un: <[ &something, &another ]>; " +
-	"def mn: numbers $+ < 6, 7 >; " +
-	"set1 ?$= set2; set1 !$= set3;";
-
+	"(1..3 ~<* yield) ~map { \"done\" };" +
+	"(Id ~<< { ::42; }) ~< g;" +
+	"(env.start..env.end ~<* yield) ~map { \"Complete.\" };" +
+	"(x + 1) ~map f;" +
+	"def x: (1..3 ~<* yield) :as Foo;" +
+	"(1..3 ~<* yield) :as Foo ~map f;";
 
 for await (let node of parseFoi(testInput)) {
 	console.log(util.inspect(node,{depth:50}));
