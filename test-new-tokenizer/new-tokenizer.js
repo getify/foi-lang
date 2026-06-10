@@ -37,7 +37,7 @@ export const BUILTINS = [
 	"Id", "None", "Maybe", "Left", "Right", "Either",
 	"Promise", "PromiseSubject", "PushStream", "PushSubject",
 	"PullStream", "PullSubject", "Channel", "Gen", "IO",
-	"Value", "Number", "List",
+	"Value", "Function", "Number", "List",
 ];
 
 export const COMPREHENSIONS = [

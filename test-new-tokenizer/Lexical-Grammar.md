@@ -129,7 +129,7 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
      BUILTINS                 = { "Id", "None", "Maybe", "Left", "Right", "Either",
                                   "Promise", "PromiseSubject", "PushStream",
                                   "PushSubject", "PullStream", "PullSubject",
-                                  "Channel", "Gen", "IO", "Value", "Number", "List" }
+                                  "Channel", "Gen", "IO", "Value", "Function", Number", "List" }
      COMPREHENSIONS           = { "~each", "~map", "~filter", "~fold", "~foldR",
                                   "~cata", "~chain", "~bind", "~flatMap", "~ap",
                                   "~foldMap" }

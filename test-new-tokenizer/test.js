@@ -165,6 +165,10 @@ var KNOWN_DIVERGENT = new Map([
 		"Same family as existing '-5foo' divergence: new applies NotIdentCont uniformly across integer-shaped productions, so NegInt backs off when followed by IdentCont. New: Hyphen + General('1_000'). Legacy: Number(-1) + General('_000') — partial-commits the integer. New's behavior is consistent with the digit-leading-identifier rules (Note 10)." ],
 	[ "-1foo",
 		"Same family as '-5foo' and '-1_000': uniform NotIdentCont guard prevents partial-commit. New: Hyphen + General('1foo'). Legacy: Number(-1) + General('foo')." ],
+	[ "Function",
+		"Builtin set drift: new tokenizer's BUILTINS includes 'Function' (null-application unit fn, parallel to 'Value'); legacy tokenizer's list does not. New emits Builtin('Function'); legacy emits General('Function'). Resolve by adding 'Function' to legacy BUILTINS." ],
+	[ "Function@42;",
+		"Same Builtin set drift as bare 'Function' — new emits Builtin('Function'); legacy emits General('Function'). All other tokens in the sample match." ],
 ]);
 
 
@@ -387,6 +391,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"falsey",
 		"emptyx",
 		"Maybex",                              // Builtin gate fails → General
+		"Functionx",                           // Builtin gate fails → General
 		"IOs",
 		"intx",                                // Keyword gate fails on "intx" → General
 
@@ -422,6 +427,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"empty",
 		"true",
 		"Maybe",
+		"Function",                            // new Builtin (null-application unit fn)
 		"~each",
 
 		// Boolean named ops & keyword extension
@@ -839,6 +845,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"foo()()",                                     // chained calls
 		"foo|a, b|()",                                 // partial then call
 		"foo@ bar",                                    // at-call form
+		"Function@42;",                                // null-app unit fn (guide form)
 		"~each !{ x > 0 }",                            // ~each with NamedUnaryExpr-shaped body
 
 		// Sample Foi source: audio player module (~90 lines).
