@@ -39,7 +39,7 @@ async function *normalizeOrigStream(legacyStream) {
 
 async function *normalizeNewStream(newStream) {
 	for await (let tok of newStream) {
-		if (tok.type === "PositiveIntegerLit") {
+		if (tok.type === "PositiveIntegerLit" || tok.type === "NegativeIntegerLit") {
 			yield { ...tok, type: "Number" };
 		}
 		else {
@@ -47,7 +47,6 @@ async function *normalizeNewStream(newStream) {
 		}
 	}
 }
-
 
 // Streaming diff. Walks the legacy stream and the new tokenizer
 // stream in lockstep, yielding one event per position:
@@ -162,6 +161,10 @@ var KNOWN_DIVERGENT = new Map([
 		"Legacy bug: emits Keyword('string') for the substring 'string' inside a spacing-escaped string body — the KEYWORDS gate leaks into string content. New correctly emits String('string') per SpacingEscapedStrChars (typed-identifier productions never fire inside string-form bodies)" ],
 	[ "`\"Special number: `-3.1415962`\n   Name: `name`\n   Greeting: `\\`\"Hello world\"`\n   Reaction: `\\\"Yay!\"`\n   Reply: `\"Ok.\"`\n!\"",
 		"Legacy emits Escape('`') for an InterpExpr closing backtick when the embed contains a nested escape-bearing string form; new correctly emits Backtick per InterpExpr's symb.Backtick reference (same production for opener and closer)" ],
+	[ "-1_000",
+		"Same family as existing '-5foo' divergence: new applies NotIdentCont uniformly across integer-shaped productions, so NegInt backs off when followed by IdentCont. New: Hyphen + General('1_000'). Legacy: Number(-1) + General('_000') — partial-commits the integer. New's behavior is consistent with the digit-leading-identifier rules (Note 10)." ],
+	[ "-1foo",
+		"Same family as '-5foo' and '-1_000': uniform NotIdentCont guard prevents partial-commit. New: Hyphen + General('1foo'). Legacy: Number(-1) + General('foo')." ],
 ]);
 
 
@@ -205,6 +208,77 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		"0",                                   // single-digit PositiveIntLit
 		"00",                                  // multi-digit, leading zero
 		"1_000_000",                           // digit-leading identifier (see below)
+
+		// =============================================================
+		// NegativeIntegerLit cases.
+		//
+		// NegInt fires at fresh-token position with the same NotDotDigit
+		// / NotIdentCont guards as PosInt; the only difference is the
+		// required leading "-". Tokens normalize via the harness back to
+		// Number on the new side, so these should all lockstep with the
+		// legacy tokenizer.
+		// =============================================================
+
+		// Bare NegInt fires:
+		"-0",                                  // sign + single zero
+		"-1",                                  // sign + single digit
+		"-42",                                 // sign + multi-digit
+		"numbers.-1",                          // motivating case: dot-access negative index
+		"def last: arr.-1;",                   // motivating case in statement context
+
+		// NegInt declines via NotDotDigit — falls through to NumberLit:
+		"-1.5",                                // decimal — NotDotDigit backs off NegInt; NumberLit decimal fires
+		"-0.5",
+		"-12.5",
+
+		// NegInt declines via NotIdentCont — falls through (Hyphen + ident path):
+		"-1_000",                              // separator is IdentCont; NegInt backs off; expect Hyphen + General
+		"-1foo",                               // ident-cont; same path as existing "-5foo"
+
+		// NumberEndingTail symmetry — DoublePeriod consumption after NegInt
+		// parallels existing PosInt cases ("5..10", "5...args").
+		"-5..3",                               // closed range LHS
+		"-5..",                                // leading range
+		"..-3",                                // trailing range
+		"-5...args",                           // splits ... into .. + . (parallel to "5...args")
+
+		// Bare ranges with negative endpoints (motivating cases for
+		// numberEnding(expressionEnding(IntegerLit)) wrapper order).
+		"-2..-1",                              // both negative — the canonical case
+		"5..-1",                               // positive LHS, negative RHS
+		"0..-1",                               // zero LHS, negative RHS
+		"-5..0",                               // negative LHS, zero RHS
+		"-5..-1",                              // both negative, multi-digit-safe
+		"-10..-5",                             // both negative, both multi-digit
+		"1..-1..3",                            // chained (lex-only; syn legality TBD)
+
+		// Ranges with negative endpoints inside other constructs (probes
+		// composition with surrounding contexts, no new lex behavior expected).
+		"(-5)..(-1)",                          // grouped form — comparison baseline
+		"<-5..-1>",                            // inside a tuple literal
+		"x..-1",                               // identifier LHS — ExprEndingTail on General must decline before `..`
+
+		// ExprEndingTail symmetry — binary Hyphen after NegInt parallels
+		// PosInt behavior ("5-3" → PosInt, Hyphen, PosInt).
+		"-5-3",                                // NegInt(-5), Hyphen, PosInt(3)
+		"-5 - 3",                              // spaced form
+		"-5+3",                                // Plus is not -Digit, no ExprEndingTail consumption
+		"-5*3",                                // similar
+		"(-5)-3",                              // grouped LHS
+
+		// NegInt inside data-structure literals — already syn-reachable
+		// via NumberLit, but verifying lex grain:
+		"<-1, -2, -3>",                        // tuple with negative literals
+		"<-0>",                                // single-entry edge case
+		"arr.[-2..-1]",                        // range with negative endpoints inside DotBracketExpr
+		"arr.[-1..]",                          // trailing range (already exists as `numbers.[-1..]` form)
+
+		// Escape arm unchanged — NegInt only fires at fresh-token position,
+		// not inside EscapePlain's inner alternation. These already exist
+		// elsewhere; restating here as smoke-tests that they still pass:
+		"\\-5",                                // EscapePlain + BareNumber(-5)
+		"\\-123_456",                          // EscapePlain + BareNumber(-int with sep)
+		"\\-5foo",                             // EscapePlain + General fallback (existing divergent)
 
 		// Digit-leading identifier formation: integer-only number
 		// productions back off via NotIdentCont when followed by any
@@ -784,10 +858,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		defn nextLoop() ^playlist(queue, false, true, onPlayNext);
 
 		defn playlist(
-		    urls,
-		    clear: false,
-		    loop: false,
-		    onNext: onPlayNext
+			urls,
+			clear: false,
+			loop: false,
+			onNext: onPlayNext
 		  )
 		  :over(queue,onPlayNext)
 		{
@@ -798,18 +872,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		  ?[clear]: queue := < &urls >;
 
 		  ?{
-		    ?[size(queue) ?= 0]: {
-		      def upcoming: queue.[1..];
-		      ?[loop]: queue := < &queue, upcoming >;
+			?[size(queue) ?= 0]: {
+			  def upcoming: queue.[1..];
+			  ?[loop]: queue := < &queue, upcoming >;
 
-		      player.src(upcoming);
-		      player.removeEventListener("ended", cb);
-		      player.addEventListener("ended", cb);
-		      player.play();
-		      ?[size(queue) ?> 0]: onNext(upcoming)
-		    };
-		    ?:
-		      player.removeEventListener("ended", cb)
+			  player.src(upcoming);
+			  player.removeEventListener("ended", cb);
+			  player.addEventListener("ended", cb);
+			  player.play();
+			  ?[size(queue) ?> 0]: onNext(upcoming)
+			};
+			?:
+			  player.removeEventListener("ended", cb)
 		  }
 		};
 

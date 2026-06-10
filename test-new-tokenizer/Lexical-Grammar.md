@@ -1,35 +1,63 @@
 # Foi Lexical Grammar
 
-Source-of-truth lexical grammar for Foi, derived from the combinator
-tokenizer in `foi-lex.js`. Written in the same EBNF dialect as
-`Grammar.md` (instaparse syntax). Where the lexer does things EBNF
-cannot express (semantic gates over reserved-set membership, the
-expression-ending wrapper's per-token emission, recursive forward
-references), inline `(* ... *)` comments flag the production and the
-Notes section expands.
+Source-of-truth lexical grammar for Foi, derived from the
+combinator tokenizer in `new-tokenizer.js`. Written in the same
+EBNF dialect as `Grammar.md` (instaparse syntax). Where the
+lexer does things EBNF cannot express (semantic gates over
+reserved-set membership, the expression-ending wrapper's
+per-token emission, recursive forward references), inline
+`(* ... *)` comments flag the production and the Notes section
+expands.
 
 Throughout: alternation `|` is intended as ordered choice (first
 match wins; longer/more-specific alternatives are listed first
 where their prefixes overlap). See Note 2.
 
 Production names prefixed with `<>` on the LHS (e.g., `<Token>`,
-`<WsChar>`) are *hidden*: they match as usual but emit no node of
-their own — their content splices into the parent's children.
+`<WsChar>`) are *hidden*: they match as usual but emit no node
+of their own — their content splices into the parent's children.
 Unbracketed names are *visible* and correspond to
 `production(NAME, ...)` wrappers in the impl; hidden names
-correspond to bare `and(...)` / `or(...)` fragments. RHS references
-inherit the LHS marking, so re-bracketing on use is unnecessary.
-The same convention applies in the syntactic grammar
-(`Syntactic-Grammar.md`).
+correspond to bare `and(...)` / `or(...)` fragments. RHS
+references inherit the LHS marking, so re-bracketing on use is
+unnecessary. The same convention applies in the syntactic
+grammar (`Syntactic-Grammar.md`).
 
-**Alias pattern.** A few visible productions emit nodes whose token type differs from the EBNF name — they are aliases for clarity at the grammar level. Three families:
+**Alias pattern.** A few visible productions emit nodes whose
+token type differs from the EBNF name — they are aliases for
+clarity at the grammar level. Four families:
 
-- Eight Escape variants — `EscapeBacktick`, `EscapePlain`, `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`, `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit `Escape` tokens with distinguishing values.
-- Six Number variants — `HexNumber`, `UnicodeNumber`, `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` — all emit `Number` tokens, paired with their corresponding Escape variant in `<EscapedNumber>` dispatch. The standalone `Number` (decimal source-level numbers) emits its own type.
-- Two `PositiveIntegerLit` variants — `PositiveIntegerLit` (bare top-level) and `PositiveIntegerLitWithSep` (paired with `EscapePlain` in `<EscapedNumber>` dispatch) — both emit `PositiveIntegerLit` tokens with distinguishing content shapes (bare disallows the underscore separator that the escaped form allows).
-- Four String content emitters — `PlainStrChars`, `InterpStrChars`, `SpacingInterpStrChars`, `SpacingEscapedStrChars` — all emit `String` tokens with context-specific char predicates.
+- Eight Escape variants — `EscapeBacktick`, `EscapePlain`,
+  `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`,
+  `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit
+  `Escape` tokens with distinguishing values.
+- Six Number variants — `HexNumber`, `UnicodeNumber`,
+  `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` —
+  all emit `Number` tokens, paired with their corresponding
+  Escape variant in `<EscapedNumber>` dispatch. The standalone
+  `Number` (decimal source-level numbers) emits its own type.
+- Two `PositiveIntegerLit` variants — `PositiveIntegerLit`
+  (bare top-level) and `PositiveIntegerLitWithSep` (paired with
+  `EscapePlain` in `<EscapedNumber>` dispatch) — both emit
+  `PositiveIntegerLit` tokens with distinguishing content
+  shapes (bare disallows the underscore separator that the
+  escaped form allows).
+- Four String content emitters — `PlainStrChars`,
+  `InterpStrChars`, `SpacingInterpStrChars`,
+  `SpacingEscapedStrChars` — all emit `String` tokens with
+  context-specific char predicates.
 
-**Concat compatibility note.** Four string-form productions and their content helpers carry a `Lex` prefix (`<LexStringLit>`, `<LexInterpStr>`, `<LexSpacingInterpStr>`, `<LexSpacingEscapedStr>`, `<LexInterpStrContent>`, `<LexSpacingInterpStrContent>`, `<LexSpacingEscapedStrContent>`, `<LexInterpExpr>`) to avoid collision with same-named visible productions in `Syntactic-Grammar.md`. The lex versions describe char-level token assembly; the syn versions describe token-level assembly into AST. The lex versions are hidden and reachable from the lex `<Token>` start (which is itself unreachable from the syn `Program` start under concat).
+**Concat compatibility note.** Four string-form productions and
+their content helpers carry a `Lex` prefix (`<LexStringLit>`,
+`<LexInterpStr>`, `<LexSpacingInterpStr>`, `<LexSpacingEscapedStr>`,
+`<LexInterpStrContent>`, `<LexSpacingInterpStrContent>`,
+`<LexSpacingEscapedStrContent>`, `<LexInterpExpr>`) to avoid
+collision with same-named visible productions in
+`Syntactic-Grammar.md`. The lex versions describe char-level
+token assembly; the syn versions describe token-level assembly
+into AST. The lex versions are hidden and reachable from the lex
+`<Token>` start (which is itself unreachable from the syn
+`Program` start under concat).
 
 ```ebnf
 (*************** Top Level ***************)
@@ -48,7 +76,7 @@ Tokens                  := Token*;
                          | (Builtin ExprEndingTail)        (* Note 1, Note 9 *)
                          | (Comprehension ExprEndingTail)  (* Note 1, Note 9 *)
                          | (BooleanOper ExprEndingTail)    (* Note 1, Note 9 *)
-                         | (PositiveIntegerLit NumberEndingTail ExprEndingTail)  (* Note 6, Note 9, Note 11 *)
+                         | (IntegerLit ExprEndingTail NumberEndingTail)  (* Note 6, Note 9, Note 11 *)
                          | (Number ExprEndingTail)         (* Note 5, Note 9 *)
                          | (General ExprEndingTail)        (* Note 9 *)
                          | TriplePeriod
@@ -117,13 +145,22 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
 Number                  := ("-" &Digit)? NumberBody;       (* Note 5 *)
 <NumberBody>            := (Digit+ "." Digit+) | (Digit+ !IdentCont);
 
-(* PositiveIntegerLit: bare positive integer (no sign, no fractional
-   part, no underscores). PEG-ordered before Number in <Token> with
-   negative lookahead for "." Digit (avoid swallowing the integer
-   part of decimals) and for IdentCont (avoid grabbing the leading
-   digits of digit-leading identifiers; Note 10). Emits
-   PositiveIntegerLit token. *)
-PositiveIntegerLit        := Digit+ !("." Digit) !IdentCont;
+(* PositiveIntegerLit / NegativeIntegerLit: bare integer literals
+   (no fractional part, no underscores). PEG-ordered before Number
+   in <Token> with negative lookahead for "." Digit (avoid swallowing
+   the integer part of decimals) and for IdentCont (avoid grabbing
+   leading digits of digit-leading identifiers; Note 10).
+   NegativeIntegerLit requires a leading "-"; PositiveIntegerLit is
+   unsigned. Their first chars are disjoint, so order between them
+   doesn't matter; both must precede BareNumber (whose integer branch
+   would otherwise consume both shapes as Number). Separator-bearing
+   integers (e.g. -1_000) and decimals (-1.5) fall through to
+   BareNumber, since neither carries underscores or fractional parts. *)
+PositiveIntegerLit := Digit+ !("." Digit) !IdentCont;
+NegativeIntegerLit := "-" Digit+ !("." Digit) !IdentCont;
+
+(* Hidden union for sites that accept either sign. *)
+<IntegerLit> := NegativeIntegerLit | PositiveIntegerLit;
 
 (* PositiveIntegerLitWithSep: positive integer with optional underscore
    separators. Fires from inside <EscapedNumber>, paired with
@@ -282,16 +319,16 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
 
 1. Typed-identifier ordering:
 
-    Keyword, Native, Builtin, Comprehension, and BooleanOper are tried
-    before General in the Token alternation. Each is gated by reserved-
-    set membership over the matched span; see Note 4. The first that
-    matches and passes its gate wins.
+    Keyword, Native, Builtin, Comprehension, and BooleanOper are
+    tried before General in the Token alternation. Each is gated
+    by reserved-set membership over the matched span; see Note 4.
+    The first that matches and passes its gate wins.
 
 2. Ordered choice:
 
-    Alternation (|) in this lexical grammar is intended as PEG-style
-    ordered choice: first match wins. Longer/more-specific forms are
-    listed before their prefixes. Examples:
+    Alternation (`|`) in this lexical grammar is intended as
+    PEG-style ordered choice: first match wins. Longer/more-specific
+    forms are listed before their prefixes. Examples:
 
     ```
     TriplePeriod      before DoublePeriod      before Period
@@ -306,57 +343,64 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
 3. sawNonDigit gate:
 
     IdentBody matches sequences of identifier characters that may
-    include digits (including as the leading character — Foi permits
-    digit-leading identifiers like `1foo`, `5_value`, `1_000_000`).
-    The combinator additionally requires that at least one non-digit
-    character appears in the matched span. Without this, a bare digit
-    run would match IdentBody and shadow Number. This semantic
-    predicate is not expressible in EBNF; the EBNF form above is a
-    syntactic over-approximation.
+    include digits (including as the leading character — Foi
+    permits digit-leading identifiers like `1foo`, `5_value`,
+    `1_000_000`). The combinator additionally requires that at
+    least one non-digit character appears in the matched span.
+    Without this, a bare digit run would match IdentBody and
+    shadow Number. This semantic predicate is not expressible in
+    EBNF; the EBNF form above is a syntactic over-approximation.
 
-    The dual to sawNonDigit lives on the Number side: every integer-
-    shaped number production carries a !IdentCont negative lookahead
-    (Note 10) so that digit runs leading into identifier characters
-    fall through to General rather than being prematurely captured
-    as a Number.
+    The dual to sawNonDigit lives on the Number side: every
+    integer-shaped number production carries a `!IdentCont`
+    negative lookahead (Note 10) so that digit runs leading into
+    identifier characters fall through to General rather than
+    being prematurely captured as a Number.
 
 4. Reserved-set membership gates:
 
     Keyword, Native, Builtin, Comprehension, and BooleanOper each
-    match a broader form syntactically than their semantics permit.
-    The combinator applies a positive lookahead over the matched span
-    asserting membership in the corresponding reserved set; on gate
-    failure the production fails and the next Token alternative is
-    tried. Not expressible in EBNF.
+    match a broader form syntactically than their semantics
+    permit. The combinator applies a positive lookahead over the
+    matched span asserting membership in the corresponding
+    reserved set; on gate failure the production fails and the
+    next Token alternative is tried. Not expressible in EBNF.
 
 5. Leading-sign rule (sign half):
 
     Number and the Number variants paired with hyphen-accepting
-    Escape openers (HexNumber, OctalNumber, BinaryNumber, MonadNumber,
-    BareNumber) all accept an optional leading "-". For the standalone
-    Number the combinator uses positive lookahead on the digit; the
-    "-" is consumed and becomes part of the Number's value. This
-    handles "-5" at start-of-input and immediately after non-expression-
-    ending operators. The other half of the disambiguation — preventing
-    "5-3" from re-lexing as Number(5) Number(-3) — is handled by
+    Escape openers (HexNumber, OctalNumber, BinaryNumber,
+    MonadNumber, BareNumber) all accept an optional leading `-`.
+    For the standalone Number the combinator uses positive
+    lookahead on the digit; the `-` is consumed and becomes part
+    of the Number's value. This handles `-5` at start-of-input
+    and immediately after non-expression-ending operators. The
+    other half of the disambiguation — preventing `5-3` from
+    re-lexing as Number(5) Number(-3) — is handled by
     ExprEndingTail (Note 9).
 
-6. UnicodeNumber and PositiveIntegerLit variants reject leading sign:
+6. UnicodeNumber and integer-literal variants — sign handling:
 
-    Unicode-char escapes (`\u`) produce a character/string from a hex
-    codepoint and carry no sign. UnicodeNumber accepts hex digits only,
-    without the optional leading "-" that other Number variants allow.
+    Unicode-char escapes (`\u`) produce a character/string from a
+    hex codepoint and carry no sign. UnicodeNumber accepts hex
+    digits only, without the optional leading `-` that other
+    Number variants allow.
 
-    PositiveIntegerLit and PositiveIntegerLitWithSep similarly accept
-    no leading sign — the "Positive" in the name. The bare form also
-    rejects underscore separators; the WithSep form accepts them. Both
-    use !("." Digit) lookahead to avoid swallowing the integer part of
-    decimals; a "." followed by a non-digit (range op, property access,
-    spread) is fine. Both also carry the !IdentCont guard per Note 10.
+    Integer literals split by sign across two productions:
+    PositiveIntegerLit (unsigned) and NegativeIntegerLit (requires
+    leading `-`), unified at use sites by the hidden `<IntegerLit>`.
+    PositiveIntegerLitWithSep (the escape-paired form inside
+    `<EscapedNumber>`) remains unsigned only — the signed case
+    for separator-bearing integers falls through to BareNumber.
+    All four use `!("." Digit)` lookahead to avoid swallowing the
+    integer part of decimals; a `.` followed by a non-digit
+    (range op, property access, spread) is fine. All four also
+    carry the `!IdentCont` guard per Note 10.
 
 7. Escape token values:
 
-    Eight EBNF productions emit Escape tokens, distinguished by value:
+    Eight EBNF productions emit Escape tokens, distinguished by
+    value:
 
     ```
     EscapeBacktick          value "`"      (one char)
@@ -369,77 +413,88 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     EscapeMonadic           value "\@"     (two chars)
     ```
 
-    All eight emit single Escape tokens in the output stream. They
-    exist for parity with the legacy hand-written tokenizer (which
-    assembles them via deferred emission). The split into eight
-    named productions lets the syntactic grammar reference each by
-    name rather than by value-literal discrimination.
+    All eight emit single Escape tokens in the output stream.
+    The split into eight named productions lets the syntactic
+    grammar reference each by name rather than by value-literal
+    discrimination.
 
 8. Recursive forward reference and embed-boundary detection:
 
     LexInterpExpr's body recursively contains Tokens — including
-    nested LexSpacingInterpStr or further LexInterpExpr, which may
-    themselves contain more nested strings. The combinator handles
-    this via a forward-declared lazy reference resolved at parse
-    time. In EBNF the recursion is direct: LexInterpExpr → Token
-    → (LexSpacingInterpStr | LexInterpExpr) → LexInterpExpr.
+    nested LexSpacingInterpStr or further LexInterpExpr, which
+    may themselves contain more nested strings. The combinator
+    handles this via a forward-declared lazy reference resolved
+    at parse time. In EBNF the recursion is direct:
+    LexInterpExpr → Token → (LexSpacingInterpStr | LexInterpExpr)
+    → LexInterpExpr.
 
-    InterpExprStop is defined as `&"`"` — a positive lookahead on
-    a bare backtick. This means LexInterpStr (the plain interp form)
-    CANNOT be nested inside an InterpExpr body: its opener begins
-    with a bare backtick, which the InterpExprStop lookahead treats
-    as the embed-close. The simplification is intentional: plain-
-    in-plain nesting would create a grammar ambiguity (any "`X`" or
-    `` `"X"` `` inside an embed could be read multiple ways), and
-    Foi forbids it by design.
+    InterpExprStop is defined as `&"`"` — a positive lookahead
+    on a bare backtick. This means LexInterpStr (the plain
+    interp form) CANNOT be nested inside an InterpExpr body: its
+    opener begins with a bare backtick, which the InterpExprStop
+    lookahead treats as the embed-close. The simplification is
+    intentional: plain-in-plain nesting would create a grammar
+    ambiguity (any `` `X` `` or `` `"X"` `` inside an embed
+    could be read multiple ways), and Foi forbids it by design.
 
-    To nest interpolated strings inside an embed, use the spacing
-    form (LexSpacingInterpStr), whose opener begins with `\` —
-    that character does not trigger InterpExprStop. The nesting can
-    be spacing-in-plain, spacing-in-spacing, or any depth thereof
-    via successive `\` openers.
+    To nest interpolated strings inside an embed, use the
+    spacing form (LexSpacingInterpStr), whose opener begins with
+    `\` — that character does not trigger InterpExprStop. The
+    nesting can be spacing-in-plain, spacing-in-spacing, or any
+    depth thereof via successive `\` openers.
 
 9. Hyphen-as-sign disambiguation (binary-operator half):
 
-    Foi treats "-" as a sign when leading a digit at the start of an
-    expression context, and as a binary operator otherwise. Rather
-    than carry cross-token state, every production whose tokens can
-    end an expression is wrapped with ExprEndingTail. After the main
-    production matches, ExprEndingTail optionally consumes trailing
-    Whitespace and Comment tokens, then peeks for "-" followed by a
-    Digit; if present, it consumes the "-" as a Hyphen token. This
-    forces the next outer iteration to see a fresh digit, which
-    Number's leading-sign rule (Note 5) then handles correctly.
+    Foi treats `-` as a sign when leading a digit at the start
+    of an expression context, and as a binary operator otherwise.
+    Rather than carry cross-token state, every production whose
+    tokens can end an expression is wrapped with ExprEndingTail.
+    After the main production matches, ExprEndingTail optionally
+    consumes trailing Whitespace and Comment tokens, then peeks
+    for `-` followed by a Digit; if present, it consumes the
+    `-` as a Hyphen token. This forces the next outer iteration
+    to see a fresh digit, which Number's leading-sign rule
+    (Note 5) then handles correctly.
 
     EBNF representational caveat: ExprEndingTail's sub-matches
-    (whitespace, comment, the hyphen) are each emitted as SEPARATE
-    tokens in the output stream, not grouped under the parent
-    production. EBNF expresses the sequential structure but cannot
-    express the per-sub-match token emission.
+    (whitespace, comment, the hyphen) are each emitted as
+    SEPARATE tokens in the output stream, not grouped under the
+    parent production. EBNF expresses the sequential structure
+    but cannot express the per-sub-match token emission.
 
-    The trailing trivia consume is speculative — if no "-Digit"
-    follows, the optional rolls back and the trivia is picked up by
-    the next outer iteration.
+    The trailing trivia consume is speculative — if no `-Digit`
+    follows, the optional rolls back and the trivia is picked up
+    by the next outer iteration.
 
-    The wrapped set of productions mirrors the tokenizer's
-    minusOpAllowed flag: exactly the token types after which a binary
-    "-" is legal. Non-expression-ending operators (Plus, Star, etc.)
-    are not wrapped; a "-" immediately following them is consumed as
-    a sign by Number.
+    The wrapped set is exactly the token types that semantically
+    end an expression context, after which a binary `-` is
+    legal. Non-expression-ending operators (Plus, Star, etc.)
+    are not wrapped; a `-` immediately following them is
+    consumed as a sign by Number.
 
-10. Digit-leading identifier disambiguation (!IdentCont):
+    For the IntegerLit slot at the Token level, ExprEndingTail
+    is applied *inside* NumberEndingTail (i.e.
+    `(IntegerLit ExprEndingTail NumberEndingTail)`) so that the
+    lookahead for `-Digit` runs immediately after the integer,
+    before any trailing `..` is consumed. The reverse order
+    would cause `-2..-1` to consume the second `-` as a binary
+    Hyphen rather than leaving it for NegativeIntegerLit on the
+    next iteration.
 
-    Foi permits identifiers to start with digits (the sawNonDigit
-    gate in Note 3 only requires that the identifier contain *some*
-    non-digit character — leading digits are permitted). To prevent
-    the integer-shaped number productions from grabbing the leading
-    digits of an identifier, each integer-shaped form ends with a
-    !IdentCont negative lookahead.
+10. Digit-leading identifier disambiguation (`!IdentCont`):
 
-    Productions carrying !IdentCont:
+    Foi permits identifiers to start with digits (the
+    sawNonDigit gate in Note 3 only requires that the identifier
+    contain *some* non-digit character — leading digits are
+    permitted). To prevent the integer-shaped number productions
+    from grabbing the leading digits of an identifier, each
+    integer-shaped form ends with a `!IdentCont` negative
+    lookahead.
+
+    Productions carrying `!IdentCont`:
 
     ```
-    PositiveIntegerLit, PositiveIntegerLitWithSep,
+    PositiveIntegerLit, NegativeIntegerLit, PositiveIntegerLitWithSep,
     Number (integer branch only — NumberBody),
     HexNumber, UnicodeNumber, OctalNumber, BinaryNumber,
     MonadNumber (integer branch only),
@@ -447,8 +502,8 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     ```
 
     Decimal branches (with explicit fractional part) do not need
-    the guard — once "." is consumed and a fractional run follows,
-    the position is unambiguously inside a number.
+    the guard — once `.` is consumed and a fractional run
+    follows, the position is unambiguously inside a number.
 
     Effects:
 
@@ -461,54 +516,55 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     "\h2Axyz"   → Escape("\h") + General("2Axyz")
     ```
 
-    **Decimal-commit corner case.** The decimal branch's lack of an
-    !IdentCont guard means that once `Digit+ "." Digit+` matches,
-    the lexer commits to a decimal Number — even when an identifier-
-    like continuation follows. So `"5.5foo"` tokenizes as
-    `Number("5.5") + General("foo")`, not as
-    `Number("5") + Period + General("5foo")` (which would be the
-    property-access reading: integer 5, dot, identifier "5foo"). To
-    express the property-access reading, parenthesize the integer:
-    `"(5).5foo"`.
+    **Decimal-commit corner case.** The decimal branch's lack of
+    a `!IdentCont` guard means that once `Digit+ "." Digit+`
+    matches, the lexer commits to a decimal Number — even when
+    an identifier-like continuation follows. So `"5.5foo"`
+    tokenizes as `Number("5.5") + General("foo")`, not as
+    `Number("5") + Period + General("5foo")` (which would be
+    the property-access reading: integer 5, dot, identifier
+    "5foo"). To express the property-access reading,
+    parenthesize the integer: `"(5).5foo"`. This is a minor
+    inconsistency in the digit-leading-identifier story (the
+    lex doesn't fully respect identifier shape on the RHS of a
+    `.`), but the common case is what users want, and the
+    parenthesization workaround is clean.
 
-    This isn't a divergence from legacy — both lexers commit to
-    decimal greedily here. It's a minor inconsistency in the digit-
-    leading-identifier story (the lex doesn't fully respect
-    identifier shape on the RHS of a `.`), but the common case is
-    what users want, and the parenthesization workaround is clean.
+11. NumberEndingTail (immediate `..` after integer literals):
 
-11. NumberEndingTail (immediate ".." after positive integer literals):
+    After an IntegerLit token (PositiveIntegerLit or
+    NegativeIntegerLit), an immediate `..` (no trivia between)
+    is consumed as a DoublePeriod token via the NumberEndingTail
+    wrapper at the Token level. This forces a third `.` in
+    `5...` to surface as a separate Period token rather than
+    getting swallowed into a TriplePeriod by PEG longest-match.
 
-    After a PositiveIntegerLit token, an immediate ".." (no trivia
-    between) is consumed as a DoublePeriod token via the
-    NumberEndingTail wrapper at the Token level. This forces a
-    third "." in "5..." to surface as a separate Period token rather
-    than getting swallowed into a TriplePeriod by PEG longest-match.
+    Rationale: the only multi-dot operator valid immediately
+    after an integer is the range op `..`. When the user typos
+    `...` after an integer, the lexer reports the syntactic
+    error at the third `.` (a single ambiguous Period token),
+    rather than silently committing to a TriplePeriod that would
+    parse as the spread operator (a more obscure error
+    downstream).
 
-    Rationale: the only multi-dot operator valid immediately after
-    a positive integer is the range op "..". When the user typos
-    "..." after an integer, the lexer reports the syntactic error
-    at the third "." (a single ambiguous Period token), rather than
-    silently committing to a TriplePeriod that would parse as the
-    spread operator (a more obscure error downstream).
-
-    Scope: applies only to the bare PositiveIntegerLit at the Token
-    level. PositiveIntegerLitWithSep (inside EscapedNumber) does
-    not get the tail — a top-level DoublePeriod can still match
-    immediately after the escaped form. The standalone Number
-    production (decimal source-level numbers) also does not get
-    the tail, which is the source of the "12.5..." known divergence
-    (see Known Divergences).
+    Scope: applies to bare PositiveIntegerLit and
+    NegativeIntegerLit (both arms of `<IntegerLit>`) at the
+    Token level. PositiveIntegerLitWithSep (inside EscapedNumber)
+    does not get the tail — a top-level DoublePeriod can still
+    match immediately after the escaped form. The standalone
+    Number production (decimal source-level numbers) also does
+    not get the tail; applying NumberEndingTail to a decimal
+    NumberLit would produce a `DoublePeriod + Period` shape for
+    `12.5...` that doesn't represent any coherent Foi reading,
+    so the wrapper is deliberately scoped to integer forms only.
 
 12. General fallback within EscapedNumber:
 
-    Each EscapedNumber arm tries the Number variant first, and on
-    failure falls back to General within the same arm. This allows
-    multi-char escapes followed by identifier-shaped content to
-    tokenize as Escape + General rather than failing the whole arm
-    and falling through to standalone EscapePlain.
-
-    Examples (all match legacy):
+    Each EscapedNumber arm tries the Number variant first, and
+    on failure falls back to General within the same arm. This
+    allows multi-char escapes followed by identifier-shaped
+    content to tokenize as Escape + General rather than failing
+    the whole arm and falling through to standalone EscapePlain:
 
     ```
     "\h_foo"   → Escape("\h"), General("_foo")
@@ -518,234 +574,17 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     "\1foo"    → Escape("\"),  General("1foo")
     ```
 
-    For the EscapePlain arm specifically (the last alternative in
-    EscapedNumber), the inner `or` is `(PositiveIntegerLitWithSep |
-    BareNumber | General)`. PEG order matters: integer-with-sep is
-    tried first, then decimal-bearing BareNumber, then General as
-    catch-all. Critically, General is the *last* alternative within
-    the arm, so it only fires when both number variants have failed.
-    A two-arm structure with General as fallback of just one number
-    variant would shadow the other.
+    For the EscapePlain arm specifically (the last alternative
+    in EscapedNumber), the inner `or` is
+    `(PositiveIntegerLitWithSep | BareNumber | General)`. PEG
+    order matters: integer-with-sep is tried first, then
+    decimal-bearing BareNumber, then General as catch-all.
+    Critically, General is the *last* alternative within the
+    arm, so it only fires when both number variants have failed.
+    A two-arm structure with General as fallback of just one
+    number variant would shadow the other.
 
     Cases where the fallback cannot fire (because no IdentStart
-    follows the multi-char Escape) remain divergent — see Known
-    Divergences.
-
-### Known Divergences From Legacy Tokenizer
-
-The combinator lexer is *not exactly* compatible with the legacy hand-written
-`tokenizer.js`. The divergences fall into several categories.
-
-#### Deliberate combinator-side divergences
-
-**PositiveIntegerLit emission.** The new lexer emits `PositiveIntegerLit`
-wherever chars match `Digit+ !("." Digit) !IdentCont` (bare) or
-`EscapePlain DigitsWithSep !("." Digit) !IdentCont` (escaped). Legacy
-emits `Number` for these char shapes. Motivation: the syntactic grammar
-restricts property-index positions to positive-int literals, and pushing
-that restriction down to a token type makes the syntactic EBNF mechanically
-round-trippable to combinator code. The diff harness normalizes
-`PositiveIntegerLit → Number` on the new side to preserve parity validation
-for all other token shapes.
-
-#### Multi-char escape, partial commit
-
-Legacy partial-commits to a multi-char Escape opener and emits the multi-
-char Escape even when the expected number content fails to match. The
-combinator lexer commits fully or not at all — when neither the number
-variant nor the General fallback (Note 12) matches inside an EscapedNumber
-arm, the whole arm rolls back and the standalone EscapePlain (`\`) catches
-the lone backslash.
-
-```
-Input    Legacy tokenizer                        Combinator lexer
--------  --------------------------------------  -------------------------------------------
-"\h"     Escape("\h")                            Escape("\"), General("h")
-"\u-5"   Escape("\u"), Hyphen, Number(5)         Escape("\"), General("u"), Hyphen, Number(5)
-"\@-"    Escape("\@"), Number("-")               Escape("\"), At, Hyphen
-```
-
-In each case, no IdentStart follows the multi-char Escape, so the General
-fallback in EscapedNumber fails too, and the whole arm rolls back. The
-divergent token shapes follow from there.
-
-`\h_foo` (where `_` is IdentStart and triggers the General fallback) is
-NOT divergent — both lexers emit `Escape("\h"), General("_foo")`. This
-case was divergent in earlier versions; the General-fallback restructure
-of EscapedNumber (Note 12) resolved it.
-
-#### Negative escaped number + underscore separator
-
-```
-Input                   Legacy tokenizer                                       Combinator lexer
-----------------------  -----------------------------------------------------  -----------------------------------------
-"\-123_456"             Escape("\"), Number(-123), General("_456")             Escape("\"), Number("-123_456")
-"\-123_456.78_9"        Escape("\"), Number(-123), General("_456"),            Escape("\"), Number("-123_456.78_9")
-                        Period, General("78_9")
-```
-
-Legacy's `EscapePlain + negative-number` branch doesn't carry through
-the underscore-separator support that its positive-number branch handles
-correctly — `\123_456` lexes cleanly on both sides, but adding a sign
-makes legacy stop the number at the first underscore. The combinator
-lexer's `BareNumber` handles `DigitsWithSep` uniformly across the sign
-branches, matching `Grammar.md`'s explicit positive examples of these
-forms (block 4 of the test snippets).
-
-#### Legacy decimal-grammar quirks
-
-```
-Input          Legacy tokenizer                  Combinator lexer
--------------  --------------------------------  -----------------------------------------
-"5.5.5"        Number("5.5.5")                   Number("5.5"), Period, Number("5")
-"12.5...args"  Number("12.5"), Period,           Number("12.5"), TriplePeriod,
-               DoublePeriod, General("args")     General("args")
-```
-
-For `"5.5.5"`: legacy's decimal grammar extends past one fractional part,
-swallowing additional `.digits` runs into a single Number. The combinator
-lexer's `NumberBody` is `(Digit+ "." Digit+) | (Digit+ !IdentCont)` — it
-stops after one fractional part.
-
-For `"12.5...args"`: legacy applies a decimal-grammar recovery (after
-fractional digits, an extra `.` surfaces as a separate Period and the
-remaining `..` is read as range-op). The combinator lexer follows PEG
-longest-match, emitting `TriplePeriod`. The NumberEndingTail rule (Note 11)
-deliberately does NOT apply to the decimal Number production — the divergence
-is preserved because new's behavior is the more coherent reading (decimal,
-spread, identifier).
-
-#### Sign + digit-leading identifier
-
-```
-Input        Legacy tokenizer                          Combinator lexer
------------  ----------------------------------------  --------------------------------------------
-"-5foo"      Number(-5), General("foo")                Hyphen, General("5foo")
-"\-5foo"     Escape("\"), Number(-5), General("foo")   Escape("\"), Hyphen, General("5foo")
-"\h-Fxyz"    Escape("\h"), Number(-F), General("xyz")  Escape("\"), General("h"), Hyphen, General("Fxyz")
-"\@-5foo"    Escape("\@"), Number(-5f), General("oo")  Escape("\"), At, Hyphen, General("5foo")
-```
-
-Following the digit-leading-identifier principle (Note 3, Note 10): `5foo`
-is an identifier on both sides, but legacy commits to number context at
-`-` and emits `Number(-5)` followed by `General("foo")`. The combinator
-lexer treats `-` as a standalone Hyphen and emits `General("5foo")` as a
-single identifier — internally consistent with how it tokenizes bare
-`"5foo"`.
-
-The escape-prefixed analogs follow the same principle inside escaped-
-number contexts. New applies `NotIdentCont` uniformly to every integer-
-shaped number production, so the production fails when an IdentCont char
-follows the digits (or hex digits for `\h`/`\@`). The General fallback
-inside the EscapedNumber arm then fails because `-` is not an IdentStart,
-and the whole arm rolls back atomically. The standalone EscapePlain
-catches the `\`, and the remaining chars tokenize independently. Legacy
-doesn't enforce `NotIdentCont` across all the escaped-number variants,
-so it commits to a partial Number reading, consuming the `-` plus as
-many digit-or-hex chars as it can.
-
-Note legacy's `\@-5foo` reading: it consumes the `f` as a hex digit
-(since MonadNumber accepts hex), producing `Number(-5f) + General("oo")`
-— a particularly awkward split.
-
-#### Digit-trailing tilde identifier
-
-```
-Input                  Legacy tokenizer                     Combinator lexer
----------------------  -----------------------------------  ----------------------------------
-"123~"                 Number("123"), Tilde                 General("123~")
-"def 123~: empty;"     Keyword("def"), Whitespace,          Keyword("def"), Whitespace,
-                       Number("123"), Tilde, Colon,         General("123~"), Colon,
-                       Whitespace, Native("empty"),         Whitespace, Native("empty"),
-                       Semicolon                            Semicolon
-```
-
-`Grammar.md`'s `Identifier` regex carries `#"[0-9]+~"` as an explicit
-third alternative, after the main `[a-zA-Z0-9_~]+` form and the
-comprehension-prefixed form. The combinator lexer's `IdentBody` accepts
-this shape directly via the sawNonDigit gate (Note 3) — tilde is an
-IdentCont char and counts as non-digit, so a pure-digit run with a
-trailing tilde passes the gate and emits as a single General. Legacy
-commits to number context for the digit prefix and emits the tilde as a
-standalone token.
-
-Grammar.md's test snippets (block 3) use `123~` as a positive identifier
-example, confirming new is correct per spec intent.
-
-#### Comment-bearing trivia + binary hyphen
-
-```
-Input                       Legacy                            Combinator lexer
---------------------------  -------------------------------   ---------------------------------
-"foo //c\n-5"               General, WS, Comment, WS,         General, WS, Comment, WS,
-                            Number(-5)                        Hyphen, Number(5)
-"foo /// c ///-5"           General, WS, Comment, Number(-5)  General, WS, Comment, Hyphen, Number(5)
-"42 // c\n-3"               Number(42), WS, Comment, WS,      Number(42), WS, Comment, WS,
-                            Number(-3)                        Hyphen, Number(3)
-```
-
-Legacy's `minusOpAllowed` flag gets clobbered when Comment tokens appear
-in trailing trivia between an expression-ending token and a subsequent
-`-Digit`; legacy then re-interprets `-Digit` as a signed Number. The
-combinator lexer's ExprEndingTail (Note 9) consumes Comment tokens as
-part of the speculative trivia run without losing the "after expression-
-end" context, so the binary Hyphen is correctly emitted.
-
-When trivia is whitespace-only (no Comment), both lexers agree: `"foo  -5"`,
-`"(5)  -3"`, `"42  -3"` all tokenize identically.
-
-#### Interpolated-string trailing-whitespace inconsistency
-
-```
-Input          Legacy                                          Combinator lexer
--------------  ----------------------------------------------  ----------------------------------------------
-`" `\h2A` "`   ..., Number("2A"), Backtick, Whitespace(" "),   ..., Number("2A"), Backtick, String(" "),
-               DoubleQuote                                     DoubleQuote
-```
-
-Legacy emits `Whitespace(" ")` for a trailing space after an escaped-
-number embed inside a plain InterpStr; the combinator lexer emits
-`String(" ")` per InterpStrChars predicate (which accepts whitespace
-as plain string content in plain interp forms). The corresponding case
-with a simple-identifier embed (e.g. `` `" `a` "` ``) emits `String(" ")`
-on both sides — the legacy inconsistency depends on what the embed
-contained. Combinator behavior is the consistent one.
-
-#### Legacy string-content bugs
-
-Two distinct legacy bugs surface inside string-form bodies, caught by
-the Grammar.md block 5 audit pass.
-
-**Keyword leak inside spacing-escaped string body.**
-
-```
-Input                                                          Legacy tokenizer                          Combinator lexer
--------------------------------------------------------------  ----------------------------------------  ----------------------------------------
-"\"A single line\n    string with whitespace collapsing..."    ..., Whitespace, Keyword("string"),       ..., Whitespace, String("string"),
-                                                               Whitespace, ...                           Whitespace, ...
-```
-
-Legacy emits `Keyword("string")` for the substring `string` inside a
-`SpacingEscapedStr` body. The KEYWORDS gate fires against string
-content, which should never happen — once inside a string form, content
-tokens should only be `String`, `Whitespace`, or escape forms. New's
-`SpacingEscapedStrChars` predicate handles the content correctly; the
-typed-identifier productions are not reachable from inside string-form
-bodies in the new lexer.
-
-**InterpExpr closer misclassified as Escape.**
-
-```
-Input                                                          Legacy tokenizer            Combinator lexer
--------------------------------------------------------------  --------------------------  ---------------------------
-"`\"... `\`"Hello world"` ... `\"Yay!"` ... `"Ok."`\n!"        ..., Escape("`"), ...       ..., Backtick, ...
-                                                               (InterpExpr closer          (InterpExpr closer
-                                                               misclassified)              correctly typed)
-```
-
-When an InterpExpr embed contains a nested escape-bearing string form
-(e.g. `` `\`"Hello world"` `` or `` `\"Yay!"` `` inside the outer
-interp), legacy emits the closing backtick of the *outer* InterpExpr as
-an `Escape("`")` token rather than a `Backtick`. New correctly emits
-`Backtick` for both opener and closer of every InterpExpr — same
-`symb.Backtick` production used at both positions.
+    follows the multi-char Escape) cause the whole arm to roll
+    back atomically; the standalone EscapePlain catches the lone
+    `\` and the remaining chars tokenize independently.

@@ -311,6 +311,18 @@ export const PositiveIntegerLit = production("PositiveIntegerLit",
 	and(many(terminal(isDigit)), NotDotDigit, NotIdentCont)
 );
 
+// NegativeIntegerLit — bare negative integer (required leading "-",
+// no separators, no fractional part). Same NotDotDigit / NotIdentCont
+// guards as PositiveIntegerLit. Emits NegativeIntegerLit token type.
+export const NegativeIntegerLit = production("NegativeIntegerLit",
+	and(ch(C.Hyphen), many(terminal(isDigit)), NotDotDigit, NotIdentCont)
+);
+
+// IntegerLit — hidden union covering both signs. Used in <Token> via
+// expressionEnding(numberEnding(IntegerLit)). First-char disjoint
+// between arms, so order is mechanical.
+var IntegerLit = or(NegativeIntegerLit, PositiveIntegerLit);
+
 export const PositiveIntegerLitWithSep = production("PositiveIntegerLit",
 	and(DigitsWithSep, NotDotDigit, NotIdentCont)
 );
@@ -582,7 +594,7 @@ var BaseTokenOr = or(
 	expressionEnding(Builtin),
 	expressionEnding(Comprehension),
 	expressionEnding(BooleanOper),
-	expressionEnding(numberEnding(PositiveIntegerLit)),
+	numberEnding(expressionEnding(IntegerLit)),
 	expressionEnding(NumberLit),
 	expressionEnding(General),
 	TriplePeriod,
