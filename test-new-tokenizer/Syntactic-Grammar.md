@@ -523,14 +523,14 @@ DefBlockStmt          := "def" _ BlockDefsInit _ BareBlockExpr;
 <BareBlockExpr>       := OpenBrace _ BlockStmts _ CloseBrace;
 <BlockStmts>          := (StmtSemi _)* StmtSemiOpt?;
 
-<BlockDefsInit>       := OpenParen _ VarDefInitList _ CloseParen;
-<BlockDefsInitOpt>    := OpenParen _ VarDefInitOptList _ CloseParen;
+BlockDefsInit         := OpenParen _ VarDefInitList _ CloseParen;
+BlockDefsInitOpt      := OpenParen _ VarDefInitOptList _ CloseParen;
 
 <VarDefInitList>      := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
 <VarDefInitOptList>   := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
 
 VarDefInit            := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
-<VarDefInitOpt>       := (Identifier        (_ Colon _ ExprNoBlock)?)
+VarDefInitOpt         := (Identifier        (_ Colon _ ExprNoBlock)?)
                        | (DestructureTarget (_ Colon _ ExprNoBlock)?);
 ```
 
@@ -555,7 +555,7 @@ DefFuncExpr           := "defn" (_ Identifier At?)?
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
                          _ FuncBody;
 
-<ParameterList>       := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+ParameterList         := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
 GatherParameter       := Star Identifier;
 
 <FuncPrecondList>     := FuncPrecond (_ FuncPrecond)*;
