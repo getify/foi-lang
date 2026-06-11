@@ -15,6 +15,11 @@ var samples = [
 	{ label: "Identifier (via bare): x",      src: "x;" },
 	{ label: "Identifier (via bare) :as int", src: "x :as int;" },
 
+	// BareIdentifier variants — all three IdentBase arms
+	{ label: "BareIdent: identifier",  src: "x;" },
+	{ label: "BareIdent: builtin",     src: "List;" },
+	{ label: "BareIdent: pipeline-#",  src: "#;" },
+
 	// NumberLit — literal value-extraction archetype
 	{ label: "NumberLit: 42",              src: "42;" },
 	{ label: "NumberLit: 42 :as int",      src: "42 :as int;" },
