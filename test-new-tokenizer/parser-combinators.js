@@ -290,6 +290,7 @@ function cloneFrameSubtree(srcFrame, newParent, pctx) {
 		matched:          srcFrame.matched          ? srcFrame.matched.slice()          : null,
 		matchedPositions: srcFrame.matchedPositions ? srcFrame.matchedPositions.slice() : null,
 	};
+	if (srcFrame.preserveInnerDelim) cloned.preserveInnerDelim = true;
 	for (let child of srcFrame.children) {
 		cloned.children.push(cloneFrameSubtree(child, cloned, pctx));
 	}
@@ -562,9 +563,27 @@ export function sepBy1(p, sep) {
 	return and(p, any(and(sep, p)));
 }
 
-// production(name, grammar): the ONLY way to create a tree node.
-// Opens a frame, runs grammar, closes the frame as matched or
-// rolled-back depending on result. Fresh `state` object on each open.
+// production(name, grammar, opts?): the ONLY way to create a tree
+// node. Opens a frame, runs grammar, closes the frame as matched
+// or rolled-back depending on result. Fresh `state` object on each
+// open.
+//
+// opts:
+//   preserveInnerDelim?: boolean — when true, delim tokens
+//     (Whitespace, Comment) captured by this production's frame
+//     are NOT filtered out of `parts` during shaping. They appear
+//     as content alongside non-delim tokens, in source order. Use
+//     for productions whose delim tokens carry semantic content
+//     rather than being inter-production separators — e.g. the
+//     spacing string forms, whose interior Whitespace tokens are
+//     part of the literal's value.
+//
+//     Independent of the global config.preserveDelim, which
+//     surfaces delim tokens in a separate `delims` array on every
+//     shaped node. When both are on, this production's delims
+//     appear in both `parts` (for the shaper) and `delims` (for
+//     source-faithful tooling) — the same token object referenced
+//     from each.
 //
 // When config.memoize is on, consults pctx.memo at (name, pos)
 // before opening a frame:
@@ -579,7 +598,8 @@ export function sepBy1(p, sep) {
 // Memo entries are stored on both success (with the frame as a
 // clone source) and failure (with just the endPos for symmetry,
 // though only the boolean is checked on hit).
-export function production(name, grammar) {
+export function production(name, grammar, opts = {}) {
+	var preserveInnerDelim = opts.preserveInnerDelim === true;
 	return async function prodFn(pctx) {
 		var memoize = !!pctx.memo;
 		var startPos = pctx.pos;
@@ -601,6 +621,7 @@ export function production(name, grammar) {
 		}
 
 		var frame = openFrame(pctx, name);
+		if (preserveInnerDelim) frame.preserveInnerDelim = true;
 		var ok = await grammar(pctx);
 		if (ok) {
 			closeFrameMatched(pctx, frame);
@@ -873,19 +894,31 @@ export function shapeNode(frame, shapers, options) {
 
 	// Partition into semantic `parts` and (when preserveDelim is
 	// on) a lazily-allocated `delims` array.
+	//
+	// Delim tokens (Whitespace, Comment) are normally filtered out
+	// of `parts` — they're separator metadata, not content. The two
+	// surfaces are independent:
+	//   - `preserveDelim` (config, global): surface delims as a
+	//     separate `delims` array on every shaped node.
+	//   - `frame.preserveInnerDelim` (per-production, set via the
+	//     `preserveInnerDelim` option to `production()`): keep this
+	//     production's delim tokens in `parts` because they ARE
+	//     content for this production (e.g. whitespace inside the
+	//     spacing string forms).
+	//
+	// Both can be on simultaneously: a delim then appears in both
+	// `parts` (for the shaper) and `delims` (for source-faithful
+	// tooling), referencing the same token object.
+	var ownDelim = frame.preserveInnerDelim === true;
 	var parts = [];
 	var delims = null;
 	for (let p of merged) {
-		if (isDelim(p)) {
-			if (preserveDelim) {
-				if (delims === null) delims = [];
-				delims.push(p);
-			}
-			// !preserveDelim: drop. The parser would normally have
-			// filtered these before shaping; defensive no-op if
-			// any slip through.
+		let d = isDelim(p);
+		if (d && preserveDelim) {
+			if (delims === null) delims = [];
+			delims.push(p);
 		}
-		else {
+		if (!d || ownDelim) {
 			parts.push(p);
 		}
 	}

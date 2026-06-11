@@ -133,7 +133,8 @@ export const PlainStr = production("PlainStr",
 // <SpacingEscapedStrContent> := SpacingEscapedStrChars | StringEscapedChar | Whitespace;
 var SpacingEscapedStrContent = or(StringChars, StringEscapedChar, WhitespaceTok);
 export const SpacingEscapedStr = production("SpacingEscapedStr",
-	and(EscapePlainTok, DoubleQuote, any(SpacingEscapedStrContent), DoubleQuote, OptAsAnnotation)
+	and(EscapePlainTok, DoubleQuote, any(SpacingEscapedStrContent), DoubleQuote, OptAsAnnotation),
+	{ preserveInnerDelim: true }
 );
 
 // InterpStr := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote (_ AsAnnotationExpr)?;
@@ -147,7 +148,8 @@ export const InterpStr = production("InterpStr",
 // <SpacingInterpStrContent> := SpacingInterpStrChars | StringEscapedChar | Whitespace | InterpExpr;
 var SpacingInterpStrContent = or(StringChars, StringEscapedChar, WhitespaceTok, lazy(() => InterpExpr));
 export const SpacingInterpStr = production("SpacingInterpStr",
-	and(EscapeSpacingBacktickTok, DoubleQuote, any(SpacingInterpStrContent), DoubleQuote, OptAsAnnotation)
+	and(EscapeSpacingBacktickTok, DoubleQuote, any(SpacingInterpStrContent), DoubleQuote, OptAsAnnotation),
+	{ preserveInnerDelim: true }
 );
 
 // InterpExpr := Backtick _ Expr _ Backtick;

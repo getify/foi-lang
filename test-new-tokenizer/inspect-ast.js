@@ -43,6 +43,17 @@ var samples = [
 	{ label: "ChainExpr: foo.bar",         src: "foo.bar;" },
 	{ label: "ChainExpr: foo'",            src: "foo';" },
 	{ label: "ChainExpr: foo'(a,b)",       src: "foo'(a,b);" },
+
+	// Spacing-form strings — content includes Whitespace tokens
+	// (the *Chars predicates exclude whitespace, forcing it out as
+	// its own token type). These productions opt into
+	// preserveInnerDelim so the machinery's delim filter doesn't
+	// strip whitespace from parts before the shaper sees it. No
+	// dedicated shaper yet — these will show under default shape;
+	// what to verify is that Whitespace tokens are present inside
+	// the parts arrays.
+	{ label: "SpacingEscapedStr: with WS",  src: '\\"hello world";' },
+	{ label: "SpacingInterpStr: with WS",   src: '\\`"hi `42` world";' },
 ];
 
 for (let { label, src } of samples) {
