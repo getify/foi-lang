@@ -47,7 +47,7 @@ export var isNode = p => !("value" in p);
 // expression and a single chain segment node, returns a typed
 // wrapper node:
 //
-//   PrefixCallSuffix   → CallExpr         { callee, args | op, primed? }
+//   PrefixCallSuffix   → CallExpr         { callee, args }
 //   PartialCallSuffix  → PartialCallExpr  { callee, args }
 //   DotIdentifier      → MemberAccessExpr { object, accessor | index }
 //   BracketExpr        → IndexAccessExpr  { object, expr }
@@ -128,6 +128,35 @@ function applyChainSeg(object,seg) {
 		};
 	}
 	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
+}
+
+// Helper for the six §5 paren-grouping productions (GroupedExpr,
+// GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
+// GroupedBareOpExprNoEmpty, GroupedDoExpr). All share the same
+// structure: OpenParen + inner-expression + CloseParen + optional
+// AsAnnotationExpr. Each shaper differs only in its type tag, so
+// the per-production shaper is a one-line delegate.
+//
+// Surrounding parens are noise (recoverable from the type tag —
+// every Grouped*Expr signals user-written parens). Inner expression
+// promotes to `expr`. Optional `:as` tail unwraps onto `as` per
+// the wrapper-unwrap-at-assignment convention.
+//
+// Note: GroupedDoExpr is in parser.js but not currently listed in
+// Syntactic-Grammar.md §5 — flagged for grammar reconciliation,
+// shaper included here so the node shapes uniformly when reached.
+function shapeGrouped(typeName,parts) {
+	var expr, as;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (p.type === "AsAnnotationExpr") as = p.annotation;
+			else expr = p;
+		}
+		// else: OpenParen, CloseParen — skip
+	}
+	var node = { type: typeName, expr };
+	if (as) node.as = as;
+	return node;
 }
 
 export const defaultShapers = {
@@ -390,6 +419,28 @@ export const defaultShapers = {
 		if (as) node.as = as.annotation;
 		return node;
 	},
+
+	// =============================================================
+	// §5 paren-grouping productions. Six structurally-identical
+	// variants distinguished only by what inner-expression form
+	// they accept (Expr | ExprNoBlock | OperandExpr | BareOperandExpr
+	// | BareOperandExprNoEmpty | DoCompr/DoLoopCompr). Each emits
+	// a node whose type matches its production name — user-written
+	// parens are preserved in the AST as a discrete node.
+	//
+	// All delegate to shapeGrouped: drop parens, lift inner to
+	// `expr`, unwrap optional :as onto `as`.
+	//
+	// GroupedDoExpr is parser-only; not currently in
+	// Syntactic-Grammar.md §5. If reconciled away, this entry
+	// becomes dead but harmless.
+	// =============================================================
+	GroupedExpr(frame,parts)              { return shapeGrouped("GroupedExpr",parts); },
+	GroupedExprNoBlock(frame,parts)       { return shapeGrouped("GroupedExprNoBlock",parts); },
+	GroupedOpExpr(frame,parts)            { return shapeGrouped("GroupedOpExpr",parts); },
+	GroupedBareOpExpr(frame,parts)        { return shapeGrouped("GroupedBareOpExpr",parts); },
+	GroupedBareOpExprNoEmpty(frame,parts) { return shapeGrouped("GroupedBareOpExprNoEmpty",parts); },
+	GroupedDoExpr(frame,parts)            { return shapeGrouped("GroupedDoExpr",parts); },
 
 	// Var-def, required init. Two semantic children: target
 	// (Identifier or DestructureTarget) and init (ExprNoBlock).

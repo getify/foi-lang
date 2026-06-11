@@ -141,6 +141,25 @@ var samples = [
 	// BlockDefsInitOpt — exercises VarDefInitOpt's init-less form
 	{ label: "BlockExpr: defs no init",        src: "(x, y) { x; };" },
 	{ label: "BlockExpr: mixed defs",          src: "(x: 1, y) { x; };" },
+
+	// GroupedExpr — outer Expr arm, inner BlockExpr (Expr-level only,
+	// can't be reached via ExprNoBlock or below)
+	{ label: "GroupedExpr: ({ x; })",       src: "({ x; });" },
+
+	// GroupedBareOpExpr — paren-wraps BareOperandExpr; `empty` is
+	// only reachable here (BareOperandExpr's EmptyLit arm), not via
+	// BareOperandExprNoEmpty
+	{ label: "GroupedBareOpExpr: (empty)",  src: "(empty);" },
+
+	// GroupedBareOpExprNoEmpty — top-level `(x)`: identifier reaches
+	// BareOperandExprNoEmpty's IdentifierExpr arm; deep PEG falls
+	// here last after ChainBase's GroupedExpr fails (no chain seg)
+	{ label: "GroupedBareOpExprNoEmpty: (x)", src: "(x);" },
+
+	// GroupedDoExpr — verbatim from the grammar's own usage comment.
+	{ label: "GroupedDoExpr: (m ~<< { x; })",   src: "(m ~<< { x; });" },
+
+	{ label: "GroupedExprNoBlock: arr[(x := 5)]",  src: "arr[(x := 5)];" },
 ];
 
 for (let { label, src } of samples) {
