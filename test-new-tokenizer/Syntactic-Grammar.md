@@ -87,7 +87,7 @@ combinator impl — they appear as named nodes in the AST. Every
 visible production emits an AST node whose type matches the
 production name exactly — no aliasing, no name-rewriting. Where
 multiple productions share structural shape but differ in inner
-content (e.g. the five paren-grouping variants), each is its own
+content (e.g. the six paren-grouping variants), each is its own
 distinct AST node, named to reflect its inner content.
 
 **Trivia is explicit.** Two hidden helpers:
