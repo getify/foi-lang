@@ -24,6 +24,35 @@ var samples = [
 	{ label: "NumberLit: 42",              src: "42;" },
 	{ label: "NumberLit: 42 :as int",      src: "42 :as int;" },
 
+	// BooleanLit
+	{ label: "BooleanLit: true",           src: "true;" },
+	{ label: "BooleanLit: false :as bool", src: "false :as bool;" },
+
+	// EmptyLit
+	{ label: "EmptyLit: empty",            src: "empty;" },
+	{ label: "EmptyLit: empty :as int",    src: "empty :as int;" },
+
+	// PlainStr
+	{ label: "PlainStr: hello",            src: '"hello";' },
+	{ label: "PlainStr: escaped quote",    src: '"a""b";' },
+	{ label: "PlainStr :as string",        src: '"hi" :as string;' },
+
+	// InterpStr — with and without interpolation
+	{ label: "InterpStr: no interp",       src: '`"hello";' },
+	{ label: "InterpStr: one interp",      src: '`"hi `42` there";' },
+	{ label: "InterpStr: two interps",     src: '`"`a` and `b` end";' },
+
+	// Spacing-form strings — content includes Whitespace tokens
+	// (the *Chars predicates exclude whitespace, forcing it out as
+	// its own token type). These productions opt into
+	// preserveInnerDelim so the machinery's delim filter doesn't
+	// strip whitespace from parts before the shaper sees it. No
+	// dedicated shaper yet — these will show under default shape;
+	// what to verify is that Whitespace tokens are present inside
+	// the parts arrays.
+	{ label: "SpacingEscapedStr: with WS",  src: '\\"hello world";' },
+	{ label: "SpacingInterpStr: with WS",   src: '\\`"hi `42` world";' },
+
 	// DefVarStmt — fixed-shape definition archetype
 	{ label: "DefVarStmt: def x: 5",       src: "def x: 5;" },
 
@@ -43,17 +72,6 @@ var samples = [
 	{ label: "ChainExpr: foo.bar",         src: "foo.bar;" },
 	{ label: "ChainExpr: foo'",            src: "foo';" },
 	{ label: "ChainExpr: foo'(a,b)",       src: "foo'(a,b);" },
-
-	// Spacing-form strings — content includes Whitespace tokens
-	// (the *Chars predicates exclude whitespace, forcing it out as
-	// its own token type). These productions opt into
-	// preserveInnerDelim so the machinery's delim filter doesn't
-	// strip whitespace from parts before the shaper sees it. No
-	// dedicated shaper yet — these will show under default shape;
-	// what to verify is that Whitespace tokens are present inside
-	// the parts arrays.
-	{ label: "SpacingEscapedStr: with WS",  src: '\\"hello world";' },
-	{ label: "SpacingInterpStr: with WS",   src: '\\`"hi `42` world";' },
 ];
 
 for (let { label, src } of samples) {

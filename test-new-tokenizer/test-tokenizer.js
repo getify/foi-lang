@@ -180,7 +180,7 @@ function safeShow(str) {
 }
 
 async function runTests() {
-	let samples = [
+	var samples = [
 		// Basics
 		"foo",
 		"foo bar",

@@ -85,6 +85,153 @@ export const defaultShapers = {
 		return node;
 	},
 
+	// Literal — boolean. Single Native token ("true" | "false")
+	// plus optional :as. Text is the raw lexeme, mirroring NumberLit.
+	BooleanLit(frame,parts) {
+		var text;
+		var as;
+		for (let p of parts) {
+			if (isNode(p)) as = p;
+			else text = p.value;
+		}
+		var node = { type: "BooleanLit", text };
+		if (as) node.as = as;
+		return node;
+	},
+
+	// Literal — empty. Type tag is total information; no `text`
+	// field. Optional :as tail becomes an optional `as` field.
+	EmptyLit(frame,parts) {
+		var as = parts.find(isNode);
+		var node = { type: "EmptyLit" };
+		if (as) node.as = as;
+		return node;
+	},
+
+	// Literal — plain string. Concatenates interior String and
+	// StringEscapedChar token values into `text`. Surrounding
+	// DoubleQuotes are noise (recoverable from the type tag).
+	// Escape sequences are preserved raw in `text` — interp's job
+	// to resolve them.
+	PlainStr(frame,parts) {
+		var text = "";
+		var as;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "AsAnnotationExpr") as = p;
+			}
+			else if (p.type === "String" || p.type === "StringEscapedChar") {
+				text += p.value;
+			}
+			// else: DoubleQuote — skip
+		}
+		var node = { type: "PlainStr", text };
+		if (as) node.as = as;
+		return node;
+	},
+
+	// Literal — spacing-escaped string. Same shape as PlainStr;
+	// additionally folds interior Whitespace tokens into `text`
+	// verbatim (the production opts into preserveInnerDelim so the
+	// whitespace tokens reach us in parts). Leading Escape and
+	// surrounding DoubleQuotes are noise.
+	SpacingEscapedStr(frame,parts) {
+		var text = "";
+		var as;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "AsAnnotationExpr") as = p;
+			}
+			else if (
+				p.type === "String" ||
+				p.type === "StringEscapedChar" ||
+				p.type === "Whitespace"
+			) {
+				text += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		var node = { type: "SpacingEscapedStr", text };
+		if (as) node.as = as;
+		return node;
+	},
+
+	// Interp slot inside the two interp-string forms. Surrounding
+	// Backticks are noise; the inner expression is exposed as
+	// `expr`. (Grammar: `InterpExpr := Backtick _ Expr _ Backtick;`
+	// — `_` is delim, so parts is exactly [Backtick, exprNode,
+	// Backtick].)
+	InterpExpr(frame,parts) {
+		var expr = parts.find(isNode);
+		return { type: "InterpExpr", expr };
+	},
+
+	// Literal — interpolated string. Surfaces as a `chunks` array
+	// alternating string text and InterpExpr nodes. Invariant:
+	// chunks.length is always odd, chunks[0] and chunks[last] are
+	// always strings (possibly ""). Consumers discriminate
+	// elements via `typeof === "string"`. Leading Escape and
+	// surrounding DoubleQuotes are noise.
+	InterpStr(frame,parts) {
+		var chunks = [];
+		var buf = "";
+		var as;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "InterpExpr") {
+					chunks.push(buf);
+					chunks.push(p);
+					buf = "";
+				}
+				else if (p.type === "AsAnnotationExpr") {
+					as = p;
+				}
+			}
+			else if (p.type === "String" || p.type === "StringEscapedChar") {
+				buf += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		chunks.push(buf);
+		var node = { type: "InterpStr", chunks };
+		if (as) node.as = as;
+		return node;
+	},
+
+	// Literal — spacing-interpolated string. Same chunks-array
+	// shape as InterpStr; Whitespace tokens fold into the
+	// adjacent text chunk verbatim (preserveInnerDelim delivers
+	// them in parts).
+	SpacingInterpStr(frame,parts) {
+		var chunks = [];
+		var buf = "";
+		var as;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "InterpExpr") {
+					chunks.push(buf);
+					chunks.push(p);
+					buf = "";
+				}
+				else if (p.type === "AsAnnotationExpr") {
+					as = p;
+				}
+			}
+			else if (
+				p.type === "String" ||
+				p.type === "StringEscapedChar" ||
+				p.type === "Whitespace"
+			) {
+				buf += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		chunks.push(buf);
+		var node = { type: "SpacingInterpStr", chunks };
+		if (as) node.as = as;
+		return node;
+	},
+
 	// Definition — `def` keyword and `:` colon are noise; the two
 	// semantic children (target = Identifier|DestructureTarget,
 	// init = Expr|ImportExpr) take named fields.
