@@ -99,9 +99,9 @@ distinct AST node, named to reflect its inner content.
 
 **`:as` annotations** attach as a final optional child of the thing
 they modify. Productions carrying `(_ AsAnnotationExpr)?`:
-- All five paren-grouping productions (`GroupedExpr`,
+- All six paren-grouping productions (`GroupedExpr`,
   `GroupedExprNoBlock`, `GroupedOpExpr`, `GroupedBareOpExpr`,
-  `GroupedBareOpExprNoEmpty`)
+  `GroupedBareOpExprNoEmpty`, `GroupedDoExpr`)
 - `BlockExpr`
 - All literal leaves (`EmptyLit`, `BooleanLit`, `NumberLit`, four
   `StringLit` variants, `DataStructLit`'s two forms)

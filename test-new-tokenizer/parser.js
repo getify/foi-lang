@@ -330,9 +330,10 @@ var BareOperandExprNoEmpty = or(
 	lazy(() => GroupedBareOpExprNoEmpty)
 );
 
-// All five paren-grouping productions are distinct visible AST nodes,
-// each named for its inner content. Call sites reference the variant
-// whose inner content they allow.
+// All five §5 paren-grouping productions below are distinct visible
+// AST nodes, each named for its inner content. Call sites reference
+// the variant whose inner content they allow. (A sixth grouping
+// production, GroupedDoExpr, is defined in §9 alongside BinaryAtom.)
 
 // GroupedExpr := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 export const GroupedExpr = production("GroupedExpr",

@@ -130,21 +130,18 @@ function applyChainSeg(object,seg) {
 	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
 }
 
-// Helper for the six §5 paren-grouping productions (GroupedExpr,
+// Helper for the six paren-grouping productions (GroupedExpr,
 // GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
-// GroupedBareOpExprNoEmpty, GroupedDoExpr). All share the same
-// structure: OpenParen + inner-expression + CloseParen + optional
-// AsAnnotationExpr. Each shaper differs only in its type tag, so
-// the per-production shaper is a one-line delegate.
+// GroupedBareOpExprNoEmpty from §5; GroupedDoExpr from §9
+// alongside BinaryAtom). All share the same structure: OpenParen +
+// inner-expression + CloseParen + optional AsAnnotationExpr. Each
+// shaper differs only in its type tag, so the per-production
+// shaper is a one-line delegate.
 //
 // Surrounding parens are noise (recoverable from the type tag —
 // every Grouped*Expr signals user-written parens). Inner expression
 // promotes to `expr`. Optional `:as` tail unwraps onto `as` per
 // the wrapper-unwrap-at-assignment convention.
-//
-// Note: GroupedDoExpr is in parser.js but not currently listed in
-// Syntactic-Grammar.md §5 — flagged for grammar reconciliation,
-// shaper included here so the node shapes uniformly when reached.
 function shapeGrouped(typeName,parts) {
 	var expr, as;
 	for (let p of parts) {
@@ -421,19 +418,17 @@ export const defaultShapers = {
 	},
 
 	// =============================================================
-	// §5 paren-grouping productions. Six structurally-identical
+	// Paren-grouping productions. Six structurally-identical
 	// variants distinguished only by what inner-expression form
 	// they accept (Expr | ExprNoBlock | OperandExpr | BareOperandExpr
-	// | BareOperandExprNoEmpty | DoCompr/DoLoopCompr). Each emits
-	// a node whose type matches its production name — user-written
-	// parens are preserved in the AST as a discrete node.
+	// | BareOperandExprNoEmpty | DoCompr/DoLoopCompr). Five live
+	// in §5; GroupedDoExpr lives in §9 alongside BinaryAtom (lets
+	// a do-compr appear as a binary operand). Each emits a node
+	// whose type matches its production name — user-written parens
+	// are preserved in the AST as a discrete node.
 	//
 	// All delegate to shapeGrouped: drop parens, lift inner to
 	// `expr`, unwrap optional :as onto `as`.
-	//
-	// GroupedDoExpr is parser-only; not currently in
-	// Syntactic-Grammar.md §5. If reconciled away, this entry
-	// becomes dead but harmless.
 	// =============================================================
 	GroupedExpr(frame,parts)              { return shapeGrouped("GroupedExpr",parts); },
 	GroupedExprNoBlock(frame,parts)       { return shapeGrouped("GroupedExprNoBlock",parts); },
