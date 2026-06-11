@@ -59,7 +59,33 @@ var isNode = p => !("value" in p);
 
 export const shapers = {
 
-	// Identifier — TODO
+	// BareIdentifier — thin-wrapper sub-archetype. Subsumes into
+	// its inner Identifier, optionally annotating with `:as`. The
+	// reference-vs-binding distinction lives in the grammar (where
+	// it's load-bearing for parsing) but is dropped from the AST
+	// surface — consumers see uniform Identifier nodes regardless
+	// of source role. The machinery's unconditional start/end
+	// overwrite extends the returned Identifier's span through any
+	// `:as` tail, which is what we want.
+	BareIdentifier(frame,parts) {
+		var ident, as;
+		for (let p of parts) {
+			if (p.type === "Identifier") ident = p;
+			else if (p.type === "AsAnnotationExpr") as = p;
+		}
+		if (as) ident.as = as;
+		return ident;
+	},
+
+	// Identifier — bare token-stream extraction. Concatenates the
+	// part values into a single `name` string. Used in binding
+	// positions (DefVarStmt target, parameter names, DotIdentifier
+	// inner, type-decl name, etc.) where no `:as` tail is grammatically
+	// possible. The BareIdentifier shaper subsumes into this same
+	// node type for reference-position identifiers, optionally
+	// adding an `as` field — so consumers see a uniform Identifier
+	// shape regardless of whether the source role was binding or
+	// reference.
 	Identifier(frame,parts) {
 		var name = "";
 		for (let p of parts) name += p.value;

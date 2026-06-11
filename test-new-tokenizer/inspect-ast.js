@@ -11,6 +11,10 @@ import { parseFoi } from "./parser.js";
 
 
 var samples = [
+	// BareIdentifier — subsumes to Identifier; :as hoists onto it
+	{ label: "Identifier (via bare): x",      src: "x;" },
+	{ label: "Identifier (via bare) :as int", src: "x :as int;" },
+
 	// NumberLit — literal value-extraction archetype
 	{ label: "NumberLit: 42",              src: "42;" },
 	{ label: "NumberLit: 42 :as int",      src: "42 :as int;" },
