@@ -43,6 +43,7 @@
 export var isNode = p => !("value" in p);
 
 export const defaultShapers = {
+
 	// Identifier — bare token-stream extraction. Concatenates the
 	// part values into a single `name` string. Used in binding
 	// positions (DefVarStmt target, parameter names, DotIdentifier
@@ -368,6 +369,157 @@ export const defaultShapers = {
 			};
 		}
 		return node;
+	},
+
+	// Dot-access by name or index. Three inner cases:
+	//   foo.bar   → accessor = Identifier-node
+	//   foo.List  → accessor = BuiltIn-node
+	//   arr.5     → index = "5"
+	//   arr.-1    → index = "-1"
+	// `accessor` and `index` are mutually exclusive — the grammar
+	// puts them in disjoint inner alternatives. Consumers branch
+	// on which field is present to distinguish name lookup from
+	// positional index. Integer text is preserved raw (no parse to
+	// Number) so source fidelity is exact and signs are unambiguous.
+	DotIdentifier(frame,parts) {
+		var node = { type: "DotIdentifier" };
+		for (let p of parts) {
+			if (isNode(p)) {
+				node.accessor = p;
+			}
+			else if (
+				p.type === "PositiveIntegerLit" ||
+				p.type === "NegativeIntegerLit"
+			) {
+				node.index = p.value;
+			}
+			// else: Period — skip
+		}
+		return node;
+	},
+
+	// Bracket-access (`arr[expr]`). Brackets are noise; the inner
+	// ExprNoBlock takes the `expr` field.
+	BracketExpr(frame,parts) {
+		return { type: "BracketExpr", expr: parts.find(isNode) };
+	},
+
+	// Range-access (`arr.[1..5]`). Period and brackets are noise;
+	// the inner RangeExpr (ClosedRangeExpr | LeadingRangeExpr |
+	// TrailingRangeExpr — each its own type tag once shaped) takes
+	// the `range` field.
+	DotBracketExpr(frame,parts) {
+		return { type: "DotBracketExpr", range: parts.find(isNode) };
+	},
+
+	// Angle-property access (`rec.<a,b,5>`). List of property
+	// accessors; each element is either { accessor: Identifier-node }
+	// or { index: "<digits>" } (positive-only here, per the §6
+	// PropertyExpr grammar). Mirrors DotIdentifier's discriminator
+	// pattern. Period, OpenAngle, CloseAngle, Comma are noise;
+	// EscapePlain (the optional `\` prefix on integer accessors)
+	// is also dropped — its role is purely tokenizer-side
+	// disambiguation, no semantic content.
+	DotAngleExpr(frame,parts) {
+		var properties = [];
+		for (let p of parts) {
+			if (isNode(p)) {
+				properties.push({ accessor: p });
+			}
+			else if (p.type === "PositiveIntegerLit") {
+				properties.push({ index: p.value });
+			}
+			// else: Period, OpenAngle, CloseAngle, Comma, EscapePlain — skip
+		}
+		return { type: "DotAngleExpr", properties };
+	},
+
+	// List of access segments used by special contexts
+	// (AssignmentExpr LHS, AtExpr internal access, ExportNamedBinding,
+	// DestructureNamedDef) — NOT by ChainExpr, which inlines its
+	// segments directly. Each segment is a DotIdentifier or
+	// BracketExpr; already type-tagged, just collected.
+	SingleAccessExpr(frame,parts) {
+		return { type: "SingleAccessExpr", segments: parts.filter(isNode) };
+	},
+
+	// Same shape as SingleAccessExpr with a broader segment alphabet
+	// (adds DotBracketExpr, DotAngleExpr). Used by MultiAccessSeg
+	// contexts.
+	MultiAccessExpr(frame,parts) {
+		return { type: "MultiAccessExpr", segments: parts.filter(isNode) };
+	},
+
+	// Range — closed form (`x..y`). Two operands `from`/`to`. No
+	// `:as` per grammar (must parenthesize: `(x..y) :as T`) — the
+	// trailing-position RangeOperand would otherwise greedily
+	// absorb `:as` via its own inner literal, same family as
+	// BinaryExpr's exclusion.
+	ClosedRangeExpr(frame,parts) {
+		var [ from, to ] = parts.filter(isNode);
+		return { type: "ClosedRangeExpr", from, to };
+	},
+
+	// Range — leading-open form (`x..`). Single operand, no `:as`
+	// per grammar.
+	LeadingRangeExpr(frame,parts) {
+		return { type: "LeadingRangeExpr", from: parts.find(isNode) };
+	},
+
+	// Range — trailing-open form (`..y`). Single operand, no `:as`
+	// per grammar.
+	TrailingRangeExpr(frame,parts) {
+		return { type: "TrailingRangeExpr", to: parts.find(isNode) };
+	},
+
+	// Call suffix — prefix form (`(arg1, arg2)` or `(op)` partial).
+	// CallArgs has two arms gated by lookahead: the first arm
+	// `(Op SingleQuote? &(CloseParen))` only fires when the closing
+	// delimiter is `)`, so the bare-Op form is reachable here but
+	// not in PartialCallSuffix. Op is hidden — its terminal content
+	// splices directly into parts and accumulates into `op`. The
+	// regular arm produces nodes which flow into `args`. The
+	// `primed` flag (presence-only) records the argument-reversal
+	// modifier on the Op-form. `args` and `op` are mutually
+	// exclusive; absence of `op` indicates the regular form.
+	PrefixCallSuffix(frame,parts) {
+		var args = [];
+		var op = "";
+		var primed;
+		for (let p of parts) {
+			if (isNode(p)) args.push(p);
+			else if (p.type === "SingleQuote") primed = true;
+			else if (
+				p.type === "OpenParen" ||
+				p.type === "CloseParen" ||
+				p.type === "Comma"
+			) {
+				// structural delimiter — skip
+			}
+			else {
+				// Op-form: accumulate operator token text
+				op += p.value;
+			}
+		}
+		var node = { type: "PrefixCallSuffix", args };
+		if (op) node.op = op;
+		if (primed) node.primed = true;
+		return node;
+	},
+
+	// Call suffix — partial form (`|arg1, arg2|`). Unlike
+	// PrefixCallSuffix, the CallArgs bare-Op arm doesn't reach this
+	// production — its `&(CloseParen)` lookahead fails on the `|`
+	// closer. Op-as-argument inside a partial-suffix must be
+	// parenthesized (e.g. `foo|(+)|`), arriving as an OpFuncExpr
+	// node in `args`. No `op` or `primed` fields.
+	PartialCallSuffix(frame,parts) {
+		var args = [];
+		for (let p of parts) {
+			if (isNode(p)) args.push(p);
+			// else: Pipe, Comma — skip
+		}
+		return { type: "PartialCallSuffix", args };
 	},
 
 	// Chain — base + ordered heterogeneous segments. Postfix `'`

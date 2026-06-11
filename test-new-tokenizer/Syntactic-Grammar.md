@@ -104,15 +104,15 @@ they modify. Productions carrying `(_ AsAnnotationExpr)?`:
   `GroupedBareOpExprNoEmpty`)
 - `BlockExpr`
 - All literal leaves (`EmptyLit`, `BooleanLit`, `NumberLit`, four
-  `StringLit` variants, `DataStructLit`'s two forms, `ClosedRangeExpr`)
+  `StringLit` variants, `DataStructLit`'s two forms)
 - `IdentifierExpr`'s three arms, `OpFuncExpr`, `ChainExpr`,
   `AtCallExpr`
 - `UnaryExpr`'s two arms, `GuardedExpr`
 
 Productions that do NOT carry `:as` (must be parenthesized to receive
 an annotation): `BinaryExpr` (and all tier iter variants),
-`AssignmentExpr`, `DoComprExpr`, `DoLoopComprExpr`, `MatchExpr`.
-`DefFuncExpr`'s `:as` is its inner `FuncAsClause`, not a tail.
+`AssignmentExpr`, `ClosedRangeExpr`, `DoComprExpr`, `DoLoopComprExpr`,
+`MatchExpr`.
 
 ---
 
@@ -285,7 +285,7 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
 <RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
-ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
+ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand;
 LeadingRangeExpr     := RangeOperand _ DoublePeriod;
 TrailingRangeExpr    := DoublePeriod _ RangeOperand;
 <RangeOperand>       := BareOperandExpr | GroupedOpExpr;

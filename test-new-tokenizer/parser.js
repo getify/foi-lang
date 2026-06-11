@@ -495,15 +495,15 @@ var IdentifierExpr = or(
 // could reach Range — no LR.
 var RangeOperand = or(BareOperandExpr, GroupedOpExpr);
 
-// ClosedRangeExpr   := RangeOperand _ DoublePeriod _ RangeOperand (_ AsAnnotationExpr)?;
-// LeadingRangeExpr  := RangeOperand _ DoublePeriod;
-// TrailingRangeExpr := DoublePeriod _ RangeOperand;
+// ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand;
 export const ClosedRangeExpr = production("ClosedRangeExpr",
-	and(RangeOperand, delim(), DoublePeriod, delim(), RangeOperand, OptAsAnnotation)
+	and(RangeOperand, delim(), DoublePeriod, delim(), RangeOperand)
 );
+// LeadingRangeExpr  := RangeOperand _ DoublePeriod;
 export const LeadingRangeExpr = production("LeadingRangeExpr",
 	and(RangeOperand, delim(), DoublePeriod)
 );
+// TrailingRangeExpr := DoublePeriod _ RangeOperand;
 export const TrailingRangeExpr = production("TrailingRangeExpr",
 	and(DoublePeriod, delim(), RangeOperand)
 );
