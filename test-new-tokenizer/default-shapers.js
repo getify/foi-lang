@@ -16,6 +16,14 @@
 //   - List-shaped productions collapse to a single array field.
 //   - Optional clauses (e.g. AsAnnotationExpr) become optional
 //     fields, omitted from the node when absent.
+//   - Wrapper-unwrap at assignment. When a child production exists
+//     only as a single-payload wrapper around one semantic value
+//     (e.g. AsAnnotationExpr around NamedType), parents unwrap to
+//     the payload at the slot assignment — the slot name on the
+//     parent (e.g. `parent.as`) conveys the role, so the wrapper
+//     layer is redundant at the consumer surface. The wrapper's
+//     own shaper still emits a node for completeness; parents
+//     reach through it.
 //   - start/end/delims are machinery's job, never set by shapers
 //     — except on synthetic intermediate nodes built by the
 //     shaper itself (e.g. left-folded binary nesting, or sub-
@@ -35,7 +43,6 @@
 export var isNode = p => !("value" in p);
 
 export const defaultShapers = {
-
 	// Identifier — bare token-stream extraction. Concatenates the
 	// part values into a single `name` string. Used in binding
 	// positions (DefVarStmt target, parameter names, DotIdentifier
@@ -49,6 +56,25 @@ export const defaultShapers = {
 		var name = "";
 		for (let p of parts) name += p.value;
 		return { type: "Identifier", name };
+	},
+
+	// BuiltIn — bare token-stream extraction. Same pattern as
+	// Identifier: concat token values to `name`. Single-token in
+	// practice (the production wraps one Builtin token), but the
+	// loop form keeps the shape symmetric with Identifier and
+	// robust to any future grammar widening.
+	BuiltIn(frame,parts) {
+		var name = "";
+		for (let p of parts) name += p.value;
+		return { type: "BuiltIn", name };
+	},
+
+	// PipelineTopic — bare token-stream extraction. Same pattern.
+	// Wraps a single Hash token; `name` is the literal "#".
+	PipelineTopic(frame,parts) {
+		var name = "";
+		for (let p of parts) name += p.value;
+		return { type: "PipelineTopic", name };
 	},
 
 	// BareIdentifier — thin-wrapper sub-archetype. Subsumes into
@@ -66,8 +92,19 @@ export const defaultShapers = {
 			if (p.type === "AsAnnotationExpr") as = p;
 			else if (isNode(p)) inner = p;
 		}
-		if (as) inner.as = as;
+		if (as) inner.as = as.annotation;
 		return inner;
+	},
+
+	// AsAnnotationExpr — `:as` keyword (noise; recoverable from
+	// the type tag) plus a NamedType promoted to `annotation`. Per
+	// the wrapper-unwrap convention, parents that mount this at
+	// their `.as` slot store `.annotation` directly rather than the
+	// wrapper itself. The shaper still emits the wrapper node so
+	// the production round-trips through default tooling; no
+	// current parent retains it intact.
+	AsAnnotationExpr(frame,parts) {
+		return { type: "AsAnnotationExpr", annotation: parts.find(isNode) };
 	},
 
 	// Literal — concatenates contained number/escape token values
@@ -81,7 +118,7 @@ export const defaultShapers = {
 			else text += p.value;
 		}
 		var node = { type: "NumberLit", text };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -95,7 +132,7 @@ export const defaultShapers = {
 			else text = p.value;
 		}
 		var node = { type: "BooleanLit", text };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -104,7 +141,7 @@ export const defaultShapers = {
 	EmptyLit(frame,parts) {
 		var as = parts.find(isNode);
 		var node = { type: "EmptyLit" };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -126,7 +163,7 @@ export const defaultShapers = {
 			// else: DoubleQuote — skip
 		}
 		var node = { type: "PlainStr", text };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -152,7 +189,7 @@ export const defaultShapers = {
 			// else: Escape, DoubleQuote — skip
 		}
 		var node = { type: "SpacingEscapedStr", text };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -194,7 +231,7 @@ export const defaultShapers = {
 		}
 		chunks.push(buf);
 		var node = { type: "InterpStr", chunks };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -228,7 +265,7 @@ export const defaultShapers = {
 		}
 		chunks.push(buf);
 		var node = { type: "SpacingInterpStr", chunks };
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -261,7 +298,7 @@ export const defaultShapers = {
 		}
 		var node = { type: "BlockExpr", stmts };
 		if (defs) node.defs = defs;
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -364,7 +401,7 @@ export const defaultShapers = {
 		}
 		var node = { type: "ChainExpr", base, segments };
 		if (primeCallSuffixes !== undefined) node.primeCallSuffixes = primeCallSuffixes;
-		if (as) node.as = as;
+		if (as) node.as = as.annotation;
 		return node;
 	},
 };

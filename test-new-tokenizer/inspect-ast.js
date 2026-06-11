@@ -19,6 +19,8 @@ var samples = [
 	{ label: "BareIdent: identifier",  src: "x;" },
 	{ label: "BareIdent: builtin",     src: "List;" },
 	{ label: "BareIdent: pipeline-#",  src: "#;" },
+	{ label: "BareIdent: builtin :as int",    src: "List :as int;" },
+	{ label: "BareIdent: pipeline-# :as int", src: "# :as int;" },
 
 	// NumberLit — literal value-extraction archetype
 	{ label: "NumberLit: 42",              src: "42;" },
