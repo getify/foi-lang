@@ -11,8 +11,8 @@
 //   - Drop noise tokens (keywords, punctuation, structural
 //     delimiters). They're recoverable from the production name.
 //   - Promote semantically meaningful children to named fields
-//     (target, init, name, op, left, right, args, base, segments,
-//     stmts, defs, as, ...).
+//     (target, init, name, op, left, right, args, callee, object,
+//     segments, stmts, defs, as, ...).
 //   - List-shaped productions collapse to a single array field.
 //   - Optional clauses (e.g. AsAnnotationExpr) become optional
 //     fields, omitted from the node when absent.
@@ -26,9 +26,10 @@
 //     reach through it.
 //   - start/end/delims are machinery's job, never set by shapers
 //     — except on synthetic intermediate nodes built by the
-//     shaper itself (e.g. left-folded binary nesting, or sub-
-//     structures reconstructed from spliced hidden-helper
-//     contents), which the machinery doesn't reach.
+//     shaper itself (left-folded binary nesting, ChainExpr's
+//     typed-node fold, or sub-structures reconstructed from
+//     spliced hidden-helper contents), which the machinery
+//     doesn't reach.
 //   - Multi-token operators (e.g. AddOp `$+`) concatenate their
 //     token values into a single string in the `op` field.
 //
@@ -41,6 +42,93 @@
 //   discriminator for any parent shaper that consumes them.
 
 export var isNode = p => !("value" in p);
+
+// Helper for ChainExpr's fold (below). Given an `object`
+// expression and a single chain segment node, returns a typed
+// wrapper node:
+//
+//   PrefixCallSuffix   → CallExpr         { callee, args | op, primed? }
+//   PartialCallSuffix  → PartialCallExpr  { callee, args }
+//   DotIdentifier      → MemberAccessExpr { object, accessor | index }
+//   BracketExpr        → IndexAccessExpr  { object, expr }
+//   DotBracketExpr     → RangeAccessExpr  { object, range }
+//   DotAngleExpr       → PropertyPickExpr { object, properties }
+//
+// Each returned node carries explicit start/end since these are
+// synthetic intermediates the machinery doesn't reach.
+//
+// PrefixCallSuffix always exposes uniform `args`. The bare-op-in-
+// parens form (`foo(+')`, gated by CallArgs' &(CloseParen)
+// lookahead) is normalized upstream by PrefixCallSuffix's shaper
+// into a single-element `args` containing a synthetic OpFuncExpr
+// — semantically equivalent to the explicit form `foo((+)')`. So
+// CallExpr's shape here is uniform: `{ callee, args }`.
+//
+// DotIdentifier's mutually-exclusive `accessor` (node, for
+// `foo.bar` / `foo.List`) and `index` (string, for `arr.5` /
+// `arr.-1`) discriminator is preserved on MemberAccessExpr.
+// Consumers branch on which field is present to distinguish name
+// lookup from positional index.
+function applyChainSeg(object,seg) {
+	var t = seg.type;
+	if (t === "PrefixCallSuffix") {
+		return {
+			type: "CallExpr",
+			callee: object,
+			args: seg.args,
+			start: object.start,
+			end: seg.end,
+		};
+	}
+	if (t === "PartialCallSuffix") {
+		return {
+			type: "PartialCallExpr",
+			callee: object,
+			args: seg.args,
+			start: object.start,
+			end: seg.end,
+		};
+	}
+	if (t === "DotIdentifier") {
+		let node = {
+			type: "MemberAccessExpr",
+			object,
+			start: object.start,
+			end: seg.end,
+		};
+		if (seg.accessor) node.accessor = seg.accessor;
+		else node.index = seg.index;
+		return node;
+	}
+	if (t === "BracketExpr") {
+		return {
+			type: "IndexAccessExpr",
+			object,
+			expr: seg.expr,
+			start: object.start,
+			end: seg.end,
+		};
+	}
+	if (t === "DotBracketExpr") {
+		return {
+			type: "RangeAccessExpr",
+			object,
+			range: seg.range,
+			start: object.start,
+			end: seg.end,
+		};
+	}
+	if (t === "DotAngleExpr") {
+		return {
+			type: "PropertyPickExpr",
+			object,
+			properties: seg.properties,
+			start: object.start,
+			end: seg.end,
+		};
+	}
+	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
+}
 
 export const defaultShapers = {
 
@@ -436,9 +524,10 @@ export const defaultShapers = {
 
 	// List of access segments used by special contexts
 	// (AssignmentExpr LHS, AtExpr internal access, ExportNamedBinding,
-	// DestructureNamedDef) — NOT by ChainExpr, which inlines its
-	// segments directly. Each segment is a DotIdentifier or
-	// BracketExpr; already type-tagged, just collected.
+	// DestructureNamedDef) — NOT by ChainExpr, which folds its
+	// segments into typed nested nodes. Each segment is a
+	// DotIdentifier or BracketExpr; already type-tagged, just
+	// collected.
 	SingleAccessExpr(frame,parts) {
 		return { type: "SingleAccessExpr", segments: parts.filter(isNode) };
 	},
@@ -472,23 +561,106 @@ export const defaultShapers = {
 		return { type: "TrailingRangeExpr", to: parts.find(isNode) };
 	},
 
-	// Call suffix — prefix form (`(arg1, arg2)` or `(op)` partial).
-	// CallArgs has two arms gated by lookahead: the first arm
-	// `(Op SingleQuote? &(CloseParen))` only fires when the closing
-	// delimiter is `)`, so the bare-Op form is reachable here but
-	// not in PartialCallSuffix. Op is hidden — its terminal content
-	// splices directly into parts and accumulates into `op`. The
-	// regular arm produces nodes which flow into `args`. The
-	// `primed` flag (presence-only) records the argument-reversal
-	// modifier on the Op-form. `args` and `op` are mutually
-	// exclusive; absence of `op` indicates the regular form.
+	// OpFuncExpr — op-as-function-value. Four inner forms (per the
+	// grammar's disjoint alternatives), surfaced via three
+	// mutually-exclusive payload fields:
+	//
+	//   (+) / (..)   → op: "<text>"   (bare operator, possibly
+	//                                  multi-token e.g. "$+")
+	//   ([])         → op: "[]"       (empty-collection op;
+	//                                  brackets are the operator)
+	//   (.<a,b,5>)   → properties     (unwrapped from DotAngleExpr —
+	//                                  parameterizes the angle-pick op)
+	//   (.[1..5])    → range          (unwrapped from DotBracketExpr —
+	//                                  parameterizes the range-access op)
+	//
+	// Optional `primed: true` (the `'` modifier) and optional `as`
+	// (NamedType, wrapper-unwrapped per convention). Surrounding
+	// parens are noise.
+	//
+	// The DotAngleExpr / DotBracketExpr inner forms are unwrapped
+	// to their semantic payload — in this context they don't
+	// represent access against an object, they parameterize an
+	// op-as-function with a property list or range. Same
+	// wrapper-unwrap convention as AsAnnotationExpr.
+	//
+	// MATCHES the synthetic OpFuncExpr created by
+	// PrefixCallSuffix's bare-op shortcut normalization, so
+	// `foo(+')` and `foo((+)')` produce identical args[0] shapes.
+	OpFuncExpr(frame,parts) {
+		var node = { type: "OpFuncExpr" };
+		var as;
+		var opText = "";
+		var sawBrackets = false;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "AsAnnotationExpr") {
+					as = p;
+				}
+				else if (p.type === "DotAngleExpr") {
+					node.properties = p.properties;
+				}
+				else if (p.type === "DotBracketExpr") {
+					node.range = p.range;
+				}
+			}
+			else if (p.type === "SingleQuote") {
+				node.primed = true;
+			}
+			else if (p.type === "OpenParen" || p.type === "CloseParen") {
+				// call-form delimiters — skip
+			}
+			else if (p.type === "OpenBracket" || p.type === "CloseBracket") {
+				// empty-bracket form
+				sawBrackets = true;
+			}
+			else {
+				// bare op token — accumulate text
+				opText += p.value;
+			}
+		}
+		if (sawBrackets) {
+			node.op = "[]";
+		}
+		else if (opText) {
+			node.op = opText;
+		}
+		if (as) node.as = as.annotation;
+		return node;
+	},
+
+	// Call suffix — prefix form (`(arg1, arg2)` or the bare-op
+	// shortcut `(+)` / `(+')`). CallArgs has two arms gated by
+	// lookahead: the first arm `(Op SingleQuote? &(CloseParen))`
+	// only fires when the closing delimiter is `)`, so the bare-Op
+	// form is reachable here but not in PartialCallSuffix. Op is
+	// hidden — its terminal content splices directly into parts
+	// and accumulates into the synthetic OpFuncExpr's `op` field.
+	//
+	// The bare-op shortcut `foo(+')` is semantically identical to
+	// the explicit form `foo((+)')` — both pass an op-as-function
+	// as a single argument. This shaper normalizes the shortcut
+	// into an `args` array containing a synthetic OpFuncExpr,
+	// matching the explicit form's eventual shape. CallExpr (built
+	// from this segment by ChainExpr's fold) then has uniform
+	// `{ callee, args }` regardless of which source form was used.
+	//
+	// Position tracking on the synthetic OpFuncExpr: opStart is the
+	// first Op token's start, opEnd is the last Op token's end (or
+	// the SingleQuote token's end when primed). Real positions —
+	// these are synthetic to the AST surface but the underlying
+	// tokens are real.
 	PrefixCallSuffix(frame,parts) {
 		var args = [];
 		var op = "";
-		var primed;
+		var opStart, opEnd;
+		var primed = false;
 		for (let p of parts) {
 			if (isNode(p)) args.push(p);
-			else if (p.type === "SingleQuote") primed = true;
+			else if (p.type === "SingleQuote") {
+				primed = true;
+				opEnd = p.end;
+			}
 			else if (
 				p.type === "OpenParen" ||
 				p.type === "CloseParen" ||
@@ -497,14 +669,27 @@ export const defaultShapers = {
 				// structural delimiter — skip
 			}
 			else {
-				// Op-form: accumulate operator token text
+				// Op-form: accumulate operator token text and span
+				if (op === "") opStart = p.start;
+				if (!primed) opEnd = p.end;
 				op += p.value;
 			}
 		}
-		var node = { type: "PrefixCallSuffix", args };
-		if (op) node.op = op;
-		if (primed) node.primed = true;
-		return node;
+		// Synthesize an OpFuncExpr arg for the bare-op shortcut.
+		// `args` is grammatically empty in the op-form (per the
+		// &(CloseParen) lookahead), so this never collides with
+		// regular-form args.
+		if (op) {
+			let opNode = {
+				type: "OpFuncExpr",
+				op,
+				start: opStart,
+				end: opEnd,
+			};
+			if (primed) opNode.primed = true;
+			args.push(opNode);
+		}
+		return { type: "PrefixCallSuffix", args };
 	},
 
 	// Call suffix — partial form (`|arg1, arg2|`). Unlike
@@ -513,6 +698,9 @@ export const defaultShapers = {
 	// closer. Op-as-argument inside a partial-suffix must be
 	// parenthesized (e.g. `foo|(+)|`), arriving as an OpFuncExpr
 	// node in `args`. No `op` or `primed` fields.
+	//
+	// NOTE: when this segment is consumed by ChainExpr's fold, it
+	// becomes a PartialCallExpr — see applyChainSeg above.
 	PartialCallSuffix(frame,parts) {
 		var args = [];
 		for (let p of parts) {
@@ -522,37 +710,65 @@ export const defaultShapers = {
 		return { type: "PartialCallSuffix", args };
 	},
 
-	// Chain — base + ordered heterogeneous segments. Postfix `'`
-	// (prime, the SingleQuote token) splits segments into
-	// pre-prime (general access/call) and post-prime (call
-	// suffixes only, reversed-arg semantics). Presence of the
-	// `primeCallSuffixes` field IS the prime flag — empty array
-	// for `foo'`, populated for `foo'(a,b)`.
+	// Chain — base + ordered segments folded into JS-style nested
+	// typed nodes. Each segment wraps the previous expression;
+	// outermost = last applied. Single-segment cases unwrap
+	// directly to the typed node (no degenerate single-element
+	// wrapper). ChainExpr itself emits no node — it's a parse
+	// vehicle only.
+	//
+	// Postfix `'` (prime, the SingleQuote token) wraps the pre-
+	// prime expression in a PrimedExpr; any post-prime call
+	// suffixes then apply on top of that wrapper. `:as` attaches
+	// to the outermost node — semantically annotates the whole
+	// chained value.
+	//
+	// Segment-to-typed-node mappings live in applyChainSeg above.
+	//
+	// All intermediate folds set start/end explicitly — machinery
+	// only stamps the outermost return.
 	ChainExpr(frame,parts) {
 		var base;
-		var segments = [];
-		var primeCallSuffixes;
+		var preSegs = [];
+		var postPrimeSegs = [];
+		var primeTokEnd;
 		var as;
 		for (let p of parts) {
 			if (p.type === "AsAnnotationExpr") {
 				as = p;
 			}
 			else if (!isNode(p)) {
-				// SingleQuote — the prime operator
-				primeCallSuffixes = [];
+				// SingleQuote — the prime operator. Capture end
+				// position for PrimedExpr's span.
+				primeTokEnd = p.end;
 			}
 			else if (base === undefined) {
 				base = p;
 			}
-			else if (primeCallSuffixes !== undefined) {
-				primeCallSuffixes.push(p);
+			else if (primeTokEnd !== undefined) {
+				postPrimeSegs.push(p);
 			}
 			else {
-				segments.push(p);
+				preSegs.push(p);
 			}
 		}
-		var node = { type: "ChainExpr", base, segments };
-		if (primeCallSuffixes !== undefined) node.primeCallSuffixes = primeCallSuffixes;
+
+		var node = base;
+		for (let seg of preSegs) {
+			node = applyChainSeg(node, seg);
+		}
+		if (primeTokEnd !== undefined) {
+			node = {
+				type: "PrimedExpr",
+				inner: node,
+				start: node.start,
+				end: primeTokEnd,
+			};
+		}
+		for (let seg of postPrimeSegs) {
+			node = applyChainSeg(node, seg);
+		}
+
 		if (as) node.as = as.annotation;
 		return node;
 	},
