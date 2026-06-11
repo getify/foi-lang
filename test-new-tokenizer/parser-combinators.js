@@ -356,13 +356,14 @@ function cascadeRollback(pctx, node) {
 
 function cascadeCommit(pctx, node) {
 	if (node.status !== "matched") return;
-	// Top-down: self first, then children. Matches the order
-	// open events were fired, which keeps consumers' mental model simple.
-	node.status = "committed";
-	pctx.emit({ kind: "commit", node });
+	// Bottom-up: children first, then self. Mirrors cascadeRollback;
+	// streaming consumers receive a parent commit only after every
+	// descendant has been committed.
 	for (let c of node.children) {
 		cascadeCommit(pctx, c);
 	}
+	node.status = "committed";
+	pctx.emit({ kind: "commit", node });
 }
 
 
@@ -769,9 +770,11 @@ export function parse(grammar, input, config) {
 //                 as they arrive; treat `matched` as provisional
 //                 (rollback may follow); `commit` is final.
 //
-//   parseCommitsAtDepth(n): factory — commit events at the given
+//   parseCommitsAtDepth(n,opts): factory — commit events at the given
 //                 depth. For streaming AST consumers that want
 //                 finalized shaped nodes at a specific tree level.
+//                 `opts.includeDepths: true` includes all depths from
+//                 `0` down to `n`
 // =============================================================
 
 export const presets = {
@@ -785,7 +788,13 @@ export const presets = {
 		if (ev.node.depth !== 1) return false;
 		return ev.kind === "matched" || ev.kind === "rollback" || ev.kind === "commit";
 	},
-	parseCommitsAtDepth(depth) {
+	parseCommitsAtDepth(depth,opts = {}) {
+		var { includeDepths = false } = opts;
+		if (includeDepths) {
+			return function (ev) {
+				return ev.kind === "commit" && ev.node.depth <= depth;
+			};
+		}
 		return function (ev) {
 			return ev.kind === "commit" && ev.node.depth === depth;
 		};

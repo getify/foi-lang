@@ -35,7 +35,7 @@ var tokVal  = (name, value)  => terminal(t => t && t.type === name && t.value ==
 //     delimiters). They're recoverable from the production name.
 //   - Promote semantically meaningful children to named fields
 //     (target, init, name, op, left, right, args, base, segments,
-//     stmts, defs, asAnnotation, ...).
+//     stmts, defs, as, ...).
 //   - List-shaped productions collapse to a single array field.
 //   - Optional clauses (e.g. AsAnnotationExpr) become optional
 //     fields, omitted from the node when absent.
@@ -59,18 +59,25 @@ var isNode = p => !("value" in p);
 
 export const shapers = {
 
+	// Identifier — TODO
+	Identifier(frame,parts) {
+		var name = "";
+		for (let p of parts) name += p.value;
+		return { type: "Identifier", name };
+	},
+
 	// Literal — concatenates contained number/escape token values
 	// into a single source-text string. Optional :as tail becomes
-	// an optional asAnnotation field.
+	// an optional `as` field.
 	NumberLit(frame,parts) {
 		var text = "";
-		var asAnnotation;
+		var as;
 		for (let p of parts) {
-			if (p.type === "AsAnnotationExpr") asAnnotation = p;
+			if (p.type === "AsAnnotationExpr") as = p;
 			else text += p.value;
 		}
 		var node = { type: "NumberLit", text };
-		if (asAnnotation) node.asAnnotation = asAnnotation;
+		if (as) node.as = as;
 		return node;
 	},
 
@@ -94,16 +101,16 @@ export const shapers = {
 	// statements, optional :as tail. With BlockDefsInitOpt and
 	// VarDefInitOpt now visible, defs flows in as a single node.
 	BlockExpr(frame,parts) {
-		var defs, asAnnotation;
+		var defs, as;
 		var stmts = [];
 		for (let p of parts) {
 			if (p.type === "BlockDefsInitOpt") defs = p;
-			else if (p.type === "AsAnnotationExpr") asAnnotation = p;
+			else if (p.type === "AsAnnotationExpr") as = p;
 			else if (isNode(p)) stmts.push(p);
 		}
 		var node = { type: "BlockExpr", stmts };
 		if (defs) node.defs = defs;
-		if (asAnnotation) node.asAnnotation = asAnnotation;
+		if (as) node.as = as;
 		return node;
 	},
 
@@ -185,10 +192,10 @@ export const shapers = {
 		var base;
 		var segments = [];
 		var primeCallSuffixes;
-		var asAnnotation;
+		var as;
 		for (let p of parts) {
 			if (p.type === "AsAnnotationExpr") {
-				asAnnotation = p;
+				as = p;
 			}
 			else if (!isNode(p)) {
 				// SingleQuote — the prime operator
@@ -206,7 +213,7 @@ export const shapers = {
 		}
 		var node = { type: "ChainExpr", base, segments };
 		if (primeCallSuffixes !== undefined) node.primeCallSuffixes = primeCallSuffixes;
-		if (asAnnotation) node.asAnnotation = asAnnotation;
+		if (as) node.as = as;
 		return node;
 	},
 };
@@ -2126,7 +2133,7 @@ export async function *parseFoi(input,opts = {}) {
 		...opts,
 	};
 	var handle = parse(Program, tokenize(input), config);
-	var events = handle.subscribe(presets.parseCommitsAtDepth(1));
+	var events = handle.subscribe(presets.parseCommitsAtDepth(1,{ includeDepths: true }));
 	var runPromise = handle.run();
 	for await (let ev of events) {
 		yield shapeNode(ev.node, shapers, config);
