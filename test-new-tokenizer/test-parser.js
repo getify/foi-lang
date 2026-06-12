@@ -1,6 +1,17 @@
 // test-parser.js — exercises parseFoi against a corpus of source samples.
-// Positive-case smoke harness: each sample is expected to fully parse
-// without throwing; failures are reported with a source preview.
+//
+// Two lanes:
+//   - samples:     expected to fully parse without throwing.
+//   - failSamples: expected to throw a SyntaxError whose message starts
+//                  with "Foi parse failed:" (the shape parseFoi emits
+//                  when result.ok === false). The strict shape check
+//                  distinguishes "parser correctly rejected" from
+//                  "an unrelated bug threw something else".
+//
+// Negative-lane outcomes per sample:
+//   - threw with right shape       → negative-passed
+//   - did not throw                → unexpected success (regression)
+//   - threw, but not our SyntaxError shape → unexpected error type
 
 import util from "node:util";
 import { parseFoi } from "./parser.js";
@@ -56,19 +67,17 @@ var samples = [
 		"deft Wrapped List{int}; " +                           // NestedType
 		"deft Dotted Either.Right; " +                         // dotted NamedType (2 segments)
 		"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " + // nested func + string union
-
-		// Edge cases:
 		"deft G <*int>; " +                                    // bare gather as whole list (DataStructTypeList alt-2)
 		"deft V {Red | Green |}; " +                           // trailing | in grouped union
 		"deft P <x: int, y: int,>; " +                         // trailing comma in DataStructType
 		"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
 		"deft D A.B.C; " +                                     // 3-segment dotted NamedType
 		"deft H (*int) ^empty;",                               // single-arg gather func (FuncTypeArgList alt-2)
-	"def t: <0, &nums.<1,3>, &person.last, 8>; " +                      // #4: PickValue with access
-		"defn fn() ^(Promise ~<< { def x:: getX(); ::x; }); " +             // #5: ^(DoCompr) return
-		"Maybe._ @ 42; " +                                                  // #6: AtCallExpr access-with-trivia
-		"def (< :p, capt: items.0 >: getOrder(123)) { p; }; " +             // #8 §11: destructure-with-init in block-defs
-		"Maybe ~<< (< :v >:: getMaybe()) { v; };",                          // #8 §16: do-destructure-with-init
+	"def t: <0, &nums.<1,3>, &person.last, 8>; " +                      // PickValue with access
+		"defn fn() ^(Promise ~<< { def x:: getX(); ::x; }); " +             // ^(DoCompr) return
+		"Maybe._ @ 42; " +                                                  // AtCallExpr access-with-trivia
+		"def (< :p, capt: items.0 >: getOrder(123)) { p; }; " +             // destructure-with-init in block-defs
+		"Maybe ~<< (< :v >:: getMaybe()) { v; };",                          // do-destructure-with-init
 	`export {
 	  :playlist, :clear, :play, :resume, :pause, :stop,
 	  :onPlay, :onTimeUpdate, :onPause, :onStop,
@@ -205,8 +214,20 @@ var samples = [
 		"x ?in arr;",                                    // regression: ?in still routes through CompareBinExpr
 ];
 
+// Expected-fail samples — nail down the `:as` precedence rule.
+// Each MUST throw a SyntaxError whose message begins with "Foi parse
+// failed:". See the ":as Precedence — First-Class Rule" section of
+// Syntactic-Grammar.md.
+var failSamples = [
+	"x + y :as int;",       // binary cannot carry :as directly
+	"1..5 :as List;",       // range cannot carry :as directly
+	"x..y :as int;",        // same range family
+	"x :as int + y;",       // outer AsExpr matches `x :as int`; `+ y` dangling
+	"x :as int :as bool;",  // no chained :as without parens; AsableExpr excludes AsExpr
+];
+
 var passed = 0;
-var failed = [];
+var unexpectedFails = [];
 
 for (let i = 0; i < samples.length; i++) {
 	try {
@@ -218,13 +239,55 @@ for (let i = 0; i < samples.length; i++) {
 		passed++;
 	}
 	catch (err) {
-		failed.push({ idx: i, src: samples[i], err: err.message });
+		unexpectedFails.push({ idx: i, src: samples[i], err: err.message });
+	}
+}
+
+var negativePassed = 0;
+var unexpectedPasses = [];
+var unexpectedErrors = [];
+
+for (let i = 0; i < failSamples.length; i++) {
+	let threw = null;
+	try {
+		for await (let tree of parseFoi(failSamples[i],{})) {
+			// drain — we only care whether the iteration throws at end
+		}
+	}
+	catch (err) {
+		threw = err;
+	}
+	if (threw === null) {
+		unexpectedPasses.push({ idx: i, src: failSamples[i] });
+	}
+	else if (
+		threw instanceof SyntaxError &&
+		threw.message.startsWith("Foi parse failed:")
+	) {
+		negativePassed++;
+	}
+	else {
+		unexpectedErrors.push({ idx: i, src: failSamples[i], err: threw });
 	}
 }
 
 console.log(`${passed}/${samples.length} passed`);
-for (let f of failed) {
+console.log(`${negativePassed}/${failSamples.length} negative-passed`);
+
+for (let f of unexpectedFails) {
 	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
-	console.log(`\n[${f.idx}] ${f.err}`);
+	console.log(`\n[pos ${f.idx}] ${f.err}`);
+	console.log(`      ${preview}`);
+}
+
+for (let f of unexpectedPasses) {
+	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
+	console.log(`\n[neg ${f.idx}] unexpected success (expected parse error)`);
+	console.log(`      ${preview}`);
+}
+
+for (let f of unexpectedErrors) {
+	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
+	console.log(`\n[neg ${f.idx}] unexpected error type: ${f.err.name}: ${f.err.message}`);
 	console.log(`      ${preview}`);
 }
