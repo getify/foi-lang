@@ -161,33 +161,70 @@ var samples = [
 
 	// { label: "GroupedExprNoBlock: arr[(x := 5)]",  src: "arr[(x := 5)];" },
 
-	// MulBinExpr — iter, single-token MulOp
-	{ label: "MulBinExpr: a * b * c",      src: "a * b * c;" },
+	// // MulBinExpr — iter, single-token MulOp
+	// { label: "MulBinExpr: a * b * c",      src: "a * b * c;" },
 
-	// AddBinExpr already covered; one extra to verify mixed precedence
-	// folds into AddBinExpr at the top with nested MulBinExpr
-	{ label: "Mixed prec: a + b * c",      src: "a + b * c;" },
+	// // AddBinExpr already covered; one extra to verify mixed precedence
+	// // folds into AddBinExpr at the top with nested MulBinExpr
+	// { label: "Mixed prec: a + b * c",      src: "a + b * c;" },
 
-	// CompareBinExpr — symbolic op (multi-token Qmark + OpenAngle + Equal)
-	{ label: "CompareBinExpr: a ?<= b",    src: "a ?<= b;" },
+	// // CompareBinExpr — symbolic op (multi-token Qmark + OpenAngle + Equal)
+	// { label: "CompareBinExpr: a ?<= b",    src: "a ?<= b;" },
 
-	// CompareBinExpr — named op (single BooleanOper token)
-	{ label: "CompareBinExpr: a ?in xs",   src: "a ?in xs;" },
+	// // CompareBinExpr — named op (single BooleanOper token)
+	// { label: "CompareBinExpr: a ?in xs",   src: "a ?in xs;" },
 
-	// AndBinExpr — single-token BooleanOper
-	{ label: "AndBinExpr: a ?and b",       src: "a ?and b;" },
+	// // AndBinExpr — single-token BooleanOper
+	// { label: "AndBinExpr: a ?and b",       src: "a ?and b;" },
 
-	// OrBinExpr — single-token BooleanOper
-	{ label: "OrBinExpr: a ?or b",         src: "a ?or b;" },
+	// // OrBinExpr — single-token BooleanOper
+	// { label: "OrBinExpr: a ?or b",         src: "a ?or b;" },
 
-	// FlowBinExpr — Comprehension token (single)
-	{ label: "FlowBinExpr: xs ~map f",     src: "xs ~map f;" },
+	// // FlowBinExpr — Comprehension token (single)
+	// { label: "FlowBinExpr: xs ~map f",     src: "xs ~map f;" },
 
-	// FlowBinExpr — multi-token pipeline op `#>` (Hash + CloseAngle)
-	{ label: "FlowBinExpr: xs #> f",       src: "xs #> f;" },
+	// // FlowBinExpr — multi-token pipeline op `#>` (Hash + CloseAngle)
+	// { label: "FlowBinExpr: xs #> f",       src: "xs #> f;" },
 
-	// TypeCompareBinExpr — single-token AsTypeOp, NamedType RHS
-	{ label: "TypeCompareBinExpr: a ?as int",  src: "a ?as int;" },
+	// // TypeCompareBinExpr — single-token AsTypeOp, NamedType RHS
+	// { label: "TypeCompareBinExpr: a ?as int",  src: "a ?as int;" },
+
+	// MonadConstructor — bare @
+	{ label: "MonadConstructor: @",         src: "@;" },
+	{ label: "MonadConstructor :as Maybe",  src: "@ :as Maybe;" },
+
+	// AtExpr — IdentBase + optional access + @
+	{ label: "AtExpr (bare base): foo@",       src: "foo@;" },
+	{ label: "AtExpr (BuiltIn base): Maybe@",  src: "Maybe@;" },
+	// NOTE: foo.bar@ already in suite; will now show typed shape
+	{ label: "AtExpr :as: foo@ :as int",       src: "foo@ :as int;" },
+
+	// AtCallExpr — Arm 1 (None@ no arg)
+	{ label: "AtCallExpr Arm 1: None@",     src: "None@;" },
+
+	// AtCallExpr — Arm 2 sub-form A (AtExpr + arg, no trivia)
+	{ label: "AtCallExpr Sub-form A: foo@ x",      src: "foo@ x;" },
+	{ label: "AtCallExpr Sub-form A w/access: foo.bar@ x",  src: "foo.bar@ x;" },
+
+	// AtCallExpr — Arm 2 sub-form B (trivia between base and @)
+	{ label: "AtCallExpr Sub-form B: foo @ x",     src: "foo @ x;" },
+
+	// AtCallExpr — Arm 2 sub-form C (bare @ + arg)
+	{ label: "AtCallExpr Sub-form C: @ x",         src: "@ x;" },
+
+	// SymbolicUnaryExpr — bare ?/!
+	{ label: "SymbolicUnaryExpr: ?x",       src: "?x;" },
+	{ label: "SymbolicUnaryExpr: !x",       src: "!x;" },
+
+	// NamedUnaryExpr — ?empty / !empty
+	{ label: "NamedUnaryExpr: ?empty x",    src: "?empty x;" },
+
+	// Unary + Binary tier interaction — verifies unary stays at BinaryAtom level
+	// Expected: AddBinExpr { left: SymbolicUnaryExpr{op:"?", right:x}, op:"+", right:5 }
+	{ label: "Tier interact: ?x + 5",       src: "?x + 5;" },
+
+	// Unary with :as
+	{ label: "Unary :as: ?x :as bool",      src: "?x :as bool;" },
 ];
 
 for (let { label, src } of samples) {

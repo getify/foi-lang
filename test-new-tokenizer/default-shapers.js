@@ -210,6 +210,33 @@ function shapeBinTier(typeName,parts) {
 	return node;
 }
 
+// Helper for the two §8 unary productions (NamedUnaryExpr,
+// SymbolicUnaryExpr). Both share `op _ BinaryAtom (_ AsAnnotationExpr)?`
+// shape. The op runs across leading non-node tokens (single token
+// in practice: ?empty/!empty as BooleanOper, or Qmark/Exmark);
+// `right` is the single operand node; optional `:as` unwraps.
+//
+// Field naming: `{ op, right, as? }` — `right` for positional
+// symmetry with shapeBinTier's `{ left, op, right }`; unary is
+// just a binary with `left` absent.
+function shapeUnaryTier(typeName,parts) {
+	var op = "";
+	var right;
+	var as;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (p.type === "AsAnnotationExpr") as = p;
+			else right = p;
+		}
+		else {
+			op += p.value;
+		}
+	}
+	var node = { type: typeName, op, right };
+	if (as) node.as = as.annotation;
+	return node;
+}
+
 export const defaultShapers = {
 
 	// Identifier — bare token-stream extraction. Concatenates the
@@ -526,6 +553,19 @@ export const defaultShapers = {
 	},
 
 	// =============================================================
+	// Unary tier (§8). Two productions, prefix-unary shape, distinguished
+	// only by op kind (named ?empty/!empty vs symbolic ?/!). Both go
+	// through shapeUnaryTier. Operand is restricted to BinaryAtom
+	// (tightest tier) per grammar — `?x + 5` parses as `(?x) + 5`.
+	//
+	// Postfix `'` (the prime modifier) is NOT a unary form here —
+	// it's a restricted tail of ChainExpr (§7), where it terminates
+	// access and allows only call suffixes after.
+	// =============================================================
+	NamedUnaryExpr(frame,parts)    { return shapeUnaryTier("NamedUnaryExpr",parts); },
+	SymbolicUnaryExpr(frame,parts) { return shapeUnaryTier("SymbolicUnaryExpr",parts); },
+
+	// =============================================================
 	// Binary tiers (§9). Seven productions ordered loosest →
 	// tightest: FlowBinExpr, OrBinExpr, AndBinExpr,
 	// TypeCompareBinExpr, CompareBinExpr, AddBinExpr, MulBinExpr.
@@ -646,6 +686,49 @@ export const defaultShapers = {
 	// contexts.
 	MultiAccessExpr(frame,parts) {
 		return { type: "MultiAccessExpr", segments: parts.filter(isNode) };
+	},
+
+	// =============================================================
+	// At-cluster (§6 IdentifierExpr + §7 CallExpr).
+	//
+	// MonadConstructor — bare `@`. Type tag is total information;
+	// only optional `:as` carries data.
+	//
+	// AtExpr — `IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?`.
+	// Shape `{ base, access?, as? }`. The `@` itself is noise
+	// (recoverable from type tag). `base` is the identifier being
+	// lifted; `access` retains the SingleAccessExpr node intact
+	// (not unwrapped — SingleAccessExpr is reused in non-AtExpr
+	// contexts so consumers expect the wrapper layer).
+	// =============================================================
+
+	// AtExpr — IdentBase + optional access + @, optional :as.
+	AtExpr(frame,parts) {
+		var base, access, as;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "AsAnnotationExpr") as = p;
+				else if (p.type === "SingleAccessExpr") access = p;
+				else base = p;
+			}
+			// else: At token — skip
+		}
+		var node = { type: "AtExpr", base };
+		if (access) node.access = access;
+		if (as) node.as = as.annotation;
+		return node;
+	},
+
+	// MonadConstructor — bare @, optional :as.
+	MonadConstructor(frame,parts) {
+		var as;
+		for (let p of parts) {
+			if (isNode(p) && p.type === "AsAnnotationExpr") as = p;
+			// else: At token — skip
+		}
+		var node = { type: "MonadConstructor" };
+		if (as) node.as = as.annotation;
+		return node;
 	},
 
 	// Range — closed form (`x..y`). Two operands `from`/`to`. No
@@ -817,6 +900,105 @@ export const defaultShapers = {
 			// else: Pipe, Comma — skip
 		}
 		return { type: "PartialCallSuffix", args };
+	},
+
+	// =============================================================
+	// AtCallExpr — at-form applied to (optionally) an argument. The
+	// grammar has two arms:
+	//
+	//   Arm 1: "None" At (_ AsAnnotationExpr)?
+	//   Arm 2: (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor)
+	//          _ ExprNoBlock (_ AsAnnotationExpr)?
+	//
+	// Arm 2 has three sub-forms: pre-shaped AtExpr (no trivia between
+	// IdentBase and @), inline IdentBase+access+@ (trivia-tolerant
+	// equivalent), or pre-shaped MonadConstructor (bare @).
+	//
+	// Normalizes to a uniform shape `{ callee, arg?, as? }`:
+	//
+	//   - Arm 1 (`None@`): synthesize an AtExpr with a BuiltIn("None")
+	//     base. No arg.
+	//   - Arm 2, AtExpr sub-form: callee = the pre-shaped AtExpr
+	//     (preserves its own internal :as, if any).
+	//   - Arm 2, IdentBase+access+@ sub-form: synthesize an AtExpr
+	//     from the spliced parts (trivia-tolerance is a parsing
+	//     concern, not an AST concern).
+	//   - Arm 2, MonadConstructor sub-form: callee = the pre-shaped
+	//     MonadConstructor.
+	//
+	// Consumers branch on `callee.type` (AtExpr vs MonadConstructor)
+	// to discriminate base-bearing vs bare-@ calls. The Arm 1 vs
+	// Arm 2 distinction surfaces as `arg`-presence.
+	//
+	// Discrimination on parts[0]:
+	//   - Builtin token → Arm 1
+	//   - AtExpr node → Arm 2 sub-form A
+	//   - MonadConstructor node → Arm 2 sub-form C
+	//   - any other node (Identifier|BuiltIn|PipelineTopic) → Arm 2 sub-form B
+	// =============================================================
+	AtCallExpr(frame,parts) {
+		var node = { type: "AtCallExpr" };
+		var as;
+		var first = parts[0];
+
+		if (!isNode(first)) {
+			// Arm 1: `None@`. parts is [Builtin-tok("None"), At-tok, ?AsAnnotationExpr].
+			let atTok;
+			for (let p of parts) {
+				if (!isNode(p) && p.type === "At") atTok = p;
+				else if (isNode(p) && p.type === "AsAnnotationExpr") as = p;
+			}
+			node.callee = {
+				type: "AtExpr",
+				base: {
+					type: "BuiltIn",
+					name: first.value,
+					start: first.start,
+					end: first.end,
+				},
+				start: first.start,
+				end: atTok.end,
+			};
+			// No arg for Arm 1.
+		}
+		else if (
+			first.type === "AtExpr" ||
+			first.type === "MonadConstructor"
+		) {
+			// Arm 2 sub-forms A and C: callee is pre-shaped.
+			node.callee = first;
+			for (let p of parts.slice(1)) {
+				if (isNode(p)) {
+					if (p.type === "AsAnnotationExpr") as = p;
+					else node.arg = p;
+				}
+			}
+		}
+		else {
+			// Arm 2 sub-form B: IdentBase + ?SingleAccessExpr + At-tok + ExprNoBlock + ?AsAnnotationExpr.
+			// Synthesize an AtExpr from the spliced parts.
+			let base = first;
+			let access, arg, atTok;
+			for (let p of parts.slice(1)) {
+				if (isNode(p)) {
+					if (p.type === "SingleAccessExpr") access = p;
+					else if (p.type === "AsAnnotationExpr") as = p;
+					else arg = p;
+				}
+				else if (p.type === "At") atTok = p;
+			}
+			node.callee = {
+				type: "AtExpr",
+				base,
+				start: base.start,
+				end: atTok.end,
+			};
+			if (access) node.callee.access = access;
+			if (arg) node.arg = arg;
+		}
+
+		if (as) node.as = as.annotation;
+		return node;
 	},
 
 	// Chain — base + ordered segments folded into JS-style nested
