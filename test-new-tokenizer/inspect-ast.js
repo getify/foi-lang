@@ -234,6 +234,17 @@ var samples = [
 	// CondClause at non-GuardedExpr call sites — same shape, different parents
 	{ label: "CondClause as FlowBinExpr LHS",      src: "?[isComplete] ~each { go(); };" },
 	{ label: "CondClause inside FuncPrecond",      src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
+
+	// DefFuncExpr cluster (§13) — every variant
+	{ label: "defn: anonymous + empty params",         src: "defn () ^42;" },
+	{ label: "defn: named + params + expr body",       src: "defn add(x, y) ^x + y;" },
+	{ label: "defn: @ form + block body",              src: "defn fact@(n) { n; };" },
+	{ label: "defn: curried (2 paramSets)",            src: "defn curried(x)(y) ^x;" },
+	{ label: "defn: :over clause",                     src: "defn ovr(x) :over(y, z) ^x;" },
+	{ label: "defn: :as clause + empty params",        src: "defn typed() :as MyType ^empty;" },
+	{ label: "defn: pipeline body",                    src: "defn pipe(x) #> log;" },
+	{ label: "defn: gather parameter",                 src: "defn gather(*args) ^args;" },
+	{ label: "defn: with FuncPrecond",                 src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
 ];
 
 for (let { label, src } of samples) {

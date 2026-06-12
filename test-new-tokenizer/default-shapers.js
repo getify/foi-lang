@@ -1150,4 +1150,218 @@ export const defaultShapers = {
 		}
 		return { type: "GuardedExpr", clause, consequent };
 	},
+
+	// =============================================================
+	// §13 FUNCTION DEFINITIONS
+	// =============================================================
+
+	// GatherParameter := Star Identifier;
+	//
+	// Flattened: name is the bare string, not an Identifier node.
+	// Convention: monomorphic-Identifier slots use a string `name`;
+	// polymorphic slots (Identifier | DestructureTarget, etc.) use a
+	// node `target`. The parent's type (GatherParameter) implies the
+	// slot semantics, so the Identifier wrapper is redundant.
+	GatherParameter(frame,parts) {
+		var inner = parts.find(isNode);
+		return { type: "GatherParameter", name: inner.name };
+	},
+
+	// FuncPrecond := CondClause _ Colon _ ExprNoBlock;
+	//
+	// Same shape as GuardedExpr (§14) — { clause, consequent }.
+	// The two productions differ only in body restriction (Expr vs.
+	// ExprNoBlock); from the consumer surface they're uniform.
+	FuncPrecond(frame,parts) {
+		var clause;
+		var consequent;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "CondClause") clause = p;
+				else consequent = p;
+			}
+			// else: Colon — skip
+		}
+		return { type: "FuncPrecond", clause, consequent };
+	},
+
+	// FuncOverClause := ":over" _ OpenParen _ Identifier (_ Comma _ Identifier)* _ CloseParen;
+	//
+	// Wrapper around an identifier list. DefFuncExpr unwraps to
+	// `over: names` at the slot assignment — mirrors AsAnnotationExpr
+	// / FuncAsClause unwrap pattern. Wrapper still emits a node for
+	// completeness; parents reach through.
+	FuncOverClause(frame,parts) {
+		var names = [];
+		for (let p of parts) {
+			if (isNode(p)) names.push(p);
+			// else: Keyword(:over), OpenParen, CloseParen, Comma — skip
+		}
+		return { type: "FuncOverClause", names };
+	},
+
+	// FuncAsClause := ":as" _ Identifier;
+	//
+	// Mirrors AsAnnotationExpr — wrapper around the annotation.
+	// DefFuncExpr unwraps to `as: annotation` at slot assignment.
+	// Note: the `as` field on DefFuncExpr carries an Identifier
+	// node (per the grammar — FuncAsClause is NOT AsAnnotationExpr),
+	// whereas `as` elsewhere via AsExpr-unwrap carries a NamedType.
+	// Consumers branch on `.type` if they care which.
+	FuncAsClause(frame,parts) {
+		return { type: "FuncAsClause", annotation: parts.find(isNode) };
+	},
+
+	// ReturnExpr := Caret _ Expr;
+	//
+	// Caret is noise (recoverable from type tag). The inner Expr
+	// promotes to `expr` — generic inner-expression convention
+	// (same as paren-wrap, index-access, etc.).
+	ReturnExpr(frame,parts) {
+		return { type: "ReturnExpr", expr: parts.find(isNode) };
+	},
+
+	// FuncBodyExpr := Caret _ (ExprNoBlock | GroupedExpr);
+	//
+	// `body` field, not `expr` — body is the natural term for a
+	// function body, and lines up with FuncBodyBlock/FuncBodyPipeline
+	// (which also use `body`). The three FuncBody* shapers expose a
+	// uniform discriminator: parent reads `.type` to learn the form,
+	// `.body`/`.stmts` to access content.
+	FuncBodyExpr(frame,parts) {
+		return { type: "FuncBodyExpr", body: parts.find(isNode) };
+	},
+
+	// FuncBodyPipeline := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
+	//
+	// Multi-token op (e.g. `#>` = Hash + CloseAngle) concatenates
+	// into the op string — same pattern as binary tier ops. Body is
+	// the trailing node.
+	FuncBodyPipeline(frame,parts) {
+		var op = "";
+		var body;
+		for (let p of parts) {
+			if (isNode(p)) body = p;
+			else op += p.value;
+		}
+		return { type: "FuncBodyPipeline", op, body };
+	},
+
+	// FuncBodyBlock := OpenBrace _ FuncBodyStmts _ CloseBrace;
+	//
+	// FuncBodyStmts is hidden, so its child FuncBodyStmt nodes
+	// (ReturnExpr | Stmt) bubble up directly. Braces and semicolons
+	// are noise. Mirrors BlockExpr's stmts-collect pattern.
+	FuncBodyBlock(frame,parts) {
+		var stmts = [];
+		for (let p of parts) {
+			if (isNode(p)) stmts.push(p);
+			// else: OpenBrace, CloseBrace, Semicolons — skip
+		}
+		return { type: "FuncBodyBlock", stmts };
+	},
+
+	// DefFuncExpr := "defn" (_ Identifier At?)?
+	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
+	//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+	//                _ FuncBody;
+	//
+	// State-machine shaper — the most complex in the file. The
+	// only state needed is which paren-pair we're currently inside
+	// (for synthesizing an empty ParameterList when the pair has
+	// no inner). All other dispatch is by node-type alone since
+	// each post-paren clause type is unique.
+	//
+	// Output shape:
+	//   {
+	//     type: "DefFuncExpr",
+	//     name?: Identifier,                    // omit when anonymous
+	//     at?: true,                            // omit when no @
+	//     paramSets: [ParameterList|GatherParameter, ...],  // ≥1 entry
+	//     preconditions?: [FuncPrecond, ...],   // omit when empty
+	//     over?: [Identifier, ...],             // omit when absent
+	//     as?: Identifier,                      // omit when absent
+	//     body: FuncBodyExpr|FuncBodyPipeline|FuncBodyBlock,
+	//   }
+	//
+	// Empty paren-pair `()` synthesizes a ParameterList with
+	// `params: []` and a zero-length span (start: openParen.end+1,
+	// end: openParen.end). The synthesized node is honest about
+	// being a ParameterList — consumers can branch uniformly on
+	// `paramSets[i].type` without a null check.
+	//
+	// FuncPrecondList is hidden, so its FuncPrecond children bubble
+	// up directly into parts. FuncOverClause and FuncAsClause unwrap
+	// to their payload fields at slot assignment (`over: p.names`,
+	// `as: p.annotation`) per the wrapper-unwrap convention.
+	//
+	// No `:as` handling for AsExpr — DefFuncExpr is NOT in
+	// <AsableExpr>; its `:as` is the dedicated FuncAsClause grammar
+	// path, distinct from AsAnnotationExpr.
+	DefFuncExpr(frame,parts) {
+		var name, at, over, as, body;
+		var paramSets = [];
+		var preconditions = [];
+
+		var lastOpenParen = null;  // OpenParen tok while between Open and Close
+		var currentSet = null;     // inner node of the current paren-pair
+
+		for (let p of parts) {
+			if (!isNode(p)) {
+				if (p.type === "Keyword" && p.value === "defn") continue;
+				if (p.type === "At") { at = true; continue; }
+				if (p.type === "OpenParen") {
+					lastOpenParen = p;
+					currentSet = null;
+					continue;
+				}
+				if (p.type === "CloseParen") {
+					if (currentSet) {
+						paramSets.push(currentSet);
+					}
+					else {
+						paramSets.push({
+							type: "ParameterList",
+							params: [],
+							start: lastOpenParen.end + 1,
+							end:   lastOpenParen.end,
+						});
+					}
+					lastOpenParen = null;
+					continue;
+				}
+				continue;
+			}
+			// Nodes
+			if (p.type === "Identifier" && !name && paramSets.length === 0 && !lastOpenParen) {
+				name = p;
+				continue;
+			}
+			if (lastOpenParen) {
+				currentSet = p;
+				continue;
+			}
+			if (p.type === "FuncPrecond")        { preconditions.push(p); continue; }
+			if (p.type === "FuncOverClause")     { over = p.names; continue; }
+			if (p.type === "FuncAsClause")       { as = p.annotation; continue; }
+			if (
+				p.type === "FuncBodyExpr" ||
+				p.type === "FuncBodyPipeline" ||
+				p.type === "FuncBodyBlock"
+			) {
+				body = p;
+				continue;
+			}
+		}
+
+		var node = { type: "DefFuncExpr" };
+		if (name) node.name = name;
+		if (at) node.at = true;
+		node.paramSets = paramSets;
+		if (preconditions.length > 0) node.preconditions = preconditions;
+		if (over) node.over = over;
+		if (as) node.as = as;
+		node.body = body;
+		return node;
+	},
 };
