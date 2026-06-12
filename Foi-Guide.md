@@ -576,12 +576,12 @@ In addition to the definitions-block form just shown, several other expressions 
         // (tmp is block-scoped to the clause)
         ?[mod(x,2) ?= 1]: (tmp) {
             tmp := (x * 3) + 1;
-            ?[tmp ?> 100]: tmp := 100
-            myFn(tmp);
-        }
+            ?[tmp ?> 100]: tmp := 100;
+            myFn(tmp)
+        };
 
         // x is non-zero (and even)?
-        ?[x != 0]: myFn(x)
+        ?[x != 0]: myFn(x);
 
         // otherwise, x must be zero,
         // so skip calling function and
@@ -1202,7 +1202,7 @@ def middle: numbers.[1..3];         // < 4, 5, 6 >
 (.[1..3])(numbers);                 // < 4, 5, 6 >
 ```
 
-**Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols, nor can the `1..3` expression have whitespace; however, whitespace is allowed *around* the range (`.[ 1..3 ]`).
+**Note:** The `.[` of this pick syntax form cannot have any whitespace between the two symbols; however, whitespace is allowed *around* the range and its parts (`.[ 1 .. 3 ]`).
 
 A ranged Tuple subset such as `.[2..5]` is a shorthand equivalent for `.<2,3,4,5>` -- selecting out specific indices `2`, `3`, `4`, and `5`.
 
@@ -1408,7 +1408,7 @@ set1 !$= set3;                  // true
 To define a function, use the `defn` keyword. To return a value from anywhere inside the function body, use the `^` sigil:
 
 ```java
-defn add(x,y) { ^x + y; }
+defn add(x,y) { ^x + y; };
 ```
 
 Function definitions are always hoisted to their enclosing scope:
@@ -1416,7 +1416,7 @@ Function definitions are always hoisted to their enclosing scope:
 ```java
 add(6,12);                          // 18
 
-defn add(x,y) { ^x + y; }
+defn add(x,y) { ^x + y; };
 ```
 
 Function definitions are also expressions (first-class values), so they can be assigned and passed around:
@@ -1505,34 +1505,35 @@ These aspects of the function's signature go beyond parameter [type annotations]
 
 Consider a function that returns `1` if its argument is less than or equal to `1`. We might call this a "base condition" or an "early return" in certain styles of programming.
 
-You *could* write it this way:
+You *might have expected* to write it this way:
 
 ```java
 defn myFn(x) {
-    ?{
-        ?[x ?<= 1]: ^1
-        ?: empty
-    }
+    // warning: this is not valid Foi, for
+    // illustration purposes only
+    ?[x ?<= 1]: ^1
 
     // ..
-}
+};
 ```
 
 The problem is, this `^1` "early return" isn't particularly obvious, and requires reading into the body to determine.
 
-**Foi** functions ***can and should do better***.
+**Foi** functions ***must do better***.
 
 Pre-conditions are [guard expressions](#guard-expressions), of the form `?[    ]: expr` or `![    ]: expr`, which are applied to *guard* against the need to run the function. One or more of these pre-conditions may appear in the function definition, between the `(    )` parameter list and the body of the function -- either the `{    }` full body, or the the `^`-denoted concise expression-body.
 
-Thus, the above `myFn()` function could be more appropriately defined as:
+Thus, the above `myFn()` function *hoists* that early-return guard clause out to the definition, as a pre-condition:
 
 ```java
 defn myFn(x) ?[x ?<= 1]: 1 {
     // ..
-}
+};
 ```
 
-Pre-conditions are evaluated -- hoisted to the call-site -- before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned (no `^` return sigil) and thus the function invocation is skipped.
+**NOTE:** The `^` return sigil is not used in pre-conditions.
+
+Pre-conditions are evaluated -- hoisted to the call-site -- before actual function invocation. If a pre-condition matches, the consequent `expr` is evaluated and returned and thus the function invocation is skipped.
 
 ----
 
@@ -1543,7 +1544,7 @@ For example, if you want to define a function that only computes its result when
 ```java
 defn myFn(x) ![x ?> 10]: empty {
     // ..
-}
+};
 ```
 
 You can read/interpret the `![x ?> 10]: empty` pre-condition as: "x must be greater than 10; if it's not, return `empty` instead". That's basically the way we interpret pre-conditions in any programming language.
@@ -1557,7 +1558,7 @@ If a function has multiple parameters, a pre-condition may imply a *relationship
 ```java
 defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
-}
+};
 ```
 
 Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is called, the function won't be invoked at all, and the result (from the pre-condition) will be `empty`:
@@ -1565,16 +1566,16 @@ Here, if `myFn(5,2)` is called, the result will be `3`. But if `myFn(2,5)` is ca
 ```java
 defn myFn(x,y) ![x ?> y]: empty {
     ^(x - y);
-}
+};
 
 def result1: ?(myFn(5,2)){
-    ![empty]: #
+    ![empty]: #;
     ?: 0
 };
 def result2: ?(myFn(2,5)){
-    ![empty]: #
+    ![empty]: #;
     ?: 0
-/?;
+};
 
 result1;            // 3
 result2;            // 0
@@ -1587,7 +1588,7 @@ Function recursion is supported:
 ```java
 defn factorial(v) ![v ?> 1]: 1 {
     ^v * factorial(v - 1);
-}
+};
 
 factorial(5);                   // 120
 ```
@@ -1597,7 +1598,7 @@ Tail-calls (recursive or not) are automatically optimized by the **Foi** compile
 ```java
 defn factorial(v,tot: 1) ![v ?> 1]: tot {
     ^factorial(v - 1,tot * v);
-}
+};
 
 factorial(5);                   // 120
 ```
@@ -1620,25 +1621,32 @@ add(6,12);                          // 18
 
 ### Function Overs
 
-Function definitions must declare side-effects (reassignment of free/outer variables) using the `:over` keyword:
+Function definitions must declare non-constant free/outer variable closures using the `:over` keyword:
 
 ```java
 def customerCache: empty;
-def count: 0;
+def maxLookupCount: 10;
+
+// somewhere else:
+maxLookupCount := 25;
 
 defn lookupCustomer(id) :over (customerCache) {
     // ..
 
-    // this reassignment side-effect allowed:
-    customerCache := cacheAppend(customerCache,customer);
+    // ERROR! `maxLookupCount` reference not allowed,
+    // because it isn't listed in the `:over`
+    ?[customerCache.size ?< maxLookupCount]: (
+        // ...but this reassignment side-effect is fine:
+        customerCache := cacheAppend(customerCache,customer)
+    );
 
-    // but this is disallowed because `count`
-    // isn't listed in the `:over` clause:
-    count := count + 1;
-}
+    // ..
+};
 ```
 
-**Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `:over` clause. The `:over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
+A free/outer variable is considered *constant* if it is never lexically reassigned anywhere. Constant free/outer variables may be referenced without being listed in the function's `:over` clause.
+
+Any free/outer variable that is lexically reassigned anywhere is considered non-constant. A function may only reference a non-constant free/outer variable if that variable is listed in the function's `:over` clause.
 
 ### Function Composition
 
@@ -1913,10 +1921,10 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 
         This loop will keep running as long as `done` is false. The *range* could also have been written as `?[!done]`, but the former should generally be preferred as easier to read.
 
-    - If the `range` expression is omitted, `~each` returns another function that expects a single argument defining the *range*. For example:
+    - To skip the `range` expression (and provide it later), use partial application::
 
         ```java
-        def printAll: ~each log;
+        def printAll: (~each)| , log |;
 
         printAll(< 1, 3, 5, 7, 9 >);
         // 1
@@ -2316,7 +2324,7 @@ Folds *can even* produce another Record/Tuple result. One typical way to accompl
 ```java
 defn onlyOdds(list,v)
     ![mod(v,2) ?= 1]: list
-        ^list + < v >
+        ^list + < v >;
 
 (~fold)(0..9, <>, onlyOdds);
 // < 1, 3, 5, 7, 9 >
@@ -2539,7 +2547,7 @@ Monadic function returns can also be integrated directly into a function's logic
 defn factorialM(v,tot: Id@ 1) ![v ?> 1]: tot {
     tot := tot ~map (t) { t * v; };
     ^factorialM(v - 1,tot);
-}
+};
 
 factorialM(5);                   // Id{120}
 ```
@@ -3773,7 +3781,7 @@ The key is, `IO` instances are lazy; these actions **do not run automatically**.
 To construct an `IO` instance, we give it an *executor* function that will perform the action(s) (side effects):
 
 ```java
-def task = IO@ (defn someTask(){
+def task: IO@ (defn someTask(){
     log("Log messages are a side effect!");
 });
 // (nothing)
@@ -3782,7 +3790,7 @@ def task = IO@ (defn someTask(){
 Notice that the log message didn't actually happen. `IO` instances are lazy. An `IO` instance (which may be a composed chain of many `IO`s) is run on-demand (one or more times), using the `run()` method on the instance:
 
 ```java
-def task = IO@ (defn someTask(){
+def task: IO@ (defn someTask(){
     log("Log messages are a side effect!");
 });
 
@@ -3793,7 +3801,7 @@ task.run();
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
 ```java
-def specialNumber = IOof@ 42;
+def specialNumber: IO._@ 42;
 
 specialNumber.run();   // 42
 ```
@@ -3808,9 +3816,9 @@ defn finish(v) {
     ^incIO(v);
 };
 
-def num = IOof@ 21;
+def num: IO._@ 21;
 
-def task = num
+def task: num
     ~map doubleIO
     ~< finish;
 
@@ -3880,7 +3888,7 @@ Inside a `~<` chain step, the carried Reader value can be *accessed* as so:
 
 ```java
 def task:
-    IOof@ 42
+    IO._@ 42
     ~< (v) {
         IO@ (defn(env){
             log(`"Value: `v`, Env.x: `env.x`");
@@ -3897,7 +3905,7 @@ This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extrac
 // Recall: Value@ and @ are the identity function
 defn getEnv() ^IO @(Value@);
 
-def fortyTwo: IOof@ 42;
+def fortyTwo: IO._@ 42;
 
 def task: IO ~<< {
     def v:: fortyTwo;
@@ -3912,7 +3920,7 @@ task.run(< x: 3 >);
 In fact, this is even cleaner:
 
 ```java
-def fortyTwo: IOof@ 42;
+def fortyTwo: IO._@ 42;
 
 def task: IO ~<< (env, v:: fortyTwo) {
     log(`"Value: `v`, Env.x: `env.x`");
@@ -3953,7 +3961,7 @@ That's basically the `Promise ~<< {    }` behavior combined automatically into `
 If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
 
 ```java
-defn readValue() ^IOof@ (Promise@ 42);
+defn readValue() ^IO._@ (Promise@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -3971,7 +3979,7 @@ task.run();
 Even in the inverse scenario -- where a `Promise` instance holds an `IO` instance -- the transformation still occurs:
 
 ```java
-defn readValue() ^Promise@ (IOof@ 42);
+defn readValue() ^Promise@ (IO._@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -3998,7 +4006,7 @@ defn printValue(v) ^IO@ (defn(){
 
 def task: IO ~<< {
     def ev:: getValue();
-    ::(~cata)(ev, IOof@, printValue);
+    ::(~cata)(ev, IO._@, printValue);
 };
 
 task.run();
@@ -4282,16 +4290,16 @@ deft SimpleFunc (int) ^empty;
 deft InterestingFunc (int,string) ^empty;
 
 def result1: ?(myFn){
-    ?[?as SimpleFunc]: myFn(42)
-    ?[?as InterestingFunction]: myFn(42,"Kyle")
+    ?[?as SimpleFunc]: myFn(42);
+    ?[?as InterestingFunc]: myFn(42,"Kyle");
     ?: myFn()
 };
 
 // or:
 
 def result2: ?{
-    ?[myFn ?as SimpleFunc]: myFn(42)
-    ?[myFn ?as InterestingFunction]: myFn(42,"Kyle")
+    ?[myFn ?as SimpleFunc]: myFn(42);
+    ?[myFn ?as InterestingFunc]: myFn(42,"Kyle");
     ?: myFn()
 };
 ```

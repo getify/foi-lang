@@ -6,7 +6,7 @@
 
 ----
 
-**Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. It pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and others.
+**Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. You'll find many  features designed for [uncommonly coherent expressiveness](Expressive.md) around common FP idioms.
 
 ```java
 greetings("my friend");
@@ -17,6 +17,8 @@ defn greetings(who) {
     log(msg)
 }
 ```
+
+**Foi** pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and more.
 
 The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
 
@@ -58,7 +60,7 @@ compute(3);                             // 7
 
 ----
 
-It shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**. Hopefully, without too much learning and practice, even more advanced code like this will brighten into clarity:
+It shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**. Hopefully, without too much learning and practice, even more advanced code like this will sharpen into clarity:
 
 ```java
 defn getFavoriteMovies(userID) ^(IO ~<< {
