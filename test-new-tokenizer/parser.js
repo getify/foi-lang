@@ -1560,9 +1560,11 @@ var DoBlockStmts = and(
 
 // <DoVarDefInitOpt> := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
 //                    | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
-var DoVarDefInitOpt = or(
-	and(Identifier,        optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))),
-	and(DestructureTarget, optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock)))
+export const DoVarDefInitOpt = production("DoVarDefInitOpt",
+	or(
+		and(Identifier,        optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))),
+		and(DestructureTarget, optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock)))
+	)
 );
 
 // <DoVarDefInitOptList> := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
@@ -1574,14 +1576,22 @@ var DoVarDefInitOptList = and(
 	))
 );
 
-// <DoBlockDefsInitOpt> := OpenParen _ DoVarDefInitOptList _ CloseParen;
-var DoBlockDefsInitOpt = and(OpenParen, delim(), DoVarDefInitOptList, delim(), CloseParen);
+// DoBlockDefsInitOpt := OpenParen _ DoVarDefInitOptList _ CloseParen;
+export const DoBlockDefsInitOpt = production("DoBlockDefsInitOpt",
+	and(OpenParen, delim(), DoVarDefInitOptList, delim(), CloseParen)
+);
 
 // <DoBareBlockExpr> := OpenBrace _ DoBlockStmts _ CloseBrace;
 var DoBareBlockExpr = and(OpenBrace, delim(), DoBlockStmts, delim(), CloseBrace);
 
-// <DoBlockExpr> := DoBlockDefsInitOpt? _ DoBareBlockExpr;
-var DoBlockExpr = and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr);
+// DoBlockExpr := DoBlockDefsInitOpt? _ DoBareBlockExpr;
+//
+// `<DoBareBlockExpr>` stays hidden; its OpenBrace/stmts/CloseBrace
+// contents splice into DoBlockExpr's parts. Parallel to BlockExpr/
+// BareBlockExpr in §11.
+export const DoBlockExpr = production("DoBlockExpr",
+	and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr)
+);
 
 // DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 //

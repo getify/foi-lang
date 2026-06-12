@@ -272,6 +272,49 @@ var samples = [
 	// here for explicit attention during the verification pass.
 	{ label: "AtExpr (retrofit): foo.bar@",                  src: "foo.bar@;" },
 	{ label: "AtCallExpr Sub-form B w/access: foo.bar @ x",  src: "foo.bar @ x;" },
+
+	// === §16 do-comprehensions ===
+
+	// DoComprExpr — bare body, no defs
+	{ label: "DoComprExpr: Foo ~<< { y }",                       src: "Foo ~<< { y };" },
+
+	// DoComprExpr — with defs
+	{ label: "DoComprExpr w/defs: Foo ~<< (x) { x }",            src: "Foo ~<< (x) { x };" },
+
+	// DoComprExpr — final unwrap
+	{ label: "DoComprExpr w/final: Foo ~<< { ::y }",             src: "Foo ~<< { ::y };" },
+
+	// DoComprExpr — full: defs + body stmts + final unwrap
+	{ label: "DoComprExpr full",                                 src: "Foo ~<< (x: 1) { def y:: getY(); ::y; };" },
+
+	// DoComprExpr — BuiltIn targetType
+	{ label: "DoComprExpr (BuiltIn): IO ~<< { y }",              src: "IO ~<< { y };" },
+
+	// DoVarDefInitOpt — both op forms and no-init
+	{ label: "DoVarDefInitOpt (::): Foo ~<< (x:: 1) { y }",      src: "Foo ~<< (x:: 1) { y };" },
+	{ label: "DoVarDefInitOpt (:): Foo ~<< (x: 1) { y }",        src: "Foo ~<< (x: 1) { y };" },
+	{ label: "DoVarDefInitOpt (no init): Foo ~<< (x) { y }",     src: "Foo ~<< (x) { y };" },
+
+	// DoDefVarStmt — inside a do-block
+	{ label: "DoDefVarStmt: Foo ~<< { def x:: 5; y; }",          src: "Foo ~<< { def x:: 5; y; };" },
+
+	// DoFinalUnwrapExpr — minimal
+	{ label: "DoFinalUnwrapExpr: Foo ~<< { ::42 }",              src: "Foo ~<< { ::42 };" },
+
+	// DoLoopComprExpr — non-block iter (Identifier)
+	{ label: "DoLoopComprExpr (ident iter): xs ~<* fn",          src: "xs ~<* fn;" },
+
+	// DoLoopComprExpr — non-block iter (chain)
+	{ label: "DoLoopComprExpr (chain iter): xs ~<* foo.bar",     src: "xs ~<* foo.bar;" },
+
+	// DoLoopComprExpr — block iter, no defs
+	{ label: "DoLoopComprExpr (block, no defs): xs ~<* { y }",   src: "xs ~<* { y };" },
+
+	// DoLoopComprExpr — block iter, with defs
+	{ label: "DoLoopComprExpr (block + defs): xs ~<* (r) { r }", src: "xs ~<* (r) { r };" },
+
+	// DoLoopComprExpr — block iter, with final unwrap
+	{ label: "DoLoopComprExpr (block + final): xs ~<* (r) { ::r }", src: "xs ~<* (r) { ::r };" },
 ];
 
 for (let { label, src } of samples) {

@@ -775,13 +775,13 @@ as a bare binary-operand suffix.
 ```ebnf
 DoComprExpr             := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 
-<DoBlockExpr>           := DoBlockDefsInitOpt? _ DoBareBlockExpr;
+DoBlockExpr             := DoBlockDefsInitOpt? _ DoBareBlockExpr;
 <DoBareBlockExpr>       := OpenBrace _ DoBlockStmts _ CloseBrace;
 <DoBlockStmts>          := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
-<DoBlockDefsInitOpt>    := OpenParen _ DoVarDefInitOptList _ CloseParen;
+DoBlockDefsInitOpt      := OpenParen _ DoVarDefInitOptList _ CloseParen;
 
 <DoVarDefInitOptList>   := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
-<DoVarDefInitOpt>       := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
+DoVarDefInitOpt         := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
                          | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 
 DoDefVarStmt            := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;

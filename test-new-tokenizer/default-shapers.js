@@ -1496,4 +1496,127 @@ export const defaultShapers = {
 		var [ name, decl ] = parts.filter(isNode);
 		return { type: "DefTypeStmt", name, decl };
 	},
+
+
+	// =============================================================
+	// §16 DO-COMPREHENSIONS
+	// =============================================================
+
+	// DoVarDefInitOpt — newly visible. Parallel to VarDefInitOpt
+	// but adds the `op` discriminator for the DoubleColon / Colon
+	// distinction (monadic-unwrap-bind vs regular-bind). `op` is
+	// the literal token text ("::" or ":"), present only when
+	// `init` is present; bare-identifier forms shape as just
+	// `{target}`.
+	DoVarDefInitOpt(frame,parts) {
+		var target, init;
+		var op;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (!target) target = p;
+				else init = p;
+			}
+			else if (p.type === "Colon" || p.type === "DoubleColon") {
+				op = p.value;
+			}
+			// else: structural delim — skip
+		}
+		var node = { type: "DoVarDefInitOpt", target };
+		if (init) {
+			node.op = op;
+			node.init = init;
+		}
+		return node;
+	},
+
+	// DoBlockDefsInitOpt — newly visible. Same shape as
+	// BlockDefsInitOpt, just carrying DoVarDefInitOpt entries
+	// (which may use `:` or `::`) instead of VarDefInitOpt.
+	DoBlockDefsInitOpt(frame,parts) {
+		return { type: "DoBlockDefsInitOpt", entries: parts.filter(isNode) };
+	},
+
+	// DoBlockExpr — newly visible. Parallel to BlockExpr (§11),
+	// minus the `as` slot (no `:as` on do-blocks at the grammar
+	// level — annotate via AsExpr at the outer DoComprExpr /
+	// GroupedDoExpr level instead). `<DoBareBlockExpr>` is hidden,
+	// so OpenBrace / stmts / Semicolons / CloseBrace splice into
+	// parts.
+	//
+	// DoFinalUnwrapExpr (when present) is grammar-positioned as
+	// the LAST entry of `stmts`. Consumers check
+	// `stmts[stmts.length-1]?.type === "DoFinalUnwrapExpr"` to
+	// detect the monadic-unwrap form.
+	DoBlockExpr(frame,parts) {
+		var defs;
+		var stmts = [];
+		for (let p of parts) {
+			if (p.type === "DoBlockDefsInitOpt") defs = p;
+			else if (isNode(p)) stmts.push(p);
+			// else: OpenBrace, CloseBrace, Semicolons — skip
+		}
+		var node = { type: "DoBlockExpr", stmts };
+		if (defs) node.defs = defs;
+		return node;
+	},
+
+	// DoDefVarStmt := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
+	//
+	// Mirrors DefVarStmt — same `{target, init}` shape. The `::`
+	// vs `:` distinction lives in the type tag (DoDefVarStmt vs
+	// DefVarStmt). "def" and "::" are noise.
+	DoDefVarStmt(frame,parts) {
+		var [ target, init ] = parts.filter(isNode);
+		return { type: "DoDefVarStmt", target, init };
+	},
+
+	// DoFinalUnwrapExpr := DoubleColon _ ExprNoBlock (_ Semicolon)*;
+	//
+	// The `::` opener is noise (recoverable from type tag).
+	// Trailing semicolons dropped per current convention. Single
+	// semantic child surfaces as `expr` (matches BracketExpr.expr
+	// / InterpExpr.expr).
+	DoFinalUnwrapExpr(frame,parts) {
+		return { type: "DoFinalUnwrapExpr", expr: parts.find(isNode) };
+	},
+
+	// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
+	//
+	// Shape `{ targetType, body }`. `targetType` is the monad type
+	// being lifted into (`Foo ~<< {...}` / `IO ~<< {...}`). `body`
+	// is the wrapped DoBlockExpr node — uniform with the
+	// "right-slot-is-a-node" convention used by FlowBinExpr for
+	// `~map { ... }` and friends. Consumer reads `body.stmts`,
+	// `body.defs?`.
+	//
+	// `~<<` tokens (Tilde, OpenAngle, OpenAngle) are noise.
+	DoComprExpr(frame,parts) {
+		var [ targetType, body ] = parts.filter(isNode);
+		return { type: "DoComprExpr", targetType, body };
+	},
+
+	// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+	//
+	// Shape `{ range, iter }`. `range` is the iterable source;
+	// `iter` is the per-item iteration target — a DoBlockExpr
+	// (when block-form: `xs ~<* (r) { ... }`) or a CallExpr /
+	// IdentifierExpr / MemberAccessExpr / etc. (when non-block:
+	// `xs ~<* fn`, `xs ~<* foo.bar`). Uniform slot; consumer
+	// branches on `iter.type === "DoBlockExpr"`.
+	//
+	// `<DoLoopIterationExpr>` and `<DoLoopIterNoBlockExpr>` are
+	// hidden — their non-paren-recursive contents resolve to the
+	// underlying typed node (DoBlockExpr, CallExpr, etc.) which
+	// surfaces directly in parts. The paren-recursive arm of
+	// DoLoopIterNoBlockExpr drops user parens around the iter
+	// (the parens never reach GroupedExpr here — they're internal
+	// to the production).
+	//
+	// `~<*` tokens (Tilde, OpenAngle, Star) are noise. So are any
+	// OpenParen/CloseParen tokens from the paren-recursive non-
+	// block arm.
+	DoLoopComprExpr(frame,parts) {
+		var [ range, iter ] = parts.filter(isNode);
+		return { type: "DoLoopComprExpr", range, iter };
+	},
 };
