@@ -315,6 +315,22 @@ var samples = [
 
 	// DoLoopComprExpr — block iter, with final unwrap
 	{ label: "DoLoopComprExpr (block + final): xs ~<* (r) { ::r }", src: "xs ~<* (r) { ::r };" },
+
+	// === §3 Export bindings (post-shaper) ===
+	{ label: "Export named, no access",        src: "export { a: b };" },
+	{ label: "Export named, with access",      src: "export { a: b.c };" },
+	{ label: "Export concise, no access",      src: "export { :a };" },
+	{ label: "Export concise, with access",    src: "export { :a.b };" },
+	{ label: "Export mixed",                   src: "export { a: b.c, :d };" },
+
+	// === §4 Destructure defs (post-shaper) ===
+	{ label: "Destructure named, no access",          src: "def < a: src >: payload;" },
+	{ label: "Destructure named, with access",        src: "def < a: src.x >: payload;" },
+	{ label: "Destructure named, BracketExpr base",   src: "def < a: [k] >: payload;" },
+	{ label: "Destructure named, BracketExpr+access", src: "def < a: [k].x >: payload;" },
+	{ label: "Destructure concise, with access",      src: "def < :a.b >: payload;" },
+	{ label: "Destructure capture (whole value)",     src: "def < #whole >: payload;" },
+	{ label: "Destructure mixed (all three forms)",   src: "def < a: src.x, :b, #whole >: payload;" },
 ];
 
 for (let { label, src } of samples) {

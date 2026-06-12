@@ -156,9 +156,9 @@ function applyChainSeg(object,seg) {
 }
 
 // Helper for fold-access call sites — AtExpr base, AssignmentExpr LHS,
-// AtCallExpr's inline AtExpr synthesis, and (when their shapers are
-// eventually written) ExportNamedBinding, ExportConciseBinding,
-// DestructureNamedDef, DestructureConciseDef. Given a base node and a
+// AtCallExpr's inline AtExpr synthesis, ExportNamedBinding source,
+// ExportConciseBinding source, DestructureNamedDef source, and
+// DestructureConciseDef source. Given a base node and a
 // SingleAccessExpr or MultiAccessExpr (or undefined), folds the
 // access segments via applyChainSeg left-to-right and returns the
 // resulting nested chain. undefined access returns the base
@@ -178,6 +178,67 @@ function foldAccess(base,access) {
 		node = applyChainSeg(node,seg);
 	}
 	return node;
+}
+
+// Helper for the two "named binding" productions —
+// ExportNamedBinding (§3) and DestructureNamedDef (§4). Both
+// share the shape `Identifier _ Colon _ <source-base> MultiAccessExpr?`.
+// After node-filter:
+//   - Without access: [target-Identifier, source-base]
+//   - With access:    [target-Identifier, source-base, MultiAccessExpr]
+//
+// Field naming `{ target, source }` is symmetric with
+// AssignmentExpr's `{ target, source }` — same conceptual roles
+// (binding LHS / value RHS), inverted only in which side carries
+// the access chain. Assignment puts the chain on `target` (you
+// assign INTO a path); binding puts it on `source` (you read
+// FROM a path).
+//
+// `target` retains the full Identifier node — matches
+// DefFuncExpr.name / DefTypeStmt.name precedent; these binding
+// sites are independently navigable in tooling. The
+// GatherParameter flatten-to-string convention is reserved for
+// purely structural sigil prefixes where the Identifier wrapper
+// carries no independent value.
+//
+// DestructureNamedDef additionally accepts BracketExpr as the
+// source-base (computed-key destructure, `def < foo: [k].bar >:`).
+// foldAccess handles BracketExpr-as-base transparently — the
+// fold wraps it like any other base node, so consumers see e.g.
+// `MemberAccessExpr{object: BracketExpr{...}, accessor: ...}` for
+// `[k].bar` and a bare BracketExpr node for `[k]` alone.
+function shapeNamedBinding(typeName,parts) {
+	var nodes = parts.filter(isNode);
+	var [ target, sourceBase, access ] = nodes;
+	return {
+		type: typeName,
+		target,
+		source: foldAccess(sourceBase,access),
+	};
+}
+
+// Helper for the two "concise binding" productions —
+// ExportConciseBinding (§3) and DestructureConciseDef (§4). Both
+// share the shape `Colon Identifier SingleAccessExpr?`. After
+// node-filter:
+//   - Without access: [source-base]
+//   - With access:    [source-base, SingleAccessExpr]
+//
+// Single-slot shape `{ source }` — per source-fidelity, the
+// concise form is deliberately distinct from the named form.
+// `:foo` is NOT desugared to `foo: foo`; consumers branch on the
+// concise-form type tag to learn that the binding name is
+// derived from the source path's outermost name (the bare
+// Identifier when no access; the last access segment when access
+// is present). That derivation belongs in the interpreter, not
+// the shaper.
+function shapeConciseBinding(typeName,parts) {
+	var nodes = parts.filter(isNode);
+	var [ sourceBase, access ] = nodes;
+	return {
+		type: typeName,
+		source: foldAccess(sourceBase,access),
+	};
 }
 
 // Helper for the six paren-grouping productions (GroupedExpr,
@@ -1176,6 +1237,7 @@ export const defaultShapers = {
 		return { type: "GuardedExpr", clause, consequent };
 	},
 
+
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
@@ -1392,7 +1454,7 @@ export const defaultShapers = {
 
 
 	// =============================================================
-	// §3 IMPORTS
+	// §3 IMPORTS / EXPORTS
 	// =============================================================
 
 	// ImportExpr := "import" _ PlainStr;
@@ -1408,10 +1470,81 @@ export const defaultShapers = {
 		return { type: "ImportExpr", from: parts.find(isNode) };
 	},
 
+	// ExportNamedBinding := Identifier _ Colon _ Identifier MultiAccessExpr?;
+	//
+	// Shape `{ target, source }` per shapeNamedBinding. `target`
+	// is the externally-visible exported name (LHS of `:`);
+	// `source` is the local-scope reference being exported, folded
+	// with any trailing access chain.
+	ExportNamedBinding(frame,parts)   { return shapeNamedBinding("ExportNamedBinding",parts); },
+
+	// ExportConciseBinding := Colon Identifier SingleAccessExpr?;
+	//
+	// Shape `{ source }` per shapeConciseBinding. Exported name is
+	// derived from the source path; see the helper's comment.
+	ExportConciseBinding(frame,parts) { return shapeConciseBinding("ExportConciseBinding",parts); },
+
+	// ExportExpr := "export" _ OpenBrace _ <ExportBindingsList> _ CloseBrace;
+	//
+	// ExportBindingsList is hidden, so binding nodes splice up
+	// directly. Keyword "export", braces, and commas are noise.
+	// Field name `entries` matches the BlockDefsInit /
+	// BlockDefsInitOpt / DoBlockDefsInitOpt convention — the
+	// parent type tag tells the consumer what kind of entries.
+	ExportExpr(frame,parts) {
+		return { type: "ExportExpr", entries: parts.filter(isNode) };
+	},
+
+	// =============================================================
+	// §4 DESTRUCTURING
+	// =============================================================
+
+	// DestructureNamedDef := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
+	//
+	// Shape `{ target, source }` per shapeNamedBinding. `target`
+	// is the new local binding name (LHS of `:`); `source` is the
+	// field path inside the destructured value, folded with any
+	// trailing access. See the helper's comment for the
+	// BracketExpr-as-base detail (`def < foo: [k].bar >: src;`).
+	DestructureNamedDef(frame,parts)   { return shapeNamedBinding("DestructureNamedDef",parts); },
+
+	// DestructureConciseDef := Colon Identifier SingleAccessExpr?;
+	//
+	// Shape `{ source }` per shapeConciseBinding. New local
+	// binding name is derived from the source path; see helper.
+	DestructureConciseDef(frame,parts) { return shapeConciseBinding("DestructureConciseDef",parts); },
+
+	// DestructureCapture := Hash Identifier;
+	//
+	// Binds the WHOLE source value to a fresh name. NOT a "rest"
+	// pattern — `#foo` and bare destructure entries can coexist
+	// in the same DestructureTarget, each pulling from the same
+	// source (the `#foo` form just additionally captures the
+	// entire payload under `foo`). The `#` is noise (recoverable
+	// from the type tag).
+	//
+	// `target` retains the Identifier node — same call as the
+	// Named productions in this cluster (see shapeNamedBinding's
+	// comment on the GatherParameter flatten-to-string exception).
+	DestructureCapture(frame,parts) {
+		return { type: "DestructureCapture", target: parts.find(isNode) };
+	},
+
+	// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
+	//
+	// DestructureDefList is hidden, so def nodes splice up
+	// directly. Angle brackets and commas are noise. `entries`
+	// matches the ExportExpr / BlockDefsInit* / DoBlockDefsInitOpt
+	// convention.
+	DestructureTarget(frame,parts) {
+		return { type: "DestructureTarget", entries: parts.filter(isNode) };
+	},
+
+
 	// =============================================================
 	// §11 DEF-BLOCK STATEMENT
 	// =============================================================
-
+	//
 	// DefBlockStmt := "def" _ BlockDefsInit _ <BareBlockExpr>;
 	//
 	// Field names `defs` + `stmts` mirror BlockExpr for consumer
