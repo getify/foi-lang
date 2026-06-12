@@ -33,6 +33,31 @@
 //   - Multi-token operators (e.g. AddOp `$+`) concatenate their
 //     token values into a single string in the `op` field.
 //
+// `:as` annotation handling — centralized via AsExpr (§5):
+//   Per the grammar's first-class `:as` precedence rule, `:as`
+//   binds at exactly one tier — strictly between unary and binary.
+//   A single visible production, `AsExpr := <AsableExpr> _ AsAnnotationExpr`,
+//   carries the annotation for non-paren expressions. Its shaper
+//   UNWRAPS — lifts `as: annotation` onto its inner node and
+//   returns the inner. No `AsExpr` node type appears in the AST.
+//   The machinery's unconditional start/end overwrite extends the
+//   returned node's span to cover the `:as` tail (AsExpr frame
+//   spans from inner.start through annotation.end), which is
+//   exactly what we want.
+//
+//   The six paren-grouping productions retain their own
+//   `(_ AsAnnotationExpr)?` tail — parens are atomic groups that
+//   can carry `:as` regardless of position (including as a binary
+//   operand). Their shapers (via shapeGrouped) attach `as`
+//   directly. The four restrictive paren inners additionally
+//   accept AsExpr as a first inner alt so that `(?x :as bool)` etc.
+//   parse inside the parens.
+//
+//   All other expression productions — literals, identifiers,
+//   unary, chain/call/access, at-form, op-as-func, block — carry
+//   no `:as` tail at the grammar level. Their shapers do not
+//   handle `as`; AsExpr handles it for them.
+//
 // Token-vs-node discriminator in `parts`:
 //   Raw tokens carry a `value` field (string, from the lex layer);
 //   shaped nodes never expose `value` at top level. Literal
@@ -142,6 +167,11 @@ function applyChainSeg(object,seg) {
 // every Grouped*Expr signals user-written parens). Inner expression
 // promotes to `expr`. Optional `:as` tail unwraps onto `as` per
 // the wrapper-unwrap-at-assignment convention.
+//
+// Parens are the only construct that still carries its own `:as`
+// tail post-rework — they're atomic groups, so `:as` can attach
+// regardless of position (including as a binary operand, as in
+// `(x + y) :as int ~map f`).
 function shapeGrouped(typeName,parts) {
 	var expr, as;
 	for (let p of parts) {
@@ -211,30 +241,29 @@ function shapeBinTier(typeName,parts) {
 }
 
 // Helper for the two §8 unary productions (NamedUnaryExpr,
-// SymbolicUnaryExpr). Both share `op _ BinaryAtom (_ AsAnnotationExpr)?`
-// shape. The op runs across leading non-node tokens (single token
-// in practice: ?empty/!empty as BooleanOper, or Qmark/Exmark);
-// `right` is the single operand node; optional `:as` unwraps.
+// SymbolicUnaryExpr). Both share `op _ BinaryAtom` shape. The op
+// runs across leading non-node tokens (single token in practice:
+// ?empty/!empty as BooleanOper, or Qmark/Exmark); `right` is the
+// single operand node.
 //
-// Field naming: `{ op, right, as? }` — `right` for positional
-// symmetry with shapeBinTier's `{ left, op, right }`; unary is
-// just a binary with `left` absent.
+// No `:as` handling — unary productions lost their own
+// `(_ AsAnnotationExpr)?` tail in the :as rework. Annotation
+// comes via AsExpr (UnaryExpr is in <AsableExpr>); AsExpr's
+// unwrap-shaper lifts `as` onto the returned unary node, so the
+// resulting AST shape for `?x :as bool` is
+// `SymbolicUnaryExpr{op:"?", right:Identifier{name:"x"}, as:"bool"}`.
+//
+// Field naming: `{ op, right }` — `right` for positional symmetry
+// with shapeBinTier's `{ left, op, right }`; unary is just a
+// binary with `left` absent.
 function shapeUnaryTier(typeName,parts) {
 	var op = "";
 	var right;
-	var as;
 	for (let p of parts) {
-		if (isNode(p)) {
-			if (p.type === "AsAnnotationExpr") as = p;
-			else right = p;
-		}
-		else {
-			op += p.value;
-		}
+		if (isNode(p)) right = p;
+		else op += p.value;
 	}
-	var node = { type: typeName, op, right };
-	if (as) node.as = as.annotation;
-	return node;
+	return { type: typeName, op, right };
 }
 
 export const defaultShapers = {
@@ -244,10 +273,9 @@ export const defaultShapers = {
 	// positions (DefVarStmt target, parameter names, DotIdentifier
 	// inner, type-decl name, etc.) where no `:as` tail is grammatically
 	// possible. The BareIdentifier shaper subsumes into this same
-	// node type for reference-position identifiers, optionally
-	// adding an `as` field — so consumers see a uniform Identifier
-	// shape regardless of whether the source role was binding or
-	// reference.
+	// node type for reference-position identifiers — consumers see
+	// a uniform Identifier shape regardless of whether the source
+	// role was binding or reference.
 	Identifier(frame,parts) {
 		var name = "";
 		for (let p of parts) name += p.value;
@@ -275,21 +303,19 @@ export const defaultShapers = {
 
 	// BareIdentifier — thin-wrapper sub-archetype. Subsumes into
 	// its inner IdentBase node (Identifier, BuiltIn, or
-	// PipelineTopic), optionally annotating with `:as`. The
-	// reference-vs-binding distinction lives in the grammar (where
-	// it's load-bearing for parsing) but is dropped from the AST
-	// surface — consumers see the underlying IdentBase node
-	// directly. The machinery's unconditional start/end overwrite
-	// extends the returned node's span through any `:as` tail,
-	// which is what we want.
+	// PipelineTopic). The reference-vs-binding distinction lives
+	// in the grammar (where it's load-bearing for parsing) but is
+	// dropped from the AST surface — consumers see the underlying
+	// IdentBase node directly.
+	//
+	// Post `:as` rework, BareIdentifier has no `:as` tail —
+	// annotation comes via AsExpr (BareIdentifier is reachable
+	// from <AsableExpr> via BareOperandExpr → BareOperandExprNoEmpty
+	// → IdentifierExpr). AsExpr's unwrap lifts `as` onto the
+	// returned IdentBase node, so `x :as int` still shapes to
+	// `Identifier{name:"x", as:"int"}`.
 	BareIdentifier(frame,parts) {
-		var inner, as;
-		for (let p of parts) {
-			if (p.type === "AsAnnotationExpr") as = p;
-			else if (isNode(p)) inner = p;
-		}
-		if (as) inner.as = as.annotation;
-		return inner;
+		return parts.find(isNode);
 	},
 
 	// AsAnnotationExpr — `:as` keyword (noise; recoverable from
@@ -303,79 +329,89 @@ export const defaultShapers = {
 		return { type: "AsAnnotationExpr", annotation: parts.find(isNode) };
 	},
 
-	// Literal — concatenates contained number/escape token values
-	// into a single source-text string. Optional :as tail becomes
-	// an optional `as` field.
-	NumberLit(frame,parts) {
-		var text = "";
-		var as;
+	// AsExpr — the centralized `:as` carrier (§5). Grammar:
+	//
+	//   AsExpr        := <AsableExpr> _ AsAnnotationExpr;
+	//   <AsableExpr>  := BlockExpr | GuardedExpr | UnaryExpr
+	//                  | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+	//
+	// Parse-time wrapper only — emits no node of its own. Unwraps
+	// to the inner AsableExpr node, lifting `as: annotation` onto
+	// it. Same pattern as BareIdentifier subsumption.
+	//
+	// Span: the machinery's unconditional start/end overwrite runs
+	// AFTER this shaper returns, deriving span from the AsExpr
+	// frame (leftmost-descendant start through AsAnnotationExpr's
+	// rightmost-descendant end). That correctly extends the inner
+	// node's `end` to cover the `:as TYPE` tail — exactly what we
+	// want.
+	//
+	// No collision risk on `inner.as`: post-rework, no non-paren
+	// inner sets its own `as`, so the lift is always a fresh slot
+	// assignment. Paren productions carry their own `:as` and are
+	// reached directly (not via AsExpr's outer level), so they
+	// never appear as AsExpr's inner with a pre-existing `as`.
+	AsExpr(frame,parts) {
+		var inner, as;
 		for (let p of parts) {
+			if (!isNode(p)) continue;
 			if (p.type === "AsAnnotationExpr") as = p;
-			else text += p.value;
+			else inner = p;
 		}
-		var node = { type: "NumberLit", text };
-		if (as) node.as = as.annotation;
-		return node;
+		inner.as = as.annotation;
+		return inner;
 	},
 
-	// Literal — boolean. Single Native token ("true" | "false")
-	// plus optional :as. Text is the raw lexeme, mirroring NumberLit.
+	// Literal — concatenates contained number/escape token values
+	// into a single source-text string. No `:as` tail at the
+	// grammar level — annotation comes via AsExpr.
+	NumberLit(frame,parts) {
+		var text = "";
+		for (let p of parts) text += p.value;
+		return { type: "NumberLit", text };
+	},
+
+	// Literal — boolean. Single Native token ("true" | "false").
+	// Text is the raw lexeme, mirroring NumberLit. No `:as` tail.
 	BooleanLit(frame,parts) {
-		var text;
-		var as;
-		for (let p of parts) {
-			if (isNode(p)) as = p;
-			else text = p.value;
-		}
-		var node = { type: "BooleanLit", text };
-		if (as) node.as = as.annotation;
-		return node;
+		var text = "";
+		for (let p of parts) text += p.value;
+		return { type: "BooleanLit", text };
 	},
 
 	// Literal — empty. Type tag is total information; no `text`
-	// field. Optional :as tail becomes an optional `as` field.
+	// field. No `:as` tail.
 	EmptyLit(frame,parts) {
-		var as = parts.find(isNode);
-		var node = { type: "EmptyLit" };
-		if (as) node.as = as.annotation;
-		return node;
+		return { type: "EmptyLit" };
 	},
 
 	// Literal — plain string. Concatenates interior String and
 	// StringEscapedChar token values into `text`. Surrounding
 	// DoubleQuotes are noise (recoverable from the type tag).
 	// Escape sequences are preserved raw in `text` — interp's job
-	// to resolve them.
+	// to resolve them. No `:as` tail.
 	PlainStr(frame,parts) {
 		var text = "";
-		var as;
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "AsAnnotationExpr") as = p;
-			}
-			else if (p.type === "String" || p.type === "StringEscapedChar") {
+			if (isNode(p)) continue;
+			if (p.type === "String" || p.type === "StringEscapedChar") {
 				text += p.value;
 			}
 			// else: DoubleQuote — skip
 		}
-		var node = { type: "PlainStr", text };
-		if (as) node.as = as.annotation;
-		return node;
+		return { type: "PlainStr", text };
 	},
 
 	// Literal — spacing-escaped string. Same shape as PlainStr;
 	// additionally folds interior Whitespace tokens into `text`
 	// verbatim (the production opts into preserveInnerDelim so the
 	// whitespace tokens reach us in parts). Leading Escape and
-	// surrounding DoubleQuotes are noise.
+	// surrounding DoubleQuotes are noise. No `:as` tail.
 	SpacingEscapedStr(frame,parts) {
 		var text = "";
-		var as;
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "AsAnnotationExpr") as = p;
-			}
-			else if (
+			if (isNode(p)) continue;
+			if (
 				p.type === "String" ||
 				p.type === "StringEscapedChar" ||
 				p.type === "Whitespace"
@@ -384,9 +420,7 @@ export const defaultShapers = {
 			}
 			// else: Escape, DoubleQuote — skip
 		}
-		var node = { type: "SpacingEscapedStr", text };
-		if (as) node.as = as.annotation;
-		return node;
+		return { type: "SpacingEscapedStr", text };
 	},
 
 	// Interp slot inside the two interp-string forms. Surrounding
@@ -404,20 +438,16 @@ export const defaultShapers = {
 	// chunks.length is always odd, chunks[0] and chunks[last] are
 	// always strings (possibly ""). Consumers discriminate
 	// elements via `typeof === "string"`. Leading Escape and
-	// surrounding DoubleQuotes are noise.
+	// surrounding DoubleQuotes are noise. No `:as` tail.
 	InterpStr(frame,parts) {
 		var chunks = [];
 		var buf = "";
-		var as;
 		for (let p of parts) {
 			if (isNode(p)) {
 				if (p.type === "InterpExpr") {
 					chunks.push(buf);
 					chunks.push(p);
 					buf = "";
-				}
-				else if (p.type === "AsAnnotationExpr") {
-					as = p;
 				}
 			}
 			else if (p.type === "String" || p.type === "StringEscapedChar") {
@@ -426,28 +456,22 @@ export const defaultShapers = {
 			// else: Escape, DoubleQuote — skip
 		}
 		chunks.push(buf);
-		var node = { type: "InterpStr", chunks };
-		if (as) node.as = as.annotation;
-		return node;
+		return { type: "InterpStr", chunks };
 	},
 
 	// Literal — spacing-interpolated string. Same chunks-array
 	// shape as InterpStr; Whitespace tokens fold into the
 	// adjacent text chunk verbatim (preserveInnerDelim delivers
-	// them in parts).
+	// them in parts). No `:as` tail.
 	SpacingInterpStr(frame,parts) {
 		var chunks = [];
 		var buf = "";
-		var as;
 		for (let p of parts) {
 			if (isNode(p)) {
 				if (p.type === "InterpExpr") {
 					chunks.push(buf);
 					chunks.push(p);
 					buf = "";
-				}
-				else if (p.type === "AsAnnotationExpr") {
-					as = p;
 				}
 			}
 			else if (
@@ -460,9 +484,7 @@ export const defaultShapers = {
 			// else: Escape, DoubleQuote — skip
 		}
 		chunks.push(buf);
-		var node = { type: "SpacingInterpStr", chunks };
-		if (as) node.as = as.annotation;
-		return node;
+		return { type: "SpacingInterpStr", chunks };
 	},
 
 	// Definition — `def` keyword and `:` colon are noise; the two
@@ -481,20 +503,23 @@ export const defaultShapers = {
 		return { type: "Program", stmts };
 	},
 
-	// Compound with optional defs-init clause, required body
-	// statements, optional :as tail. With BlockDefsInitOpt and
-	// VarDefInitOpt now visible, defs flows in as a single node.
+	// Compound with optional defs-init clause and required body
+	// statements. With BlockDefsInitOpt and VarDefInitOpt now
+	// visible, defs flows in as a single node.
+	//
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (BlockExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
+	// onto the returned BlockExpr node, so `{x;y} :as int` still
+	// shapes to `BlockExpr{stmts:[...], as:"int"}`.
 	BlockExpr(frame,parts) {
-		var defs, as;
+		var defs;
 		var stmts = [];
 		for (let p of parts) {
 			if (p.type === "BlockDefsInitOpt") defs = p;
-			else if (p.type === "AsAnnotationExpr") as = p;
 			else if (isNode(p)) stmts.push(p);
 		}
 		var node = { type: "BlockExpr", stmts };
 		if (defs) node.defs = defs;
-		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -507,6 +532,15 @@ export const defaultShapers = {
 	// a do-compr appear as a binary operand). Each emits a node
 	// whose type matches its production name — user-written parens
 	// are preserved in the AST as a discrete node.
+	//
+	// All retain their own `(_ AsAnnotationExpr)?` tail post-rework
+	// — parens are the sole exception to the centralized `:as` rule
+	// because they're atomic groups that can carry `:as` regardless
+	// of position (including as a binary operand). The four
+	// restrictive paren inners (GroupedOpExpr, GroupedBareOpExpr,
+	// GroupedBareOpExprNoEmpty, GroupedDoExpr) additionally accept
+	// AsExpr as their first inner alt so that constructs like
+	// `(?x :as bool)` parse correctly inside the parens.
 	//
 	// All delegate to shapeGrouped: drop parens, lift inner to
 	// `expr`, unwrap optional :as onto `as`.
@@ -558,6 +592,10 @@ export const defaultShapers = {
 	// through shapeUnaryTier. Operand is restricted to BinaryAtom
 	// (tightest tier) per grammar — `?x + 5` parses as `(?x) + 5`.
 	//
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (UnaryExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
+	// onto the unary node; see shapeUnaryTier's comment.
+	//
 	// Postfix `'` (the prime modifier) is NOT a unary form here —
 	// it's a restricted tail of ChainExpr (§7), where it terminates
 	// access and allows only call suffixes after.
@@ -578,6 +616,12 @@ export const defaultShapers = {
 	// TypeCompareBinExpr carves ?as/!as out of the Compare tier:
 	// single-op (non-iter), RHS is a NamedType rather than an
 	// expression. Distinct shape handler below.
+	//
+	// No tier carries its own `:as` tail. By design — `x + y :as int`
+	// is a parse error per the first-class precedence rule, which
+	// is enforced by AsExpr living at the dispatcher level above
+	// the binary tiers (not inside BinaryAtom). To annotate a
+	// binary expression, parenthesize: `(x + y) :as int`.
 	// =============================================================
 	FlowBinExpr(frame,parts)    { return shapeBinTier("FlowBinExpr",parts); },
 	OrBinExpr(frame,parts)      { return shapeBinTier("OrBinExpr",parts); },
@@ -691,51 +735,46 @@ export const defaultShapers = {
 	// =============================================================
 	// At-cluster (§6 IdentifierExpr + §7 CallExpr).
 	//
-	// MonadConstructor — bare `@`. Type tag is total information;
-	// only optional `:as` carries data.
+	// MonadConstructor — bare `@`. Type tag is total information.
 	//
-	// AtExpr — `IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?`.
-	// Shape `{ base, access?, as? }`. The `@` itself is noise
-	// (recoverable from type tag). `base` is the identifier being
-	// lifted; `access` retains the SingleAccessExpr node intact
-	// (not unwrapped — SingleAccessExpr is reused in non-AtExpr
-	// contexts so consumers expect the wrapper layer).
+	// AtExpr — `IdentBase SingleAccessExpr? At`. Shape
+	// `{ base, access? }`. The `@` itself is noise (recoverable
+	// from type tag). `base` is the identifier being lifted;
+	// `access` retains the SingleAccessExpr node intact (not
+	// unwrapped — SingleAccessExpr is reused in non-AtExpr contexts
+	// so consumers expect the wrapper layer).
+	//
+	// Neither carries a `:as` tail post-rework — annotation comes
+	// via AsExpr. AsExpr's unwrap lifts `as` onto the returned
+	// AtExpr/MonadConstructor node.
 	// =============================================================
 
-	// AtExpr — IdentBase + optional access + @, optional :as.
+	// AtExpr — IdentBase + optional access + @.
 	AtExpr(frame,parts) {
-		var base, access, as;
+		var base, access;
 		for (let p of parts) {
 			if (isNode(p)) {
-				if (p.type === "AsAnnotationExpr") as = p;
-				else if (p.type === "SingleAccessExpr") access = p;
+				if (p.type === "SingleAccessExpr") access = p;
 				else base = p;
 			}
 			// else: At token — skip
 		}
 		var node = { type: "AtExpr", base };
 		if (access) node.access = access;
-		if (as) node.as = as.annotation;
 		return node;
 	},
 
-	// MonadConstructor — bare @, optional :as.
+	// MonadConstructor — bare @.
 	MonadConstructor(frame,parts) {
-		var as;
-		for (let p of parts) {
-			if (isNode(p) && p.type === "AsAnnotationExpr") as = p;
-			// else: At token — skip
-		}
-		var node = { type: "MonadConstructor" };
-		if (as) node.as = as.annotation;
-		return node;
+		// All parts are the At token; nothing semantic to collect.
+		return { type: "MonadConstructor" };
 	},
 
 	// Range — closed form (`x..y`). Two operands `from`/`to`. No
 	// `:as` per grammar (must parenthesize: `(x..y) :as T`) — the
 	// trailing-position RangeOperand would otherwise greedily
-	// absorb `:as` via its own inner literal, same family as
-	// BinaryExpr's exclusion.
+	// absorb `:as`, and ranges are deliberately omitted from
+	// <AsableExpr> as well, making `1..5 :as List` a parse error.
 	ClosedRangeExpr(frame,parts) {
 		var [ from, to ] = parts.filter(isNode);
 		return { type: "ClosedRangeExpr", from, to };
@@ -766,9 +805,10 @@ export const defaultShapers = {
 	//   (.[1..5])    → range          (unwrapped from DotBracketExpr —
 	//                                  parameterizes the range-access op)
 	//
-	// Optional `primed: true` (the `'` modifier) and optional `as`
-	// (NamedType, wrapper-unwrapped per convention). Surrounding
-	// parens are noise.
+	// Optional `primed: true` (the `'` modifier). Surrounding
+	// parens are noise. No `:as` tail post-rework — annotation
+	// comes via AsExpr (OpFuncExpr is reachable from <AsableExpr>
+	// via BareOperandExpr → BareOperandExprNoEmpty).
 	//
 	// The DotAngleExpr / DotBracketExpr inner forms are unwrapped
 	// to their semantic payload — in this context they don't
@@ -781,15 +821,11 @@ export const defaultShapers = {
 	// `foo(+')` and `foo((+)')` produce identical args[0] shapes.
 	OpFuncExpr(frame,parts) {
 		var node = { type: "OpFuncExpr" };
-		var as;
 		var opText = "";
 		var sawBrackets = false;
 		for (let p of parts) {
 			if (isNode(p)) {
-				if (p.type === "AsAnnotationExpr") {
-					as = p;
-				}
-				else if (p.type === "DotAngleExpr") {
+				if (p.type === "DotAngleExpr") {
 					node.properties = p.properties;
 				}
 				else if (p.type === "DotBracketExpr") {
@@ -817,7 +853,6 @@ export const defaultShapers = {
 		else if (opText) {
 			node.op = opText;
 		}
-		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -906,20 +941,19 @@ export const defaultShapers = {
 	// AtCallExpr — at-form applied to (optionally) an argument. The
 	// grammar has two arms:
 	//
-	//   Arm 1: "None" At (_ AsAnnotationExpr)?
+	//   Arm 1: "None" At
 	//   Arm 2: (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor)
-	//          _ ExprNoBlock (_ AsAnnotationExpr)?
+	//          _ ExprNoBlock
 	//
 	// Arm 2 has three sub-forms: pre-shaped AtExpr (no trivia between
 	// IdentBase and @), inline IdentBase+access+@ (trivia-tolerant
 	// equivalent), or pre-shaped MonadConstructor (bare @).
 	//
-	// Normalizes to a uniform shape `{ callee, arg?, as? }`:
+	// Normalizes to a uniform shape `{ callee, arg? }`:
 	//
 	//   - Arm 1 (`None@`): synthesize an AtExpr with a BuiltIn("None")
 	//     base. No arg.
-	//   - Arm 2, AtExpr sub-form: callee = the pre-shaped AtExpr
-	//     (preserves its own internal :as, if any).
+	//   - Arm 2, AtExpr sub-form: callee = the pre-shaped AtExpr.
 	//   - Arm 2, IdentBase+access+@ sub-form: synthesize an AtExpr
 	//     from the spliced parts (trivia-tolerance is a parsing
 	//     concern, not an AST concern).
@@ -930,6 +964,10 @@ export const defaultShapers = {
 	// to discriminate base-bearing vs bare-@ calls. The Arm 1 vs
 	// Arm 2 distinction surfaces as `arg`-presence.
 	//
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (AtCallExpr is reachable from <AsableExpr> via BareOperandExpr
+	// → BareOperandExprNoEmpty → CallExpr).
+	//
 	// Discrimination on parts[0]:
 	//   - Builtin token → Arm 1
 	//   - AtExpr node → Arm 2 sub-form A
@@ -938,15 +976,13 @@ export const defaultShapers = {
 	// =============================================================
 	AtCallExpr(frame,parts) {
 		var node = { type: "AtCallExpr" };
-		var as;
 		var first = parts[0];
 
 		if (!isNode(first)) {
-			// Arm 1: `None@`. parts is [Builtin-tok("None"), At-tok, ?AsAnnotationExpr].
+			// Arm 1: `None@`. parts is [Builtin-tok("None"), At-tok].
 			let atTok;
 			for (let p of parts) {
 				if (!isNode(p) && p.type === "At") atTok = p;
-				else if (isNode(p) && p.type === "AsAnnotationExpr") as = p;
 			}
 			node.callee = {
 				type: "AtExpr",
@@ -968,21 +1004,17 @@ export const defaultShapers = {
 			// Arm 2 sub-forms A and C: callee is pre-shaped.
 			node.callee = first;
 			for (let p of parts.slice(1)) {
-				if (isNode(p)) {
-					if (p.type === "AsAnnotationExpr") as = p;
-					else node.arg = p;
-				}
+				if (isNode(p)) node.arg = p;
 			}
 		}
 		else {
-			// Arm 2 sub-form B: IdentBase + ?SingleAccessExpr + At-tok + ExprNoBlock + ?AsAnnotationExpr.
+			// Arm 2 sub-form B: IdentBase + ?SingleAccessExpr + At-tok + ExprNoBlock.
 			// Synthesize an AtExpr from the spliced parts.
 			let base = first;
 			let access, arg, atTok;
 			for (let p of parts.slice(1)) {
 				if (isNode(p)) {
 					if (p.type === "SingleAccessExpr") access = p;
-					else if (p.type === "AsAnnotationExpr") as = p;
 					else arg = p;
 				}
 				else if (p.type === "At") atTok = p;
@@ -997,7 +1029,6 @@ export const defaultShapers = {
 			if (arg) node.arg = arg;
 		}
 
-		if (as) node.as = as.annotation;
 		return node;
 	},
 
@@ -1010,9 +1041,14 @@ export const defaultShapers = {
 	//
 	// Postfix `'` (prime, the SingleQuote token) wraps the pre-
 	// prime expression in a PrimedExpr; any post-prime call
-	// suffixes then apply on top of that wrapper. `:as` attaches
-	// to the outermost node — semantically annotates the whole
-	// chained value.
+	// suffixes then apply on top of that wrapper.
+	//
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (ChainExpr is reachable from <AsableExpr> via BareOperandExpr
+	// → BareOperandExprNoEmpty → CallExpr). AsExpr's unwrap lifts
+	// `as` onto whatever outermost typed node ChainExpr's fold
+	// produces (CallExpr, MemberAccessExpr, PrimedExpr, etc.) —
+	// semantically annotates the whole chained value, as before.
 	//
 	// Segment-to-typed-node mappings live in applyChainSeg above.
 	//
@@ -1023,12 +1059,8 @@ export const defaultShapers = {
 		var preSegs = [];
 		var postPrimeSegs = [];
 		var primeTokEnd;
-		var as;
 		for (let p of parts) {
-			if (p.type === "AsAnnotationExpr") {
-				as = p;
-			}
-			else if (!isNode(p)) {
+			if (!isNode(p)) {
 				// SingleQuote — the prime operator. Capture end
 				// position for PrimedExpr's span.
 				primeTokEnd = p.end;
@@ -1060,7 +1092,6 @@ export const defaultShapers = {
 			node = applyChainSeg(node, seg);
 		}
 
-		if (as) node.as = as.annotation;
 		return node;
 	},
 };

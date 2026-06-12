@@ -70,6 +70,10 @@ export const PipelineTopic = production("PipelineTopic", tokType("Hash"));
 // §2 LITERALS
 // =============================================================
 
+// Shared optional `:as` tail. Now used ONLY by the six paren-grouping
+// productions in §5 and §9 — leaves and other intermediates no longer
+// carry their own `:as` tail. See the `:as` Precedence section in
+// Syntactic-Grammar.md.
 var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
 
 // Integer-lit token matchers and the hidden <IntegerLit> union from
@@ -80,7 +84,9 @@ var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
 var NegativeIntegerLitTok = tokType("NegativeIntegerLit");
 var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 
-// NumberLit := (EscapedNumber | Number | IntegerLit) (_ AsAnnotationExpr)?;
+// NumberLit := EscapedNumber | Number | IntegerLit;
+//
+// No `:as` tail — annotation comes via AsExpr (§5) where applicable.
 //
 // The lex layer's EscapedNumber is a hidden dispatcher that splices an
 // (Escape variant, Number variant) pair as siblings. From the syn layer
@@ -89,27 +95,21 @@ var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 // then bare IntegerLit (longest first, per Note 2 in the lex grammar).
 // IntegerLit covers both signs via the hidden union from Lexical-Grammar.md.
 export const NumberLit = production("NumberLit",
-	and(
-		or(
-			and(tokType("Escape"), tokType("Number")),
-			tokType("Number"),
-			IntegerLit
-		),
-		OptAsAnnotation
+	or(
+		and(tokType("Escape"), tokType("Number")),
+		tokType("Number"),
+		IntegerLit
 	)
 );
 
-// BooleanLit := ("true" | "false") (_ AsAnnotationExpr)?;
+// BooleanLit := "true" | "false";
 export const BooleanLit = production("BooleanLit",
-	and(
-		or(tokVal("Native", "true"), tokVal("Native", "false")),
-		OptAsAnnotation
-	)
+	or(tokVal("Native", "true"), tokVal("Native", "false"))
 );
 
-// EmptyLit := "empty" (_ AsAnnotationExpr)?;
+// EmptyLit := "empty";
 export const EmptyLit = production("EmptyLit",
-	and(tokVal("Native", "empty"), OptAsAnnotation)
+	tokVal("Native", "empty")
 );
 
 // Lex token-name shortcuts used inside string forms.
@@ -122,33 +122,33 @@ var EscapePlainTok         = tokVal("Escape", "\\");
 var EscapeBacktickTok      = tokVal("Escape", "`");
 var EscapeSpacingBacktickTok = tokVal("Escape", "\\`");
 
-// PlainStr := DoubleQuote PlainStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+// PlainStr := DoubleQuote PlainStrContent* DoubleQuote;
 // <PlainStrContent> := PlainStrChars | StringEscapedChar;
 var PlainStrContent = or(StringChars, StringEscapedChar);
 export const PlainStr = production("PlainStr",
-	and(DoubleQuote, any(PlainStrContent), DoubleQuote, OptAsAnnotation)
+	and(DoubleQuote, any(PlainStrContent), DoubleQuote)
 );
 
-// SpacingEscapedStr := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+// SpacingEscapedStr := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote;
 // <SpacingEscapedStrContent> := SpacingEscapedStrChars | StringEscapedChar | Whitespace;
 var SpacingEscapedStrContent = or(StringChars, StringEscapedChar, WhitespaceTok);
 export const SpacingEscapedStr = production("SpacingEscapedStr",
-	and(EscapePlainTok, DoubleQuote, any(SpacingEscapedStrContent), DoubleQuote, OptAsAnnotation),
+	and(EscapePlainTok, DoubleQuote, any(SpacingEscapedStrContent), DoubleQuote),
 	{ preserveInnerDelim: true }
 );
 
-// InterpStr := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+// InterpStr := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote;
 // <InterpStrContent> := InterpStrChars | StringEscapedChar | InterpExpr;
 var InterpStrContent = or(StringChars, StringEscapedChar, lazy(() => InterpExpr));
 export const InterpStr = production("InterpStr",
-	and(EscapeBacktickTok, DoubleQuote, any(InterpStrContent), DoubleQuote, OptAsAnnotation)
+	and(EscapeBacktickTok, DoubleQuote, any(InterpStrContent), DoubleQuote)
 );
 
-// SpacingInterpStr := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+// SpacingInterpStr := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote;
 // <SpacingInterpStrContent> := SpacingInterpStrChars | StringEscapedChar | Whitespace | InterpExpr;
 var SpacingInterpStrContent = or(StringChars, StringEscapedChar, WhitespaceTok, lazy(() => InterpExpr));
 export const SpacingInterpStr = production("SpacingInterpStr",
-	and(EscapeSpacingBacktickTok, DoubleQuote, any(SpacingInterpStrContent), DoubleQuote, OptAsAnnotation),
+	and(EscapeSpacingBacktickTok, DoubleQuote, any(SpacingInterpStrContent), DoubleQuote),
 	{ preserveInnerDelim: true }
 );
 
@@ -245,12 +245,12 @@ var DestructureDefList = and(
 );
 
 // DestructureTarget := OpenAngle _ DestructureDefList _ CloseAngle;
-var DestructureTarget = production("DestructureTarget",
+export const DestructureTarget = production("DestructureTarget",
 	and(OpenAngle, delim(), DestructureDefList, delim(), CloseAngle)
 );
 
 // DefVarStmt := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
-var DefVarStmt = production("DefVarStmt",
+export const DefVarStmt = production("DefVarStmt",
 	and(
 		KwDef, delim(),
 		or(Identifier, DestructureTarget),
@@ -271,33 +271,57 @@ var KwAs = tokVal("Keyword", ":as");
 
 // AsAnnotationExpr := ":as" _ NamedType;
 //
-// NamedType is §18; forward-ref via lazy() since §18 appears later
-// in this file.
+// NamedType is §18 (forward-ref via lazy). Used by AsExpr (below)
+// and by all six paren-grouping productions' optional trailing `:as`.
 export const AsAnnotationExpr = production("AsAnnotationExpr",
 	and(KwAs, delim(), lazy(() => NamedType))
 );
 
-// <Expr> := DoComprExpr | DoLoopComprExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+// <Expr> := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
 //
-// PEG ordering: BlockExpr precedes ExprNoBlock so `(x){y;}` parses
-// as a BlockExpr (bare-identifier def `x`, body `{y;}`) rather
-// than ExprNoBlock's GroupedExprNoBlock `(x)` with dangling
-// `{y;}`. BlockExpr fails-through to ExprNoBlock when no `{`
-// follows the optional defs-init.
+// PEG ordering:
+// - DoCompr / DoLoopCompr first (niche; distinctive `~<<` / `~<*` openers
+//   reached after a leading Identifier/BuiltIn or ExprNoBlock; ordering
+//   them first keeps them reachable before BlockExpr/ExprNoBlock try
+//   to consume the leading token).
+// - AsExpr before BlockExpr/ExprNoBlock — longer match (`...` + `:as`
+//   tail) wins. Falls through cleanly on no `:as`.
+// - BlockExpr precedes ExprNoBlock so `(x){y;}` parses as a BlockExpr
+//   (bare-identifier def `x`, body `{y;}`) rather than ExprNoBlock's
+//   GroupedExprNoBlock `(x)` with dangling `{y;}`. BlockExpr fails-through
+//   cleanly when no `{` follows the optional defs-init.
 var Expr = or(
 	lazy(() => DoComprExpr),
 	lazy(() => DoLoopComprExpr),
+	lazy(() => AsExpr),
 	lazy(() => BlockExpr),
 	lazy(() => ExprNoBlock),
 	lazy(() => GroupedExpr)
 );
 
-// <ExprNoBlock> := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
+// <ExprNoBlock> := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | AsExpr | OperandExpr | GroupedExprNoBlock;
+//
+// PEG ordering:
+// - DefFunc/Assignment/MatchExpr/GuardedExpr first (distinctive
+//   `defn`/`:=`/`?{`/`?(`/`?[`/`![` openers).
+// - AsExpr after GuardedExpr: GuardedExpr's body Expr is greedy
+//   (consumes any inner `:as`), so trying AsExpr first when the
+//   input is `?[c]:y :as int` would have AsExpr's <AsableExpr>
+//   match GuardedExpr → body greedily eat `y :as int` → AsExpr's
+//   outer `:as` tail then unsatisfied. Backtracking to plain
+//   GuardedExpr produces the correct shape. Placing GuardedExpr
+//   before AsExpr makes this the direct path.
+// - AsExpr before OperandExpr — longer match (`...` + `:as` tail)
+//   wins. Falls through cleanly on no `:as`, so `x + y` reaches
+//   OperandExpr → BinaryExpr, and `x + y :as int` becomes a parse
+//   error because AsExpr fails fast at `+` and then OperandExpr
+//   matches `x + y` leaving `:as int` dangling.
 var ExprNoBlock = or(
 	lazy(() => DefFuncExpr),
 	lazy(() => AssignmentExpr),
 	lazy(() => MatchExpr),
 	lazy(() => GuardedExpr),
+	lazy(() => AsExpr),
 	lazy(() => OperandExpr),
 	lazy(() => GroupedExprNoBlock)
 );
@@ -330,47 +354,115 @@ var BareOperandExprNoEmpty = or(
 	lazy(() => GroupedBareOpExprNoEmpty)
 );
 
+// AsExpr := <AsableExpr> _ AsAnnotationExpr;
+// <AsableExpr> := BlockExpr | GuardedExpr | UnaryExpr
+//               | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+//
+// The central carrier of `:as` annotations on non-paren expressions.
+// Reachable from <Expr> and <ExprNoBlock> dispatchers (outer-position
+// expression slots) and from the inner-expr alt of the four
+// restrictive paren variants. NOT reachable from <BinaryAtom> — that
+// is the mechanism that makes `x + y :as int` a parse error.
+//
+// PEG order in <AsableExpr>:
+// - BlockExpr first (distinctive openers `(` with var-defs, or `{`).
+// - GuardedExpr (distinctive `?[`/`![`).
+// - UnaryExpr (`?`/`!`/named-unary).
+// - BareOperandExpr | GroupedOpExpr | GroupedDoExpr — same order
+//   as <BinaryAtom>'s tail.
+//
+// Ranges deliberately omitted — `1..5 :as List` must be a parse
+// error. Annotating a range requires explicit parens.
+//
+// AsExpr is a parse-time wrapper: its shaper unwraps, lifting `as`
+// onto the inner node. No AsExpr node type appears in the AST.
+var AsableExpr = or(
+	lazy(() => BlockExpr),
+	lazy(() => GuardedExpr),
+	lazy(() => UnaryExpr),
+	lazy(() => BareOperandExpr),
+	lazy(() => GroupedOpExpr),
+	lazy(() => GroupedDoExpr)
+);
+export const AsExpr = production("AsExpr",
+	and(AsableExpr, delim(), AsAnnotationExpr)
+);
+
 // All five §5 paren-grouping productions below are distinct visible
 // AST nodes, each named for its inner content. Call sites reference
 // the variant whose inner content they allow. (A sixth grouping
 // production, GroupedDoExpr, is defined in §9 alongside BinaryAtom.)
+//
+// All six retain their own `(_ AsAnnotationExpr)?` trailing tail —
+// parens are atomic groups that can carry `:as` regardless of
+// position. The four restrictive variants additionally allow
+// `AsExpr` as a first alternative in their inner slot so that
+// constructs like `(?x :as bool)` parse correctly inside the parens.
 
 // GroupedExpr := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
+//
+// Inner Expr reaches AsExpr via dispatch, so no widening needed.
 export const GroupedExpr = production("GroupedExpr",
 	and(OpenParen, delim(), Expr, delim(), CloseParen, OptAsAnnotation)
 );
 
 // GroupedExprNoBlock := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
+//
+// Inner ExprNoBlock reaches AsExpr via dispatch, so no widening needed.
 export const GroupedExprNoBlock = production("GroupedExprNoBlock",
 	and(OpenParen, delim(), ExprNoBlock, delim(), CloseParen, OptAsAnnotation)
 );
 
-// GroupedOpExpr := OpenParen _ OperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedOpExpr := OpenParen _ (AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+//
+// AsExpr added as first inner alt — `(?x :as bool)` and similar
+// `:as`-bearing operand-level expressions parse inside the parens.
+// PEG: AsExpr first (longer with `:as` tail); falls through to
+// OperandExpr on no `:as`.
 export const GroupedOpExpr = production("GroupedOpExpr",
-	and(OpenParen, delim(), OperandExpr, delim(), CloseParen, OptAsAnnotation)
+	and(
+		OpenParen, delim(),
+		or(lazy(() => AsExpr), OperandExpr),
+		delim(), CloseParen,
+		OptAsAnnotation
+	)
 );
 
-// GroupedBareOpExpr := OpenParen _ BareOperandExpr _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedBareOpExpr := OpenParen _ (AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
 export const GroupedBareOpExpr = production("GroupedBareOpExpr",
-	and(OpenParen, delim(), BareOperandExpr, delim(), CloseParen, OptAsAnnotation)
+	and(
+		OpenParen, delim(),
+		or(lazy(() => AsExpr), BareOperandExpr),
+		delim(), CloseParen,
+		OptAsAnnotation
+	)
 );
 
-// GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedBareOpExprNoEmpty := OpenParen _ (AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
 export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
-	and(OpenParen, delim(), BareOperandExprNoEmpty, delim(), CloseParen, OptAsAnnotation)
+	and(
+		OpenParen, delim(),
+		or(lazy(() => AsExpr), BareOperandExprNoEmpty),
+		delim(), CloseParen,
+		OptAsAnnotation
+	)
 );
 
-// GroupedDoExpr := OpenParen _ (DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedDoExpr := OpenParen _ (AsExpr | DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
 //
 // Lets a do-comprehension appear as a binary operand (always
-// parenthesized). Forward refs to §16 via lazy() — DoComprExpr /
-// DoLoopComprExpr are defined later in this file. PEG order inside
-// matches <Expr> ordering in §5; disjoint at the third token of the
-// `~<<` / `~<*` signatures, so the order is mechanical.
+// parenthesized). Forward refs to §16 via lazy(). PEG order inside
+// matches <Expr> ordering: AsExpr first (for `(?x :as bool)`-style
+// inputs that route here when other variants reject them), then
+// the two do-compr arms.
 export const GroupedDoExpr = production("GroupedDoExpr",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => DoComprExpr), lazy(() => DoLoopComprExpr)),
+		or(
+			lazy(() => AsExpr),
+			lazy(() => DoComprExpr),
+			lazy(() => DoLoopComprExpr)
+		),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
@@ -456,24 +548,28 @@ export const MultiAccessExpr = production("MultiAccessExpr",
 	and(MultiAccessSeg, any(and(delim(), MultiAccessSeg)))
 );
 
-// MonadConstructor := At (_ AsAnnotationExpr)?;
-export const MonadConstructor = production("MonadConstructor",
-	and(At, OptAsAnnotation)
-);
+// MonadConstructor := At;
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
+export const MonadConstructor = production("MonadConstructor", At);
 
-// AtExpr := IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?;
+// AtExpr := IdentBase SingleAccessExpr? At;
 //
 // No trivia between IdentBase, the optional SingleAccessExpr, and At
 // (per grammar). DotIdentifier carries its own internal `_`, so
 // `foo.bar@` still works; `foo .bar@` does not.
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 export const AtExpr = production("AtExpr",
-	and(IdentBase, optional(SingleAccessExpr), At, OptAsAnnotation)
+	and(IdentBase, optional(SingleAccessExpr), At)
 );
 
-// BareIdentifier := IdentBase (_ AsAnnotationExpr)?;
-export const BareIdentifier = production("BareIdentifier",
-	and(IdentBase, OptAsAnnotation)
-);
+// BareIdentifier := IdentBase;
+//
+// No `:as` tail — annotation comes via AsExpr (§5). The
+// reference-vs-binding distinction lives in the grammar; the
+// shaper still subsumes BareIdentifier to its inner IdentBase node.
+export const BareIdentifier = production("BareIdentifier", IdentBase);
 
 // <IdentifierExpr> := MonadConstructor | AtExpr | BareIdentifier;
 //
@@ -493,7 +589,8 @@ var IdentifierExpr = or(
 // <RangeOperand> := BareOperandExpr | GroupedOpExpr;
 //
 // Both alternatives consume tokens before reaching anything that
-// could reach Range — no LR.
+// could reach Range — no LR. Range operands are bare (no `:as`);
+// annotating a range as a whole requires explicit parens.
 var RangeOperand = or(BareOperandExpr, GroupedOpExpr);
 
 // ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand;
@@ -614,11 +711,13 @@ var CallArgs = or(
 	and(delim(), optional(CallArgList), delim())
 );
 
-// AtCallExpr := "None" At (_ AsAnnotationExpr)?
-//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+// AtCallExpr := "None" At
+//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock;
 //
 // Arm 1: bare `None@` (None monad constructor, no argument).
 // Arm 2: at-form applied to an ExprNoBlock argument.
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 //
 // PEG within arm 2:
 //   - AtExpr first — matches IdentBase+access+adjacent At (no trivia between IdentBase and At).
@@ -626,7 +725,7 @@ var CallArgs = or(
 //   - MonadConstructor — bare `@` fallback.
 export const AtCallExpr = production("AtCallExpr",
 	or(
-		and(BuiltinNone, At, OptAsAnnotation),
+		and(BuiltinNone, At),
 		and(
 			or(
 				AtExpr,
@@ -634,8 +733,7 @@ export const AtCallExpr = production("AtCallExpr",
 				MonadConstructor
 			),
 			delim(),
-			lazy(() => ExprNoBlock),
-			OptAsAnnotation
+			lazy(() => ExprNoBlock)
 		)
 	)
 );
@@ -669,13 +767,14 @@ var ChainBase = or(
 //              (
 //                  (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
 //                | SingleQuote (_ CallSuffix)*
-//              )
-//              (_ AsAnnotationExpr)?;
+//              );
 //
 // Requires extension beyond ChainBase — either ≥1 ChainSeg, or a
 // postfix `'` (prime, argument-reversal modifier). A bare ChainBase
 // alone falls through to the later alternatives in
 // BareOperandExprNoEmpty.
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 //
 // Postfix `'` is adjacent to the preceding expression (no trivia
 // between), terminates the access chain (no dot/bracket access may
@@ -705,8 +804,7 @@ export const ChainExpr = production("ChainExpr",
 				SingleQuote,
 				any(and(delim(), CallSuffix))
 			)
-		),
-		OptAsAnnotation
+		)
 	)
 );
 
@@ -717,7 +815,9 @@ export const ChainExpr = production("ChainExpr",
 // with dangling `5`.
 var CallExpr = or(AtCallExpr, ChainExpr);
 
-// OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
+// OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 //
 // PEG ordering: longer-prefix arms first. DotAngleExpr and
 // DotBracketExpr both open with Period — same as Op's UnaryOpSym
@@ -737,8 +837,7 @@ export const OpFuncExpr = production("OpFuncExpr",
 			lazy(() => Op)
 		),
 		optional(SingleQuote),
-		CloseParen,
-		OptAsAnnotation
+		CloseParen
 	)
 );
 
@@ -751,6 +850,11 @@ export const OpFuncExpr = production("OpFuncExpr",
 // handled as a restricted tail of ChainExpr in §7, not as a UnaryExpr
 // arm. It attaches only where a function value lives, terminates the
 // access chain, and may be followed only by call suffixes.
+//
+// Neither unary arm carries `:as` directly — annotation comes via
+// AsExpr (§5). This is the precedence-fix that prompted the rework:
+// `?x :as bool` now correctly hoists `as` onto the outer
+// SymbolicUnaryExpr rather than the inner Identifier.
 
 var Qmark  = tokType("Qmark");
 var Exmark = tokType("Exmark");
@@ -758,25 +862,23 @@ var Exmark = tokType("Exmark");
 var KwQmarkEmpty  = tokVal("BooleanOper", "?empty");
 var KwExmarkEmpty = tokVal("BooleanOper", "!empty");
 
-// NamedUnaryExpr := NamedUnaryOp _ BinaryAtom (_ AsAnnotationExpr)?;
+// NamedUnaryExpr := NamedUnaryOp _ BinaryAtom;
 //
 // NamedUnaryOp is §10; forward-ref via lazy().
 export const NamedUnaryExpr = production("NamedUnaryExpr",
 	and(
 		lazy(() => NamedUnaryOp),
 		delim(),
-		lazy(() => BinaryAtom),
-		OptAsAnnotation
+		lazy(() => BinaryAtom)
 	)
 );
 
-// SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
+// SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom;
 export const SymbolicUnaryExpr = production("SymbolicUnaryExpr",
 	and(
 		or(Qmark, Exmark),
 		delim(),
-		lazy(() => BinaryAtom),
-		OptAsAnnotation
+		lazy(() => BinaryAtom)
 	)
 );
 
@@ -800,6 +902,11 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 // iter requires ≥1 op match at that tier; on no-match the
 // dispatcher falls through to the next tier. Pure atoms traverse
 // all tiers and resolve at BinaryAtom — no spurious wrappers.
+//
+// <BinaryAtom> does NOT include AsExpr. That is what enforces the
+// rule that `:as` cannot attach as a tail on a binary operand —
+// `x + y :as int` is a parse error rather than silently binding
+// `:as` to `y`. See the `:as` Precedence section of the grammar.
 //
 // All op refs forward to §10 via lazy() (forward-ref, §10 appears
 // later in this file).
@@ -905,62 +1012,37 @@ var BinaryExpr = FlowDispatch;
 // §10 OPERATOR FAMILY
 // =============================================================
 //
-// All <Op*> productions are hidden — they match operator tokens
-// in op positions without emitting AST nodes. The visible iter
-// rules in §9 splice them between LHS and RHS. Op (the full
-// union) is consumed by OpFuncExpr (§7) and CallArgs (§7).
+// Op (used in OpFuncExpr) is the full union of operators —
+// anything that can be quoted as a function value.
 
-var Tilde         = tokType("Tilde");
-var Plus          = tokType("Plus");
-var Hyphen        = tokType("Hyphen");
-var Star          = tokType("Star");
-var ForwardSlash  = tokType("ForwardSlash");
-var Equal         = tokType("Equal");
-var Dollar        = tokType("Dollar");
-var Comprehension = tokType("Comprehension");
+var Tilde          = tokType("Tilde");
+var Plus           = tokType("Plus");
+var Hyphen         = tokType("Hyphen");
+var Star           = tokType("Star");
+var ForwardSlash   = tokType("ForwardSlash");
+var Dollar         = tokType("Dollar");
+var Equal          = tokType("Equal");
+var Caret          = tokType("Caret");
+var ComprehensionTok = tokType("Comprehension");
 
-// BooleanOper-value matchers for named boolean operators.
-var KwQor    = tokVal("BooleanOper", "?or");
-var KwExor   = tokVal("BooleanOper", "!or");
-var KwQand   = tokVal("BooleanOper", "?and");
-var KwExand  = tokVal("BooleanOper", "!and");
-var KwQin    = tokVal("BooleanOper", "?in");
-var KwExin   = tokVal("BooleanOper", "!in");
-var KwQhas   = tokVal("BooleanOper", "?has");
-var KwExhas  = tokVal("BooleanOper", "!has");
-var KwQasOp  = tokVal("BooleanOper", "?as");
-var KwExasOp = tokVal("BooleanOper", "!as");
+// <ComprOp> := Comprehension | (Tilde OpenAngle);
+var ComprOp = or(ComprehensionTok, and(Tilde, OpenAngle));
 
-// <ComprOp>    := Comprehension | (Tilde OpenAngle);
 // <PipelineOp> := Hash CloseAngle;
-// <ComposeOp>  := (Plus CloseAngle) | (OpenAngle Plus);
-// <FlowOp>     := ComprOp | PipelineOp | ComposeOp;
-//
-// ComprOp's Comprehension arm catches named forms (~map, ~each,
-// etc.) as single tokens; the (Tilde OpenAngle) arm catches the
-// bare `~<` operator as two adjacent tokens. Disjoint — order is
-// per grammar.
-var ComprOp    = or(Comprehension, and(Tilde, OpenAngle));
 var PipelineOp = and(Hash, CloseAngle);
-var ComposeOp  = or(and(Plus, CloseAngle), and(OpenAngle, Plus));
-var FlowOp     = or(ComprOp, PipelineOp, ComposeOp);
 
-// <OrOp>  := "?or"  | "!or";
+// <ComposeOp> := (Plus CloseAngle) | (OpenAngle Plus);
+var ComposeOp = or(and(Plus, CloseAngle), and(OpenAngle, Plus));
+
+// <FlowOp> := ComprOp | PipelineOp | ComposeOp;
+var FlowOp = or(ComprOp, PipelineOp, ComposeOp);
+
+// <OrOp>  := "?or" | "!or";
 // <AndOp> := "?and" | "!and";
-var OrOp  = or(KwQor, KwExor);
-var AndOp = or(KwQand, KwExand);
+var OrOp  = or(tokVal("BooleanOper", "?or"),  tokVal("BooleanOper", "!or"));
+var AndOp = or(tokVal("BooleanOper", "?and"), tokVal("BooleanOper", "!and"));
 
 // <NamedCompareOp> := "?in" | "!in" | "?has" | "!has";
-// <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle)
-//                                        | (OpenAngle Equal)
-//                                        | (CloseAngle Equal)
-//                                        | (OpenAngle CloseAngle)
-//                                        | (Dollar Equal)
-//                                        | Equal | OpenAngle | CloseAngle);
-// <CompareOp>         := NamedCompareOp | SymbolicCompareOp;
-//
-// Inner alternation in SymbolicCompareOp is longest-first per
-// grammar: ?<=> before ?<= / ?>= / ?<> / ?$= / ?= / ?< / ?>.
 var NamedCompareOp = or(
 	tokVal("BooleanOper", "?in"),
 	tokVal("BooleanOper", "!in"),
@@ -969,15 +1051,11 @@ var NamedCompareOp = or(
 );
 
 // <AsTypeOp> := "?as" | "!as";
+var AsTypeOp = or(tokVal("BooleanOper", "?as"), tokVal("BooleanOper", "!as"));
+
+// <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | (Dollar Equal) | Equal | OpenAngle | CloseAngle);
 //
-// Separate from NamedCompareOp because its RHS is a NamedType, not
-// a regular expression — handled by TypeCompareBinExpr at the Compare
-// tier (§9). Included in Op below so `(?as)` / `(!as)` remain valid
-// OpFuncExpr forms.
-var AsTypeOp = or(
-	tokVal("BooleanOper", "?as"),
-	tokVal("BooleanOper", "!as")
-);
+// Longest sequence first so `?<=>` matches before `?<=` / `?<>` / etc.
 var SymbolicCompareOp = and(
 	or(Qmark, Exmark),
 	or(
@@ -991,32 +1069,25 @@ var SymbolicCompareOp = and(
 		CloseAngle
 	)
 );
+
+// <CompareOp> := NamedCompareOp | SymbolicCompareOp;
 var CompareOp = or(NamedCompareOp, SymbolicCompareOp);
 
 // <AddOp> := (Dollar Plus) | Plus | Hyphen;
-// <MulOp> := Star | ForwardSlash;
 //
-// AddOp: `$+` first (longest), then bare `+`, then `-`.
+// PEG: Dollar Plus first (two-token longest), then bare Plus/Hyphen.
 var AddOp = or(and(Dollar, Plus), Plus, Hyphen);
+
+// <MulOp> := Star | ForwardSlash;
 var MulOp = or(Star, ForwardSlash);
 
 // <NamedUnaryOp> := "?empty" | "!empty";
-// <UnaryOpSym>   := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
-var UnaryOpSym   = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period);
+
+// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
+var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
-//
-// Longest-prefix concerns resolved by this ordering:
-//   - FlowOp (`+>`, `<+`, `#>`) before AddOp (`+`) and before
-//     anything matching bare `<` / `>`.
-//   - CompareOp (?<=, !<>, etc.) before UnaryOpSym (bare ?, !).
-//   - NamedUnaryOp (?empty/!empty) before UnaryOpSym — disjoint at
-//     the lex token level (BooleanOper vs. bare Qmark/Exmark), so
-//     order is mechanical; matches the named-then-symbolic pattern
-//     used elsewhere.
-//   - Within FlowOp, ComprOp's `~<` is disjoint from everything
-//     downstream (Tilde appears nowhere else in Op).
 var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
 
 
@@ -1024,10 +1095,9 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 // §11 BLOCK EXPRESSIONS
 // =============================================================
 
-// VarDefInit := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
-//
-// Required init form — used by DefBlockStmt's BlockDefsInit. Accepts
-// destructure-with-init (e.g., `def (< :x >: getThing()) { ... };`).
+// VarDefInit    := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
+// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
+//                | (DestructureTarget (_ Colon _ ExprNoBlock)?);
 export const VarDefInit = production("VarDefInit",
 	and(
 		or(Identifier, DestructureTarget),
@@ -1036,27 +1106,20 @@ export const VarDefInit = production("VarDefInit",
 	)
 );
 
-// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
-//                | (DestructureTarget (_ Colon _ ExprNoBlock)?);
-//
-// Both arms carry the optional `: ExprNoBlock` initializer. Enables
-// destructure-with-init in block-defs clauses.
 export const VarDefInitOpt = production("VarDefInitOpt",
 	or(
 		and(Identifier,        optional(and(delim(), Colon, delim(), ExprNoBlock))),
 		and(DestructureTarget, optional(and(delim(), Colon, delim(), ExprNoBlock)))
 	)
 );
-// <VarDefInitList> := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
+
+// <VarDefInitList>    := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
+// <VarDefInitOptList> := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
 var VarDefInitList = and(
 	VarDefInit,
 	any(and(delim(), Comma, delim(), VarDefInit)),
 	optional(and(delim(), Comma))
 );
-
-// <VarDefInitOptList> := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
-//
-// Permissive comma handling — same shape as CallArgList in §7.
 var VarDefInitOptList = and(
 	any(and(delim(), Comma)),
 	optional(and(
@@ -1066,10 +1129,10 @@ var VarDefInitOptList = and(
 );
 
 // BlockDefsInit    := OpenParen _ VarDefInitList _ CloseParen;
+// BlockDefsInitOpt := OpenParen _ VarDefInitOptList _ CloseParen;
 export const BlockDefsInit = production("BlockDefsInit",
 	and(OpenParen, delim(), VarDefInitList, delim(), CloseParen)
 );
-// BlockDefsInitOpt := OpenParen _ VarDefInitOptList _ CloseParen;
 export const BlockDefsInitOpt = production("BlockDefsInitOpt",
 	and(OpenParen, delim(), VarDefInitOptList, delim(), CloseParen)
 );
@@ -1083,9 +1146,11 @@ var BlockStmts = and(
 // <BareBlockExpr> := OpenBrace _ BlockStmts _ CloseBrace;
 var BareBlockExpr = and(OpenBrace, delim(), BlockStmts, delim(), CloseBrace);
 
-// BlockExpr := BlockDefsInitOpt? _ BareBlockExpr (_ AsAnnotationExpr)?;
+// BlockExpr := BlockDefsInitOpt? _ BareBlockExpr;
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 export const BlockExpr = production("BlockExpr",
-	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr, OptAsAnnotation)
+	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr)
 );
 
 // DefBlockStmt := "def" _ BlockDefsInit _ BareBlockExpr;
@@ -1132,8 +1197,6 @@ export const AssignmentExpr = production("AssignmentExpr",
 // §13 FUNCTION DEFINITIONS
 // =============================================================
 
-var Caret = tokType("Caret");
-
 var KwDefn = tokVal("Keyword", "defn");
 var KwOver = tokVal("Keyword", ":over");
 
@@ -1158,9 +1221,7 @@ export const GatherParameter = production("GatherParameter",
 
 // FuncPrecond := CondClause _ Colon _ ExprNoBlock;
 //
-// CondClause is §14 (forward-ref via lazy). Until §14 lands,
-// FuncPrecond can't fire — the optional FuncPrecondList slot in
-// DefFuncExpr falls through cleanly.
+// CondClause is §14; forward-ref via lazy.
 export const FuncPrecond = production("FuncPrecond",
 	and(lazy(() => CondClause), delim(), Colon, delim(), ExprNoBlock)
 );
@@ -1248,16 +1309,8 @@ var FuncBody = or(FuncBodyExpr, FuncBodyPipeline, FuncBodyBlock);
 //                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
 //                _ FuncBody;
 //
-// - Optional name with optional adjacent `@` for naturally-recursive
-//   binding.
-// - One-or-more parameter groups (currying: `defn add(x)(y) …`).
-// - Each clause optional; FuncBody required.
-//
-// PEG inside paren-group: ParameterList | GatherParameter. Openers
-// disjoint (Identifier/OpenAngle vs. Star), so order is mechanical.
-//
 // `:as` on a defn is FuncAsClause, NOT a trailing OptAsAnnotation —
-// DefFuncExpr does not carry the `(_ AsAnnotationExpr)?` tail.
+// DefFuncExpr does not carry any `(_ AsAnnotationExpr)?` tail.
 export const DefFuncExpr = production("DefFuncExpr",
 	and(
 		KwDefn,
@@ -1287,9 +1340,11 @@ export const CondClause = production("CondClause",
 	and(or(Qmark, Exmark), BracketExpr)
 );
 
-// GuardedExpr := CondClause _ Colon _ Expr (_ AsAnnotationExpr)?;
+// GuardedExpr := CondClause _ Colon _ Expr;
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 export const GuardedExpr = production("GuardedExpr",
-	and(CondClause, delim(), Colon, delim(), lazy(() => Expr), OptAsAnnotation)
+	and(CondClause, delim(), Colon, delim(), lazy(() => Expr))
 );
 
 
@@ -1368,14 +1423,13 @@ export const IndepMatchExpr = production("IndepMatchExpr",
 
 // --- Dependent Match -------------------------------------------
 
-// <DepCondBoolOp>   := CompareOp | AndOp | OrOp;
-// CompareDispatch is the §9 internal — references the hidden
-// dispatcher directly. Defined in §9 as `var CompareDispatch`.
+// <DepCondBoolOp> := CompareOp | AndOp | OrOp;
 var DepCondBoolOp = or(
 	lazy(() => CompareOp),
 	lazy(() => AndOp),
 	lazy(() => OrOp)
 );
+
 // <DepCondBoolExpr> := AsTypeOp _ NamedType
 //                    | DepCondBoolOp _ CompareDispatch
 //                    | OpenParen _ DepCondBoolExpr _ CloseParen;
@@ -1507,19 +1561,11 @@ var DoBlockStmts = and(
 // <DoVarDefInitOpt> := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
 //                    | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 var DoVarDefInitOpt = or(
-	and(
-		Identifier,
-		optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))
-	),
-	and(
-		DestructureTarget,
-		optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))
-	)
+	and(Identifier,        optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock))),
+	and(DestructureTarget, optional(and(delim(), or(DoubleColon, Colon), delim(), ExprNoBlock)))
 );
 
 // <DoVarDefInitOptList> := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
-//
-// Permissive comma handling — same shape as CallArgList / VarDefInitOptList.
 var DoVarDefInitOptList = and(
 	any(and(delim(), Comma)),
 	optional(and(
@@ -1540,8 +1586,7 @@ var DoBlockExpr = and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr);
 // DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 //
 // `~<<` is Tilde + OpenAngle + OpenAngle — three adjacent single-char
-// tokens (no trivia between). Range is bare Identifier or BuiltIn
-// only, not arbitrary expressions.
+// tokens at the syn layer.
 export const DoComprExpr = production("DoComprExpr",
 	and(
 		or(Identifier, BuiltIn),
@@ -1554,9 +1599,8 @@ export const DoComprExpr = production("DoComprExpr",
 
 // <DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 //
-// PEG: CallExpr first — IdentifierExpr's bare-identifier match would
-// otherwise shadow ChainExpr. Paren-recursive arm consumes `(` before
-// recursing — no LR.
+// PEG: CallExpr first so `foo()` reaches the call form rather than
+// IdentifierExpr with dangling `(...)`.
 var DoLoopIterNoBlockExpr = or(
 	CallExpr,
 	IdentifierExpr,
@@ -1565,9 +1609,9 @@ var DoLoopIterNoBlockExpr = or(
 
 // <DoLoopIterationExpr> := DoBlockExpr | DoLoopIterNoBlockExpr;
 //
-// PEG: DoBlockExpr before DoLoopIterNoBlockExpr — `(x){...}` should
-// parse as DoBlockExpr (defs `x`, body `{...}`) rather than
-// DoLoopIterNoBlockExpr's paren-wrap. Same shape as §5/§13 ordering.
+// PEG: DoBlockExpr opens with `(` or `{`; DoLoopIterNoBlockExpr
+// opens with anything-else (CallExpr/IdentifierExpr/`(`).
+// Same shape as §5/§13 ordering.
 var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
 
 // DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
@@ -1636,15 +1680,21 @@ export const ExplicitPropDef = production("ExplicitPropDef",
 // (PropertyExpr). Order is mechanical.
 var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 
-// <RecordTupleValue> := CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
+// <RecordTupleValue> := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
 //                     | DataStructLit | IdentifierExpr
 //                     | (OpenParen _ RecordTupleValue _ CloseParen);
 //
-// PEG: CallExpr first so `foo.bar` parses as ChainExpr rather than
-// IdentifierExpr with dangling `.bar`. DataStructLit before
-// IdentifierExpr — disjoint openers (`<` vs IdentBase). Paren-recursive
-// arm consumes `(` before recursing — no LR.
+// PEG order:
+// - AsExpr first — longer match with `:as` tail; falls through on no `:as`.
+//   Preserves `<x :as int, y>` after the `:as` rework (leaves no longer
+//   carry `:as` directly).
+// - CallExpr next so `foo.bar` parses as ChainExpr rather than
+//   IdentifierExpr with dangling `.bar`.
+// - DataStructLit before IdentifierExpr — disjoint openers
+//   (`<` vs IdentBase).
+// - Paren-recursive arm consumes `(` before recursing — no LR.
 var RecordTupleValue = or(
+	lazy(() => AsExpr),
 	CallExpr,
 	EmptyLit,
 	BooleanLit,
@@ -1679,13 +1729,14 @@ var RecordTupleEntryList = and(
 	))
 );
 
-// RecordTupleLit := OpenAngle _ RecordTupleEntryList _ CloseAngle (_ AsAnnotationExpr)?;
+// RecordTupleLit := OpenAngle _ RecordTupleEntryList _ CloseAngle;
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 export const RecordTupleLit = production("RecordTupleLit",
 	and(
 		OpenAngle, delim(),
 		RecordTupleEntryList,
-		delim(), CloseAngle,
-		OptAsAnnotation
+		delim(), CloseAngle
 	)
 );
 
@@ -1703,16 +1754,17 @@ var SetEntryList = and(
 	))
 );
 
-// SetLit := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle (_ AsAnnotationExpr)?;
+// SetLit := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle;
 //
 // `<[` and `]>` are two-token compound openers/closers — no trivia
 // between OpenAngle/OpenBracket or CloseBracket/CloseAngle.
+//
+// No `:as` tail — annotation comes via AsExpr (§5).
 export const SetLit = production("SetLit",
 	and(
 		OpenAngle, OpenBracket, delim(),
 		SetEntryList,
-		delim(), CloseBracket, CloseAngle,
-		OptAsAnnotation
+		delim(), CloseBracket, CloseAngle
 	)
 );
 
@@ -1792,10 +1844,7 @@ var NoFuncTypeExpr = or(UnionTypeExpr, NoUnionTypeExpr);
 
 // GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
 //
-// PEG: FuncTypeExpr first (disjoint OpenParen opener). UnionTypeExpr
-// before NoUnionTypeExpr (same backtrack pattern as NoFuncTypeExpr).
-// Optional trailing Pipe on the union arm preserves the legacy's
-// `{int | str |}` permissiveness.
+// Trailing `|` allowed only inside grouped union type, per grammar.
 export const GroupedTypeExpr = production("GroupedTypeExpr",
 	and(
 		OpenBrace, delim(),
@@ -1808,39 +1857,36 @@ export const GroupedTypeExpr = production("GroupedTypeExpr",
 	)
 );
 
-// DataStructFinalValType := Star NoUnionTypeExpr;
+// DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
+// DataStructFinalValType:= Star NoUnionTypeExpr;
+// <DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
 //
-// No trivia between Star and inner type (per grammar — `*` adjacent
-// to its type, same as GatherParameter in §13).
+// GroupedTypeExpr in DataStructValueType because grouped types are
+// allowed at field/value positions (per grammar — NoFuncTypeExpr
+// already covers UnionTypeExpr and NestedTypeExpr).
+var DataStructValueType = or(NoFuncTypeExpr, GroupedTypeExpr);
+
+export const DataStructFieldType = production("DataStructFieldType",
+	and(Identifier, delim(), Colon, delim(), DataStructValueType)
+);
+
 export const DataStructFinalValType = production("DataStructFinalValType",
 	and(Star, NoUnionTypeExpr)
 );
 
-// DataStructFieldType := Identifier _ Colon _ DataStructValueType;
-export const DataStructFieldType = production("DataStructFieldType",
-	and(Identifier, delim(), Colon, delim(), lazy(() => DataStructValueType))
-);
-
-// <DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
-//
-// Second arm is dead in PEG — GroupedTypeExpr reaches via
-// NoFuncTypeExpr → NoUnionTypeExpr's last arm — but kept for
-// legacy-grammar fidelity.
-var DataStructValueType = or(NoFuncTypeExpr, lazy(() => GroupedTypeExpr));
-
 // <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
 //
-// PEG: Field first — opens with `Identifier _ Colon`. On bare
-// `Identifier` (no colon follows), backtracks to DataStructValueType,
-// which matches via NoFuncTypeExpr → NamedType.
+// PEG: DataStructFieldType first (Identifier + Colon + value). On
+// missing Colon, backtracks to DataStructValueType.
 var DataStructTypeEntry = or(DataStructFieldType, DataStructValueType);
 
 // <DataStructTypeList> := (DataStructTypeEntry (_ Comma _ DataStructTypeEntry)* (_ Comma _ DataStructFinalValType)?)
 //                       | DataStructFinalValType;
 //
-// PEG: list arm first. FinalValType-only arm (bare `*int`) reached
-// via fallthrough — list arm's DataStructTypeEntry opener doesn't
-// include Star, so `<*int>` falls cleanly to arm 2.
+// PEG: entry-list-first arm before the bare-final arm. The entry-list
+// arm requires ≥1 DataStructTypeEntry, so on input starting with
+// Star (DataStructFinalValType's opener), it fails fast and the
+// bare-final arm fires.
 var DataStructTypeList = or(
 	and(
 		DataStructTypeEntry,
@@ -1851,6 +1897,8 @@ var DataStructTypeList = or(
 );
 
 // DataStructTypeExpr := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
+//
+// Trailing comma allowed.
 export const DataStructTypeExpr = production("DataStructTypeExpr",
 	and(
 		OpenAngle, delim(),
@@ -1861,28 +1909,20 @@ export const DataStructTypeExpr = production("DataStructTypeExpr",
 	)
 );
 
-// FuncTypeArg := Qmark? NoUnionTypeExpr;
+// FuncTypeArg      := Qmark? NoUnionTypeExpr;
+// FuncTypeFinalArg := (Star NoUnionTypeExpr) | FuncTypeArg;
 export const FuncTypeArg = production("FuncTypeArg",
 	and(optional(Qmark), NoUnionTypeExpr)
 );
 
-// FuncTypeFinalArg := (Star NoUnionTypeExpr) | FuncTypeArg;
-//
-// PEG: gather arm first (distinctive Star opener); bare FuncTypeArg
-// catches the non-gather final-position case.
 export const FuncTypeFinalArg = production("FuncTypeFinalArg",
-	or(
-		and(Star, NoUnionTypeExpr),
-		FuncTypeArg
-	)
+	or(and(Star, NoUnionTypeExpr), FuncTypeArg)
 );
 
 // <FuncTypeArgList> := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
 //                    | FuncTypeFinalArg;
 //
-// PEG: list arm first. Single-FinalArg-first would commit on `(int`
-// then fail at unconsumed `, str)` without backtracking past the
-// committed `or` arm. Bare `(*int)` falls through to arm 2.
+// PEG: same ordering rationale as DataStructTypeList.
 var FuncTypeArgList = or(
 	and(
 		FuncTypeArg,
@@ -1899,23 +1939,21 @@ export const FuncTypeExpr = production("FuncTypeExpr",
 		optional(FuncTypeArgList),
 		delim(),
 		optional(and(Comma, delim())),
-		CloseParen,
-		delim(), Caret, delim(),
-		optional(Qmark),
-		delim(),
+		CloseParen, delim(),
+		Caret, delim(),
+		optional(Qmark), delim(),
 		NoUnionTypeExpr
 	)
 );
 
 // <TypeExpr> := FuncTypeExpr | NoFuncTypeExpr;
 //
-// PEG: FuncTypeExpr first (disjoint OpenParen opener). Order mechanical.
+// PEG: FuncTypeExpr first — opens with `(` which could conflict with
+// nothing in NoFuncTypeExpr (NoUnionTypeExpr doesn't include a paren
+// form). Mechanical ordering.
 var TypeExpr = or(FuncTypeExpr, NoFuncTypeExpr);
 
 // DefTypeStmt := "deft" _ Identifier _ TypeExpr;
-//
-// <Stmt> orders DefTypeStmt after DefBlockStmt and DefVarStmt —
-// disjoint opener (Keyword "deft" vs "def"). Order mechanical.
 export const DefTypeStmt = production("DefTypeStmt",
 	and(KwDeft, delim(), Identifier, delim(), TypeExpr)
 );

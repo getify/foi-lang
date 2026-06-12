@@ -1,37 +1,24 @@
 # Foi Syntactic Grammar
 
-Source-of-truth syntactic grammar for Foi, operating over the lexer's
-token stream. Companion to `Lexical-Grammar.md`. Same EBNF dialect
-(instaparse syntax: `:=` for rules, `|` for ordered choice, `&(...)` /
-`!(...)` for lookahead, `(* *)` for comments).
+Source-of-truth syntactic grammar for Foi, derived from the
+combinator parser in `parser.js`. Operates over tokens emitted by
+the lex layer (see `Lexical-Grammar.md`). Instaparse-style EBNF.
 
-Design principles:
-- Operates over the lexer's token stream rather than raw characters
-- Uses PEG-style ordered choice (first match wins) throughout
-- Uses iterative forms in place of left-recursion
-- Encodes operator precedence via a tier ladder
-- Preserves concrete syntax that the user wrote (e.g. parentheses,
-  `:as` annotations) as visible AST nodes
+Throughout: alternation `|` is intended as ordered choice (first
+match wins; longer/more-specific alternatives are listed first
+where their prefixes overlap).
 
-This grammar is designed to concatenate cleanly with `Lexical-Grammar.md`
-into a single valid EBNF document — every production reference here
-resolves to a lex-layer production, and value-literals are restricted
-to reserved-word values that resolve through their lex type production.
+## Notation
 
-## Conventions
+The grammar uses the same notation conventions as
+`Lexical-Grammar.md`. Terminal references in this grammar are
+token-level — they name a token *type* (e.g. `Identifier`,
+`OpenParen`, `Comma`) or, for reserved-word value-literals, a
+token type plus a `value` field constraint.
 
-**Terminals are lexer tokens, not characters.** Two reference forms:
-
-- **`PascalCase`** — match a token by its `type` field. These are
-  production names from `Lexical-Grammar.md`; the syntactic grammar
-  consumes them whole. Token-emitting productions referenced this
-  way include: `General`, `Number`, `Builtin`, `Whitespace`,
-  `Comment`, `StringEscapedChar`, `Hyphen`, `DoubleColon`,
-  `DoublePeriod`, `TriplePeriod`, all single-char operator
-  productions (`Semicolon`, `OpenParen`, `Colon`, `Hash`, `At`, …),
-  and the eight Escape variants (`EscapeBacktick`, `EscapePlain`,
-  `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`,
-  `EscapeOctal`, `EscapeBinary`, `EscapeMonadic`).
+- **`Name`** — match a token of type `Name`. The set of token
+  types is fixed by the lex layer: see `Lexical-Grammar.md`. Most
+  terminal references are direct type matches.
 
   Also referenced this way: the hidden char-level dispatcher
   `EscapedNumber` from `Lexical-Grammar.md`. When matched, it
@@ -63,8 +50,8 @@ to reserved-word values that resolve through their lex type production.
     referenced by value.
 
 **Adjacency.** Adjacent productions in a sequence match adjacent
-tokens — no trivia between them. Explicit trivia is marked with `_`
-(optional trivia) or `__` (required `Whitespace`). Multi-char
+tokens — no trivia between them. Explicit trivia is marked with
+`_` (optional trivia). Multi-char
 operator sequences that aren't single lex tokens are written as
 space-separated production references: `:=` is `Colon Equal`,
 `~<<` is `Tilde OpenAngle OpenAngle`, `~<*` is `Tilde OpenAngle Star`,
@@ -90,29 +77,89 @@ multiple productions share structural shape but differ in inner
 content (e.g. the six paren-grouping variants), each is its own
 distinct AST node, named to reflect its inner content.
 
-**Trivia is explicit.** Two hidden helpers:
+**Trivia is explicit.** One hidden helper:
 
 ```ebnf
 <_>  := (Whitespace | Comment)*;       (* optional trivia *)
-<__> := _ Whitespace _;                (* required Whitespace *)
 ```
 
-**`:as` annotations** attach as a final optional child of the thing
-they modify. Productions carrying `(_ AsAnnotationExpr)?`:
+The syntactic grammar never needs a "required whitespace"
+combinator — required separation between syntactic forms is
+already enforced at the lex layer via token boundaries
+(identifier longest-match, reserved-word gates, etc.).
+
+## `:as` Precedence — First-Class Rule
+
+`:as` annotations bind at exactly one level of precedence —
+**strictly between unary and binary** in the tier ladder.
+
+Tightest → loosest:
+
+```
+chain/access → unary → :as → binary tiers → range
+```
+
+Operationally: `:as` can only attach to a **complete chain, access,
+unary, leaf, or parenthesized-group expression**. It cannot attach
+to a bare binary or range expression — those require parentheses
+to receive an annotation.
+
+There is exactly one production in the grammar that introduces
+the `:as` tail on a non-paren expression: **`AsExpr`** (§5). The
+six paren-grouping productions additionally carry their own
+`(_ AsAnnotationExpr)?` tail (because parens already define an
+atomic group). Nothing else in the grammar carries `:as` directly.
+
+Concrete consequences:
+
+- `x :as int` → parses; `as` attaches to `x`
+- `?x :as bool` → parses; `as` attaches to the outer
+  `SymbolicUnaryExpr`, not the inner `x`
+- `?empty foo :as Maybe` → parses; `as` attaches to the outer
+  `NamedUnaryExpr`
+- `5 :as int` → parses; `as` attaches to the `NumberLit`
+- `foo() :as int` → parses; `as` attaches to the outermost typed
+  chain node (e.g. `CallExpr`)
+- `foo.bar@ :as Maybe` → parses; `as` attaches to the `AtExpr`
+- **`x + y :as int` → PARSE ERROR** (must be `(x + y) :as int`)
+- **`x + y :as int + z` → PARSE ERROR**
+- **`1..5 :as List` → PARSE ERROR** (must be `(1..5) :as List`)
+- **`x..y :as int` → PARSE ERROR** (the same ambiguity binary
+  has, applied to range — require parens)
+- **`x :as int + y` → PARSE ERROR** (once `AsExpr` consumes
+  `x :as int` at the outer level, `+ y` has nowhere to go)
+- `(x + y) :as int` → parses; `as` on the `GroupedOpExpr`
+- `(1..5) :as List` → parses; `as` on the `GroupedOpExpr` wrapping
+  the `ClosedRangeExpr`
+- `(?x :as bool) ?and y` → parses; the inner `:as bool` rides
+  inside the paren-group via `AsExpr`; outer paren has no own `:as`
+- `(x + y) :as int ~map f` → parses; `GroupedOpExpr` carries its
+  own `:as`, then `~map f` is the binary tail
+
+The mechanism: `AsExpr` is reachable from `<Expr>` and
+`<ExprNoBlock>` dispatchers (outer-position expression slots), but
+**not** from inside `<BinaryAtom>`. The binary tier operands see
+only the bare forms (no `:as`), which is what makes
+`x + y :as int` rejected rather than silently binding `:as` to
+`y`. The four restrictive paren-inner forms gain `AsExpr` as an
+alternative so that `(?x :as bool)`, `(foo() :as int)`, etc.
+continue to parse inside parens.
+
+**Productions that carry `:as`:**
+- `AsExpr` (§5) — the central carrier
 - All six paren-grouping productions (`GroupedExpr`,
   `GroupedExprNoBlock`, `GroupedOpExpr`, `GroupedBareOpExpr`,
   `GroupedBareOpExprNoEmpty`, `GroupedDoExpr`)
-- `BlockExpr`
-- All literal leaves (`EmptyLit`, `BooleanLit`, `NumberLit`, four
-  `StringLit` variants, `DataStructLit`'s two forms)
-- `IdentifierExpr`'s three arms, `OpFuncExpr`, `ChainExpr`,
-  `AtCallExpr`
-- `UnaryExpr`'s two arms, `GuardedExpr`
 
-Productions that do NOT carry `:as` (must be parenthesized to receive
-an annotation): `BinaryExpr` (and all tier iter variants),
-`AssignmentExpr`, `ClosedRangeExpr`, `DoComprExpr`, `DoLoopComprExpr`,
-`MatchExpr`.
+**Productions that do NOT carry `:as`** (must be parenthesized or
+wrapped via `AsExpr` to receive an annotation): everything else,
+including `BinaryExpr` (and all tier iter variants),
+`AssignmentExpr`, `ClosedRangeExpr` / `LeadingRangeExpr` /
+`TrailingRangeExpr`, `DoComprExpr`, `DoLoopComprExpr`, `MatchExpr`,
+all literal leaves (`NumberLit`, `BooleanLit`, `EmptyLit`, four
+`StringLit` variants, `RecordTupleLit`, `SetLit`), `IdentifierExpr`'s
+three arms, `OpFuncExpr`, `ChainExpr`, `AtCallExpr`, `UnaryExpr`'s
+two arms, `BlockExpr`, `GuardedExpr`.
 
 ---
 
@@ -136,6 +183,9 @@ PipelineTopic       := Hash;
 ## §2 Literals
 
 ```ebnf
+(* No leaf in §2 carries its own (_ AsAnnotationExpr)?. The `:as`
+   tail on a leaf is supplied by an enclosing AsExpr (§5). *)
+
 <Literal>          := NumberLit | StringLit | BooleanLit | EmptyLit;
 
 (* NumberLit: either a bare decimal Number token, an Escape+Number
@@ -144,23 +194,23 @@ PipelineTopic       := Hash;
    a bare integer literal of either sign (PositiveIntegerLit or
    NegativeIntegerLit, unified via the hidden IntegerLit from
    Lexical-Grammar.md). *)
-NumberLit          := (EscapedNumber | Number | IntegerLit) (_ AsAnnotationExpr)?;
+NumberLit          := EscapedNumber | Number | IntegerLit;
 
-BooleanLit         := ("true" | "false") (_ AsAnnotationExpr)?;
-EmptyLit           := "empty" (_ AsAnnotationExpr)?;
+BooleanLit         := "true" | "false";
+EmptyLit           := "empty";
 
 <StringLit>        := PlainStr | SpacingEscapedStr | InterpStr | SpacingInterpStr;
 
-PlainStr           := DoubleQuote PlainStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+PlainStr           := DoubleQuote PlainStrContent* DoubleQuote;
 <PlainStrContent>  := PlainStrChars | StringEscapedChar;
 
-SpacingEscapedStr  := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+SpacingEscapedStr  := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote;
 <SpacingEscapedStrContent> := SpacingEscapedStrChars | StringEscapedChar | Whitespace;
 
-InterpStr          := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+InterpStr          := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote;
 <InterpStrContent> := InterpStrChars | StringEscapedChar | InterpExpr;
 
-SpacingInterpStr   := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote (_ AsAnnotationExpr)?;
+SpacingInterpStr   := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote;
 <SpacingInterpStrContent> := SpacingInterpStrChars | StringEscapedChar | Whitespace | InterpExpr;
 
 InterpExpr         := Backtick _ Expr _ Backtick;
@@ -207,11 +257,22 @@ DestructureCapture    := Hash Identifier;
 (* Vertical dispatchers hidden — pure parser routing. Each
    paren-grouping production is a distinct visible AST node, named
    for its inner content. Call sites reference the variant whose
-   inner content they allow. *)
+   inner content they allow.
 
-<Expr>                 := DoComprExpr | DoLoopComprExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+   AsExpr is the central carrier of `:as` annotations on non-paren
+   expressions. It is placed in <Expr> and <ExprNoBlock> (outer
+   expression slots), and as an inner alternative in the four
+   restrictive paren variants (GroupedOpExpr, GroupedBareOpExpr,
+   GroupedBareOpExprNoEmpty, GroupedDoExpr) so that paren-wrapped
+   expressions like `(?x :as bool)` can also reach `:as`. AsExpr
+   is NOT in <BinaryAtom> — that's what enforces the rule that
+   `x + y :as int` is a parse error.
 
-<ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | OperandExpr | GroupedExprNoBlock;
+   See the `:as` Precedence section above. *)
+
+<Expr>                 := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+
+<ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | AsExpr | OperandExpr | GroupedExprNoBlock;
 
 <OperandExpr>          := BinaryExpr;
 
@@ -220,16 +281,53 @@ DestructureCapture    := Hash Identifier;
 <BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit
                           | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
 
+(* AsExpr — the sole non-paren carrier of `:as`. Inner is restricted
+   to <AsableExpr>: anything tighter than binary (chain/access via
+   BareOperandExpr's CallExpr arm, unary, leaves, parens that allow
+   operand-level inner) plus BlockExpr/GuardedExpr at the outer
+   level. Ranges are deliberately NOT in <AsableExpr> — annotating
+   a bare range requires explicit parens (`(1..5) :as List`).
+
+   AsExpr is a parse-time wrapper. Its shaper unwraps — it lifts
+   `as` onto its inner node and returns the inner. There is no
+   AsExpr node type in the AST. *)
+AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
+<AsableExpr>           := BlockExpr | GuardedExpr | UnaryExpr
+                        | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+
+(* Six paren-grouping productions. The two whose inner-expr forms
+   include AsExpr via dispatch (GroupedExpr's Expr, GroupedExprNoBlock's
+   ExprNoBlock) need no widening. The four restrictive variants
+   (OperandExpr, BareOperandExpr, BareOperandExprNoEmpty, do-compr)
+   add AsExpr as an explicit first alternative.
+
+   All six keep their own (_ AsAnnotationExpr)? trailing tail —
+   parens are atomic groups that can carry their own `:as` regardless
+   of position (including as a binary operand). PEG order for the
+   widened forms: AsExpr first (longer with `:as` tail), falls
+   through cleanly on no `:as`. *)
+
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
-GroupedOpExpr            := OpenParen _ OperandExpr _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExpr        := OpenParen _ BareOperandExpr _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExprNoEmpty := OpenParen _ BareOperandExprNoEmpty _ CloseParen (_ AsAnnotationExpr)?;
+GroupedOpExpr            := OpenParen _ (AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExpr        := OpenParen _ (AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExprNoEmpty := OpenParen _ (AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
 
 AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```
 
 PEG ordering notes:
+
+- In `<Expr>`, `AsExpr` precedes `BlockExpr` and `ExprNoBlock` —
+  the longer match (with `:as` tail) wins. On no `:as`, `AsExpr`
+  fails fast at the missing tail and falls through.
+- In `<ExprNoBlock>`, `AsExpr` precedes `OperandExpr` and
+  `GroupedExprNoBlock` for the same reason. It is placed after
+  `GuardedExpr` because `<AsableExpr>` includes `GuardedExpr`;
+  trying `AsExpr` first would consume the guarded body greedily
+  and then fail at the `:as` tail when the body's own greedy
+  `Expr` already ate any `:as`. Same fall-through semantics on
+  no `:as`.
 - In `<Expr>`, `BlockExpr` precedes `ExprNoBlock` so inputs like
   `(x){y;}` (a BlockExpr with bare-identifier def) parse as a
   BlockExpr rather than `(x)` as GroupedExprNoBlock with dangling
@@ -247,13 +345,14 @@ PEG ordering notes:
 ```ebnf
 (* ChainExpr (§7) covers all post-base chains (calls, access, or
    mixed) on any base. IdentifierExpr here is the bare/at/monad
-   forms only. *)
+   forms only. None of these arms carry `:as` directly — annotation
+   comes from enclosing AsExpr (§5). *)
 
 <IdentifierExpr>     := MonadConstructor | AtExpr | BareIdentifier;
 
-MonadConstructor     := At (_ AsAnnotationExpr)?;
-AtExpr               := IdentBase SingleAccessExpr? At (_ AsAnnotationExpr)?;
-BareIdentifier       := IdentBase (_ AsAnnotationExpr)?;
+MonadConstructor     := At;
+AtExpr               := IdentBase SingleAccessExpr? At;
+BareIdentifier       := IdentBase;
 
 <IdentBase>          := PipelineTopic | Identifier | BuiltIn;
 
@@ -284,6 +383,9 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
+(* Range operands are bare — no `:as` tail allowed directly on a
+   range operand. To annotate a range expression as a whole,
+   parenthesize it: `(1..5) :as List`. *)
 <RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
 ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand;
 LeadingRangeExpr     := RangeOperand _ DoublePeriod;
@@ -305,6 +407,9 @@ TrailingRangeExpr    := DoublePeriod _ RangeOperand;
    A bare base alone falls through to its non-chained form via
    BareOperandExprNoEmpty's later alternatives.
 
+   None of ChainExpr / AtCallExpr / OpFuncExpr carry `:as` directly.
+   Annotation comes from an enclosing AsExpr (§5).
+
    Postfix `'` is adjacent to the preceding expression (no trivia
    between), terminates the access chain (no dot/bracket access
    may follow), and may itself be followed only by zero or more
@@ -319,8 +424,7 @@ ChainExpr      := ChainBase
                   (
                       (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
                     | SingleQuote (_ CallSuffix)*
-                  )
-                  (_ AsAnnotationExpr)?;
+                  );
 
 <ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
                 | OpFuncExpr | GroupedExpr
@@ -335,8 +439,8 @@ ChainExpr      := ChainBase
 PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 PartialCallSuffix := Pipe CallArgs Pipe;
 
-AtCallExpr           := "None" At (_ AsAnnotationExpr)?
-                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock (_ AsAnnotationExpr)?;
+AtCallExpr           := "None" At
+                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock;
 
 <CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 <CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -354,7 +458,7 @@ ExplicitNamedArg     := Identifier _ Colon _ Expr;
    back the whole production without giving the longer arms a
    chance. The `[]` arm is disjoint (OpenBracket opener); Op last
    catches bare-operator forms like `(.)`, `(+)`, `(..)`. *)
-OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen (_ AsAnnotationExpr)?;
+OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
 ```
 
 PEG ordering notes for `<ChainBase>`:
@@ -370,6 +474,12 @@ PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the fou
 (* Unary operand restricted to BinaryAtom (tier-1) — `?x + 5` parses
    as `(?x) + 5`. Use parens for broader operands: `?(x + 5)`.
 
+   Neither unary arm carries `:as` directly. `?x :as bool` parses as
+   AsExpr wrapping SymbolicUnaryExpr; AsExpr's unwrap-shaper lifts
+   `as` onto the SymbolicUnaryExpr node. This is the precedence-fix
+   that prompted this rework — `:as` no longer silently sticks to
+   the inner BinaryAtom.
+
    Postfix `'` (the prime operator, argument-reversal modifier) is
    handled as a restricted tail of ChainExpr in §7, not as a UnaryExpr
    arm. It attaches only where a function value lives, terminates
@@ -378,8 +488,8 @@ PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the fou
 
 <UnaryExpr>       := NamedUnaryExpr | SymbolicUnaryExpr;
 
-NamedUnaryExpr    := NamedUnaryOp _ BinaryAtom (_ AsAnnotationExpr)?;
-SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
+NamedUnaryExpr    := NamedUnaryOp _ BinaryAtom;
+SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom;
 ```
 
 ## §9 Binary Expressions (Tier Ladder)
@@ -397,6 +507,13 @@ SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom (_ AsAnnotationExpr)?;
 
    All iters are visible AST nodes. No `:as` on any tier —
    parenthesize.
+
+   <BinaryAtom> does NOT include AsExpr. That is what enforces the
+   rule that `:as` cannot attach as a tail on a binary operand —
+   `x + y :as int` is a parse error rather than silently binding
+   `:as` to `y`. To get a `:as`-annotated operand into a binary
+   expression, use a paren-grouping variant (which DOES carry
+   `:as` and also allows AsExpr inside).
 
    Flow tier extensions: LHS may be a CondClause (for `~each`-style
    range-as-conditional); RHS may be a BlockExpr (for
@@ -444,7 +561,10 @@ MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
    `(x ~map f)`); GroupedDoExpr's inner DoComprExpr/DoLoopComprExpr
    is the niche case. Trying the common case first keeps the hot
    path cheap; on `(` followed by do-compr content, GroupedOpExpr
-   fails through cleanly. *)
+   fails through cleanly.
+
+   <BinaryAtom> deliberately does NOT include AsExpr — see the
+   `:as` Precedence section. *)
 <BinaryAtom>     := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
                   | UnaryExpr | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
 
@@ -462,19 +582,24 @@ MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
    content that isn't an OperandExpr (e.g. starts a DoComprExpr or
    DoLoopComprExpr), it fails through to GroupedDoExpr cleanly.
 
-   Trailing `:as` allowed for consistency with GroupedOpExpr; semantic
-   validity (whether annotating a monadic do-result is meaningful) is
-   checked downstream. *)
-(* PEG: DoComprExpr before DoLoopComprExpr — matches <Expr> ordering
-   in §5. Disjoint at the third token of their `~<<` / `~<*`
-   signatures, so the order is mechanical, not discriminating. *)
-GroupedDoExpr    := OpenParen _ (DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
+   AsExpr added to the inner so `(?x :as bool) ~<< { ... }`-style
+   constructs are reachable inside the paren. Trailing `:as` allowed
+   for consistency with the other parens; semantic validity (whether
+   annotating a monadic do-result is meaningful) is checked downstream.
+
+   PEG: AsExpr before DoComprExpr before DoLoopComprExpr — matches
+   <Expr> ordering. Disjoint at the third token of `~<<` / `~<*`
+   signatures. *)
+GroupedDoExpr    := OpenParen _ (AsExpr | DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
 ```
 
 **Precedence (tightest → loosest):** Unary → Mul (`*`, `/`) →
 Add (`+`, `-`, `$+`) → Compare/Membership/Type → And (`?and`, `!and`)
 → Or (`?or`, `!or`) → Flow (`+>`, `<+`, `#>`, all `~`-comprehensions,
 `~<`). All tiers left-associative.
+
+`:as` lives between Unary and Mul in the ladder — see the `:as`
+Precedence section above.
 
 Tier iter names: `FlowBinExpr`, `OrBinExpr`, `AndBinExpr`,
 `TypeCompareBinExpr`, `CompareBinExpr`, `AddBinExpr`, `MulBinExpr`.
@@ -518,7 +643,12 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
 ## §11 Block Expressions
 
 ```ebnf
-BlockExpr             := BlockDefsInitOpt? _ BareBlockExpr (_ AsAnnotationExpr)?;
+(* BlockExpr loses its own `(_ AsAnnotationExpr)?` — annotation comes
+   via AsExpr (§5), whose AsableExpr inner list includes BlockExpr.
+   AsExpr's unwrap-shaper lifts `as` onto the BlockExpr node, so the
+   AST shape for `{x;y} :as int` is unchanged from the prior design. *)
+
+BlockExpr             := BlockDefsInitOpt? _ BareBlockExpr;
 DefBlockStmt          := "def" _ BlockDefsInit _ BareBlockExpr;
 <BareBlockExpr>       := OpenBrace _ BlockStmts _ CloseBrace;
 <BlockStmts>          := (StmtSemi _)* StmtSemiOpt?;
@@ -586,8 +716,12 @@ not the choice of inner-expression variant.
 ## §14 Conditionals / Guards
 
 ```ebnf
+(* GuardedExpr loses its own `(_ AsAnnotationExpr)?` — annotation
+   comes via AsExpr (§5), whose AsableExpr inner list includes
+   GuardedExpr. *)
+
 CondClause            := (Qmark | Exmark) BracketExpr;
-GuardedExpr           := CondClause _ Colon _ Expr (_ AsAnnotationExpr)?;
+GuardedExpr           := CondClause _ Colon _ Expr;
 ```
 
 ## §15 Match Expressions
@@ -628,6 +762,14 @@ nodes. The `NoSemi` variant differs only in trailing-semicolon
 handling for the final clause; downstream code treats them
 uniformly.
 
+Note: `DepCondBoolExpr`'s `DepCondBoolOp _ CompareDispatch` arm
+reaches `CompareDispatch` directly, not through `OperandExpr`. This
+means `:as` is unreachable from inside `DepCondBoolExpr`'s
+operator-led arm — `[?and x :as int]` is a parse error. To annotate,
+use `[?and (x :as int)]` (the paren-recursive arm wraps the inner
+operand). This is consistent with the rule that `:as` cannot attach
+as a bare binary-operand suffix.
+
 ## §16 Do-Comprehensions
 
 ```ebnf
@@ -653,16 +795,30 @@ DoLoopComprExpr         := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ 
 <DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 ```
 
+Note: `<DoLoopIterNoBlockExpr>` lists `IdentifierExpr` directly (no
+`Expr` dispatch path). `:as` on an iter function (`range ~<* foo :as Maybe`)
+is therefore a parse error — wrap in parens (`range ~<* (foo :as Maybe)`)
+to annotate. Consistent with the "use parens" rule.
+
 ## §17 Data Structure Literals
 
 ```ebnf
+(* Neither RecordTupleLit nor SetLit carries its own `(_ AsAnnotationExpr)?`.
+   Annotation comes via AsExpr (§5) — since DataStructLit is reachable
+   from BareOperandExprNoEmpty, an AsExpr wrapping `<lit> :as T` works
+   at any outer-position expression slot.
+
+   RecordTupleValue gains AsExpr as its first alternative so that
+   `<x :as int, y>` continues to parse — without it, leaves inside
+   record/tuple entries would lose access to `:as`. *)
+
 <DataStructLit>        := SetLit | RecordTupleLit;     (* SetLit first — opens with OpenAngle OpenBracket (2 tokens); RecordTupleLit opens with just OpenAngle (1 token) *)
 
-RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle (_ AsAnnotationExpr)?;
+RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-<RecordTupleValue>     := CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
+<RecordTupleValue>     := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
                         | IdentifierExpr | (OpenParen _ RecordTupleValue _ CloseParen);
 
 PickValue              := Ampersand IdentBase MultiAccessExpr?;
@@ -671,10 +827,16 @@ ConcisePropDef         := Colon PropertyExpr;
 ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;
 <ComputedPropName>     := Percent (PipelineTopic | IdentifierExpr | StringLit);
 
-SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle (_ AsAnnotationExpr)?;
+SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle;
 <SetEntryList>         := (_ Comma)* (SetEntry (_ Comma (_ SetEntry)?)*)?;
 <SetEntry>             := PickValue | RecordTupleValue;
 ```
+
+PEG ordering note for `<RecordTupleValue>`: `AsExpr` first — longer
+match with `:as` tail. Falls through to `CallExpr` and the rest on
+no `:as`. The remaining order is unchanged from prior design:
+`CallExpr` before `IdentifierExpr` so `foo.bar` parses as a chain;
+`DataStructLit` before `IdentifierExpr` (disjoint openers).
 
 ## §18 Type Definitions
 
