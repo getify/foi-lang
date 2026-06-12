@@ -156,6 +156,60 @@ function shapeGrouped(typeName,parts) {
 	return node;
 }
 
+// Helper for the six §9 binary tier iter productions (FlowBinExpr,
+// OrBinExpr, AndBinExpr, CompareBinExpr, AddBinExpr, MulBinExpr).
+// Each iter is `lhs (op rhs)+` — flat-fold to nested
+// `{ left, op, right }` (left-associative).
+//
+// Parts arrive interleaved: [n1, opTok…, n2, opTok…, n3, …]. Runs
+// of non-node tokens between nodes are accumulated into a single
+// op string, handling multi-token ops:
+//   - AddOp `$+` → Dollar + Plus (2 tokens)
+//   - FlowOps `#>` / `+>` / `<+` → 2 tokens each
+//   - FlowOp `~<` → Tilde + OpenAngle (2 tokens)
+//   - SymbolicCompareOp `?<=>` → Qmark + OpenAngle + Equal + CloseAngle (4 tokens)
+//   - Named/keyword ops (?and, ?or, ?in, ~map, etc.) → 1 BooleanOper or
+//     Comprehension token
+//
+// FlowBinExpr's LHS may be a CondClause and RHS may be a BlockExpr
+// (per §9's flow-tier extensions); both arrive as shaped nodes so
+// the same accumulator pattern applies — no special-case needed.
+//
+// Intermediate fold nodes set start/end explicitly since the
+// machinery only stamps the outermost return.
+//
+// TypeCompareBinExpr is NOT routed through this helper — it's
+// non-iter (single op, RHS is NamedType) with its own shaper.
+function shapeBinTier(typeName,parts) {
+	var operands = [];
+	var ops = [];
+	var pendingOp = "";
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (pendingOp) {
+				ops.push(pendingOp);
+				pendingOp = "";
+			}
+			operands.push(p);
+		}
+		else {
+			pendingOp += p.value;
+		}
+	}
+	var node = operands[0];
+	for (let i = 0; i < ops.length; i++) {
+		node = {
+			type: typeName,
+			left: node,
+			op: ops[i],
+			right: operands[i + 1],
+			start: node.start,
+			end: operands[i + 1].end,
+		};
+	}
+	return node;
+}
+
 export const defaultShapers = {
 
 	// Identifier — bare token-stream extraction. Concatenates the
@@ -471,39 +525,48 @@ export const defaultShapers = {
 		return { type: "ParameterList", params: parts.filter(isNode) };
 	},
 
-	// Binary tier — flat iter `lhs (op rhs)+` left-folds into
-	// nested {left, op, right}. Multi-token AddOps ($+) concat.
-	// Intermediate fold nodes must set start/end manually since
-	// the machinery only brand-stamps the outermost return.
-	AddBinExpr(frame,parts) {
-		var operands = [];
-		var ops = [];
-		var pendingOp = "";
+	// =============================================================
+	// Binary tiers (§9). Seven productions ordered loosest →
+	// tightest: FlowBinExpr, OrBinExpr, AndBinExpr,
+	// TypeCompareBinExpr, CompareBinExpr, AddBinExpr, MulBinExpr.
+	//
+	// Six iter tiers share `lhs (op rhs)+` shape and delegate to
+	// shapeBinTier — flat-fold to nested {left, op, right}
+	// (left-associative), multi-token ops concatenated via the
+	// token-accumulator pattern.
+	//
+	// TypeCompareBinExpr carves ?as/!as out of the Compare tier:
+	// single-op (non-iter), RHS is a NamedType rather than an
+	// expression. Distinct shape handler below.
+	// =============================================================
+	FlowBinExpr(frame,parts)    { return shapeBinTier("FlowBinExpr",parts); },
+	OrBinExpr(frame,parts)      { return shapeBinTier("OrBinExpr",parts); },
+	AndBinExpr(frame,parts)     { return shapeBinTier("AndBinExpr",parts); },
+
+	// TypeCompareBinExpr — single-op binary, RHS is NamedType (not
+	// a general expression). Op is the single ?as/!as BooleanOper
+	// token. Shape matches sibling iter tiers (`{ left, op, right }`)
+	// for consumer uniformity; `right` carries a NamedType node.
+	// No iteration — `x ?as int ?as bool` must be parenthesized
+	// per grammar.
+	TypeCompareBinExpr(frame,parts) {
+		var nodes = [];
+		var op = "";
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (pendingOp) {
-					ops.push(pendingOp);
-					pendingOp = "";
-				}
-				operands.push(p);
-			}
-			else {
-				pendingOp += p.value;
-			}
+			if (isNode(p)) nodes.push(p);
+			else op += p.value;
 		}
-		var node = operands[0];
-		for (let i = 0; i < ops.length; i++) {
-			node = {
-				type: "AddBinExpr",
-				left: node,
-				op: ops[i],
-				right: operands[i + 1],
-				start: node.start,
-				end: operands[i + 1].end,
-			};
-		}
-		return node;
+		return {
+			type: "TypeCompareBinExpr",
+			left: nodes[0],
+			op,
+			right: nodes[1],
+		};
 	},
+
+	CompareBinExpr(frame,parts) { return shapeBinTier("CompareBinExpr",parts); },
+	AddBinExpr(frame,parts)     { return shapeBinTier("AddBinExpr",parts); },
+	MulBinExpr(frame,parts)     { return shapeBinTier("MulBinExpr",parts); },
 
 	// Dot-access by name or index. Three inner cases:
 	//   foo.bar   → accessor = Identifier-node
