@@ -6,7 +6,7 @@
 
 ----
 
-**Foi** is a programming language that pragmatically balances Functional Programming (FP) and imperative programming techniques. You'll find many  features designed for [uncommonly coherent expressiveness](Expressive.md) around common FP idioms.
+**Foi** is a practical functional language where common semantic moves -- function adaptation, immutable derivation, decision logic, and effect boundaries -- are promoted into regular surface syntax instead of being rebuilt with lambdas, helper functions, mutation conventions, or hidden control flow.
 
 ```java
 greetings("my friend");
@@ -17,6 +17,8 @@ defn greetings(who) {
     log(msg)
 }
 ```
+
+You'll find many features designed for [uncommonly coherent expressiveness](Expressive.md) around these common FP idioms.
 
 **Foi** pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and more.
 
