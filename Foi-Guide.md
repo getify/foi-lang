@@ -1621,25 +1621,32 @@ add(6,12);                          // 18
 
 ### Function Overs
 
-Function definitions must declare side-effects (reassignment of free/outer variables) using the `:over` keyword:
+Function definitions must declare non-constant free/outer variable closures using the `:over` keyword:
 
 ```java
 def customerCache: empty;
-def count: 0;
+def maxLookupCount: 10;
+
+// somewhere else:
+maxLookupCount := 25;
 
 defn lookupCustomer(id) :over (customerCache) {
     // ..
 
-    // this reassignment side-effect allowed:
-    customerCache := cacheAppend(customerCache,customer);
+    // ERROR! `maxLookupCount` reference not allowed,
+    // because it isn't listed in the `:over`
+    ?[customerCache.size ?< maxLookupCount]: (
+        // ...but this reassignment side-effect is fine:
+        customerCache := cacheAppend(customerCache,customer)
+    );
 
-    // but this is disallowed because `count`
-    // isn't listed in the `:over` clause:
-    count := count + 1;
+    // ..
 };
 ```
 
-**Note:** Closure over free/outer variables -- specifically, (r-value) read-only access -- is allowed without being listed in the `:over` clause. The `:over` clause must only list free/outer variables that will appear in an (l-value) assignment-target position.
+A free/outer variable is considered *constant* if it is never lexically reassigned anywhere. Constant free/outer variables may be referenced without being listed in the function's `:over` clause.
+
+Any free/outer variable that is lexically reassigned anywhere is considered non-constant. A function may only reference a non-constant free/outer variable if that variable is listed in the function's `:over` clause.
 
 ### Function Composition
 
