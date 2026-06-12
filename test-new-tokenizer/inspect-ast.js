@@ -245,6 +245,33 @@ var samples = [
 	{ label: "defn: pipeline body",                    src: "defn pipe(x) #> log;" },
 	{ label: "defn: gather parameter",                 src: "defn gather(*args) ^args;" },
 	{ label: "defn: with FuncPrecond",                 src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
+
+	// === §4 orphans cluster ===
+
+	// ImportExpr — direct, also covered indirectly via DefVarStmt
+	{ label: "ImportExpr (in DefVarStmt)",  src: 'def x: import "foo";' },
+
+	// DefBlockStmt — required defs + body
+	{ label: "DefBlockStmt: def (x: 1) { x; }",            src: "def (x: 1) { x; };" },
+	{ label: "DefBlockStmt: def (x: 1, y: 2) { x + y; }",  src: "def (x: 1, y: 2) { x + y; };" },
+
+	// AssignmentExpr — bare and access forms
+	{ label: "AssignmentExpr (bare): x := 5",             src: "x := 5;" },
+	{ label: "AssignmentExpr (access): foo.bar := 42",    src: "foo.bar := 42;" },
+	{ label: "AssignmentExpr (multi-seg): a.b.c := 1",    src: "a.b.c := 1;" },
+	{ label: "AssignmentExpr (bracket): foo[0] := y + 1", src: "foo[0] := y + 1;" },
+
+	// DefTypeStmt — bare named, function, union, nested
+	{ label: "DefTypeStmt: deft Foo int",          src: "deft Foo int;" },
+	{ label: "DefTypeStmt: deft Bar (x) ^int",     src: "deft Bar (x) ^int;" },
+	{ label: "DefTypeStmt: deft Baz int | string", src: "deft Baz int | string;" },
+
+	// === Access-fold retrofit re-verification ===
+	// These samples already exist in the suite — their AtExpr/
+	// AtCallExpr output shape changes after Patches B/C land. Tag
+	// here for explicit attention during the verification pass.
+	{ label: "AtExpr (retrofit): foo.bar@",                  src: "foo.bar@;" },
+	{ label: "AtCallExpr Sub-form B w/access: foo.bar @ x",  src: "foo.bar @ x;" },
 ];
 
 for (let { label, src } of samples) {

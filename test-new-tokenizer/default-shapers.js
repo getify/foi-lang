@@ -155,6 +155,31 @@ function applyChainSeg(object,seg) {
 	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
 }
 
+// Helper for fold-access call sites — AtExpr base, AssignmentExpr LHS,
+// AtCallExpr's inline AtExpr synthesis, and (when their shapers are
+// eventually written) ExportNamedBinding, ExportConciseBinding,
+// DestructureNamedDef, DestructureConciseDef. Given a base node and a
+// SingleAccessExpr or MultiAccessExpr (or undefined), folds the
+// access segments via applyChainSeg left-to-right and returns the
+// resulting nested chain. undefined access returns the base
+// unchanged.
+//
+// Wrapper-unwrap-at-assignment pattern — SingleAccessExpr /
+// MultiAccessExpr shapers still emit their own node, but parents
+// that mount an access-bearing base reach through `.segments` and
+// consume the wrapper. The result is uniform with the typed-node
+// fold ChainExpr produces in operand position: `foo.bar` shapes
+// the same way whether it appears as a chain base or as an
+// AssignmentExpr LHS.
+function foldAccess(base,access) {
+	if (!access) return base;
+	var node = base;
+	for (let seg of access.segments) {
+		node = applyChainSeg(node,seg);
+	}
+	return node;
+}
+
 // Helper for the six paren-grouping productions (GroupedExpr,
 // GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
 // GroupedBareOpExprNoEmpty from §5; GroupedDoExpr from §9
@@ -737,19 +762,22 @@ export const defaultShapers = {
 	//
 	// MonadConstructor — bare `@`. Type tag is total information.
 	//
-	// AtExpr — `IdentBase SingleAccessExpr? At`. Shape
-	// `{ base, access? }`. The `@` itself is noise (recoverable
-	// from type tag). `base` is the identifier being lifted;
-	// `access` retains the SingleAccessExpr node intact (not
-	// unwrapped — SingleAccessExpr is reused in non-AtExpr contexts
-	// so consumers expect the wrapper layer).
+	// AtExpr — `IdentBase SingleAccessExpr? At`. Shape `{ base }`,
+	// where `base` is folded via the unified access-fold rule (see
+	// foldAccess above): bare `foo@` → `AtExpr{ base: Identifier{
+	// name:"foo"} }`; access form `foo.bar@` → `AtExpr{ base:
+	// MemberAccessExpr{ object: Identifier{name:"foo"}, accessor:
+	// Identifier{name:"bar"} } }`. So the access portion of an at-
+	// expression shapes identically to the same access appearing in
+	// operand position — no separate `access` slot to special-case.
+	// The `@` itself is noise (recoverable from type tag).
 	//
 	// Neither carries a `:as` tail post-rework — annotation comes
 	// via AsExpr. AsExpr's unwrap lifts `as` onto the returned
 	// AtExpr/MonadConstructor node.
 	// =============================================================
 
-	// AtExpr — IdentBase + optional access + @.
+	// AtExpr — IdentBase + optional access + @. Access folds into base.
 	AtExpr(frame,parts) {
 		var base, access;
 		for (let p of parts) {
@@ -759,9 +787,7 @@ export const defaultShapers = {
 			}
 			// else: At token — skip
 		}
-		var node = { type: "AtExpr", base };
-		if (access) node.access = access;
-		return node;
+		return { type: "AtExpr", base: foldAccess(base,access) };
 	},
 
 	// MonadConstructor — bare @.
@@ -1021,11 +1047,10 @@ export const defaultShapers = {
 			}
 			node.callee = {
 				type: "AtExpr",
-				base,
+				base: foldAccess(base,access),
 				start: base.start,
 				end: atTok.end,
 			};
-			if (access) node.callee.access = access;
 			if (arg) node.arg = arg;
 		}
 
@@ -1363,5 +1388,112 @@ export const defaultShapers = {
 		if (as) node.as = as;
 		node.body = body;
 		return node;
+	},
+
+
+	// =============================================================
+	// §3 IMPORTS
+	// =============================================================
+
+	// ImportExpr := "import" _ PlainStr;
+	//
+	// Keyword "import" is noise. The PlainStr node is kept intact —
+	// its own `.text` field carries the import target string; the
+	// wrapping node retains span info covering the quotes.
+	//
+	// Field name `from` matches the literal source-form
+	// (`def x: import "..."` reads "from a source"); also lines up
+	// with ES-module-style mental model.
+	ImportExpr(frame,parts) {
+		return { type: "ImportExpr", from: parts.find(isNode) };
+	},
+
+	// =============================================================
+	// §11 DEF-BLOCK STATEMENT
+	// =============================================================
+
+	// DefBlockStmt := "def" _ BlockDefsInit _ <BareBlockExpr>;
+	//
+	// Field names `defs` + `stmts` mirror BlockExpr for consumer
+	// uniformity. Difference vs BlockExpr: `defs` is REQUIRED here
+	// (BlockDefsInit, not the Opt variant) — always present, no
+	// omission. <BareBlockExpr> is hidden, so OpenBrace, Semicolons,
+	// and CloseBrace bubble up directly into parts; the
+	// BlockDefsInit child sits alongside stmt nodes and is
+	// identified by its type tag.
+	//
+	// "def" keyword and structural delimiters (braces, semicolons)
+	// are noise (recoverable from the type tag).
+	DefBlockStmt(frame,parts) {
+		var defs;
+		var stmts = [];
+		for (let p of parts) {
+			if (p.type === "BlockDefsInit") defs = p;
+			else if (isNode(p)) stmts.push(p);
+			// else: KwDef, OpenBrace, CloseBrace, Semicolons — skip
+		}
+		return { type: "DefBlockStmt", defs, stmts };
+	},
+
+	// =============================================================
+	// §12 ASSIGNMENT
+	// =============================================================
+
+	// AssignmentExpr := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
+	//
+	// Shape `{ target, source }`. The LHS folds via the unified
+	// access-fold rule (see foldAccess above): bare-arm LHS is the
+	// raw IdentBase node; access-arm LHS becomes the same nested
+	// MemberAccessExpr / IndexAccessExpr chain that ChainExpr
+	// produces in operand position. So `foo.bar := 5` and the
+	// operand-position expression `foo.bar` share an identical
+	// shape for the access chain — only the outer node type
+	// differs.
+	//
+	// `:` and `=` (the two tokens of `:=`) are noise. No `:as` tail
+	// per grammar — parenthesize to annotate.
+	//
+	// Parts layout (after node-filter):
+	//   - Bare arm:   [ Identifier-node,            Expr-node ]
+	//   - Access arm: [ IdentBase-node, AccessNode, Expr-node ]
+	// The middle node (when present) is always SingleAccessExpr.
+	AssignmentExpr(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var base, access, source;
+		if (nodes.length === 2) {
+			[ base, source ] = nodes;
+		}
+		else {
+			[ base, access, source ] = nodes;
+		}
+		return {
+			type: "AssignmentExpr",
+			target: foldAccess(base,access),
+			source,
+		};
+	},
+
+	// =============================================================
+	// §18 TYPE DEFINITION
+	// =============================================================
+
+	// DefTypeStmt := "deft" _ Identifier _ TypeExpr;
+	//
+	// Shape `{ name, decl }`. `decl` (declaration) holds whichever
+	// type-tagged node TypeExpr resolves to — FuncTypeExpr,
+	// UnionTypeExpr, NamedType, NestedTypeExpr, DataStructTypeExpr,
+	// GroupedTypeExpr, or a leaf literal (EmptyLit / NumberLit /
+	// PlainStr / BooleanLit). All §18 productions are currently on
+	// default shape, but their type tags survive, so consumers can
+	// branch on `decl.type`.
+	//
+	// `name` is the Identifier node (mirrors DefFuncExpr.name —
+	// keep node for span/source-fidelity; the GatherParameter
+	// flatten-to-string convention is reserved for adjacency-
+	// marked names where the wrapper is purely structural).
+	// "deft" keyword is noise.
+	DefTypeStmt(frame,parts) {
+		var [ name, decl ] = parts.filter(isNode);
+		return { type: "DefTypeStmt", name, decl };
 	},
 };
