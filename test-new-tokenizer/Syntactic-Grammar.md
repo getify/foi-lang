@@ -743,10 +743,10 @@ DepMatchExpr           := Qmark OpenParen _ ExprNoBlock _ CloseParen OpenBrace _
                         | ElseStmt;
 DepPatternStmt         := DepCondClause _ MatchConsequent (_ Semicolon)*;
 DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;
-<DepCondClause>        := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
+DepCondClause          := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
 <DepCondExprList>      := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
-<DepCondBoolExpr>      := AsTypeOp _ NamedType
+DepCondBoolExpr        := AsTypeOp _ NamedType
                         | DepCondBoolOp _ CompareDispatch
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;

@@ -241,6 +241,88 @@ function shapeConciseBinding(typeName,parts) {
 	};
 }
 
+// Helper for the polarity field naming convention used in §15
+// (and reused from §14's CondClause shape).
+//
+// When user wrote ?/! explicitly, the field is `polarity` with
+// that token's value. When the polarity slot was omitted
+// (allowed by <IndepCondClause> and DepCondClause, and by
+// ElseStmt's leading-? form), the field is `defaultPolarity`
+// with the implicit "?" value — per the Foi-Guide convention
+// that omitted polarity defaults to ?.
+//
+// Field-name discrimination preserves user-written vs. implicit
+// source-fidelity without an extra boolean flag. Consumers
+// reading effective polarity do `clause.polarity ?? clause.defaultPolarity`.
+//
+// Used by:
+//   - shapeIndepPatternStmt (CondClause synthesis)
+//   - DepCondClause shaper
+//   - ElseStmt shaper
+//
+// Returns an object spreadable onto the caller's result.
+function shapePolarity(polarityTok) {
+	if (polarityTok) return { polarity: polarityTok.value };
+	return { defaultPolarity: "?" };
+}
+
+// Helper for the two §15 independent-match pattern-stmt
+// productions — IndepPatternStmt and IndepPatternStmtNoSemi.
+// Per Q1's collapse decision, both shape to the same
+// {type: "IndepPatternStmt", ...} node; the trailing-semi
+// distinction lives in the deferred source-fidelity audit
+// (terminators parallel array).
+//
+// <IndepCondClause> stays hidden — its content splices in.
+// Parts contain: optional Qmark/Exmark, BracketExpr (the test),
+// then spliced <MatchConsequent>/<MatchConsequentNoSemi> content
+// (either [Colon, Expr-node, Semi] or [BlockExpr-node]).
+//
+// Synthesizes a CondClause node uniform with §14's
+// GuardedExpr.clause — same {polarity|defaultPolarity, test}
+// shape. Synthetic, so start/end is set explicitly.
+function shapeIndepPatternStmt(parts) {
+	var polarityTok, test, consequent;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (!test) test = p;
+			else if (!consequent) consequent = p;
+		}
+		else if (p.type === "Qmark" || p.type === "Exmark") {
+			polarityTok = p;
+		}
+		// else: Colon, Semicolon — skip
+	}
+	var clause = {
+		type: "CondClause",
+		...shapePolarity(polarityTok),
+		test,
+		start: polarityTok ? polarityTok.start : test.start,
+		end: test.end,
+	};
+	return { type: "IndepPatternStmt", clause, consequent };
+}
+
+// Helper for the two §15 dependent-match pattern-stmt
+// productions — DepPatternStmt and DepPatternStmtNoSemi. Per Q1,
+// both collapse to {type: "DepPatternStmt", ...}.
+//
+// DepCondClause is now visible (promoted from <DepCondClause>),
+// so it arrives in parts as a typed node directly. Consequent
+// comes from the spliced <MatchConsequent>/<MatchConsequentNoSemi>
+// content (Expr or BlockExpr node).
+function shapeDepPatternStmt(parts) {
+	var clause, consequent;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (p.type === "DepCondClause") clause = p;
+			else if (!consequent) consequent = p;
+		}
+		// else: Colon, Semicolon — skip
+	}
+	return { type: "DepPatternStmt", clause, consequent };
+}
+
 // Helper for the six paren-grouping productions (GroupedExpr,
 // GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
 // GroupedBareOpExprNoEmpty from §5; GroupedDoExpr from §9
@@ -1751,5 +1833,157 @@ export const defaultShapers = {
 	DoLoopComprExpr(frame,parts) {
 		var [ range, iter ] = parts.filter(isNode);
 		return { type: "DoLoopComprExpr", range, iter };
+	},
+
+
+	// =============================================================
+	// §15 MATCH EXPRESSIONS
+	// =============================================================
+
+	// IndepMatchExpr := Qmark OpenBrace _ <IndepMatchStmts> _ CloseBrace;
+	//
+	// <IndepMatchStmts> hidden — its list of IndepPatternStmt
+	// nodes (plus optional trailing ElseStmt or
+	// IndepPatternStmtNoSemi) splices up directly. Per Q1, the
+	// NoSemi variant collapses to IndepPatternStmt at shape time,
+	// so consumers see uniform `IndepPatternStmt` type tags in
+	// stmts. Qmark and braces are noise.
+	IndepMatchExpr(frame,parts) {
+		return { type: "IndepMatchExpr", stmts: parts.filter(isNode) };
+	},
+
+	// IndepPatternStmt       := <IndepCondClause> _ <MatchConsequent>       (_ Semicolon)*;
+	// IndepPatternStmtNoSemi := <IndepCondClause> _ <MatchConsequentNoSemi>;
+	//
+	// Per Q1, both delegate to shapeIndepPatternStmt and emit the
+	// same {type: "IndepPatternStmt", ...} node. See the helper's
+	// comment for shape details.
+	IndepPatternStmt(frame,parts)       { return shapeIndepPatternStmt(parts); },
+	IndepPatternStmtNoSemi(frame,parts) { return shapeIndepPatternStmt(parts); },
+
+	// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen
+	//                 OpenBrace _ <DepMatchStmts> _ CloseBrace;
+	//
+	// Two semantic parts: the topic (the ExprNoBlock between the
+	// parens) and the list of stmts (DepPatternStmt nodes, possibly
+	// ending with ElseStmt). Topic arrives as the first node in
+	// source order; subsequent nodes are stmts.
+	DepMatchExpr(frame,parts) {
+		var topic;
+		var stmts = [];
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (!topic) topic = p;
+				else stmts.push(p);
+			}
+			// else: Qmark, OpenParen, CloseParen, OpenBrace, CloseBrace — skip
+		}
+		return { type: "DepMatchExpr", topic, stmts };
+	},
+
+	// DepPatternStmt       := DepCondClause _ <MatchConsequent>       (_ Semicolon)*;
+	// DepPatternStmtNoSemi := DepCondClause _ <MatchConsequentNoSemi>;
+	//
+	// Per Q1, both delegate to shapeDepPatternStmt.
+	DepPatternStmt(frame,parts)       { return shapeDepPatternStmt(parts); },
+	DepPatternStmtNoSemi(frame,parts) { return shapeDepPatternStmt(parts); },
+
+	// DepCondClause := (Qmark | Exmark)? OpenBracket _ <DepCondExprList> _ CloseBracket;
+	//
+	// Promoted from <DepCondClause> this batch. Shape
+	// `{polarity|defaultPolarity, tests}`. `tests` (plural of
+	// CondClause.test) is the list of values/operator-led fragments
+	// matched against the dependent-match topic. Atoms are typed
+	// nodes — DepCondBoolExpr for operator-led fragments
+	// (`?and x`, `?= "Kyle"`, `?as int`) or any ExprNoBlock-shaped
+	// node for plain values.
+	//
+	// OpenBracket/CloseBracket/Comma are noise.
+	DepCondClause(frame,parts) {
+		var polarityTok;
+		var tests = [];
+		for (let p of parts) {
+			if (isNode(p)) tests.push(p);
+			else if (p.type === "Qmark" || p.type === "Exmark") polarityTok = p;
+			// else: OpenBracket, CloseBracket, Comma — skip
+		}
+		return {
+			type: "DepCondClause",
+			...shapePolarity(polarityTok),
+			tests,
+		};
+	},
+
+	// DepCondBoolExpr := AsTypeOp _ NamedType
+	//                  | DepCondBoolOp _ CompareDispatch
+	//                  | OpenParen _ DepCondBoolExpr _ CloseParen;
+	//
+	// Promoted from <DepCondBoolExpr> this batch. Shape `{op, right}`
+	// — monadic operator + single operand. These are expression
+	// FRAGMENTS (op + RHS, with the implicit LHS being the
+	// dependent-match topic), not full binary expressions, so
+	// there's no `left` slot. The fragment nature is also why the
+	// paren-recursive arm earns no node: there's nothing to group
+	// around a monadic op+operand.
+	//
+	// Arm 3 (paren-recursive) UNWRAPS — return the inner
+	// DepCondBoolExpr unchanged. The machinery's start/end overwrite
+	// then extends the inner node's span to cover the outer parens
+	// (same pattern as AsExpr's unwrap; see top-of-file `:as`
+	// annotation handling comment).
+	//
+	// Multi-token ops (?<=, ?<=>, etc.) concatenate token values
+	// into the op string — same pattern as the binary tier helper.
+	// Single-token BooleanOper ops (?and, ?or, ?=, ?as, etc.) just
+	// pass their full value through.
+	DepCondBoolExpr(frame,parts) {
+		var op = "";
+		var right;
+		var sawOpenParen = false;
+		for (let p of parts) {
+			if (isNode(p)) {
+				right = p;
+			}
+			else if (p.type === "OpenParen") {
+				sawOpenParen = true;
+			}
+			else if (p.type === "CloseParen") {
+				// noise
+			}
+			else {
+				op += p.value;
+			}
+		}
+		// Paren arm: right is the inner DepCondBoolExpr; unwrap.
+		if (sawOpenParen) return right;
+		return { type: "DepCondBoolExpr", op, right };
+	},
+
+	// ElseStmt := (Qmark _)? <MatchConsequentNoSemi> (_ Semicolon)*;
+	//
+	// Optional leading `?` distinguishes the explicit `?:` form
+	// from the abbreviated `:` form (semantically identical per
+	// Foi-Guide). Per the same precedent as IndepCondClause (Q2),
+	// the explicit form sets `polarity: "?"` and the abbreviated
+	// form sets `defaultPolarity: "?"`. The grammar only allows
+	// Qmark here (no Exmark), so polarity value is always "?".
+	//
+	// Consequent is the trailing node (Expr or BlockExpr — both
+	// arms of <MatchConsequentNoSemi> splice in either way).
+	// Trailing semicolons are dropped per source-fidelity deferral.
+	ElseStmt(frame,parts) {
+		var polarityTok, consequent;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (!consequent) consequent = p;
+			}
+			else if (p.type === "Qmark") polarityTok = p;
+			// else: Colon, Semicolon — skip
+		}
+		return {
+			type: "ElseStmt",
+			...shapePolarity(polarityTok),
+			consequent,
+		};
 	},
 };

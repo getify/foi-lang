@@ -1430,17 +1430,19 @@ var DepCondBoolOp = or(
 	lazy(() => OrOp)
 );
 
-// <DepCondBoolExpr> := AsTypeOp _ NamedType
-//                    | DepCondBoolOp _ CompareDispatch
-//                    | OpenParen _ DepCondBoolExpr _ CloseParen;
+// DepCondBoolExpr := AsTypeOp _ NamedType
+//                  | DepCondBoolOp _ CompareDispatch
+//                  | OpenParen _ DepCondBoolExpr _ CloseParen;
 //
 // PEG: AsTypeOp arm first — disjoint opener (?as/!as) from
 // DepCondBoolOp (which is CompareOp|AndOp|OrOp, none of which include
 // ?as/!as anymore).
-var DepCondBoolExpr = or(
-	and(AsTypeOp, delim(), lazy(() => NamedType)),
-	and(lazy(() => DepCondBoolOp), delim(), CompareDispatch),
-	and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
+export const DepCondBoolExpr = production("DepCondBoolExpr",
+	or(
+		and(AsTypeOp, delim(), lazy(() => NamedType)),
+		and(lazy(() => DepCondBoolOp), delim(), CompareDispatch),
+		and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
+	)
 );
 
 // <DepCondExprAtom> := DepCondBoolExpr | ExprNoBlock;
@@ -1459,12 +1461,14 @@ var DepCondExprList = and(
 	optional(and(delim(), Comma))
 );
 
-// <DepCondClause> := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
-var DepCondClause = and(
-	optional(or(Qmark, Exmark)),
-	OpenBracket, delim(),
-	DepCondExprList,
-	delim(), CloseBracket
+// DepCondClause := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
+export const DepCondClause = production("DepCondClause",
+	and(
+		optional(or(Qmark, Exmark)),
+		OpenBracket, delim(),
+		DepCondExprList,
+		delim(), CloseBracket
+	)
 );
 
 // DepPatternStmt       := DepCondClause _ MatchConsequent (_ Semicolon)*;

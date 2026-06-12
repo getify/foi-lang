@@ -331,6 +331,25 @@ var samples = [
 	{ label: "Destructure concise, with access",      src: "def < :a.b >: payload;" },
 	{ label: "Destructure capture (whole value)",     src: "def < #whole >: payload;" },
 	{ label: "Destructure mixed (all three forms)",   src: "def < a: src.x, :b, #whole >: payload;" },
+
+	// === §15 Match Expressions ===
+	{ label: "IndepMatch: bare ?[..]",                    src: '?{ ?[x ?= 1]: "one" };' },
+	{ label: "IndepMatch: implicit-? form [..]",          src: '?{ [x ?= 1]: "one" };' },
+	{ label: "IndepMatch: negated ![..]",                 src: '?{ ![x ?= 1]: "no" };' },
+	{ label: "IndepMatch: with explicit ?: else",         src: '?{ ?[x]: "yes"; ?: "no" };' },
+	{ label: "IndepMatch: with abbreviated : else",       src: '?{ ?[x]: "yes"; : "no" };' },
+	{ label: "IndepMatch: block consequent",              src: '?{ ?[x]: { log("hi"); "ok" }; ?: "no" };' },
+
+	{ label: "DepMatch: single string atom",              src: '?(name){ ?["Kyle"]: "hi" };' },
+	{ label: "DepMatch: multi-atom comma list",           src: '?(name){ ?["Kyle","Fred"]: "hi"; ?: "bye" };' },
+	{ label: "DepMatch: operator-led ?and",               src: '?(x){ ?[?and y]: "ok"; ?: "no" };' },
+	{ label: "DepMatch: operator-led ?=",                 src: '?(x){ ?[?= 1]: "one"; ?: "other" };' },
+	{ label: "DepMatch: operator-led ?as",                src: '?(x){ ?[?as int]: "i"; ?: "?" };' },
+	{ label: "DepMatch: mixed atom kinds",                src: '?(x){ ?["foo", ?= 1, ?as int]: "match"; ?: "no" };' },
+	{ label: "DepMatch: paren-wrapped fragment unwraps",  src: '?(x){ ?[(?and y)]: "ok"; ?: "no" };' },
+	{ label: "DepMatch: implicit-? clause",               src: '?(x){ ["Kyle"]: "hi"; ?: "bye" };' },
+
+	{ label: "GuardedExpr (§14 sanity)",                  src: '?[!empty x]: log(x);' },
 ];
 
 for (let { label, src } of samples) {
