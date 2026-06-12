@@ -225,6 +225,15 @@ var samples = [
 
 	// Unary with :as
 	{ label: "Unary :as: ?x :as bool",      src: "?x :as bool;" },
+
+	// CondClause + GuardedExpr (§14) — basic + variants
+	{ label: "GuardedExpr: bare",                  src: "?[x ?< 5]: x + 1;" },
+	{ label: "GuardedExpr: negated (Exmark)",      src: "![ready]: shutdown();" },
+	{ label: "GuardedExpr: BlockExpr consequent",  src: "?[ready]: { go(); };" },
+
+	// CondClause at non-GuardedExpr call sites — same shape, different parents
+	{ label: "CondClause as FlowBinExpr LHS",      src: "?[isComplete] ~each { go(); };" },
+	{ label: "CondClause inside FuncPrecond",      src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
 ];
 
 for (let { label, src } of samples) {

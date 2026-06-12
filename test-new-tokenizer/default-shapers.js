@@ -1094,4 +1094,60 @@ export const defaultShapers = {
 
 		return node;
 	},
+
+	// =============================================================
+	// §14 CONDITIONALS / GUARDS
+	// =============================================================
+
+	// CondClause := (Qmark | Exmark) BracketExpr;
+	//
+	// Polarity (`?` or `!`) is required — the production guarantees
+	// one. BracketExpr is kept as a nested node rather than unwrapped
+	// to its inner expr; BracketExpr already surfaces in the AST in
+	// other contexts (e.g. DestructureNamedDef's BracketExpr arm),
+	// so this shape stays uniform across roles. The `test` field name
+	// conveys the semantic role; the BracketExpr type tag conveys the
+	// syntactic shape (`[...]`).
+	//
+	// Used at three call sites with the same shape:
+	//   - GuardedExpr (§14)        — as `clause`
+	//   - FuncPrecond (§13)        — as `clause` (default-shape today)
+	//   - FlowBinExpr LHS (§9)     — as `left` via shapeBinTier
+	CondClause(frame,parts) {
+		var polarity = "";
+		var test;
+		for (let p of parts) {
+			if (isNode(p)) test = p;
+			else polarity = p.value;
+		}
+		return { type: "CondClause", polarity, test };
+	},
+
+	// GuardedExpr := CondClause _ Colon _ Expr;
+	//
+	// Colon is noise (recoverable from the type tag — every
+	// GuardedExpr has a `:` between clause and consequent). The
+	// CondClause shapes per its own shaper above; the inner Expr
+	// fills `consequent`.
+	//
+	// No `:as` handling — GuardedExpr is in <AsableExpr>, so
+	// annotation comes via AsExpr's unwrap, which lifts `as` onto
+	// the returned GuardedExpr from the outside.
+	//
+	// Field name `consequent` (not `body`): "body" is associated
+	// with blocks/functions; "consequent" is the natural term for
+	// the branch of a conditional, and lines up with what
+	// MatchConsequent will produce in §15.
+	GuardedExpr(frame,parts) {
+		var clause;
+		var consequent;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "CondClause") clause = p;
+				else consequent = p;
+			}
+			// else: Colon — skip
+		}
+		return { type: "GuardedExpr", clause, consequent };
+	},
 };
