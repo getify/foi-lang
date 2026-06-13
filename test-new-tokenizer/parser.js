@@ -2,9 +2,8 @@
 
 import {
 	lazy, parse, production, terminal,
-	and, or, optional, any, many,
-	not, lookahead, eof, gate, dispatch,
-	delim, delimWSReq, presets, shapeNode,
+	and, or, optional, any, many, lookahead,
+	eof, delim, presets, shapeNode,
 } from "./parser-combinators.js";
 
 import { tokenize } from "./tokenizer.js";
@@ -69,12 +68,6 @@ export const PipelineTopic = production("PipelineTopic", tokType("Hash"));
 // =============================================================
 // §2 LITERALS
 // =============================================================
-
-// Shared optional `:as` tail. Now used ONLY by the six paren-grouping
-// productions in §5 and §9 — leaves and other intermediates no longer
-// carry their own `:as` tail. See the `:as` Precedence section in
-// Syntactic-Grammar.md.
-var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
 
 // Integer-lit token matchers and the hidden <IntegerLit> union from
 // the lex layer. Used by §2 NumberLit and §6 DotIdentifier. The
@@ -276,6 +269,12 @@ var KwAs = tokVal("Keyword", ":as");
 export const AsAnnotationExpr = production("AsAnnotationExpr",
 	and(KwAs, delim(), lazy(() => NamedType))
 );
+
+// Shared optional `:as` tail. Now used ONLY by the six paren-grouping
+// productions in §5 and §9 — leaves and other intermediates no longer
+// carry their own `:as` tail. See the `:as` Precedence section in
+// Syntactic-Grammar.md.
+var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
 
 // <Expr> := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
 //
