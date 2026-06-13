@@ -1,4 +1,4 @@
-// shapers.js — AST shape conventions for the Foi syntactic parser.
+// default-shapers.js — AST shape conventions for the Foi syntactic parser.
 //
 // Each shaper receives (frame, parts) where parts is the source-
 // ordered, delim-free sequence of terminals (tokens) and recursively-
@@ -33,6 +33,14 @@
 //   - Multi-token operators (e.g. AddOp `$+`) concatenate their
 //     token values into a single string in the `op` field.
 //
+// Token-vs-node discriminator in `parts`:
+//   Raw tokens carry a `value` field (string, from the lex layer);
+//   shaped nodes never expose `value` at top level. Literal
+//   shapers expose source as `text`, identifiers as `name`, etc.
+//   The isNode helper below tests this. SHAPERS MUST NOT set a
+//   `value` field on returned nodes — doing so breaks the
+//   discriminator for any parent shaper that consumes them.
+//
 // `:as` annotation handling — centralized via AsExpr (§5):
 //   Per the grammar's first-class `:as` precedence rule, `:as`
 //   binds at exactly one tier — strictly between unary and binary.
@@ -57,15 +65,17 @@
 //   unary, chain/call/access, at-form, op-as-func, block — carry
 //   no `:as` tail at the grammar level. Their shapers do not
 //   handle `as`; AsExpr handles it for them.
-//
-// Token-vs-node discriminator in `parts`:
-//   Raw tokens carry a `value` field (string, from the lex layer);
-//   shaped nodes never expose `value` at top level. Literal
-//   shapers expose source as `text`, identifiers as `name`, etc.
-//   The isNode helper below tests this. SHAPERS MUST NOT set a
-//   `value` field on returned nodes — doing so breaks the
-//   discriminator for any parent shaper that consumes them.
 
+
+// =============================================================
+// HELPERS
+// =============================================================
+
+// Token-vs-node discriminator. Raw tokens have a `value` field
+// (string, from the lex layer); shaped nodes never do. SHAPERS
+// MUST NOT set a `value` field on returned nodes — collision with
+// this predicate breaks every parent shaper's parts.filter(isNode)
+// / parts.find(isNode) call.
 export var isNode = p => !("value" in p);
 
 // Helper for ChainExpr's fold (below). Given an `object`
@@ -155,14 +165,14 @@ function applyChainSeg(object,seg) {
 	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
 }
 
-// Helper for fold-access call sites — AtExpr base, AssignmentExpr LHS,
-// AtCallExpr's inline AtExpr synthesis, ExportNamedBinding source,
-// ExportConciseBinding source, DestructureNamedDef source, and
-// DestructureConciseDef source. Given a base node and a
-// SingleAccessExpr or MultiAccessExpr (or undefined), folds the
-// access segments via applyChainSeg left-to-right and returns the
-// resulting nested chain. undefined access returns the base
-// unchanged.
+// Helper for the eight unified access-fold sites — AtExpr base,
+// AssignmentExpr LHS, AtCallExpr's inline AtExpr synthesis,
+// ExportNamedBinding source, ExportConciseBinding source,
+// DestructureNamedDef source, DestructureConciseDef source, and
+// PickValue source. Given a base node and a SingleAccessExpr or
+// MultiAccessExpr (or undefined), folds the access segments via
+// applyChainSeg left-to-right and returns the resulting nested
+// chain. undefined access returns the base unchanged.
 //
 // Wrapper-unwrap-at-assignment pattern — SingleAccessExpr /
 // MultiAccessExpr shapers still emit their own node, but parents
@@ -217,33 +227,6 @@ function shapeNamedBinding(typeName,parts) {
 	};
 }
 
-// Shapes a PropertyExpr key. PropertyExpr is grammar-hidden:
-//
-//   <PropertyExpr> := Identifier | <PositiveIntLit>;
-//
-// Identifier arrives as a node — passthrough. PositiveIntLit
-// arrives as one or two raw tokens (bare PositiveIntegerLit, or
-// [Escape, PositiveIntegerLit] for the `\5_000` form). We
-// synthesize a NumberLit mirroring the existing NumberLit shaper:
-// text = concat of token values; span derives from first/last
-// token. Synthetic — machinery doesn't reach this node, so we set
-// start/end explicitly.
-//
-// Used by ConcisePropDef.source and ExplicitPropDef.key (static
-// arm).
-function shapePropertyExpr(keyParts) {
-	var node = keyParts.find(isNode);
-	if (node) return node;
-	var text = "";
-	for (let p of keyParts) text += p.value;
-	return {
-		type: "NumberLit",
-		text,
-		start: keyParts[0].start,
-		end:   keyParts[keyParts.length - 1].end,
-	};
-}
-
 // Helper for the two "concise binding" productions —
 // ExportConciseBinding (§3) and DestructureConciseDef (§4). Both
 // share the shape `Colon Identifier SingleAccessExpr?`. After
@@ -266,88 +249,6 @@ function shapeConciseBinding(typeName,parts) {
 		type: typeName,
 		source: foldAccess(sourceBase,access),
 	};
-}
-
-// Helper for the polarity field naming convention used in §15
-// (and reused from §14's CondClause shape).
-//
-// When user wrote ?/! explicitly, the field is `polarity` with
-// that token's value. When the polarity slot was omitted
-// (allowed by <IndepCondClause> and DepCondClause, and by
-// ElseStmt's leading-? form), the field is `defaultPolarity`
-// with the implicit "?" value — per the Foi-Guide convention
-// that omitted polarity defaults to ?.
-//
-// Field-name discrimination preserves user-written vs. implicit
-// source-fidelity without an extra boolean flag. Consumers
-// reading effective polarity do `clause.polarity ?? clause.defaultPolarity`.
-//
-// Used by:
-//   - shapeIndepPatternStmt (CondClause synthesis)
-//   - DepCondClause shaper
-//   - ElseStmt shaper
-//
-// Returns an object spreadable onto the caller's result.
-function shapePolarity(polarityTok) {
-	if (polarityTok) return { polarity: polarityTok.value };
-	return { defaultPolarity: "?" };
-}
-
-// Helper for the two §15 independent-match pattern-stmt
-// productions — IndepPatternStmt and IndepPatternStmtNoSemi.
-// Per Q1's collapse decision, both shape to the same
-// {type: "IndepPatternStmt", ...} node; the trailing-semi
-// distinction lives in the deferred source-fidelity audit
-// (terminators parallel array).
-//
-// <IndepCondClause> stays hidden — its content splices in.
-// Parts contain: optional Qmark/Exmark, BracketExpr (the test),
-// then spliced <MatchConsequent>/<MatchConsequentNoSemi> content
-// (either [Colon, Expr-node, Semi] or [BlockExpr-node]).
-//
-// Synthesizes a CondClause node uniform with §14's
-// GuardedExpr.clause — same {polarity|defaultPolarity, test}
-// shape. Synthetic, so start/end is set explicitly.
-function shapeIndepPatternStmt(parts) {
-	var polarityTok, test, consequent;
-	for (let p of parts) {
-		if (isNode(p)) {
-			if (!test) test = p;
-			else if (!consequent) consequent = p;
-		}
-		else if (p.type === "Qmark" || p.type === "Exmark") {
-			polarityTok = p;
-		}
-		// else: Colon, Semicolon — skip
-	}
-	var clause = {
-		type: "CondClause",
-		...shapePolarity(polarityTok),
-		test,
-		start: polarityTok ? polarityTok.start : test.start,
-		end: test.end,
-	};
-	return { type: "IndepPatternStmt", clause, consequent };
-}
-
-// Helper for the two §15 dependent-match pattern-stmt
-// productions — DepPatternStmt and DepPatternStmtNoSemi. Per Q1,
-// both collapse to {type: "DepPatternStmt", ...}.
-//
-// DepCondClause is now visible (promoted from <DepCondClause>),
-// so it arrives in parts as a typed node directly. Consequent
-// comes from the spliced <MatchConsequent>/<MatchConsequentNoSemi>
-// content (Expr or BlockExpr node).
-function shapeDepPatternStmt(parts) {
-	var clause, consequent;
-	for (let p of parts) {
-		if (isNode(p)) {
-			if (p.type === "DepCondClause") clause = p;
-			else if (!consequent) consequent = p;
-		}
-		// else: Colon, Semicolon — skip
-	}
-	return { type: "DepPatternStmt", clause, consequent };
 }
 
 // Helper for the six paren-grouping productions (GroupedExpr,
@@ -379,6 +280,32 @@ function shapeGrouped(typeName,parts) {
 	var node = { type: typeName, expr };
 	if (as) node.as = as;
 	return node;
+}
+
+// Helper for the two §8 unary productions (NamedUnaryExpr,
+// SymbolicUnaryExpr). Both share `op _ BinaryAtom` shape. The op
+// runs across leading non-node tokens (single token in practice:
+// ?empty/!empty as BooleanOper, or Qmark/Exmark); `right` is the
+// single operand node.
+//
+// No `:as` handling — unary productions lost their own
+// `(_ AsAnnotationExpr)?` tail in the :as rework. Annotation
+// comes via AsExpr (UnaryExpr is in <AsableExpr>); AsExpr's
+// unwrap-shaper lifts `as` onto the returned unary node, so the
+// resulting AST shape for `?x :as bool` is
+// `SymbolicUnaryExpr{op:"?", right:Identifier{name:"x"}, as:"bool"}`.
+//
+// Field naming: `{ op, right }` — `right` for positional symmetry
+// with shapeBinTier's `{ left, op, right }`; unary is just a
+// binary with `left` absent.
+function shapeUnaryTier(typeName,parts) {
+	var op = "";
+	var right;
+	for (let p of parts) {
+		if (isNode(p)) right = p;
+		else op += p.value;
+	}
+	return { type: typeName, op, right };
 }
 
 // Helper for the six §9 binary tier iter productions (FlowBinExpr,
@@ -435,38 +362,141 @@ function shapeBinTier(typeName,parts) {
 	return node;
 }
 
-// Helper for the two §8 unary productions (NamedUnaryExpr,
-// SymbolicUnaryExpr). Both share `op _ BinaryAtom` shape. The op
-// runs across leading non-node tokens (single token in practice:
-// ?empty/!empty as BooleanOper, or Qmark/Exmark); `right` is the
-// single operand node.
+// Helper for the polarity field naming convention used in §15
+// (and reused from §14's CondClause shape rationale).
 //
-// No `:as` handling — unary productions lost their own
-// `(_ AsAnnotationExpr)?` tail in the :as rework. Annotation
-// comes via AsExpr (UnaryExpr is in <AsableExpr>); AsExpr's
-// unwrap-shaper lifts `as` onto the returned unary node, so the
-// resulting AST shape for `?x :as bool` is
-// `SymbolicUnaryExpr{op:"?", right:Identifier{name:"x"}, as:"bool"}`.
+// When user wrote ?/! explicitly, the field is `polarity` with
+// that token's value. When the polarity slot was omitted
+// (allowed by <IndepCondClause> and DepCondClause, and by
+// ElseStmt's leading-? form), the field is `defaultPolarity`
+// with the implicit "?" value — per the Foi-Guide convention
+// that omitted polarity defaults to ?.
 //
-// Field naming: `{ op, right }` — `right` for positional symmetry
-// with shapeBinTier's `{ left, op, right }`; unary is just a
-// binary with `left` absent.
-function shapeUnaryTier(typeName,parts) {
-	var op = "";
-	var right;
-	for (let p of parts) {
-		if (isNode(p)) right = p;
-		else op += p.value;
-	}
-	return { type: typeName, op, right };
+// Field-name discrimination preserves user-written vs. implicit
+// source-fidelity without an extra boolean flag. Consumers
+// reading effective polarity do `clause.polarity ?? clause.defaultPolarity`.
+//
+// Used by:
+//   - shapeIndepPatternStmt (CondClause synthesis)
+//   - DepCondClause shaper
+//   - ElseStmt shaper
+//
+// §14's CondClause does NOT use this helper — its grammar
+// requires polarity, so the field is unconditionally `polarity`
+// with no implicit-default branch needed.
+//
+// Returns an object spreadable onto the caller's result.
+function shapePolarity(polarityTok) {
+	if (polarityTok) return { polarity: polarityTok.value };
+	return { defaultPolarity: "?" };
 }
+
+// Helper for the two §15 independent-match pattern-stmt
+// productions — IndepPatternStmt and IndepPatternStmtNoSemi.
+// Both collapse to the same {type: "IndepPatternStmt", ...} node;
+// the trailing-semi distinction is a source-fidelity bit handled
+// by the deferred terminators audit, not by a separate node type.
+//
+// <IndepCondClause> stays hidden — its content splices in.
+// Parts contain: optional Qmark/Exmark, BracketExpr (the test),
+// then spliced <MatchConsequent>/<MatchConsequentNoSemi> content
+// (either [Colon, Expr-node, Semi] or [BlockExpr-node]).
+//
+// Synthesizes a CondClause node uniform with §14's
+// GuardedExpr.clause — same {polarity|defaultPolarity, test}
+// shape. Synthetic, so start/end is set explicitly.
+function shapeIndepPatternStmt(parts) {
+	var polarityTok, test, consequent;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (!test) test = p;
+			else if (!consequent) consequent = p;
+		}
+		else if (p.type === "Qmark" || p.type === "Exmark") {
+			polarityTok = p;
+		}
+		// else: Colon, Semicolon — skip
+	}
+	var clause = {
+		type: "CondClause",
+		...shapePolarity(polarityTok),
+		test,
+		start: polarityTok ? polarityTok.start : test.start,
+		end: test.end,
+	};
+	return { type: "IndepPatternStmt", clause, consequent };
+}
+
+// Helper for the two §15 dependent-match pattern-stmt
+// productions — DepPatternStmt and DepPatternStmtNoSemi. Both
+// collapse to {type: "DepPatternStmt", ...}.
+//
+// DepCondClause is visible, so it arrives in parts as a typed
+// node directly. Consequent comes from the spliced
+// <MatchConsequent>/<MatchConsequentNoSemi> content (Expr or
+// BlockExpr node).
+function shapeDepPatternStmt(parts) {
+	var clause, consequent;
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (p.type === "DepCondClause") clause = p;
+			else if (!consequent) consequent = p;
+		}
+		// else: Colon, Semicolon — skip
+	}
+	return { type: "DepPatternStmt", clause, consequent };
+}
+
+// Shapes a PropertyExpr key. PropertyExpr is grammar-hidden:
+//
+//   <PropertyExpr> := Identifier | <PositiveIntLit>;
+//
+// Identifier arrives as a node — passthrough. PositiveIntLit
+// arrives as one or two raw tokens (bare PositiveIntegerLit, or
+// [Escape, PositiveIntegerLit] for the `\5_000` form). We
+// synthesize a NumberLit mirroring the existing NumberLit shaper:
+// text = concat of token values; span derives from first/last
+// token. Synthetic — machinery doesn't reach this node, so we set
+// start/end explicitly.
+//
+// Used by ConcisePropDef.source and ExplicitPropDef.key (static
+// arm).
+function shapePropertyExpr(keyParts) {
+	var node = keyParts.find(isNode);
+	if (node) return node;
+	var text = "";
+	for (let p of keyParts) text += p.value;
+	return {
+		type: "NumberLit",
+		text,
+		start: keyParts[0].start,
+		end:   keyParts[keyParts.length - 1].end,
+	};
+}
+
 
 export const defaultShapers = {
 
-	// Identifier — bare token-stream extraction. Concatenates the
-	// part values into a single `name` string. Used in binding
-	// positions (DefVarStmt target, parameter names, DotIdentifier
-	// inner, type-decl name, etc.) where no `:as` tail is grammatically
+	// =============================================================
+	// §1 PROGRAM / STATEMENTS
+	// =============================================================
+
+	// Program := _ ((StmtSemi | ExportStmtSemi) _)*
+	//            ((StmtSemiOpt | ExportStmtSemiOpt) _)?;
+	//
+	// Pure list-of-statements. Semicolons are noise; everything
+	// shaped is a top-level statement node.
+	Program(frame,parts) {
+		var stmts = parts.filter(isNode);
+		return { type: "Program", stmts };
+	},
+
+	// Identifier := General;
+	//
+	// Bare token-stream extraction. Concatenates the part values
+	// into a single `name` string. Used in binding positions
+	// (DefVarStmt target, parameter names, DotIdentifier inner,
+	// type-decl name, etc.) where no `:as` tail is grammatically
 	// possible. The BareIdentifier shaper subsumes into this same
 	// node type for reference-position identifiers — consumers see
 	// a uniform Identifier shape regardless of whether the source
@@ -477,24 +507,274 @@ export const defaultShapers = {
 		return { type: "Identifier", name };
 	},
 
-	// BuiltIn — bare token-stream extraction. Same pattern as
-	// Identifier: concat token values to `name`. Single-token in
-	// practice (the production wraps one Builtin token), but the
-	// loop form keeps the shape symmetric with Identifier and
-	// robust to any future grammar widening.
+	// BuiltIn := Builtin;
+	//
+	// Same pattern as Identifier: concat token values to `name`.
+	// Single-token in practice (the production wraps one Builtin
+	// token), but the loop form keeps the shape symmetric with
+	// Identifier and robust to any future grammar widening.
 	BuiltIn(frame,parts) {
 		var name = "";
 		for (let p of parts) name += p.value;
 		return { type: "BuiltIn", name };
 	},
 
-	// PipelineTopic — bare token-stream extraction. Same pattern.
-	// Wraps a single Hash token; `name` is the literal "#".
+	// PipelineTopic := Hash;
+	//
+	// Same pattern. Wraps a single Hash token; `name` is the
+	// literal "#".
 	PipelineTopic(frame,parts) {
 		var name = "";
 		for (let p of parts) name += p.value;
 		return { type: "PipelineTopic", name };
 	},
+
+
+	// =============================================================
+	// §2 LITERALS
+	// =============================================================
+
+	// NumberLit := EscapedNumber | Number | IntegerLit;
+	//
+	// Concatenates contained number/escape token values into a
+	// single source-text string. No `:as` tail at the grammar
+	// level — annotation comes via AsExpr.
+	NumberLit(frame,parts) {
+		var text = "";
+		for (let p of parts) text += p.value;
+		return { type: "NumberLit", text };
+	},
+
+	// BooleanLit := "true" | "false";
+	//
+	// Single Native token. Text is the raw lexeme, mirroring
+	// NumberLit. No `:as` tail.
+	BooleanLit(frame,parts) {
+		var text = "";
+		for (let p of parts) text += p.value;
+		return { type: "BooleanLit", text };
+	},
+
+	// EmptyLit := "empty";
+	//
+	// Type tag is total information; no `text` field. No `:as` tail.
+	EmptyLit(frame,parts) {
+		return { type: "EmptyLit" };
+	},
+
+	// PlainStr := DoubleQuote PlainStrContent* DoubleQuote;
+	//
+	// Concatenates interior String and StringEscapedChar token
+	// values into `text`. Surrounding DoubleQuotes are noise
+	// (recoverable from the type tag). Escape sequences are
+	// preserved raw in `text` — interp's job to resolve them.
+	// No `:as` tail.
+	PlainStr(frame,parts) {
+		var text = "";
+		for (let p of parts) {
+			if (isNode(p)) continue;
+			if (p.type === "String" || p.type === "StringEscapedChar") {
+				text += p.value;
+			}
+			// else: DoubleQuote — skip
+		}
+		return { type: "PlainStr", text };
+	},
+
+	// SpacingEscapedStr := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote;
+	//
+	// Same shape as PlainStr; additionally folds interior
+	// Whitespace tokens into `text` verbatim (the production opts
+	// into preserveInnerDelim so the whitespace tokens reach us in
+	// parts). Leading Escape and surrounding DoubleQuotes are
+	// noise. No `:as` tail.
+	SpacingEscapedStr(frame,parts) {
+		var text = "";
+		for (let p of parts) {
+			if (isNode(p)) continue;
+			if (
+				p.type === "String" ||
+				p.type === "StringEscapedChar" ||
+				p.type === "Whitespace"
+			) {
+				text += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		return { type: "SpacingEscapedStr", text };
+	},
+
+	// InterpExpr := Backtick _ Expr _ Backtick;
+	//
+	// Interp slot inside the two interp-string forms. Surrounding
+	// Backticks are noise; the inner expression is exposed as
+	// `expr`. Parts is exactly [Backtick, exprNode, Backtick].
+	InterpExpr(frame,parts) {
+		var expr = parts.find(isNode);
+		return { type: "InterpExpr", expr };
+	},
+
+	// InterpStr := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote;
+	//
+	// Surfaces as a `chunks` array alternating string text and
+	// InterpExpr nodes. Invariant: chunks.length is always odd,
+	// chunks[0] and chunks[last] are always strings (possibly "").
+	// Consumers discriminate elements via `typeof === "string"`.
+	// Leading Escape and surrounding DoubleQuotes are noise.
+	// No `:as` tail.
+	InterpStr(frame,parts) {
+		var chunks = [];
+		var buf = "";
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "InterpExpr") {
+					chunks.push(buf);
+					chunks.push(p);
+					buf = "";
+				}
+			}
+			else if (p.type === "String" || p.type === "StringEscapedChar") {
+				buf += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		chunks.push(buf);
+		return { type: "InterpStr", chunks };
+	},
+
+	// SpacingInterpStr := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote;
+	//
+	// Same chunks-array shape as InterpStr; Whitespace tokens
+	// fold into the adjacent text chunk verbatim (preserveInnerDelim
+	// delivers them in parts). No `:as` tail.
+	SpacingInterpStr(frame,parts) {
+		var chunks = [];
+		var buf = "";
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "InterpExpr") {
+					chunks.push(buf);
+					chunks.push(p);
+					buf = "";
+				}
+			}
+			else if (
+				p.type === "String" ||
+				p.type === "StringEscapedChar" ||
+				p.type === "Whitespace"
+			) {
+				buf += p.value;
+			}
+			// else: Escape, DoubleQuote — skip
+		}
+		chunks.push(buf);
+		return { type: "SpacingInterpStr", chunks };
+	},
+
+
+	// =============================================================
+	// §3 IMPORTS / EXPORTS
+	// =============================================================
+
+	// ImportExpr := "import" _ PlainStr;
+	//
+	// Keyword "import" is noise. The PlainStr node is kept intact —
+	// its own `.text` field carries the import target string; the
+	// wrapping node retains span info covering the quotes.
+	//
+	// Field name `from` matches the literal source-form
+	// (`def x: import "..."` reads "from a source"); also lines up
+	// with ES-module-style mental model.
+	ImportExpr(frame,parts) {
+		return { type: "ImportExpr", from: parts.find(isNode) };
+	},
+
+	// ExportNamedBinding := Identifier _ Colon _ Identifier MultiAccessExpr?;
+	//
+	// Shape `{ target, source }` per shapeNamedBinding. `target`
+	// is the externally-visible exported name (LHS of `:`);
+	// `source` is the local-scope reference being exported, folded
+	// with any trailing access chain.
+	ExportNamedBinding(frame,parts)   { return shapeNamedBinding("ExportNamedBinding",parts); },
+
+	// ExportConciseBinding := Colon Identifier SingleAccessExpr?;
+	//
+	// Shape `{ source }` per shapeConciseBinding. Exported name is
+	// derived from the source path; see the helper's comment.
+	ExportConciseBinding(frame,parts) { return shapeConciseBinding("ExportConciseBinding",parts); },
+
+	// ExportExpr := "export" _ OpenBrace _ <ExportBindingsList> _ CloseBrace;
+	//
+	// ExportBindingsList is hidden, so binding nodes splice up
+	// directly. Keyword "export", braces, and commas are noise.
+	// Field name `entries` matches the BlockDefsInit /
+	// BlockDefsInitOpt / DoBlockDefsInitOpt convention — the
+	// parent type tag tells the consumer what kind of entries.
+	ExportExpr(frame,parts) {
+		return { type: "ExportExpr", entries: parts.filter(isNode) };
+	},
+
+
+	// =============================================================
+	// §4 VARIABLE DEFINITIONS / DESTRUCTURING
+	// =============================================================
+
+	// DefVarStmt := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+	//
+	// `def` keyword and `:` colon are noise; the two semantic
+	// children (target = Identifier|DestructureTarget, init =
+	// Expr|ImportExpr) take named fields.
+	DefVarStmt(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var [ target, init ] = nodes;
+		return { type: "DefVarStmt", target, init };
+	},
+
+	// DestructureNamedDef := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
+	//
+	// Shape `{ target, source }` per shapeNamedBinding. `target`
+	// is the new local binding name (LHS of `:`); `source` is the
+	// field path inside the destructured value, folded with any
+	// trailing access. See the helper's comment for the
+	// BracketExpr-as-base detail (`def < foo: [k].bar >: src;`).
+	DestructureNamedDef(frame,parts)   { return shapeNamedBinding("DestructureNamedDef",parts); },
+
+	// DestructureConciseDef := Colon Identifier SingleAccessExpr?;
+	//
+	// Shape `{ source }` per shapeConciseBinding. New local
+	// binding name is derived from the source path; see helper.
+	DestructureConciseDef(frame,parts) { return shapeConciseBinding("DestructureConciseDef",parts); },
+
+	// DestructureCapture := Hash Identifier;
+	//
+	// Binds the WHOLE source value to a fresh name. NOT a "rest"
+	// pattern — `#foo` and bare destructure entries can coexist
+	// in the same DestructureTarget, each pulling from the same
+	// source (the `#foo` form just additionally captures the
+	// entire payload under `foo`). The `#` is noise (recoverable
+	// from the type tag).
+	//
+	// `target` retains the Identifier node — same call as the
+	// Named productions in this cluster (see shapeNamedBinding's
+	// comment on the GatherParameter flatten-to-string exception).
+	DestructureCapture(frame,parts) {
+		return { type: "DestructureCapture", target: parts.find(isNode) };
+	},
+
+	// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
+	//
+	// DestructureDefList is hidden, so def nodes splice up
+	// directly. Angle brackets and commas are noise. `entries`
+	// matches the ExportExpr / BlockDefsInit* / DoBlockDefsInitOpt
+	// convention.
+	DestructureTarget(frame,parts) {
+		return { type: "DestructureTarget", entries: parts.filter(isNode) };
+	},
+
+
+	// =============================================================
+	// §5 EXPRESSION SCAFFOLDING
+	// =============================================================
 
 	// BareIdentifier — thin-wrapper sub-archetype. Subsumes into
 	// its inner IdentBase node (Identifier, BuiltIn, or
@@ -513,22 +793,22 @@ export const defaultShapers = {
 		return parts.find(isNode);
 	},
 
-	// AsAnnotationExpr — `:as` keyword (noise; recoverable from
-	// the type tag) plus a NamedType promoted to `annotation`. Per
-	// the wrapper-unwrap convention, parents that mount this at
-	// their `.as` slot store `.annotation` directly rather than the
-	// wrapper itself. The shaper still emits the wrapper node so
-	// the production round-trips through default tooling; no
-	// current parent retains it intact.
+	// AsAnnotationExpr := ":as" _ NamedType;
+	//
+	// `:as` keyword (noise; recoverable from the type tag) plus a
+	// NamedType promoted to `annotation`. Per the wrapper-unwrap
+	// convention, parents that mount this at their `.as` slot
+	// store `.annotation` directly rather than the wrapper itself.
+	// The shaper still emits the wrapper node so the production
+	// round-trips through default tooling; no current parent
+	// retains it intact.
 	AsAnnotationExpr(frame,parts) {
 		return { type: "AsAnnotationExpr", annotation: parts.find(isNode) };
 	},
 
-	// AsExpr — the centralized `:as` carrier (§5). Grammar:
-	//
-	//   AsExpr        := <AsableExpr> _ AsAnnotationExpr;
-	//   <AsableExpr>  := BlockExpr | GuardedExpr | UnaryExpr
-	//                  | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+	// AsExpr := <AsableExpr> _ AsAnnotationExpr;
+	// <AsableExpr> := BlockExpr | GuardedExpr | UnaryExpr
+	//               | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
 	//
 	// Parse-time wrapper only — emits no node of its own. Unwraps
 	// to the inner AsableExpr node, lifting `as: annotation` onto
@@ -557,168 +837,6 @@ export const defaultShapers = {
 		return inner;
 	},
 
-	// Literal — concatenates contained number/escape token values
-	// into a single source-text string. No `:as` tail at the
-	// grammar level — annotation comes via AsExpr.
-	NumberLit(frame,parts) {
-		var text = "";
-		for (let p of parts) text += p.value;
-		return { type: "NumberLit", text };
-	},
-
-	// Literal — boolean. Single Native token ("true" | "false").
-	// Text is the raw lexeme, mirroring NumberLit. No `:as` tail.
-	BooleanLit(frame,parts) {
-		var text = "";
-		for (let p of parts) text += p.value;
-		return { type: "BooleanLit", text };
-	},
-
-	// Literal — empty. Type tag is total information; no `text`
-	// field. No `:as` tail.
-	EmptyLit(frame,parts) {
-		return { type: "EmptyLit" };
-	},
-
-	// Literal — plain string. Concatenates interior String and
-	// StringEscapedChar token values into `text`. Surrounding
-	// DoubleQuotes are noise (recoverable from the type tag).
-	// Escape sequences are preserved raw in `text` — interp's job
-	// to resolve them. No `:as` tail.
-	PlainStr(frame,parts) {
-		var text = "";
-		for (let p of parts) {
-			if (isNode(p)) continue;
-			if (p.type === "String" || p.type === "StringEscapedChar") {
-				text += p.value;
-			}
-			// else: DoubleQuote — skip
-		}
-		return { type: "PlainStr", text };
-	},
-
-	// Literal — spacing-escaped string. Same shape as PlainStr;
-	// additionally folds interior Whitespace tokens into `text`
-	// verbatim (the production opts into preserveInnerDelim so the
-	// whitespace tokens reach us in parts). Leading Escape and
-	// surrounding DoubleQuotes are noise. No `:as` tail.
-	SpacingEscapedStr(frame,parts) {
-		var text = "";
-		for (let p of parts) {
-			if (isNode(p)) continue;
-			if (
-				p.type === "String" ||
-				p.type === "StringEscapedChar" ||
-				p.type === "Whitespace"
-			) {
-				text += p.value;
-			}
-			// else: Escape, DoubleQuote — skip
-		}
-		return { type: "SpacingEscapedStr", text };
-	},
-
-	// Interp slot inside the two interp-string forms. Surrounding
-	// Backticks are noise; the inner expression is exposed as
-	// `expr`. (Grammar: `InterpExpr := Backtick _ Expr _ Backtick;`
-	// — `_` is delim, so parts is exactly [Backtick, exprNode,
-	// Backtick].)
-	InterpExpr(frame,parts) {
-		var expr = parts.find(isNode);
-		return { type: "InterpExpr", expr };
-	},
-
-	// Literal — interpolated string. Surfaces as a `chunks` array
-	// alternating string text and InterpExpr nodes. Invariant:
-	// chunks.length is always odd, chunks[0] and chunks[last] are
-	// always strings (possibly ""). Consumers discriminate
-	// elements via `typeof === "string"`. Leading Escape and
-	// surrounding DoubleQuotes are noise. No `:as` tail.
-	InterpStr(frame,parts) {
-		var chunks = [];
-		var buf = "";
-		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "InterpExpr") {
-					chunks.push(buf);
-					chunks.push(p);
-					buf = "";
-				}
-			}
-			else if (p.type === "String" || p.type === "StringEscapedChar") {
-				buf += p.value;
-			}
-			// else: Escape, DoubleQuote — skip
-		}
-		chunks.push(buf);
-		return { type: "InterpStr", chunks };
-	},
-
-	// Literal — spacing-interpolated string. Same chunks-array
-	// shape as InterpStr; Whitespace tokens fold into the
-	// adjacent text chunk verbatim (preserveInnerDelim delivers
-	// them in parts). No `:as` tail.
-	SpacingInterpStr(frame,parts) {
-		var chunks = [];
-		var buf = "";
-		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "InterpExpr") {
-					chunks.push(buf);
-					chunks.push(p);
-					buf = "";
-				}
-			}
-			else if (
-				p.type === "String" ||
-				p.type === "StringEscapedChar" ||
-				p.type === "Whitespace"
-			) {
-				buf += p.value;
-			}
-			// else: Escape, DoubleQuote — skip
-		}
-		chunks.push(buf);
-		return { type: "SpacingInterpStr", chunks };
-	},
-
-	// Definition — `def` keyword and `:` colon are noise; the two
-	// semantic children (target = Identifier|DestructureTarget,
-	// init = Expr|ImportExpr) take named fields.
-	DefVarStmt(frame,parts) {
-		var nodes = parts.filter(isNode);
-		var [ target, init ] = nodes;
-		return { type: "DefVarStmt", target, init };
-	},
-
-	// Pure list-of-statements. Semicolons are noise; everything
-	// shaped is a top-level statement node.
-	Program(frame,parts) {
-		var stmts = parts.filter(isNode);
-		return { type: "Program", stmts };
-	},
-
-	// Compound with optional defs-init clause and required body
-	// statements. With BlockDefsInitOpt and VarDefInitOpt now
-	// visible, defs flows in as a single node.
-	//
-	// No `:as` tail post-rework — annotation comes via AsExpr
-	// (BlockExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
-	// onto the returned BlockExpr node, so `{x;y} :as int` still
-	// shapes to `BlockExpr{stmts:[...], as:"int"}`.
-	BlockExpr(frame,parts) {
-		var defs;
-		var stmts = [];
-		for (let p of parts) {
-			if (p.type === "BlockDefsInitOpt") defs = p;
-			else if (isNode(p)) stmts.push(p);
-		}
-		var node = { type: "BlockExpr", stmts };
-		if (defs) node.defs = defs;
-		return node;
-	},
-
-	// =============================================================
 	// Paren-grouping productions. Six structurally-identical
 	// variants distinguished only by what inner-expression form
 	// they accept (Expr | ExprNoBlock | OperandExpr | BareOperandExpr
@@ -739,7 +857,6 @@ export const defaultShapers = {
 	//
 	// All delegate to shapeGrouped: drop parens, lift inner to
 	// `expr`, unwrap optional :as onto `as`.
-	// =============================================================
 	GroupedExpr(frame,parts)              { return shapeGrouped("GroupedExpr",parts); },
 	GroupedExprNoBlock(frame,parts)       { return shapeGrouped("GroupedExprNoBlock",parts); },
 	GroupedOpExpr(frame,parts)            { return shapeGrouped("GroupedOpExpr",parts); },
@@ -747,107 +864,14 @@ export const defaultShapers = {
 	GroupedBareOpExprNoEmpty(frame,parts) { return shapeGrouped("GroupedBareOpExprNoEmpty",parts); },
 	GroupedDoExpr(frame,parts)            { return shapeGrouped("GroupedDoExpr",parts); },
 
-	// Var-def, required init. Two semantic children: target
-	// (Identifier or DestructureTarget) and init (ExprNoBlock).
-	VarDefInit(frame,parts) {
-		var [ target, init ] = parts.filter(isNode);
-		return { type: "VarDefInit", target, init };
-	},
-
-	// Var-def, optional init. Same shape as VarDefInit but init
-	// may be absent.
-	VarDefInitOpt(frame,parts) {
-		var [ target, init ] = parts.filter(isNode);
-		var node = { type: "VarDefInitOpt", target };
-		if (init) node.init = init;
-		return node;
-	},
-
-	// Paren-bounded list of var-defs (required-init form).
-	// Used by DefBlockStmt.
-	BlockDefsInit(frame,parts) {
-		return { type: "BlockDefsInit", entries: parts.filter(isNode) };
-	},
-
-	// Paren-bounded list of var-defs (optional-init form).
-	// Used by BlockExpr.
-	BlockDefsInitOpt(frame,parts) {
-		return { type: "BlockDefsInitOpt", entries: parts.filter(isNode) };
-	},
-
-	// Comma-separated list of optional-init parameter defs.
-	// Used by DefFuncExpr per paren-group.
-	ParameterList(frame,parts) {
-		return { type: "ParameterList", params: parts.filter(isNode) };
-	},
 
 	// =============================================================
-	// Unary tier (§8). Two productions, prefix-unary shape, distinguished
-	// only by op kind (named ?empty/!empty vs symbolic ?/!). Both go
-	// through shapeUnaryTier. Operand is restricted to BinaryAtom
-	// (tightest tier) per grammar — `?x + 5` parses as `(?x) + 5`.
-	//
-	// No `:as` tail post-rework — annotation comes via AsExpr
-	// (UnaryExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
-	// onto the unary node; see shapeUnaryTier's comment.
-	//
-	// Postfix `'` (the prime modifier) is NOT a unary form here —
-	// it's a restricted tail of ChainExpr (§7), where it terminates
-	// access and allows only call suffixes after.
+	// §6 IDENTIFIER EXPRESSIONS / ACCESS / RANGE
 	// =============================================================
-	NamedUnaryExpr(frame,parts)    { return shapeUnaryTier("NamedUnaryExpr",parts); },
-	SymbolicUnaryExpr(frame,parts) { return shapeUnaryTier("SymbolicUnaryExpr",parts); },
 
-	// =============================================================
-	// Binary tiers (§9). Seven productions ordered loosest →
-	// tightest: FlowBinExpr, OrBinExpr, AndBinExpr,
-	// TypeCompareBinExpr, CompareBinExpr, AddBinExpr, MulBinExpr.
+	// DotIdentifier := Period (Identifier | BuiltIn | PositiveIntegerLit | NegativeIntegerLit);
 	//
-	// Six iter tiers share `lhs (op rhs)+` shape and delegate to
-	// shapeBinTier — flat-fold to nested {left, op, right}
-	// (left-associative), multi-token ops concatenated via the
-	// token-accumulator pattern.
-	//
-	// TypeCompareBinExpr carves ?as/!as out of the Compare tier:
-	// single-op (non-iter), RHS is a NamedType rather than an
-	// expression. Distinct shape handler below.
-	//
-	// No tier carries its own `:as` tail. By design — `x + y :as int`
-	// is a parse error per the first-class precedence rule, which
-	// is enforced by AsExpr living at the dispatcher level above
-	// the binary tiers (not inside BinaryAtom). To annotate a
-	// binary expression, parenthesize: `(x + y) :as int`.
-	// =============================================================
-	FlowBinExpr(frame,parts)    { return shapeBinTier("FlowBinExpr",parts); },
-	OrBinExpr(frame,parts)      { return shapeBinTier("OrBinExpr",parts); },
-	AndBinExpr(frame,parts)     { return shapeBinTier("AndBinExpr",parts); },
-
-	// TypeCompareBinExpr — single-op binary, RHS is NamedType (not
-	// a general expression). Op is the single ?as/!as BooleanOper
-	// token. Shape matches sibling iter tiers (`{ left, op, right }`)
-	// for consumer uniformity; `right` carries a NamedType node.
-	// No iteration — `x ?as int ?as bool` must be parenthesized
-	// per grammar.
-	TypeCompareBinExpr(frame,parts) {
-		var nodes = [];
-		var op = "";
-		for (let p of parts) {
-			if (isNode(p)) nodes.push(p);
-			else op += p.value;
-		}
-		return {
-			type: "TypeCompareBinExpr",
-			left: nodes[0],
-			op,
-			right: nodes[1],
-		};
-	},
-
-	CompareBinExpr(frame,parts) { return shapeBinTier("CompareBinExpr",parts); },
-	AddBinExpr(frame,parts)     { return shapeBinTier("AddBinExpr",parts); },
-	MulBinExpr(frame,parts)     { return shapeBinTier("MulBinExpr",parts); },
-
-	// Dot-access by name or index. Three inner cases:
+	// Dot-access by name or index. Four inner cases:
 	//   foo.bar   → accessor = Identifier-node
 	//   foo.List  → accessor = BuiltIn-node
 	//   arr.5     → index = "5"
@@ -874,12 +898,16 @@ export const defaultShapers = {
 		return node;
 	},
 
+	// BracketExpr := OpenBracket _ ExprNoBlock _ CloseBracket;
+	//
 	// Bracket-access (`arr[expr]`). Brackets are noise; the inner
 	// ExprNoBlock takes the `expr` field.
 	BracketExpr(frame,parts) {
 		return { type: "BracketExpr", expr: parts.find(isNode) };
 	},
 
+	// DotBracketExpr := Period OpenBracket _ <RangeExpr> _ CloseBracket;
+	//
 	// Range-access (`arr.[1..5]`). Period and brackets are noise;
 	// the inner RangeExpr (ClosedRangeExpr | LeadingRangeExpr |
 	// TrailingRangeExpr — each its own type tag once shaped) takes
@@ -888,6 +916,8 @@ export const defaultShapers = {
 		return { type: "DotBracketExpr", range: parts.find(isNode) };
 	},
 
+	// DotAngleExpr := Period OpenAngle _ <PropertyExpr> (_ Comma _ <PropertyExpr>)* _ CloseAngle;
+	//
 	// Angle-property access (`rec.<a,b,5>`). List of property
 	// accessors; each element is either { accessor: Identifier-node }
 	// or { index: "<digits>" } (positive-only here, per the §6
@@ -910,29 +940,24 @@ export const defaultShapers = {
 		return { type: "DotAngleExpr", properties };
 	},
 
-	// List of access segments used by special contexts
-	// (AssignmentExpr LHS, AtExpr internal access, ExportNamedBinding,
-	// DestructureNamedDef) — NOT by ChainExpr, which folds its
-	// segments into typed nested nodes. Each segment is a
-	// DotIdentifier or BracketExpr; already type-tagged, just
+	// SingleAccessExpr — list of access segments used by special
+	// contexts (AssignmentExpr LHS, AtExpr internal access,
+	// ExportNamedBinding, ExportConciseBinding, DestructureNamedDef,
+	// DestructureConciseDef, PickValue) — NOT by ChainExpr, which
+	// folds its segments into typed nested nodes. Each segment is
+	// a DotIdentifier or BracketExpr; already type-tagged, just
 	// collected.
 	SingleAccessExpr(frame,parts) {
 		return { type: "SingleAccessExpr", segments: parts.filter(isNode) };
 	},
 
-	// Same shape as SingleAccessExpr with a broader segment alphabet
-	// (adds DotBracketExpr, DotAngleExpr). Used by MultiAccessSeg
-	// contexts.
+	// MultiAccessExpr — same shape as SingleAccessExpr with a
+	// broader segment alphabet (adds DotBracketExpr, DotAngleExpr).
 	MultiAccessExpr(frame,parts) {
 		return { type: "MultiAccessExpr", segments: parts.filter(isNode) };
 	},
 
-	// =============================================================
-	// At-cluster (§6 IdentifierExpr + §7 CallExpr).
-	//
-	// MonadConstructor — bare `@`. Type tag is total information.
-	//
-	// AtExpr — `IdentBase SingleAccessExpr? At`. Shape `{ base }`,
+	// AtExpr — IdentBase + optional access + @. Shape `{ base }`,
 	// where `base` is folded via the unified access-fold rule (see
 	// foldAccess above): bare `foo@` → `AtExpr{ base: Identifier{
 	// name:"foo"} }`; access form `foo.bar@` → `AtExpr{ base:
@@ -942,12 +967,8 @@ export const defaultShapers = {
 	// operand position — no separate `access` slot to special-case.
 	// The `@` itself is noise (recoverable from type tag).
 	//
-	// Neither carries a `:as` tail post-rework — annotation comes
-	// via AsExpr. AsExpr's unwrap lifts `as` onto the returned
-	// AtExpr/MonadConstructor node.
-	// =============================================================
-
-	// AtExpr — IdentBase + optional access + @. Access folds into base.
+	// No `:as` tail post-rework — annotation comes via AsExpr.
+	// AsExpr's unwrap lifts `as` onto the returned AtExpr node.
 	AtExpr(frame,parts) {
 		var base, access;
 		for (let p of parts) {
@@ -960,12 +981,18 @@ export const defaultShapers = {
 		return { type: "AtExpr", base: foldAccess(base,access) };
 	},
 
-	// MonadConstructor — bare @.
+	// MonadConstructor — bare `@`. Type tag is total information.
+	//
+	// No `:as` tail post-rework — annotation comes via AsExpr.
+	// AsExpr's unwrap lifts `as` onto the returned MonadConstructor
+	// node.
 	MonadConstructor(frame,parts) {
 		// All parts are the At token; nothing semantic to collect.
 		return { type: "MonadConstructor" };
 	},
 
+	// ClosedRangeExpr := RangeOperand _ DoublePeriod _ RangeOperand;
+	//
 	// Range — closed form (`x..y`). Two operands `from`/`to`. No
 	// `:as` per grammar (must parenthesize: `(x..y) :as T`) — the
 	// trailing-position RangeOperand would otherwise greedily
@@ -976,21 +1003,32 @@ export const defaultShapers = {
 		return { type: "ClosedRangeExpr", from, to };
 	},
 
+	// LeadingRangeExpr := RangeOperand _ DoublePeriod;
+	//
 	// Range — leading-open form (`x..`). Single operand, no `:as`
 	// per grammar.
 	LeadingRangeExpr(frame,parts) {
 		return { type: "LeadingRangeExpr", from: parts.find(isNode) };
 	},
 
+	// TrailingRangeExpr := DoublePeriod _ RangeOperand;
+	//
 	// Range — trailing-open form (`..y`). Single operand, no `:as`
 	// per grammar.
 	TrailingRangeExpr(frame,parts) {
 		return { type: "TrailingRangeExpr", to: parts.find(isNode) };
 	},
 
-	// OpFuncExpr — op-as-function-value. Four inner forms (per the
-	// grammar's disjoint alternatives), surfaced via three
-	// mutually-exclusive payload fields:
+
+	// =============================================================
+	// §7 FUNCTION CALLS / OP-AS-FUNCTION
+	// =============================================================
+
+	// OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
+	//
+	// Op-as-function-value. Four inner forms (per the grammar's
+	// disjoint alternatives), surfaced via three mutually-exclusive
+	// payload fields:
 	//
 	//   (+) / (..)   → op: "<text>"   (bare operator, possibly
 	//                                  multi-token e.g. "$+")
@@ -1052,6 +1090,8 @@ export const defaultShapers = {
 		return node;
 	},
 
+	// PrefixCallSuffix := OpenParen CallArgs CloseParen;
+	//
 	// Call suffix — prefix form (`(arg1, arg2)` or the bare-op
 	// shortcut `(+)` / `(+')`). CallArgs has two arms gated by
 	// lookahead: the first arm `(Op SingleQuote? &(CloseParen))`
@@ -1115,6 +1155,8 @@ export const defaultShapers = {
 		return { type: "PrefixCallSuffix", args };
 	},
 
+	// PartialCallSuffix := Pipe CallArgs Pipe;
+	//
 	// Call suffix — partial form (`|arg1, arg2|`). Unlike
 	// PrefixCallSuffix, the CallArgs bare-Op arm doesn't reach this
 	// production — its `&(CloseParen)` lookahead fails on the `|`
@@ -1133,9 +1175,10 @@ export const defaultShapers = {
 		return { type: "PartialCallSuffix", args };
 	},
 
-	// =============================================================
-	// AtCallExpr — at-form applied to (optionally) an argument. The
-	// grammar has two arms:
+	// AtCallExpr := "None" At
+	//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock;
+	//
+	// At-form applied to (optionally) an argument. Two arms:
 	//
 	//   Arm 1: "None" At
 	//   Arm 2: (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor)
@@ -1169,7 +1212,6 @@ export const defaultShapers = {
 	//   - AtExpr node → Arm 2 sub-form A
 	//   - MonadConstructor node → Arm 2 sub-form C
 	//   - any other node (Identifier|BuiltIn|PipelineTopic) → Arm 2 sub-form B
-	// =============================================================
 	AtCallExpr(frame,parts) {
 		var node = { type: "AtCallExpr" };
 		var first = parts[0];
@@ -1227,12 +1269,17 @@ export const defaultShapers = {
 		return node;
 	},
 
-	// Chain — base + ordered segments folded into JS-style nested
-	// typed nodes. Each segment wraps the previous expression;
-	// outermost = last applied. Single-segment cases unwrap
-	// directly to the typed node (no degenerate single-element
-	// wrapper). ChainExpr itself emits no node — it's a parse
-	// vehicle only.
+	// ChainExpr := ChainBase
+	//              (
+	//                  (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
+	//                | SingleQuote (_ CallSuffix)*
+	//              );
+	//
+	// Base + ordered segments folded into JS-style nested typed
+	// nodes. Each segment wraps the previous expression; outermost
+	// = last applied. Single-segment cases unwrap directly to the
+	// typed node (no degenerate single-element wrapper). ChainExpr
+	// itself emits no node — it's a parse vehicle only.
 	//
 	// Postfix `'` (prime, the SingleQuote token) wraps the pre-
 	// prime expression in a PrimedExpr; any post-prime call
@@ -1290,66 +1337,221 @@ export const defaultShapers = {
 		return node;
 	},
 
-	// =============================================================
-	// §14 CONDITIONALS / GUARDS
-	// =============================================================
 
-	// CondClause := (Qmark | Exmark) BracketExpr;
+	// =============================================================
+	// §8 UNARY
+	// =============================================================
 	//
-	// Polarity (`?` or `!`) is required — the production guarantees
-	// one. BracketExpr is kept as a nested node rather than unwrapped
-	// to its inner expr; BracketExpr already surfaces in the AST in
-	// other contexts (e.g. DestructureNamedDef's BracketExpr arm),
-	// so this shape stays uniform across roles. The `test` field name
-	// conveys the semantic role; the BracketExpr type tag conveys the
-	// syntactic shape (`[...]`).
+	// Two productions, prefix-unary shape, distinguished only by
+	// op kind (named ?empty/!empty vs symbolic ?/!). Both go
+	// through shapeUnaryTier. Operand is restricted to BinaryAtom
+	// (tightest tier) per grammar — `?x + 5` parses as `(?x) + 5`.
 	//
-	// Used at three call sites with the same shape:
-	//   - GuardedExpr (§14)        — as `clause`
-	//   - FuncPrecond (§13)        — as `clause` (default-shape today)
-	//   - FlowBinExpr LHS (§9)     — as `left` via shapeBinTier
-	CondClause(frame,parts) {
-		var polarity = "";
-		var test;
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (UnaryExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
+	// onto the unary node; see shapeUnaryTier's comment.
+	//
+	// Postfix `'` (the prime modifier) is NOT a unary form here —
+	// it's a restricted tail of ChainExpr (§7), where it terminates
+	// access and allows only call suffixes after.
+	NamedUnaryExpr(frame,parts)    { return shapeUnaryTier("NamedUnaryExpr",parts); },
+	SymbolicUnaryExpr(frame,parts) { return shapeUnaryTier("SymbolicUnaryExpr",parts); },
+
+
+	// =============================================================
+	// §9 BINARY TIERS
+	// =============================================================
+	//
+	// Seven productions ordered loosest → tightest: FlowBinExpr,
+	// OrBinExpr, AndBinExpr, TypeCompareBinExpr, CompareBinExpr,
+	// AddBinExpr, MulBinExpr.
+	//
+	// Six iter tiers share `lhs (op rhs)+` shape and delegate to
+	// shapeBinTier — flat-fold to nested {left, op, right}
+	// (left-associative), multi-token ops concatenated via the
+	// token-accumulator pattern.
+	//
+	// TypeCompareBinExpr carves ?as/!as out of the Compare tier:
+	// single-op (non-iter), RHS is a NamedType rather than an
+	// expression. Distinct shape handler below.
+	//
+	// No tier carries its own `:as` tail. By design — `x + y :as int`
+	// is a parse error per the first-class precedence rule, which
+	// is enforced by AsExpr living at the dispatcher level above
+	// the binary tiers (not inside BinaryAtom). To annotate a
+	// binary expression, parenthesize: `(x + y) :as int`.
+	FlowBinExpr(frame,parts)    { return shapeBinTier("FlowBinExpr",parts); },
+	OrBinExpr(frame,parts)      { return shapeBinTier("OrBinExpr",parts); },
+	AndBinExpr(frame,parts)     { return shapeBinTier("AndBinExpr",parts); },
+
+	// TypeCompareBinExpr — single-op binary, RHS is NamedType (not
+	// a general expression). Op is the single ?as/!as BooleanOper
+	// token. Shape matches sibling iter tiers (`{ left, op, right }`)
+	// for consumer uniformity; `right` carries a NamedType node.
+	// No iteration — `x ?as int ?as bool` must be parenthesized
+	// per grammar.
+	TypeCompareBinExpr(frame,parts) {
+		var nodes = [];
+		var op = "";
 		for (let p of parts) {
-			if (isNode(p)) test = p;
-			else polarity = p.value;
+			if (isNode(p)) nodes.push(p);
+			else op += p.value;
 		}
-		return { type: "CondClause", polarity, test };
+		return {
+			type: "TypeCompareBinExpr",
+			left: nodes[0],
+			op,
+			right: nodes[1],
+		};
 	},
 
-	// GuardedExpr := CondClause _ Colon _ Expr;
+	CompareBinExpr(frame,parts) { return shapeBinTier("CompareBinExpr",parts); },
+	AddBinExpr(frame,parts)     { return shapeBinTier("AddBinExpr",parts); },
+	MulBinExpr(frame,parts)     { return shapeBinTier("MulBinExpr",parts); },
+
+
+	// =============================================================
+	// §11 BLOCKS / DEF-BLOCK STATEMENT
+	// =============================================================
+
+	// VarDefInit := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
 	//
-	// Colon is noise (recoverable from the type tag — every
-	// GuardedExpr has a `:` between clause and consequent). The
-	// CondClause shapes per its own shaper above; the inner Expr
-	// fills `consequent`.
+	// Var-def, required init. Two semantic children: target
+	// (Identifier or DestructureTarget) and init (ExprNoBlock).
+	VarDefInit(frame,parts) {
+		var [ target, init ] = parts.filter(isNode);
+		return { type: "VarDefInit", target, init };
+	},
+
+	// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
+	//                | (DestructureTarget (_ Colon _ ExprNoBlock)?);
 	//
-	// No `:as` handling — GuardedExpr is in <AsableExpr>, so
-	// annotation comes via AsExpr's unwrap, which lifts `as` onto
-	// the returned GuardedExpr from the outside.
+	// Var-def, optional init. Same shape as VarDefInit but init
+	// may be absent.
+	VarDefInitOpt(frame,parts) {
+		var [ target, init ] = parts.filter(isNode);
+		var node = { type: "VarDefInitOpt", target };
+		if (init) node.init = init;
+		return node;
+	},
+
+	// BlockDefsInit := OpenParen _ <VarDefInitList> _ CloseParen;
 	//
-	// Field name `consequent` (not `body`): "body" is associated
-	// with blocks/functions; "consequent" is the natural term for
-	// the branch of a conditional, and lines up with what
-	// MatchConsequent will produce in §15.
-	GuardedExpr(frame,parts) {
-		var clause;
-		var consequent;
+	// Paren-bounded list of var-defs (required-init form).
+	// Used by DefBlockStmt.
+	BlockDefsInit(frame,parts) {
+		return { type: "BlockDefsInit", entries: parts.filter(isNode) };
+	},
+
+	// BlockDefsInitOpt := OpenParen _ <VarDefInitOptList> _ CloseParen;
+	//
+	// Paren-bounded list of var-defs (optional-init form).
+	// Used by BlockExpr.
+	BlockDefsInitOpt(frame,parts) {
+		return { type: "BlockDefsInitOpt", entries: parts.filter(isNode) };
+	},
+
+	// BlockExpr := BlockDefsInitOpt? _ <BareBlockExpr>;
+	//
+	// Compound with optional defs-init clause and required body
+	// statements. <BareBlockExpr> is hidden, so OpenBrace, stmts,
+	// Semicolons, and CloseBrace splice into parts. The
+	// BlockDefsInitOpt child (when present) sits alongside stmt
+	// nodes and is identified by its type tag.
+	//
+	// No `:as` tail post-rework — annotation comes via AsExpr
+	// (BlockExpr is in <AsableExpr>). AsExpr's unwrap lifts `as`
+	// onto the returned BlockExpr node, so `{x;y} :as int` still
+	// shapes to `BlockExpr{stmts:[...], as:"int"}`.
+	//
+	// Field order: always-present first (`stmts`), then optional
+	// `defs`.
+	BlockExpr(frame,parts) {
+		var defs;
+		var stmts = [];
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "CondClause") clause = p;
-				else consequent = p;
-			}
-			// else: Colon — skip
+			if (p.type === "BlockDefsInitOpt") defs = p;
+			else if (isNode(p)) stmts.push(p);
 		}
-		return { type: "GuardedExpr", clause, consequent };
+		var node = { type: "BlockExpr", stmts };
+		if (defs) node.defs = defs;
+		return node;
+	},
+
+	// DefBlockStmt := "def" _ BlockDefsInit _ <BareBlockExpr>;
+	//
+	// Field names `defs` + `stmts` mirror BlockExpr for consumer
+	// uniformity. Difference vs BlockExpr: `defs` is REQUIRED here
+	// (BlockDefsInit, not the Opt variant) — always present, no
+	// omission. <BareBlockExpr> is hidden, so OpenBrace, Semicolons,
+	// and CloseBrace bubble up directly into parts; the
+	// BlockDefsInit child sits alongside stmt nodes and is
+	// identified by its type tag.
+	//
+	// "def" keyword and structural delimiters (braces, semicolons)
+	// are noise (recoverable from the type tag).
+	DefBlockStmt(frame,parts) {
+		var defs;
+		var stmts = [];
+		for (let p of parts) {
+			if (p.type === "BlockDefsInit") defs = p;
+			else if (isNode(p)) stmts.push(p);
+			// else: KwDef, OpenBrace, CloseBrace, Semicolons — skip
+		}
+		return { type: "DefBlockStmt", defs, stmts };
+	},
+
+
+	// =============================================================
+	// §12 ASSIGNMENT
+	// =============================================================
+
+	// AssignmentExpr := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
+	//
+	// Shape `{ target, source }`. The LHS folds via the unified
+	// access-fold rule (see foldAccess above): bare-arm LHS is the
+	// raw IdentBase node; access-arm LHS becomes the same nested
+	// MemberAccessExpr / IndexAccessExpr chain that ChainExpr
+	// produces in operand position. So `foo.bar := 5` and the
+	// operand-position expression `foo.bar` share an identical
+	// shape for the access chain — only the outer node type
+	// differs.
+	//
+	// `:` and `=` (the two tokens of `:=`) are noise. No `:as` tail
+	// per grammar — parenthesize to annotate.
+	//
+	// Parts layout (after node-filter):
+	//   - Bare arm:   [ Identifier-node,            Expr-node ]
+	//   - Access arm: [ IdentBase-node, AccessNode, Expr-node ]
+	// The middle node (when present) is always SingleAccessExpr.
+	AssignmentExpr(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var base, access, source;
+		if (nodes.length === 2) {
+			[ base, source ] = nodes;
+		}
+		else {
+			[ base, access, source ] = nodes;
+		}
+		return {
+			type: "AssignmentExpr",
+			target: foldAccess(base,access),
+			source,
+		};
 	},
 
 
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
+
+	// ParameterList := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+	//
+	// Comma-separated list of optional-init parameter defs. Used
+	// by DefFuncExpr per paren-group.
+	ParameterList(frame,parts) {
+		return { type: "ParameterList", params: parts.filter(isNode) };
+	},
 
 	// GatherParameter := Star Identifier;
 	//
@@ -1443,7 +1645,7 @@ export const defaultShapers = {
 		return { type: "FuncBodyPipeline", op, body };
 	},
 
-	// FuncBodyBlock := OpenBrace _ FuncBodyStmts _ CloseBrace;
+	// FuncBodyBlock := OpenBrace _ <FuncBodyStmts> _ CloseBrace;
 	//
 	// FuncBodyStmts is hidden, so its child FuncBodyStmt nodes
 	// (ReturnExpr | Stmt) bubble up directly. Braces and semicolons
@@ -1459,8 +1661,8 @@ export const defaultShapers = {
 
 	// DefFuncExpr := "defn" (_ Identifier At?)?
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-	//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
-	//                _ FuncBody;
+	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
+	//                _ <FuncBody>;
 	//
 	// State-machine shaper — the most complex in the file. The
 	// only state needed is which paren-pair we're currently inside
@@ -1486,7 +1688,7 @@ export const defaultShapers = {
 	// being a ParameterList — consumers can branch uniformly on
 	// `paramSets[i].type` without a null check.
 	//
-	// FuncPrecondList is hidden, so its FuncPrecond children bubble
+	// <FuncPrecondList> is hidden, so its FuncPrecond children bubble
 	// up directly into parts. FuncOverClause and FuncAsClause unwrap
 	// to their payload fields at slot assignment (`over: p.names`,
 	// `as: p.annotation`) per the wrapper-unwrap convention.
@@ -1563,379 +1765,214 @@ export const defaultShapers = {
 
 
 	// =============================================================
-	// §3 IMPORTS / EXPORTS
+	// §14 CONDITIONALS / GUARDS
 	// =============================================================
 
-	// ImportExpr := "import" _ PlainStr;
+	// CondClause := (Qmark | Exmark) BracketExpr;
 	//
-	// Keyword "import" is noise. The PlainStr node is kept intact —
-	// its own `.text` field carries the import target string; the
-	// wrapping node retains span info covering the quotes.
+	// Polarity (`?` or `!`) is required — the production guarantees
+	// one, so the field is unconditionally `polarity` (no implicit-
+	// default branch via shapePolarity). BracketExpr is kept as a
+	// nested node rather than unwrapped to its inner expr;
+	// BracketExpr already surfaces in the AST in other contexts
+	// (e.g. DestructureNamedDef's BracketExpr arm), so this shape
+	// stays uniform across roles. The `test` field name conveys
+	// the semantic role; the BracketExpr type tag conveys the
+	// syntactic shape (`[...]`).
 	//
-	// Field name `from` matches the literal source-form
-	// (`def x: import "..."` reads "from a source"); also lines up
-	// with ES-module-style mental model.
-	ImportExpr(frame,parts) {
-		return { type: "ImportExpr", from: parts.find(isNode) };
+	// Used at three call sites with the same node shape:
+	//   - GuardedExpr (§14)        — as `clause`
+	//   - FuncPrecond (§13)        — as `clause`
+	//   - FlowBinExpr LHS (§9)     — as `left` via shapeBinTier
+	CondClause(frame,parts) {
+		var polarity = "";
+		var test;
+		for (let p of parts) {
+			if (isNode(p)) test = p;
+			else polarity = p.value;
+		}
+		return { type: "CondClause", polarity, test };
 	},
 
-	// ExportNamedBinding := Identifier _ Colon _ Identifier MultiAccessExpr?;
+	// GuardedExpr := CondClause _ Colon _ Expr;
 	//
-	// Shape `{ target, source }` per shapeNamedBinding. `target`
-	// is the externally-visible exported name (LHS of `:`);
-	// `source` is the local-scope reference being exported, folded
-	// with any trailing access chain.
-	ExportNamedBinding(frame,parts)   { return shapeNamedBinding("ExportNamedBinding",parts); },
-
-	// ExportConciseBinding := Colon Identifier SingleAccessExpr?;
+	// Colon is noise (recoverable from the type tag — every
+	// GuardedExpr has a `:` between clause and consequent). The
+	// CondClause shapes per its own shaper above; the inner Expr
+	// fills `consequent`.
 	//
-	// Shape `{ source }` per shapeConciseBinding. Exported name is
-	// derived from the source path; see the helper's comment.
-	ExportConciseBinding(frame,parts) { return shapeConciseBinding("ExportConciseBinding",parts); },
-
-	// ExportExpr := "export" _ OpenBrace _ <ExportBindingsList> _ CloseBrace;
+	// No `:as` handling — GuardedExpr is in <AsableExpr>, so
+	// annotation comes via AsExpr's unwrap, which lifts `as` onto
+	// the returned GuardedExpr from the outside.
 	//
-	// ExportBindingsList is hidden, so binding nodes splice up
-	// directly. Keyword "export", braces, and commas are noise.
-	// Field name `entries` matches the BlockDefsInit /
-	// BlockDefsInitOpt / DoBlockDefsInitOpt convention — the
-	// parent type tag tells the consumer what kind of entries.
-	ExportExpr(frame,parts) {
-		return { type: "ExportExpr", entries: parts.filter(isNode) };
-	},
-
-	// =============================================================
-	// §4 DESTRUCTURING
-	// =============================================================
-
-	// DestructureNamedDef := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
-	//
-	// Shape `{ target, source }` per shapeNamedBinding. `target`
-	// is the new local binding name (LHS of `:`); `source` is the
-	// field path inside the destructured value, folded with any
-	// trailing access. See the helper's comment for the
-	// BracketExpr-as-base detail (`def < foo: [k].bar >: src;`).
-	DestructureNamedDef(frame,parts)   { return shapeNamedBinding("DestructureNamedDef",parts); },
-
-	// DestructureConciseDef := Colon Identifier SingleAccessExpr?;
-	//
-	// Shape `{ source }` per shapeConciseBinding. New local
-	// binding name is derived from the source path; see helper.
-	DestructureConciseDef(frame,parts) { return shapeConciseBinding("DestructureConciseDef",parts); },
-
-	// DestructureCapture := Hash Identifier;
-	//
-	// Binds the WHOLE source value to a fresh name. NOT a "rest"
-	// pattern — `#foo` and bare destructure entries can coexist
-	// in the same DestructureTarget, each pulling from the same
-	// source (the `#foo` form just additionally captures the
-	// entire payload under `foo`). The `#` is noise (recoverable
-	// from the type tag).
-	//
-	// `target` retains the Identifier node — same call as the
-	// Named productions in this cluster (see shapeNamedBinding's
-	// comment on the GatherParameter flatten-to-string exception).
-	DestructureCapture(frame,parts) {
-		return { type: "DestructureCapture", target: parts.find(isNode) };
-	},
-
-	// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
-	//
-	// DestructureDefList is hidden, so def nodes splice up
-	// directly. Angle brackets and commas are noise. `entries`
-	// matches the ExportExpr / BlockDefsInit* / DoBlockDefsInitOpt
-	// convention.
-	DestructureTarget(frame,parts) {
-		return { type: "DestructureTarget", entries: parts.filter(isNode) };
+	// Field name `consequent` (not `body`): "body" is associated
+	// with blocks/functions; "consequent" is the natural term for
+	// the branch of a conditional, and lines up with what
+	// MatchConsequent produces in §15.
+	GuardedExpr(frame,parts) {
+		var clause;
+		var consequent;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "CondClause") clause = p;
+				else consequent = p;
+			}
+			// else: Colon — skip
+		}
+		return { type: "GuardedExpr", clause, consequent };
 	},
 
 
 	// =============================================================
-	// §11 DEF-BLOCK STATEMENT
+	// §15 MATCH EXPRESSIONS
 	// =============================================================
+
+	// IndepMatchExpr := Qmark OpenBrace _ <IndepMatchStmts> _ CloseBrace;
 	//
-	// DefBlockStmt := "def" _ BlockDefsInit _ <BareBlockExpr>;
+	// <IndepMatchStmts> hidden — its list of IndepPatternStmt
+	// nodes (plus optional trailing ElseStmt or
+	// IndepPatternStmtNoSemi) splices up directly. The NoSemi
+	// variant collapses to IndepPatternStmt at shape time, so
+	// consumers see uniform `IndepPatternStmt` type tags in stmts.
+	// Qmark and braces are noise.
+	IndepMatchExpr(frame,parts) {
+		return { type: "IndepMatchExpr", stmts: parts.filter(isNode) };
+	},
+
+	// IndepPatternStmt       := <IndepCondClause> _ <MatchConsequent>       (_ Semicolon)*;
+	// IndepPatternStmtNoSemi := <IndepCondClause> _ <MatchConsequentNoSemi>;
 	//
-	// Field names `defs` + `stmts` mirror BlockExpr for consumer
-	// uniformity. Difference vs BlockExpr: `defs` is REQUIRED here
-	// (BlockDefsInit, not the Opt variant) — always present, no
-	// omission. <BareBlockExpr> is hidden, so OpenBrace, Semicolons,
-	// and CloseBrace bubble up directly into parts; the
-	// BlockDefsInit child sits alongside stmt nodes and is
-	// identified by its type tag.
+	// Both delegate to shapeIndepPatternStmt and emit the same
+	// {type: "IndepPatternStmt", ...} node. See the helper's
+	// comment for shape details. The NoSemi-vs-Semi distinction is
+	// a source-fidelity bit deferred to the terminators audit.
+	IndepPatternStmt(frame,parts)       { return shapeIndepPatternStmt(parts); },
+	IndepPatternStmtNoSemi(frame,parts) { return shapeIndepPatternStmt(parts); },
+
+	// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen
+	//                 OpenBrace _ <DepMatchStmts> _ CloseBrace;
 	//
-	// "def" keyword and structural delimiters (braces, semicolons)
-	// are noise (recoverable from the type tag).
-	DefBlockStmt(frame,parts) {
-		var defs;
+	// Two semantic parts: the topic (the ExprNoBlock between the
+	// parens) and the list of stmts (DepPatternStmt nodes, possibly
+	// ending with ElseStmt). Topic arrives as the first node in
+	// source order; subsequent nodes are stmts.
+	DepMatchExpr(frame,parts) {
+		var topic;
 		var stmts = [];
 		for (let p of parts) {
-			if (p.type === "BlockDefsInit") defs = p;
-			else if (isNode(p)) stmts.push(p);
-			// else: KwDef, OpenBrace, CloseBrace, Semicolons — skip
+			if (isNode(p)) {
+				if (!topic) topic = p;
+				else stmts.push(p);
+			}
+			// else: Qmark, OpenParen, CloseParen, OpenBrace, CloseBrace — skip
 		}
-		return { type: "DefBlockStmt", defs, stmts };
+		return { type: "DepMatchExpr", topic, stmts };
 	},
 
-	// =============================================================
-	// §12 ASSIGNMENT
-	// =============================================================
+	// DepPatternStmt       := DepCondClause _ <MatchConsequent>       (_ Semicolon)*;
+	// DepPatternStmtNoSemi := DepCondClause _ <MatchConsequentNoSemi>;
+	//
+	// Both delegate to shapeDepPatternStmt and emit the same
+	// {type: "DepPatternStmt", ...} node.
+	DepPatternStmt(frame,parts)       { return shapeDepPatternStmt(parts); },
+	DepPatternStmtNoSemi(frame,parts) { return shapeDepPatternStmt(parts); },
 
-	// AssignmentExpr := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
+	// DepCondClause := (Qmark | Exmark)? OpenBracket _ <DepCondExprList> _ CloseBracket;
 	//
-	// Shape `{ target, source }`. The LHS folds via the unified
-	// access-fold rule (see foldAccess above): bare-arm LHS is the
-	// raw IdentBase node; access-arm LHS becomes the same nested
-	// MemberAccessExpr / IndexAccessExpr chain that ChainExpr
-	// produces in operand position. So `foo.bar := 5` and the
-	// operand-position expression `foo.bar` share an identical
-	// shape for the access chain — only the outer node type
-	// differs.
+	// Shape `{polarity|defaultPolarity, tests}`. `tests` (plural of
+	// CondClause.test) is the list of values/operator-led fragments
+	// matched against the dependent-match topic. Atoms are typed
+	// nodes — DepCondBoolExpr for operator-led fragments
+	// (`?and x`, `?= "Kyle"`, `?as int`) or any ExprNoBlock-shaped
+	// node for plain values.
 	//
-	// `:` and `=` (the two tokens of `:=`) are noise. No `:as` tail
-	// per grammar — parenthesize to annotate.
-	//
-	// Parts layout (after node-filter):
-	//   - Bare arm:   [ Identifier-node,            Expr-node ]
-	//   - Access arm: [ IdentBase-node, AccessNode, Expr-node ]
-	// The middle node (when present) is always SingleAccessExpr.
-	AssignmentExpr(frame,parts) {
-		var nodes = parts.filter(isNode);
-		var base, access, source;
-		if (nodes.length === 2) {
-			[ base, source ] = nodes;
-		}
-		else {
-			[ base, access, source ] = nodes;
+	// OpenBracket/CloseBracket/Comma are noise.
+	DepCondClause(frame,parts) {
+		var polarityTok;
+		var tests = [];
+		for (let p of parts) {
+			if (isNode(p)) tests.push(p);
+			else if (p.type === "Qmark" || p.type === "Exmark") polarityTok = p;
+			// else: OpenBracket, CloseBracket, Comma — skip
 		}
 		return {
-			type: "AssignmentExpr",
-			target: foldAccess(base,access),
-			source,
+			type: "DepCondClause",
+			...shapePolarity(polarityTok),
+			tests,
 		};
 	},
 
-
-	// =============================================================
-	// §18 TYPE DEFINITION
-	// =============================================================
-
-	// DefTypeStmt := "deft" _ Identifier _ TypeExpr;
+	// DepCondBoolExpr := AsTypeOp _ NamedType
+	//                  | DepCondBoolOp _ CompareDispatch
+	//                  | OpenParen _ DepCondBoolExpr _ CloseParen;
 	//
-	// Shape `{ name, decl }`. `decl` (declaration) holds whichever
-	// type-tagged node TypeExpr resolves to — FuncTypeExpr,
-	// UnionTypeExpr, NamedType, NestedTypeExpr, DataStructTypeExpr,
-	// GroupedTypeExpr, or a leaf literal (EmptyLit / NumberLit /
-	// PlainStr / BooleanLit). All §18 productions are currently on
-	// default shape, but their type tags survive, so consumers can
-	// branch on `decl.type`.
+	// Shape `{op, right}` — monadic operator + single operand.
+	// These are expression FRAGMENTS (op + RHS, with the implicit
+	// LHS being the dependent-match topic), not full binary
+	// expressions, so there's no `left` slot. The fragment nature
+	// is also why the paren-recursive arm earns no node: there's
+	// nothing to group around a monadic op+operand.
 	//
-	// `name` is the Identifier node (mirrors DefFuncExpr.name —
-	// keep node for span/source-fidelity; the GatherParameter
-	// flatten-to-string convention is reserved for adjacency-
-	// marked names where the wrapper is purely structural).
-	// "deft" keyword is noise.
-	DefTypeStmt(frame,parts) {
-		var [ name, decl ] = parts.filter(isNode);
-		return { type: "DefTypeStmt", name, decl };
-	},
-
-
-	// NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
+	// Arm 3 (paren-recursive) UNWRAPS — return the inner
+	// DepCondBoolExpr unchanged. The machinery's start/end overwrite
+	// then extends the inner node's span to cover the outer parens
+	// (same pattern as AsExpr's unwrap; see top-of-file `:as`
+	// annotation handling comment).
 	//
-	// Two arms surfaced as mutually exclusive fields:
-	//
-	// - Native arm — single Keyword token, no nodes. Shape
-	//   `{type, of: <keyword-text>}` where `of` carries the
-	//   native-type spelling (`"int"` / `"integer"` / `"float"` /
-	//   `"bool"` / `"boolean"` / `"string"`). The field name `of`
-	//   mirrors FuncTypeArg.of and reads as "NamedType of int."
-	//
-	// - Bare/dotted arm — one or more Identifier/BuiltIn nodes
-	//   interleaved with Period tokens. Shape `{type, segments:
-	//   [...]}`. Periods drop as noise (namespace separator, not
-	//   value-position member access — NOT folded via foldAccess).
-	//   Single bare segment (e.g. `Foo`) carries segments of
-	//   length 1; consumer treats the list uniformly regardless of
-	//   arity.
-	//
-	// Consumer discrimination: branch on which field is present
-	// (`if (node.of) ... else ... node.segments`). The two fields
-	// are mutually exclusive at construction.
-	NamedType(frame,parts) {
-		if (parts.length === 1 && !isNode(parts[0])) {
-			return { type: "NamedType", of: parts[0].value };
-		}
-		return { type: "NamedType", segments: parts.filter(isNode) };
-	},
-
-	// GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
-	//
-	// Unwrap-shaper — returns the inner type node directly.
-	// Mirrors AsExpr's unwrap-and-lift pattern: GroupedTypeExpr
-	// never appears in the AST. Under the strict-B brace rule,
-	// GroupedTypeExpr only appears at sites where braces serve as
-	// disambiguation (NestedTypeExpr's type-arg site; the position
-	// after `?`/`*`/`^` modifiers in FuncTypeArg /
-	// FuncTypeFinalArg / FuncTypeExpr). At every such site the
-	// braces' structural role is owned by the parent production;
-	// the wrapper carries no AST identity of its own.
-	//
-	// Optional trailing Pipe inside the UnionTypeExpr arm drops
-	// as noise — its source-fidelity bit belongs in the audit,
-	// not on a wrapper node we erase.
-	GroupedTypeExpr(frame,parts) {
-		return parts.find(isNode);
-	},
-
-	// NestedTypeExpr := NamedType _ GroupedTypeExpr;
-	//
-	// Two-slot `{base, arg}`. `base` is the type constructor
-	// (NamedType node); `arg` is the parameterizing type — the
-	// GroupedTypeExpr's inner node, which arrives already
-	// unwrapped via GroupedTypeExpr's unwrap-shaper.
-	NestedTypeExpr(frame,parts) {
-		var [ base, arg ] = parts.filter(isNode);
-		return { type: "NestedTypeExpr", base, arg };
-	},
-
-	// UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
-	//
-	// Flat `types` list. Union is associative — no precedence to
-	// encode via left-folded nesting (unlike §9 binary tiers).
-	// Pipes drop as noise.
-	UnionTypeExpr(frame,parts) {
-		return { type: "UnionTypeExpr", types: parts.filter(isNode) };
-	},
-
-	// DataStructTypeExpr := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
-	//
-	// Heterogeneous `entries` — discriminate via `entry.type`:
-	//   - DataStructFieldType    — `name: type` slot
-	//   - DataStructFinalValType — `*type` rest-slot (always last)
-	//   - bare type node          — positional value (NamedType /
-	//     UnionTypeExpr / NestedTypeExpr / etc, arriving directly
-	//     via the hidden <DataStructValueType> production)
-	//
-	// Angle brackets and commas are noise. Trailing comma —
-	// deferred to source-fidelity audit.
-	DataStructTypeExpr(frame,parts) {
-		return { type: "DataStructTypeExpr", entries: parts.filter(isNode) };
-	},
-
-	// DataStructFieldType := Identifier _ Colon _ DataStructValueType;
-	//
-	// Two slots: `name` (Identifier node, kept as node for
-	// span/source-fidelity — mirrors DefFuncExpr.name and the
-	// binding-target convention) and `fieldType` (the RHS type
-	// node). Field name `fieldType` distinct from FuncTypeArg's
-	// `of` to avoid conflating "type slot in a record" with "type
-	// slot in a function signature" — they read at different
-	// semantic registers.
-	//
-	// Colon is noise.
-	DataStructFieldType(frame,parts) {
-		var [ name, fieldType ] = parts.filter(isNode);
-		return { type: "DataStructFieldType", name, fieldType };
-	},
-
-	// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
-	//
-	// Single slot `fieldType`. The Star modifier's "rest" semantic
-	// is recoverable from the type tag (unlike FuncTypeFinalArg,
-	// which normalizes into FuncTypeArg with rest:true —
-	// DataStructFinalValType keeps its own tag because there's no
-	// non-rest sibling shape to merge with). The GroupedTypeExpr
-	// arm arrives already unwrapped, so `fieldType` is the inner
-	// type node regardless of arm.
-	//
-	// Star token drops as noise.
-	DataStructFinalValType(frame,parts) {
-		return { type: "DataStructFinalValType", fieldType: parts.find(isNode) };
-	},
-
-	// FuncTypeArg := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
-	//
-	// Unified shape `{of, optional?, rest?}` per the Q7
-	// resolution. `of` always carries the arg's type (the
-	// GroupedTypeExpr arm arrives already unwrapped, so `of` is
-	// always the inner type node). `optional:true` set when a
-	// Qmark token precedes; absent when bare. `rest` is set only
-	// by FuncTypeFinalArg's Star arm — never directly here.
-	//
-	// Qmark drops as noise (recoverable from the `optional`
-	// flag).
-	FuncTypeArg(frame,parts) {
-		var node = { type: "FuncTypeArg", of: parts.find(isNode) };
-		for (let p of parts) {
-			if (!isNode(p) && p.type === "Qmark") {
-				node.optional = true;
-				break;
-			}
-		}
-		return node;
-	},
-
-	// FuncTypeFinalArg := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
-	//
-	// Normalizes into FuncTypeArg shape — FuncTypeFinalArg never
-	// appears as a node type in the AST. Two arms:
-	//
-	// - Star arm: parts contain [Star token, type node]. Build a
-	//   FuncTypeArg with rest:true. The GroupedTypeExpr arm
-	//   arrives already unwrapped, so the type node is the inner
-	//   regardless.
-	// - FuncTypeArg arm: parts contain a single already-shaped
-	//   FuncTypeArg child node. Unwrap (return the inner) — the
-	//   "final position" semantic is recoverable from being the
-	//   last entry in FuncTypeExpr.argTypes; no AST flag needed
-	//   to mark it.
-	//
-	// Parallel to collapse-rule for parse-time-only variants
-	// (cf. §15 NoSemi siblings): two productions differing only
-	// in trailing/position syntax collapse to one AST type tag.
-	FuncTypeFinalArg(frame,parts) {
-		var nodes = parts.filter(isNode);
-		var hasStar = parts.some(p => !isNode(p) && p.type === "Star");
-		if (hasStar) {
-			return { type: "FuncTypeArg", of: nodes[0], rest: true };
-		}
-		return nodes[0];
-	},
-
-	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
-	//
-	// Shape `{argTypes, optionalReturn?, returnType}`. `argTypes`
-	// is a list of FuncTypeArg nodes (FuncTypeFinalArg normalizes
-	// into FuncTypeArg via its own shaper, so the list is uniform
-	// in element type). Empty arg list (`() ^ T`) → argTypes is
-	// `[]`.
-	//
-	// Caret marks the args/return boundary; Qmark after Caret
-	// sets `optionalReturn:true` (parallel to FuncTypeArg's
-	// `optional` flag). GroupedTypeExpr return arm arrives
-	// already unwrapped — `returnType` is the inner type node
-	// regardless of arm.
-	//
-	// Parens, commas, Caret drop as noise (recoverable from the
-	// type tag and field layout).
-	FuncTypeExpr(frame,parts) {
-		var argTypes = [];
-		var returnType;
-		var optionalReturn = false;
-		var seenCaret = false;
+	// Multi-token ops (?<=, ?<=>, etc.) concatenate token values
+	// into the op string — same pattern as the binary tier helper.
+	// Single-token BooleanOper ops (?and, ?or, ?=, ?as, etc.) just
+	// pass their full value through.
+	DepCondBoolExpr(frame,parts) {
+		var op = "";
+		var right;
+		var sawOpenParen = false;
 		for (let p of parts) {
 			if (isNode(p)) {
-				if (seenCaret) returnType = p;
-				else argTypes.push(p);
+				right = p;
 			}
-			else if (p.type === "Caret") seenCaret = true;
-			else if (p.type === "Qmark" && seenCaret) optionalReturn = true;
-			// else: OpenParen / CloseParen / Comma — noise
+			else if (p.type === "OpenParen") {
+				sawOpenParen = true;
+			}
+			else if (p.type === "CloseParen") {
+				// noise
+			}
+			else {
+				op += p.value;
+			}
 		}
-		var node = { type: "FuncTypeExpr", argTypes, returnType };
-		if (optionalReturn) node.optionalReturn = true;
-		return node;
+		// Paren arm: right is the inner DepCondBoolExpr; unwrap.
+		if (sawOpenParen) return right;
+		return { type: "DepCondBoolExpr", op, right };
+	},
+
+	// ElseStmt := (Qmark _)? <MatchConsequentNoSemi> (_ Semicolon)*;
+	//
+	// Optional leading `?` distinguishes the explicit `?:` form
+	// from the abbreviated `:` form (semantically identical per
+	// Foi-Guide). Per the same precedent as IndepCondClause /
+	// DepCondClause, the explicit form sets `polarity: "?"` and
+	// the abbreviated form sets `defaultPolarity: "?"`. The grammar
+	// only allows Qmark here (no Exmark), so polarity value is
+	// always "?".
+	//
+	// Consequent is the trailing node (Expr or BlockExpr — both
+	// arms of <MatchConsequentNoSemi> splice in either way).
+	// Trailing semicolons are dropped per source-fidelity deferral.
+	ElseStmt(frame,parts) {
+		var polarityTok, consequent;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (!consequent) consequent = p;
+			}
+			else if (p.type === "Qmark") polarityTok = p;
+			// else: Colon, Semicolon — skip
+		}
+		return {
+			type: "ElseStmt",
+			...shapePolarity(polarityTok),
+			consequent,
+		};
 	},
 
 
@@ -1943,12 +1980,14 @@ export const defaultShapers = {
 	// §16 DO-COMPREHENSIONS
 	// =============================================================
 
-	// DoVarDefInitOpt — newly visible. Parallel to VarDefInitOpt
-	// but adds the `op` discriminator for the DoubleColon / Colon
-	// distinction (monadic-unwrap-bind vs regular-bind). `op` is
-	// the literal token text ("::" or ":"), present only when
-	// `init` is present; bare-identifier forms shape as just
-	// `{target}`.
+	// DoVarDefInitOpt := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
+	//                  | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
+	//
+	// Parallel to VarDefInitOpt but adds the `op` discriminator
+	// for the DoubleColon / Colon distinction (monadic-unwrap-bind
+	// vs regular-bind). `op` is the literal token text ("::" or
+	// ":"), present only when `init` is present; bare-identifier
+	// forms shape as just `{target}`.
 	DoVarDefInitOpt(frame,parts) {
 		var target, init;
 		var op;
@@ -1970,24 +2009,29 @@ export const defaultShapers = {
 		return node;
 	},
 
-	// DoBlockDefsInitOpt — newly visible. Same shape as
-	// BlockDefsInitOpt, just carrying DoVarDefInitOpt entries
-	// (which may use `:` or `::`) instead of VarDefInitOpt.
+	// DoBlockDefsInitOpt := OpenParen _ <DoVarDefInitOptList> _ CloseParen;
+	//
+	// Same shape as BlockDefsInitOpt, just carrying DoVarDefInitOpt
+	// entries (which may use `:` or `::`) instead of VarDefInitOpt.
 	DoBlockDefsInitOpt(frame,parts) {
 		return { type: "DoBlockDefsInitOpt", entries: parts.filter(isNode) };
 	},
 
-	// DoBlockExpr — newly visible. Parallel to BlockExpr (§11),
-	// minus the `as` slot (no `:as` on do-blocks at the grammar
-	// level — annotate via AsExpr at the outer DoComprExpr /
-	// GroupedDoExpr level instead). `<DoBareBlockExpr>` is hidden,
-	// so OpenBrace / stmts / Semicolons / CloseBrace splice into
-	// parts.
+	// DoBlockExpr := DoBlockDefsInitOpt? _ <DoBareBlockExpr>;
+	//
+	// Parallel to BlockExpr (§11), minus the `as` slot (no `:as`
+	// on do-blocks at the grammar level — annotate via AsExpr at
+	// the outer DoComprExpr / GroupedDoExpr level instead).
+	// <DoBareBlockExpr> is hidden, so OpenBrace / stmts /
+	// Semicolons / CloseBrace splice into parts.
 	//
 	// DoFinalUnwrapExpr (when present) is grammar-positioned as
 	// the LAST entry of `stmts`. Consumers check
 	// `stmts[stmts.length-1]?.type === "DoFinalUnwrapExpr"` to
 	// detect the monadic-unwrap form.
+	//
+	// Field order: always-present first (`stmts`), then optional
+	// `defs`.
 	DoBlockExpr(frame,parts) {
 		var defs;
 		var stmts = [];
@@ -2036,7 +2080,7 @@ export const defaultShapers = {
 		return { type: "DoComprExpr", targetType, body };
 	},
 
-	// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+	// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ <DoLoopIterationExpr>;
 	//
 	// Shape `{ range, iter }`. `range` is the iterable source;
 	// `iter` is the per-item iteration target — a DoBlockExpr
@@ -2063,159 +2107,7 @@ export const defaultShapers = {
 
 
 	// =============================================================
-	// §15 MATCH EXPRESSIONS
-	// =============================================================
-
-	// IndepMatchExpr := Qmark OpenBrace _ <IndepMatchStmts> _ CloseBrace;
-	//
-	// <IndepMatchStmts> hidden — its list of IndepPatternStmt
-	// nodes (plus optional trailing ElseStmt or
-	// IndepPatternStmtNoSemi) splices up directly. Per Q1, the
-	// NoSemi variant collapses to IndepPatternStmt at shape time,
-	// so consumers see uniform `IndepPatternStmt` type tags in
-	// stmts. Qmark and braces are noise.
-	IndepMatchExpr(frame,parts) {
-		return { type: "IndepMatchExpr", stmts: parts.filter(isNode) };
-	},
-
-	// IndepPatternStmt       := <IndepCondClause> _ <MatchConsequent>       (_ Semicolon)*;
-	// IndepPatternStmtNoSemi := <IndepCondClause> _ <MatchConsequentNoSemi>;
-	//
-	// Per Q1, both delegate to shapeIndepPatternStmt and emit the
-	// same {type: "IndepPatternStmt", ...} node. See the helper's
-	// comment for shape details.
-	IndepPatternStmt(frame,parts)       { return shapeIndepPatternStmt(parts); },
-	IndepPatternStmtNoSemi(frame,parts) { return shapeIndepPatternStmt(parts); },
-
-	// DepMatchExpr := Qmark OpenParen _ ExprNoBlock _ CloseParen
-	//                 OpenBrace _ <DepMatchStmts> _ CloseBrace;
-	//
-	// Two semantic parts: the topic (the ExprNoBlock between the
-	// parens) and the list of stmts (DepPatternStmt nodes, possibly
-	// ending with ElseStmt). Topic arrives as the first node in
-	// source order; subsequent nodes are stmts.
-	DepMatchExpr(frame,parts) {
-		var topic;
-		var stmts = [];
-		for (let p of parts) {
-			if (isNode(p)) {
-				if (!topic) topic = p;
-				else stmts.push(p);
-			}
-			// else: Qmark, OpenParen, CloseParen, OpenBrace, CloseBrace — skip
-		}
-		return { type: "DepMatchExpr", topic, stmts };
-	},
-
-	// DepPatternStmt       := DepCondClause _ <MatchConsequent>       (_ Semicolon)*;
-	// DepPatternStmtNoSemi := DepCondClause _ <MatchConsequentNoSemi>;
-	//
-	// Per Q1, both delegate to shapeDepPatternStmt.
-	DepPatternStmt(frame,parts)       { return shapeDepPatternStmt(parts); },
-	DepPatternStmtNoSemi(frame,parts) { return shapeDepPatternStmt(parts); },
-
-	// DepCondClause := (Qmark | Exmark)? OpenBracket _ <DepCondExprList> _ CloseBracket;
-	//
-	// Promoted from <DepCondClause> this batch. Shape
-	// `{polarity|defaultPolarity, tests}`. `tests` (plural of
-	// CondClause.test) is the list of values/operator-led fragments
-	// matched against the dependent-match topic. Atoms are typed
-	// nodes — DepCondBoolExpr for operator-led fragments
-	// (`?and x`, `?= "Kyle"`, `?as int`) or any ExprNoBlock-shaped
-	// node for plain values.
-	//
-	// OpenBracket/CloseBracket/Comma are noise.
-	DepCondClause(frame,parts) {
-		var polarityTok;
-		var tests = [];
-		for (let p of parts) {
-			if (isNode(p)) tests.push(p);
-			else if (p.type === "Qmark" || p.type === "Exmark") polarityTok = p;
-			// else: OpenBracket, CloseBracket, Comma — skip
-		}
-		return {
-			type: "DepCondClause",
-			...shapePolarity(polarityTok),
-			tests,
-		};
-	},
-
-	// DepCondBoolExpr := AsTypeOp _ NamedType
-	//                  | DepCondBoolOp _ CompareDispatch
-	//                  | OpenParen _ DepCondBoolExpr _ CloseParen;
-	//
-	// Promoted from <DepCondBoolExpr> this batch. Shape `{op, right}`
-	// — monadic operator + single operand. These are expression
-	// FRAGMENTS (op + RHS, with the implicit LHS being the
-	// dependent-match topic), not full binary expressions, so
-	// there's no `left` slot. The fragment nature is also why the
-	// paren-recursive arm earns no node: there's nothing to group
-	// around a monadic op+operand.
-	//
-	// Arm 3 (paren-recursive) UNWRAPS — return the inner
-	// DepCondBoolExpr unchanged. The machinery's start/end overwrite
-	// then extends the inner node's span to cover the outer parens
-	// (same pattern as AsExpr's unwrap; see top-of-file `:as`
-	// annotation handling comment).
-	//
-	// Multi-token ops (?<=, ?<=>, etc.) concatenate token values
-	// into the op string — same pattern as the binary tier helper.
-	// Single-token BooleanOper ops (?and, ?or, ?=, ?as, etc.) just
-	// pass their full value through.
-	DepCondBoolExpr(frame,parts) {
-		var op = "";
-		var right;
-		var sawOpenParen = false;
-		for (let p of parts) {
-			if (isNode(p)) {
-				right = p;
-			}
-			else if (p.type === "OpenParen") {
-				sawOpenParen = true;
-			}
-			else if (p.type === "CloseParen") {
-				// noise
-			}
-			else {
-				op += p.value;
-			}
-		}
-		// Paren arm: right is the inner DepCondBoolExpr; unwrap.
-		if (sawOpenParen) return right;
-		return { type: "DepCondBoolExpr", op, right };
-	},
-
-	// ElseStmt := (Qmark _)? <MatchConsequentNoSemi> (_ Semicolon)*;
-	//
-	// Optional leading `?` distinguishes the explicit `?:` form
-	// from the abbreviated `:` form (semantically identical per
-	// Foi-Guide). Per the same precedent as IndepCondClause (Q2),
-	// the explicit form sets `polarity: "?"` and the abbreviated
-	// form sets `defaultPolarity: "?"`. The grammar only allows
-	// Qmark here (no Exmark), so polarity value is always "?".
-	//
-	// Consequent is the trailing node (Expr or BlockExpr — both
-	// arms of <MatchConsequentNoSemi> splice in either way).
-	// Trailing semicolons are dropped per source-fidelity deferral.
-	ElseStmt(frame,parts) {
-		var polarityTok, consequent;
-		for (let p of parts) {
-			if (isNode(p)) {
-				if (!consequent) consequent = p;
-			}
-			else if (p.type === "Qmark") polarityTok = p;
-			// else: Colon, Semicolon — skip
-		}
-		return {
-			type: "ElseStmt",
-			...shapePolarity(polarityTok),
-			consequent,
-		};
-	},
-
-
-	// =============================================================
-	// §17 DATA STRUCTURES
+	// §17 DATA STRUCTURE LITERALS
 	// =============================================================
 
 	// RecordTupleLit := OpenAngle _ <RecordTupleEntryList> _ CloseAngle;
@@ -2337,4 +2229,226 @@ export const defaultShapers = {
 		var init = valueParts.find(isNode);
 		return { type: "ExplicitPropDef", key, init };
 	},
+
+
+	// =============================================================
+	// §18 TYPE DEFINITIONS
+	// =============================================================
+
+	// DefTypeStmt := "deft" _ Identifier _ <TypeExpr>;
+	//
+	// Shape `{ name, decl }`. `decl` (declaration) holds whichever
+	// type-tagged node TypeExpr resolves to — FuncTypeExpr,
+	// UnionTypeExpr, NamedType, NestedTypeExpr, DataStructTypeExpr,
+	// or a leaf literal (EmptyLit / NumberLit / PlainStr /
+	// BooleanLit). GroupedTypeExpr never appears here — it
+	// unwrap-shapes to its inner.
+	//
+	// `name` is the Identifier node (mirrors DefFuncExpr.name —
+	// keep node for span/source-fidelity; the GatherParameter
+	// flatten-to-string convention is reserved for adjacency-
+	// marked names where the wrapper is purely structural).
+	// "deft" keyword is noise.
+	DefTypeStmt(frame,parts) {
+		var [ name, decl ] = parts.filter(isNode);
+		return { type: "DefTypeStmt", name, decl };
+	},
+
+	// NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
+	//
+	// Two arms surfaced as mutually exclusive fields:
+	//
+	// - Native arm — single Keyword token, no nodes. Shape
+	//   `{type, of: <keyword-text>}` where `of` carries the
+	//   native-type spelling (`"int"` / `"integer"` / `"float"` /
+	//   `"bool"` / `"boolean"` / `"string"`). The field name `of`
+	//   mirrors FuncTypeArg.of and reads as "NamedType of int."
+	//
+	// - Bare/dotted arm — one or more Identifier/BuiltIn nodes
+	//   interleaved with Period tokens. Shape `{type, segments:
+	//   [...]}`. Periods drop as noise (namespace separator, not
+	//   value-position member access — NOT folded via foldAccess).
+	//   Single bare segment (e.g. `Foo`) carries segments of
+	//   length 1; consumer treats the list uniformly regardless of
+	//   arity.
+	//
+	// Consumer discrimination: branch on which field is present
+	// (`if (node.of) ... else ... node.segments`). The two fields
+	// are mutually exclusive at construction.
+	NamedType(frame,parts) {
+		if (parts.length === 1 && !isNode(parts[0])) {
+			return { type: "NamedType", of: parts[0].value };
+		}
+		return { type: "NamedType", segments: parts.filter(isNode) };
+	},
+
+	// GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
+	//
+	// Unwrap-shaper — returns the inner type node directly.
+	// Mirrors AsExpr's unwrap-and-lift pattern: GroupedTypeExpr
+	// never appears in the AST. Under the strict-B brace rule,
+	// GroupedTypeExpr only appears at sites where braces serve as
+	// disambiguation (NestedTypeExpr's type-arg site; the position
+	// after `?`/`*`/`^` modifiers in FuncTypeArg /
+	// FuncTypeFinalArg / FuncTypeExpr). At every such site the
+	// braces' structural role is owned by the parent production;
+	// the wrapper carries no AST identity of its own.
+	//
+	// Optional trailing Pipe inside the UnionTypeExpr arm drops
+	// as noise — its source-fidelity bit belongs in the audit,
+	// not on a wrapper node we erase.
+	GroupedTypeExpr(frame,parts) {
+		return parts.find(isNode);
+	},
+
+	// NestedTypeExpr := NamedType _ GroupedTypeExpr;
+	//
+	// Two-slot `{base, arg}`. `base` is the type constructor
+	// (NamedType node); `arg` is the parameterizing type — the
+	// GroupedTypeExpr's inner node, which arrives already
+	// unwrapped via GroupedTypeExpr's unwrap-shaper.
+	NestedTypeExpr(frame,parts) {
+		var [ base, arg ] = parts.filter(isNode);
+		return { type: "NestedTypeExpr", base, arg };
+	},
+
+	// UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
+	//
+	// Flat `types` list. Union is associative — no precedence to
+	// encode via left-folded nesting (unlike §9 binary tiers).
+	// Pipes drop as noise.
+	UnionTypeExpr(frame,parts) {
+		return { type: "UnionTypeExpr", types: parts.filter(isNode) };
+	},
+
+	// DataStructTypeExpr := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
+	//
+	// Heterogeneous `entries` — discriminate via `entry.type`:
+	//   - DataStructFieldType    — `name: type` slot
+	//   - DataStructFinalValType — `*type` rest-slot (always last)
+	//   - bare type node          — positional value (NamedType /
+	//     UnionTypeExpr / NestedTypeExpr / etc, arriving directly
+	//     via the hidden <DataStructValueType> production)
+	//
+	// Angle brackets and commas are noise. Trailing comma —
+	// deferred to source-fidelity audit.
+	DataStructTypeExpr(frame,parts) {
+		return { type: "DataStructTypeExpr", entries: parts.filter(isNode) };
+	},
+
+	// DataStructFieldType := Identifier _ Colon _ <DataStructValueType>;
+	//
+	// Two slots: `name` (Identifier node, kept as node for
+	// span/source-fidelity — mirrors DefFuncExpr.name and the
+	// binding-target convention) and `fieldType` (the RHS type
+	// node). Field name `fieldType` distinct from FuncTypeArg's
+	// `of` to avoid conflating "type slot in a record" with "type
+	// slot in a function signature" — they read at different
+	// semantic registers.
+	//
+	// Colon is noise.
+	DataStructFieldType(frame,parts) {
+		var [ name, fieldType ] = parts.filter(isNode);
+		return { type: "DataStructFieldType", name, fieldType };
+	},
+
+	// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Single slot `fieldType`. The Star modifier's "rest" semantic
+	// is recoverable from the type tag (unlike FuncTypeFinalArg,
+	// which normalizes into FuncTypeArg with rest:true —
+	// DataStructFinalValType keeps its own tag because there's no
+	// non-rest sibling shape to merge with). The GroupedTypeExpr
+	// arm arrives already unwrapped, so `fieldType` is the inner
+	// type node regardless of arm.
+	//
+	// Star token drops as noise.
+	DataStructFinalValType(frame,parts) {
+		return { type: "DataStructFinalValType", fieldType: parts.find(isNode) };
+	},
+
+	// FuncTypeArg := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Unified shape `{of, optional?, rest?}`. `of` always carries
+	// the arg's type (the GroupedTypeExpr arm arrives already
+	// unwrapped, so `of` is always the inner type node).
+	// `optional:true` set when a Qmark token precedes; absent when
+	// bare. `rest` is set only by FuncTypeFinalArg's Star arm —
+	// never directly here.
+	//
+	// Qmark drops as noise (recoverable from the `optional`
+	// flag).
+	FuncTypeArg(frame,parts) {
+		var node = { type: "FuncTypeArg", of: parts.find(isNode) };
+		for (let p of parts) {
+			if (!isNode(p) && p.type === "Qmark") {
+				node.optional = true;
+				break;
+			}
+		}
+		return node;
+	},
+
+	// FuncTypeFinalArg := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
+	//
+	// Normalizes into FuncTypeArg shape — FuncTypeFinalArg never
+	// appears as a node type in the AST. Two arms:
+	//
+	// - Star arm: parts contain [Star token, type node]. Build a
+	//   FuncTypeArg with rest:true. The GroupedTypeExpr arm
+	//   arrives already unwrapped, so the type node is the inner
+	//   regardless.
+	// - FuncTypeArg arm: parts contain a single already-shaped
+	//   FuncTypeArg child node. Unwrap (return the inner) — the
+	//   "final position" semantic is recoverable from being the
+	//   last entry in FuncTypeExpr.argTypes; no AST flag needed
+	//   to mark it.
+	//
+	// Parallel to the collapse-rule for parse-time-only variants
+	// (cf. §15 NoSemi siblings): two productions differing only
+	// in trailing/position syntax collapse to one AST type tag.
+	FuncTypeFinalArg(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var hasStar = parts.some(p => !isNode(p) && p.type === "Star");
+		if (hasStar) {
+			return { type: "FuncTypeArg", of: nodes[0], rest: true };
+		}
+		return nodes[0];
+	},
+
+	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Shape `{argTypes, optionalReturn?, returnType}`. `argTypes`
+	// is a list of FuncTypeArg nodes (FuncTypeFinalArg normalizes
+	// into FuncTypeArg via its own shaper, so the list is uniform
+	// in element type). Empty arg list (`() ^ T`) → argTypes is
+	// `[]`.
+	//
+	// Caret marks the args/return boundary; Qmark after Caret
+	// sets `optionalReturn:true` (parallel to FuncTypeArg's
+	// `optional` flag). GroupedTypeExpr return arm arrives
+	// already unwrapped — `returnType` is the inner type node
+	// regardless of arm.
+	//
+	// Parens, commas, Caret drop as noise (recoverable from the
+	// type tag and field layout).
+	FuncTypeExpr(frame,parts) {
+		var argTypes = [];
+		var returnType;
+		var optionalReturn = false;
+		var seenCaret = false;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (seenCaret) returnType = p;
+				else argTypes.push(p);
+			}
+			else if (p.type === "Caret") seenCaret = true;
+			else if (p.type === "Qmark" && seenCaret) optionalReturn = true;
+			// else: OpenParen / CloseParen / Comma — noise
+		}
+		var node = { type: "FuncTypeExpr", argTypes, returnType };
+		if (optionalReturn) node.optionalReturn = true;
+		return node;
+	},
+
 };
