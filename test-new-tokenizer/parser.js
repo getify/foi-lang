@@ -1841,8 +1841,7 @@ var NoUnionTypeExpr = or(
 	PlainStr,
 	NumberLit,
 	BooleanLit,
-	lazy(() => DataStructTypeExpr),
-	lazy(() => GroupedTypeExpr)
+	lazy(() => DataStructTypeExpr)
 );
 
 // UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
@@ -1871,21 +1870,26 @@ export const GroupedTypeExpr = production("GroupedTypeExpr",
 	)
 );
 
-// DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
-// DataStructFinalValType:= Star NoUnionTypeExpr;
-// <DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
+// <DataStructValueType> := NoFuncTypeExpr;
 //
-// GroupedTypeExpr in DataStructValueType because grouped types are
-// allowed at field/value positions (per grammar — NoFuncTypeExpr
-// already covers UnionTypeExpr and NestedTypeExpr).
-var DataStructValueType = or(NoFuncTypeExpr, GroupedTypeExpr);
+// Strict-B brace rule: decorative bracing of a non-union type in
+// field/value position is rejected. Unions are bare (`<x: a|b>`);
+// function-typed fields must be named via DefTypeStmt rather than
+// inlined.
+var DataStructValueType = NoFuncTypeExpr;
 
+// DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
 export const DataStructFieldType = production("DataStructFieldType",
 	and(Identifier, delim(), Colon, delim(), DataStructValueType)
 );
 
+// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
+//
+// Strict-B brace rule: `*{T|U}` parallel to `?{T|U}` / `^{T|U}`.
+// Bare union at rest-position is rejected for uniformity, not
+// because the position is ambiguous.
 export const DataStructFinalValType = production("DataStructFinalValType",
-	and(Star, NoUnionTypeExpr)
+	and(Star, or(NoUnionTypeExpr, GroupedTypeExpr))
 );
 
 // <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
@@ -1923,14 +1927,19 @@ export const DataStructTypeExpr = production("DataStructTypeExpr",
 	)
 );
 
-// FuncTypeArg      := Qmark? NoUnionTypeExpr;
-// FuncTypeFinalArg := (Star NoUnionTypeExpr) | FuncTypeArg;
+// FuncTypeArg      := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
+//
+// PEG note for the `or(NoUnionTypeExpr, GroupedTypeExpr)` alternative
+// at FuncTypeArg/FuncTypeFinalArg-Star/FuncTypeExpr-return: disjoint
+// by opener — NoUnionTypeExpr never starts with `{`, GroupedTypeExpr
+// always does. Order is mechanical.
 export const FuncTypeArg = production("FuncTypeArg",
-	and(optional(Qmark), NoUnionTypeExpr)
+	and(optional(Qmark), or(NoUnionTypeExpr, GroupedTypeExpr))
 );
 
+// FuncTypeFinalArg := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
 export const FuncTypeFinalArg = production("FuncTypeFinalArg",
-	or(and(Star, NoUnionTypeExpr), FuncTypeArg)
+	or(and(Star, or(NoUnionTypeExpr, GroupedTypeExpr)), FuncTypeArg)
 );
 
 // <FuncTypeArgList> := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
@@ -1946,7 +1955,7 @@ var FuncTypeArgList = or(
 	FuncTypeFinalArg
 );
 
-// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ NoUnionTypeExpr;
+// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 export const FuncTypeExpr = production("FuncTypeExpr",
 	and(
 		OpenParen, delim(),
@@ -1956,7 +1965,7 @@ export const FuncTypeExpr = production("FuncTypeExpr",
 		CloseParen, delim(),
 		Caret, delim(),
 		optional(Qmark), delim(),
-		NoUnionTypeExpr
+		or(NoUnionTypeExpr, GroupedTypeExpr)
 	)
 );
 

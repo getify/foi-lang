@@ -392,6 +392,42 @@ var samples = [
 	{ label: "ExplicitPropDef: computed BuiltIn",                src: "<%Maybe: 1>;" },
 	{ label: "ExplicitPropDef: computed StringLit",              src: "<%\"k\": 1>;" },
 	{ label: "ExplicitPropDef: computed PipelineTopic",          src: "<%#: 1>;" },
+
+	// §18 — NamedType: native
+	{ label: "DefTypeStmt: NamedType (native)",                src: "deft I int;" },
+
+	// §18 — NamedType: bare single segment
+	{ label: "DefTypeStmt: NamedType (bare single)",           src: "deft F Foo;" },
+
+	// §18 — NamedType: dotted (Identifier.Identifier)
+	{ label: "DefTypeStmt: NamedType (dotted)",                src: "deft E Either.Right;" },
+
+	// §18 — NamedType: dotted with BuiltIn root + Identifier child
+	{ label: "DefTypeStmt: NamedType (BuiltIn.Ident)",         src: "deft S List.Inner;" },
+
+	// §18 — UnionTypeExpr: bare two-type union (canonical sum-type form)
+	{ label: "DefTypeStmt: UnionTypeExpr (2-arm)",             src: "deft R Ok | Err;" },
+
+	// §18 — UnionTypeExpr: bare three-type union, mixed native/named
+	{ label: "DefTypeStmt: UnionTypeExpr (3-arm mixed)",       src: "deft V int | string | Foo;" },
+
+	// §18 — NestedTypeExpr: single-arg generic
+	{ label: "DefTypeStmt: NestedTypeExpr (single arg)",       src: "deft L List{int};" },
+
+	// §18 — NestedTypeExpr: union argument (GroupedTypeExpr arm of inner)
+	{ label: "DefTypeStmt: NestedTypeExpr (union arg)",        src: "deft E Either{Foo | Bar};" },
+
+	// §18 — DataStructTypeExpr: positional values
+	{ label: "DefTypeStmt: DataStructTypeExpr (positional)",   src: "deft P <int, string>;" },
+
+	// §18 — DataStructTypeExpr: named fields + final-val-rest (braced union per B)
+	{ label: "DefTypeStmt: DataStructTypeExpr (fields+rest)",  src: "deft S <x: int, y: string, *{bool | int}>;" },
+
+	// §18 — FuncTypeExpr: basic, two args, native return
+	{ label: "DefTypeStmt: FuncTypeExpr (basic)",              src: "deft F (int, string) ^ bool;" },
+
+	// §18 — FuncTypeExpr: optional arg, optional braced-union return, rest with braced union
+	{ label: "DefTypeStmt: FuncTypeExpr (complex)",            src: "deft G (?int, *{bool | string}) ^? {int | Foo};" },
 ];
 
 for (let { label, src } of samples) {

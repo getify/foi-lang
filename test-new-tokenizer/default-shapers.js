@@ -1715,6 +1715,7 @@ export const defaultShapers = {
 		};
 	},
 
+
 	// =============================================================
 	// §18 TYPE DEFINITION
 	// =============================================================
@@ -1737,6 +1738,204 @@ export const defaultShapers = {
 	DefTypeStmt(frame,parts) {
 		var [ name, decl ] = parts.filter(isNode);
 		return { type: "DefTypeStmt", name, decl };
+	},
+
+
+	// NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
+	//
+	// Two arms surfaced as mutually exclusive fields:
+	//
+	// - Native arm — single Keyword token, no nodes. Shape
+	//   `{type, of: <keyword-text>}` where `of` carries the
+	//   native-type spelling (`"int"` / `"integer"` / `"float"` /
+	//   `"bool"` / `"boolean"` / `"string"`). The field name `of`
+	//   mirrors FuncTypeArg.of and reads as "NamedType of int."
+	//
+	// - Bare/dotted arm — one or more Identifier/BuiltIn nodes
+	//   interleaved with Period tokens. Shape `{type, segments:
+	//   [...]}`. Periods drop as noise (namespace separator, not
+	//   value-position member access — NOT folded via foldAccess).
+	//   Single bare segment (e.g. `Foo`) carries segments of
+	//   length 1; consumer treats the list uniformly regardless of
+	//   arity.
+	//
+	// Consumer discrimination: branch on which field is present
+	// (`if (node.of) ... else ... node.segments`). The two fields
+	// are mutually exclusive at construction.
+	NamedType(frame,parts) {
+		if (parts.length === 1 && !isNode(parts[0])) {
+			return { type: "NamedType", of: parts[0].value };
+		}
+		return { type: "NamedType", segments: parts.filter(isNode) };
+	},
+
+	// GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
+	//
+	// Unwrap-shaper — returns the inner type node directly.
+	// Mirrors AsExpr's unwrap-and-lift pattern: GroupedTypeExpr
+	// never appears in the AST. Under the strict-B brace rule,
+	// GroupedTypeExpr only appears at sites where braces serve as
+	// disambiguation (NestedTypeExpr's type-arg site; the position
+	// after `?`/`*`/`^` modifiers in FuncTypeArg /
+	// FuncTypeFinalArg / FuncTypeExpr). At every such site the
+	// braces' structural role is owned by the parent production;
+	// the wrapper carries no AST identity of its own.
+	//
+	// Optional trailing Pipe inside the UnionTypeExpr arm drops
+	// as noise — its source-fidelity bit belongs in the audit,
+	// not on a wrapper node we erase.
+	GroupedTypeExpr(frame,parts) {
+		return parts.find(isNode);
+	},
+
+	// NestedTypeExpr := NamedType _ GroupedTypeExpr;
+	//
+	// Two-slot `{base, arg}`. `base` is the type constructor
+	// (NamedType node); `arg` is the parameterizing type — the
+	// GroupedTypeExpr's inner node, which arrives already
+	// unwrapped via GroupedTypeExpr's unwrap-shaper.
+	NestedTypeExpr(frame,parts) {
+		var [ base, arg ] = parts.filter(isNode);
+		return { type: "NestedTypeExpr", base, arg };
+	},
+
+	// UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
+	//
+	// Flat `types` list. Union is associative — no precedence to
+	// encode via left-folded nesting (unlike §9 binary tiers).
+	// Pipes drop as noise.
+	UnionTypeExpr(frame,parts) {
+		return { type: "UnionTypeExpr", types: parts.filter(isNode) };
+	},
+
+	// DataStructTypeExpr := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
+	//
+	// Heterogeneous `entries` — discriminate via `entry.type`:
+	//   - DataStructFieldType    — `name: type` slot
+	//   - DataStructFinalValType — `*type` rest-slot (always last)
+	//   - bare type node          — positional value (NamedType /
+	//     UnionTypeExpr / NestedTypeExpr / etc, arriving directly
+	//     via the hidden <DataStructValueType> production)
+	//
+	// Angle brackets and commas are noise. Trailing comma —
+	// deferred to source-fidelity audit.
+	DataStructTypeExpr(frame,parts) {
+		return { type: "DataStructTypeExpr", entries: parts.filter(isNode) };
+	},
+
+	// DataStructFieldType := Identifier _ Colon _ DataStructValueType;
+	//
+	// Two slots: `name` (Identifier node, kept as node for
+	// span/source-fidelity — mirrors DefFuncExpr.name and the
+	// binding-target convention) and `fieldType` (the RHS type
+	// node). Field name `fieldType` distinct from FuncTypeArg's
+	// `of` to avoid conflating "type slot in a record" with "type
+	// slot in a function signature" — they read at different
+	// semantic registers.
+	//
+	// Colon is noise.
+	DataStructFieldType(frame,parts) {
+		var [ name, fieldType ] = parts.filter(isNode);
+		return { type: "DataStructFieldType", name, fieldType };
+	},
+
+	// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Single slot `fieldType`. The Star modifier's "rest" semantic
+	// is recoverable from the type tag (unlike FuncTypeFinalArg,
+	// which normalizes into FuncTypeArg with rest:true —
+	// DataStructFinalValType keeps its own tag because there's no
+	// non-rest sibling shape to merge with). The GroupedTypeExpr
+	// arm arrives already unwrapped, so `fieldType` is the inner
+	// type node regardless of arm.
+	//
+	// Star token drops as noise.
+	DataStructFinalValType(frame,parts) {
+		return { type: "DataStructFinalValType", fieldType: parts.find(isNode) };
+	},
+
+	// FuncTypeArg := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Unified shape `{of, optional?, rest?}` per the Q7
+	// resolution. `of` always carries the arg's type (the
+	// GroupedTypeExpr arm arrives already unwrapped, so `of` is
+	// always the inner type node). `optional:true` set when a
+	// Qmark token precedes; absent when bare. `rest` is set only
+	// by FuncTypeFinalArg's Star arm — never directly here.
+	//
+	// Qmark drops as noise (recoverable from the `optional`
+	// flag).
+	FuncTypeArg(frame,parts) {
+		var node = { type: "FuncTypeArg", of: parts.find(isNode) };
+		for (let p of parts) {
+			if (!isNode(p) && p.type === "Qmark") {
+				node.optional = true;
+				break;
+			}
+		}
+		return node;
+	},
+
+	// FuncTypeFinalArg := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
+	//
+	// Normalizes into FuncTypeArg shape — FuncTypeFinalArg never
+	// appears as a node type in the AST. Two arms:
+	//
+	// - Star arm: parts contain [Star token, type node]. Build a
+	//   FuncTypeArg with rest:true. The GroupedTypeExpr arm
+	//   arrives already unwrapped, so the type node is the inner
+	//   regardless.
+	// - FuncTypeArg arm: parts contain a single already-shaped
+	//   FuncTypeArg child node. Unwrap (return the inner) — the
+	//   "final position" semantic is recoverable from being the
+	//   last entry in FuncTypeExpr.argTypes; no AST flag needed
+	//   to mark it.
+	//
+	// Parallel to collapse-rule for parse-time-only variants
+	// (cf. §15 NoSemi siblings): two productions differing only
+	// in trailing/position syntax collapse to one AST type tag.
+	FuncTypeFinalArg(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var hasStar = parts.some(p => !isNode(p) && p.type === "Star");
+		if (hasStar) {
+			return { type: "FuncTypeArg", of: nodes[0], rest: true };
+		}
+		return nodes[0];
+	},
+
+	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Shape `{argTypes, optionalReturn?, returnType}`. `argTypes`
+	// is a list of FuncTypeArg nodes (FuncTypeFinalArg normalizes
+	// into FuncTypeArg via its own shaper, so the list is uniform
+	// in element type). Empty arg list (`() ^ T`) → argTypes is
+	// `[]`.
+	//
+	// Caret marks the args/return boundary; Qmark after Caret
+	// sets `optionalReturn:true` (parallel to FuncTypeArg's
+	// `optional` flag). GroupedTypeExpr return arm arrives
+	// already unwrapped — `returnType` is the inner type node
+	// regardless of arm.
+	//
+	// Parens, commas, Caret drop as noise (recoverable from the
+	// type tag and field layout).
+	FuncTypeExpr(frame,parts) {
+		var argTypes = [];
+		var returnType;
+		var optionalReturn = false;
+		var seenCaret = false;
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (seenCaret) returnType = p;
+				else argTypes.push(p);
+			}
+			else if (p.type === "Caret") seenCaret = true;
+			else if (p.type === "Qmark" && seenCaret) optionalReturn = true;
+			// else: OpenParen / CloseParen / Comma — noise
+		}
+		var node = { type: "FuncTypeExpr", argTypes, returnType };
+		if (optionalReturn) node.optionalReturn = true;
+		return node;
 	},
 
 

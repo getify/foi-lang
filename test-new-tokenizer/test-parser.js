@@ -58,7 +58,6 @@ var samples = [
 		"def n: <<1, 2>, <3, 4>>;",                  // nested RecordTupleLit
 	"deft Status int; " +                                  // bare NativeType
 		"deft Color Red | Green | Blue; " +                    // UnionType (3 arms)
-		"deft Container { Just | Nothing }; " +                // GroupedType containing UnionType
 		"deft Point <x: int, y: int>; " +                      // DataStructType with fields
 		"deft Tuple <int, string, *bool>; " +                  // DataStructType with values + gather
 		"deft Adder (int, int) ^int; " +                       // FuncType
@@ -68,7 +67,6 @@ var samples = [
 		"deft Dotted Either.Right; " +                         // dotted NamedType (2 segments)
 		"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " + // nested func + string union
 		"deft G <*int>; " +                                    // bare gather as whole list (DataStructTypeList alt-2)
-		"deft V {Red | Green |}; " +                           // trailing | in grouped union
 		"deft P <x: int, y: int,>; " +                         // trailing comma in DataStructType
 		"deft F (int, int,) ^int; " +                          // trailing comma in FuncType args
 		"deft D A.B.C; " +                                     // 3-segment dotted NamedType

@@ -849,7 +849,18 @@ no `:as`. The remaining order is unchanged from prior design:
 
    Type forms do NOT carry trailing :as — they are types, not values.
    Grammar permissive; semantic validation in interp (e.g., interp
-   strings in type position, `int :as bool` chains, etc.). *)
+   strings in type position, `int :as bool` chains, etc.).
+
+   Brace-grouping rule: `{...}` appears in type expressions only where
+   syntactically required: NestedTypeExpr's type-argument site, and
+   the position immediately after a `?`, `*`, or `^` modifier when the
+   inner type is a union or function. Bare types are required
+   everywhere else — decorative bracing of a non-union, non-function
+   type in those non-modifier positions is a parse error. (A narrow
+   leakage: `(?{int})`, `(*{int})`, and `^{int}` technically parse
+   because the modifier-position arms accept GroupedTypeExpr broadly;
+   the strict reading is "don't brace a non-union/non-function" — this
+   is conventionally discouraged but not grammar-rejected.) *)
 
 DefTypeStmt           := "deft" _ Identifier _ TypeExpr;
 
@@ -860,7 +871,7 @@ UnionTypeExpr         := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
 
 <NoUnionTypeExpr>     := NestedTypeExpr | NamedType
                        | EmptyLit | PlainStr | NumberLit | BooleanLit
-                       | DataStructTypeExpr | GroupedTypeExpr;
+                       | DataStructTypeExpr;
 
 NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*)
                        | NativeType;
@@ -868,21 +879,22 @@ NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))
 
 NestedTypeExpr        := NamedType _ GroupedTypeExpr;
 
-GroupedTypeExpr       := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
+GroupedTypeExpr       := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)?
+                                    | NoUnionTypeExpr) _ CloseBrace;
 
 DataStructTypeExpr    := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle;
 <DataStructTypeList>  := (DataStructTypeEntry (_ Comma _ DataStructTypeEntry)* (_ Comma _ DataStructFinalValType)?)
                        | DataStructFinalValType;
 <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
-<DataStructValueType> := NoFuncTypeExpr | GroupedTypeExpr;
+<DataStructValueType> := NoFuncTypeExpr;
 DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
-DataStructFinalValType:= Star NoUnionTypeExpr;
+DataStructFinalValType:= Star (NoUnionTypeExpr | GroupedTypeExpr);
 
-FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ NoUnionTypeExpr;
+FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 <FuncTypeArgList>     := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
                        | FuncTypeFinalArg;
-FuncTypeArg           := Qmark? NoUnionTypeExpr;
-FuncTypeFinalArg      := (Star NoUnionTypeExpr) | FuncTypeArg;
+FuncTypeArg           := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
+FuncTypeFinalArg      := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
 ```
 
 ---
