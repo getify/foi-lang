@@ -1683,10 +1683,13 @@ export const defaultShapers = {
 	//   }
 	//
 	// Empty paren-pair `()` synthesizes a ParameterList with
-	// `params: []` and a zero-length span (start: openParen.end+1,
-	// end: openParen.end). The synthesized node is honest about
-	// being a ParameterList — consumers can branch uniformly on
-	// `paramSets[i].type` without a null check.
+	// `params: []` and a zero-length span: `start` anchored at
+	// `openParen.end + 1`, `end: null`. The `null` end matches
+	// the machinery's empty-merged edge case (shapeNode in
+	// parser-combinators.js) — both signal "no content, no end
+	// character." Consumers detect emptiness via `node.end === null`.
+	// The synthesized node is honest about being a ParameterList —
+	// `paramSets[i].type` is uniform regardless of arity.
 	//
 	// <FuncPrecondList> is hidden, so its FuncPrecond children bubble
 	// up directly into parts. FuncOverClause and FuncAsClause unwrap
@@ -1722,7 +1725,7 @@ export const defaultShapers = {
 							type: "ParameterList",
 							params: [],
 							start: lastOpenParen.end + 1,
-							end:   lastOpenParen.end,
+							end:   null,
 						});
 					}
 					lastOpenParen = null;
