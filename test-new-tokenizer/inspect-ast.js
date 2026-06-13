@@ -350,6 +350,48 @@ var samples = [
 	{ label: "DepMatch: implicit-? clause",               src: '?(x){ ["Kyle"]: "hi"; ?: "bye" };' },
 
 	{ label: "GuardedExpr (§14 sanity)",                  src: '?[!empty x]: log(x);' },
+
+
+	// =============================================================
+	// §17 DATA STRUCTURES
+	// =============================================================
+
+	// === RecordTupleLit ===
+	{ label: "RecordTupleLit: single bare value",                src: "<1>;" },
+	{ label: "RecordTupleLit: bare values",                      src: "<1, 2, 3>;" },
+	{ label: "RecordTupleLit: ConcisePropDef entries",           src: "<:x, :y>;" },
+	{ label: "RecordTupleLit: ExplicitPropDef static",           src: "<x: 1, y: 2>;" },
+	{ label: "RecordTupleLit: mixed entry types",                src: "<&foo, x: 1, :bar, 42>;" },
+	{ label: "RecordTupleLit: nested",                           src: "<<1, 2>, <3, 4>>;" },
+	{ label: "RecordTupleLit: realistic (combined entries)",     src: "<&order, customer: customers[idx]>;" },
+
+	// === SetLit ===
+	{ label: "SetLit: bare values",                              src: "<[1, 2, 3]>;" },
+	{ label: "SetLit: PickValue + bare",                         src: "<[&foo, x]>;" },
+	{ label: "SetLit: nested",                                   src: "<[<[1, 2]>, <[3, 4]>]>;" },
+
+	// === PickValue (8th access-fold site) ===
+	{ label: "PickValue: bare Identifier",                       src: "<&foo>;" },
+	{ label: "PickValue: BuiltIn base",                          src: "<&Maybe>;" },
+	{ label: "PickValue: single dot-access",                     src: "<&foo.bar>;" },
+	{ label: "PickValue: multi-segment access fold",             src: "<&foo.bar.baz>;" },
+	{ label: "PickValue: index access",                          src: "<&foo[0]>;" },
+
+	// === ConcisePropDef (PropertyExpr arms) ===
+	{ label: "ConcisePropDef: Identifier",                       src: "<:foo>;" },
+	{ label: "ConcisePropDef: numeric (synth NumberLit)",        src: "<:5>;" },
+	{ label: "ConcisePropDef: escaped numeric (synth NumberLit)", src: "<:\\5_000>;" },
+
+	// === ExplicitPropDef — static keys (via shapePropertyExpr) ===
+	{ label: "ExplicitPropDef: Identifier key",                  src: "<foo: 1>;" },
+	{ label: "ExplicitPropDef: numeric key (synth NumberLit)",   src: "<5: x>;" },
+	{ label: "ExplicitPropDef: escaped numeric key",             src: "<\\5_000: x>;" },
+
+	// === ExplicitPropDef — computed keys (ComputedPropName synthesis) ===
+	{ label: "ExplicitPropDef: computed Identifier",             src: "<%foo: 1>;" },
+	{ label: "ExplicitPropDef: computed BuiltIn",                src: "<%Maybe: 1>;" },
+	{ label: "ExplicitPropDef: computed StringLit",              src: "<%\"k\": 1>;" },
+	{ label: "ExplicitPropDef: computed PipelineTopic",          src: "<%#: 1>;" },
 ];
 
 for (let { label, src } of samples) {

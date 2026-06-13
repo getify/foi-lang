@@ -217,6 +217,33 @@ function shapeNamedBinding(typeName,parts) {
 	};
 }
 
+// Shapes a PropertyExpr key. PropertyExpr is grammar-hidden:
+//
+//   <PropertyExpr> := Identifier | <PositiveIntLit>;
+//
+// Identifier arrives as a node — passthrough. PositiveIntLit
+// arrives as one or two raw tokens (bare PositiveIntegerLit, or
+// [Escape, PositiveIntegerLit] for the `\5_000` form). We
+// synthesize a NumberLit mirroring the existing NumberLit shaper:
+// text = concat of token values; span derives from first/last
+// token. Synthetic — machinery doesn't reach this node, so we set
+// start/end explicitly.
+//
+// Used by ConcisePropDef.source and ExplicitPropDef.key (static
+// arm).
+function shapePropertyExpr(keyParts) {
+	var node = keyParts.find(isNode);
+	if (node) return node;
+	var text = "";
+	for (let p of keyParts) text += p.value;
+	return {
+		type: "NumberLit",
+		text,
+		start: keyParts[0].start,
+		end:   keyParts[keyParts.length - 1].end,
+	};
+}
+
 // Helper for the two "concise binding" productions —
 // ExportConciseBinding (§3) and DestructureConciseDef (§4). Both
 // share the shape `Colon Identifier SingleAccessExpr?`. After
@@ -1985,5 +2012,130 @@ export const defaultShapers = {
 			...shapePolarity(polarityTok),
 			consequent,
 		};
+	},
+
+
+	// =============================================================
+	// §17 DATA STRUCTURES
+	// =============================================================
+
+	// RecordTupleLit := OpenAngle _ <RecordTupleEntryList> _ CloseAngle;
+	//
+	// <RecordTupleEntryList> is hidden, so entry nodes (PickValue
+	// | ConcisePropDef | ExplicitPropDef | <RecordTupleValue>'s
+	// resolved leaf) splice up directly. Angle brackets and commas
+	// are noise. `entries` matches the established list-container
+	// convention (ExportExpr / DestructureTarget / BlockDefsInit*).
+	//
+	// <RecordTupleValue>'s paren-recursive arm is hidden, so user
+	// parens around an entry value drop as noise tokens — the inner
+	// node bubbles up unchanged. Parallel to the DepCondBoolExpr
+	// paren-arm unwrap pattern (parens around a non-Expr-grade
+	// form earn no node).
+	//
+	// No `:as` tail — annotation comes via AsExpr (§5).
+	RecordTupleLit(frame,parts) {
+		return { type: "RecordTupleLit", entries: parts.filter(isNode) };
+	},
+
+	// SetLit := OpenAngle OpenBracket _ <SetEntryList> _ CloseBracket CloseAngle;
+	//
+	// Same shape as RecordTupleLit modulo entry kind: <SetEntry>
+	// is `PickValue | <RecordTupleValue>` (no RecordProperty
+	// arms — sets are keyless). Compound `<[` / `]>` openers and
+	// commas are noise.
+	//
+	// No `:as` tail — annotation comes via AsExpr (§5).
+	SetLit(frame,parts) {
+		return { type: "SetLit", entries: parts.filter(isNode) };
+	},
+
+	// PickValue := Ampersand <IdentBase> MultiAccessExpr?;
+	//
+	// 8th access-fold site (joins AtExpr, AssignmentExpr LHS,
+	// AtCallExpr Arm 2 sub-form B inline AtExpr, ExportNamedBinding,
+	// ExportConciseBinding, DestructureNamedDef, DestructureConciseDef).
+	// <IdentBase> is hidden — the inner Identifier or BuiltIn node
+	// arrives directly. foldAccess returns base unchanged when no
+	// access fragment follows.
+	//
+	// `source` matches the Export/Destructure binding convention
+	// (read FROM a path). Ampersand is noise.
+	PickValue(frame,parts) {
+		var [ base, access ] = parts.filter(isNode);
+		return {
+			type: "PickValue",
+			source: foldAccess(base, access),
+		};
+	},
+
+	// ConcisePropDef := Colon <PropertyExpr>;
+	//
+	// Single-slot `{source}` per the concise-form convention
+	// (matches ExportConciseBinding / DestructureConciseDef).
+	// The `:foo` form is deliberately NOT desugared to `foo: foo`
+	// — derivation belongs in the interpreter. Numeric concise
+	// form `:5` is grammar-legal (permissive); the interpreter
+	// validates that the source is path-derivable.
+	//
+	// Colon is noise.
+	ConcisePropDef(frame,parts) {
+		return {
+			type: "ConcisePropDef",
+			source: shapePropertyExpr(parts.slice(1)),
+		};
+	},
+
+	// ExplicitPropDef := (<ComputedPropName> | <PropertyExpr>) _ Colon _ <RecordTupleValue>;
+	//
+	// Field names `{key, init}` — record-property semantics.
+	// `init` mirrors DefVarStmt's RHS slot (definition site with
+	// name on the left, initial value on the right). Avoids the
+	// reserved `value` field name (collides with the isNode token
+	// discriminator). Distinct from binding-flavor `{target,
+	// source}`: a property definition writes a name→value pair
+	// into a structure rather than binding a name to a read path.
+	//
+	// Two shapes for `key`:
+	// - Static arm (<PropertyExpr>): Identifier node (passthrough)
+	//   or synthetic NumberLit, via shapePropertyExpr.
+	// - Computed arm (<ComputedPropName>): synthesized
+	//   ComputedPropName{expr: <inner-node>} wrapper. The
+	//   <ComputedPropName> grammar helper is hidden-but-named;
+	//   promoting it at shape time gives consumers a uniform
+	//   `key.type === "ComputedPropName"` discriminator (no
+	//   parallel boolean flag). Parallels §15 CondClause
+	//   synthesis — same pattern of materializing a named-but-
+	//   hidden grammar helper to carry real semantic identity.
+	//
+	// Computed-arm inner is one of PipelineTopic | IdentifierExpr's
+	// resolved leaf (Identifier | BuiltIn | ...) | StringLit's
+	// resolved leaf (PlainStr | InterpStr | SpacingEscapedStr |
+	// SpacingInterpStr) — all node forms.
+	//
+	// Colon is noise. Percent is consumed into the synthesized
+	// ComputedPropName node's span (start = Percent.start).
+	ExplicitPropDef(frame,parts) {
+		var colonIdx = parts.findIndex(p => !isNode(p) && p.type === "Colon");
+		var keyParts = parts.slice(0, colonIdx);
+		var valueParts = parts.slice(colonIdx + 1);
+
+		var key;
+		if (keyParts.length > 0 && !isNode(keyParts[0]) && keyParts[0].type === "Percent") {
+			var percent = keyParts[0];
+			var inner = keyParts.find(isNode);
+			key = {
+				type: "ComputedPropName",
+				expr: inner,
+				start: percent.start,
+				end: inner.end,
+			};
+		}
+		else {
+			key = shapePropertyExpr(keyParts);
+		}
+
+		var init = valueParts.find(isNode);
+		return { type: "ExplicitPropDef", key, init };
 	},
 };
