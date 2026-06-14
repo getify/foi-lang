@@ -274,7 +274,7 @@ export const AsAnnotationExpr = production("AsAnnotationExpr",
 // productions in §5 and §9 — leaves and other intermediates no longer
 // carry their own `:as` tail. See the `:as` Precedence section in
 // Syntactic-Grammar.md.
-var OptAsAnnotation = optional(and(delim(), lazy(() => AsAnnotationExpr)));
+var OptAsAnnotation = optional(and(delim(), AsAnnotationExpr));
 
 // <Expr> := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
 //
@@ -379,7 +379,7 @@ var AsableExpr = or(
 	lazy(() => BlockExpr),
 	lazy(() => GuardedExpr),
 	lazy(() => UnaryExpr),
-	lazy(() => BareOperandExpr),
+	BareOperandExpr,
 	lazy(() => GroupedOpExpr),
 	lazy(() => GroupedDoExpr)
 );
@@ -421,7 +421,7 @@ export const GroupedExprNoBlock = production("GroupedExprNoBlock",
 export const GroupedOpExpr = production("GroupedOpExpr",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AsExpr), OperandExpr),
+		or(AsExpr, OperandExpr),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
@@ -431,7 +431,7 @@ export const GroupedOpExpr = production("GroupedOpExpr",
 export const GroupedBareOpExpr = production("GroupedBareOpExpr",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AsExpr), BareOperandExpr),
+		or(AsExpr, BareOperandExpr),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
@@ -441,27 +441,7 @@ export const GroupedBareOpExpr = production("GroupedBareOpExpr",
 export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AsExpr), BareOperandExprNoEmpty),
-		delim(), CloseParen,
-		OptAsAnnotation
-	)
-);
-
-// GroupedDoExpr := OpenParen _ (AsExpr | DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
-//
-// Lets a do-comprehension appear as a binary operand (always
-// parenthesized). Forward refs to §16 via lazy(). PEG order inside
-// matches <Expr> ordering: AsExpr first (for `(?x :as bool)`-style
-// inputs that route here when other variants reject them), then
-// the two do-compr arms.
-export const GroupedDoExpr = production("GroupedDoExpr",
-	and(
-		OpenParen, delim(),
-		or(
-			lazy(() => AsExpr),
-			lazy(() => DoComprExpr),
-			lazy(() => DoLoopComprExpr)
-		),
+		or(AsExpr, BareOperandExprNoEmpty),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
@@ -613,7 +593,7 @@ var RangeExpr = or(ClosedRangeExpr, LeadingRangeExpr, TrailingRangeExpr);
 
 
 // =============================================================
-// §7 CHAIN EXPRESSIONS / FUNCTION CALLS / OP-AS-FUNCTION
+// §7 Function Calls / Op-as-Function
 // =============================================================
 
 var Pipe         = tokType("Pipe");
@@ -655,13 +635,13 @@ var ChainSeg = or(
 );
 
 // ConciseNamedArg  := Colon Identifier;
-// ExplicitNamedArg := Identifier _ Colon _ Expr;
 export const ConciseNamedArg = production("ConciseNamedArg",
 	and(Colon, Identifier)
 );
 
+// ExplicitNamedArg := Identifier _ Colon _ Expr;
 export const ExplicitNamedArg = production("ExplicitNamedArg",
-	and(Identifier, delim(), Colon, delim(), lazy(() => Expr))
+	and(Identifier, delim(), Colon, delim(), Expr)
 );
 
 // <NamedArgExpr> := ConciseNamedArg | ExplicitNamedArg | (OpenParen _ NamedArgExpr _ CloseParen);
@@ -676,7 +656,7 @@ var NamedArgExpr = or(
 // <CallArgExpr> := (TriplePeriod _)? (NamedArgExpr | Expr);
 var CallArgExpr = and(
 	optional(and(TriplePeriod, delim())),
-	or(NamedArgExpr, lazy(() => Expr))
+	or(NamedArgExpr, Expr)
 );
 
 // <CallArgList> := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -732,7 +712,7 @@ export const AtCallExpr = production("AtCallExpr",
 				MonadConstructor
 			),
 			delim(),
-			lazy(() => ExprNoBlock)
+			ExprNoBlock
 		)
 	)
 );
@@ -928,7 +908,27 @@ var BinaryAtom = or(
 	UnaryExpr,
 	BareOperandExpr,
 	GroupedOpExpr,
-	GroupedDoExpr
+	lazy(() => GroupedDoExpr)
+);
+
+// GroupedDoExpr := OpenParen _ (AsExpr | DoComprExpr | DoLoopComprExpr) _ CloseParen (_ AsAnnotationExpr)?;
+//
+// Lets a do-comprehension appear as a binary operand (always
+// parenthesized). Forward refs to §16 via lazy(). PEG order inside
+// matches <Expr> ordering: AsExpr first (for `(?x :as bool)`-style
+// inputs that route here when other variants reject them), then
+// the two do-compr arms.
+export const GroupedDoExpr = production("GroupedDoExpr",
+	and(
+		OpenParen, delim(),
+		or(
+			AsExpr,
+			lazy(() => DoComprExpr),
+			lazy(() => DoLoopComprExpr)
+		),
+		delim(), CloseParen,
+		OptAsAnnotation
+	)
 );
 
 // MulBinExpr := BinaryAtom (_ MulOp _ BinaryAtom)+;
@@ -1187,7 +1187,7 @@ export const AssignmentExpr = production("AssignmentExpr",
 		delim(),
 		Colon, Equal,
 		delim(),
-		lazy(() => Expr)
+		Expr
 	)
 );
 
@@ -1254,7 +1254,7 @@ export const FuncAsClause = production("FuncAsClause",
 
 // ReturnExpr := Caret _ Expr;
 export const ReturnExpr = production("ReturnExpr",
-	and(Caret, delim(), lazy(() => Expr))
+	and(Caret, delim(), Expr)
 );
 
 // <FuncBodyStmt> := ReturnExpr | Stmt;
@@ -1343,7 +1343,7 @@ export const CondClause = production("CondClause",
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 export const GuardedExpr = production("GuardedExpr",
-	and(CondClause, delim(), Colon, delim(), lazy(() => Expr))
+	and(CondClause, delim(), Colon, delim(), Expr)
 );
 
 
@@ -1352,16 +1352,17 @@ export const GuardedExpr = production("GuardedExpr",
 // =============================================================
 
 // MatchConsequent      := (Colon _ Expr _ Semicolon) | BlockExpr;
-// MatchConsequentNoSemi := (Colon _ Expr) | BlockExpr;
 //
 // PEG: Colon-arm first (disjoint from BlockExpr's OpenBrace opener).
 var MatchConsequent = or(
-	and(Colon, delim(), lazy(() => Expr), delim(), Semicolon),
-	lazy(() => BlockExpr)
+	and(Colon, delim(), Expr, delim(), Semicolon),
+	BlockExpr
 );
+
+// MatchConsequentNoSemi := (Colon _ Expr) | BlockExpr;
 var MatchConsequentNoSemi = or(
-	and(Colon, delim(), lazy(() => Expr)),
-	lazy(() => BlockExpr)
+	and(Colon, delim(), Expr),
+	BlockExpr
 );
 
 // ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
@@ -1424,9 +1425,9 @@ export const IndepMatchExpr = production("IndepMatchExpr",
 
 // <DepCondBoolOp> := CompareOp | AndOp | OrOp;
 var DepCondBoolOp = or(
-	lazy(() => CompareOp),
-	lazy(() => AndOp),
-	lazy(() => OrOp)
+	CompareOp,
+	AndOp,
+	OrOp
 );
 
 // DepCondBoolExpr := AsTypeOp _ NamedType
@@ -1439,7 +1440,7 @@ var DepCondBoolOp = or(
 export const DepCondBoolExpr = production("DepCondBoolExpr",
 	or(
 		and(AsTypeOp, delim(), lazy(() => NamedType)),
-		and(lazy(() => DepCondBoolOp), delim(), CompareDispatch),
+		and(DepCondBoolOp, delim(), CompareDispatch),
 		and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
 	)
 );
@@ -1527,7 +1528,7 @@ export const DoDefVarStmt = production("DoDefVarStmt",
 		KwDef, delim(),
 		or(Identifier, DestructureTarget),
 		delim(), DoubleColon, delim(),
-		lazy(() => Expr)
+		Expr
 	)
 );
 
@@ -1561,7 +1562,7 @@ var DoBlockStmts = and(
 	optional(or(DoFinalUnwrapExpr, DoStmtSemiOpt))
 );
 
-// <DoVarDefInitOpt> := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
+// DoVarDefInitOpt := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
 //                    | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 export const DoVarDefInitOpt = production("DoVarDefInitOpt",
 	or(
@@ -1715,7 +1716,7 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 // pattern as DepCondBoolExpr arm-3 and GroupedTypeExpr). AST
 // surface unchanged.
 var RecordTupleValue = production("RecordTupleValue", or(
-	lazy(() => AsExpr),
+	AsExpr,
 	CallExpr,
 	EmptyLit,
 	BooleanLit,
