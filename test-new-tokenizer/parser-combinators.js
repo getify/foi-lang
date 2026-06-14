@@ -949,7 +949,7 @@ export function shapeNode(frame, shapers, options) {
 		: { type: frame.production, parts };
 	node.start = charStart;
 	node.end   = charEnd;
-	if (preserveSoftDelims) {
+	if (preserveSoftDelims && !ownDelim) {
 		let softDelims = delims || [];
 		let hardDelims = node.delims || [];
 		if (softDelims.length === 0 && hardDelims.length === 0) {

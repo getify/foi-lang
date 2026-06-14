@@ -170,10 +170,10 @@ Program             := _ ((StmtSemi | ExportStmtSemi) _)*
                        ((StmtSemiOpt | ExportStmtSemiOpt) _)?;
 
 <Stmt>              := DefBlockStmt | DefVarStmt | DefTypeStmt | Expr;
-<StmtSemi>          := Stmt? (_ Semicolon)+;
-<StmtSemiOpt>       := Stmt? (_ Semicolon)*;
-<ExportStmtSemi>    := ExportExpr (_ Semicolon)+;
-<ExportStmtSemiOpt> := ExportExpr (_ Semicolon)*;
+StmtSemi            := Stmt? (_ Semicolon)+;
+StmtSemiOpt         := Stmt? (_ Semicolon)*;
+ExportStmtSemi      := ExportExpr (_ Semicolon)+;
+ExportStmtSemiOpt   := ExportExpr (_ Semicolon)*;
 
 Identifier          := General;
 BuiltIn             := Builtin;
@@ -699,8 +699,8 @@ FuncBodyPipeline      := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
 FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 
 <FuncBodyStmts>       := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;
-<FuncBodyStmtSemi>    := FuncBodyStmt (_ Semicolon)+;
-<FuncBodyStmtSemiOpt> := FuncBodyStmt (_ Semicolon)*;
+FuncBodyStmtSemi      := FuncBodyStmt (_ Semicolon)+;
+FuncBodyStmtSemiOpt   := FuncBodyStmt (_ Semicolon)*;
 <FuncBodyStmt>        := ReturnExpr | Stmt;
 ReturnExpr            := Caret _ Expr;
 ```
@@ -786,8 +786,8 @@ DoVarDefInitOpt         := (Identifier        (_ (DoubleColon | Colon) _ ExprNoB
 
 DoDefVarStmt            := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
 <DoStmt>                := DoDefVarStmt | Stmt;
-<DoStmtSemi>            := DoStmt? (_ Semicolon)+;
-<DoStmtSemiOpt>         := DoStmt? (_ Semicolon)*;
+DoStmtSemi              := DoStmt? (_ Semicolon)+;
+DoStmtSemiOpt           := DoStmt? (_ Semicolon)*;
 DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
 DoLoopComprExpr         := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;

@@ -37,14 +37,14 @@ var Stmt = or(
 
 var Semicolon = tokType("Semicolon");
 
-// <StmtSemi>          := Stmt? (_ Semicolon)+;
-// <StmtSemiOpt>       := Stmt? (_ Semicolon)*;
-// <ExportStmtSemi>    := ExportExpr (_ Semicolon)+;
-// <ExportStmtSemiOpt> := ExportExpr (_ Semicolon)*;
-var StmtSemi          = and(optional(Stmt),                 many(and(delim(), Semicolon)));
-var StmtSemiOpt       = and(optional(Stmt),                 any (and(delim(), Semicolon)));
-var ExportStmtSemi    = and(lazy(() => ExportExpr),         many(and(delim(), Semicolon)));
-var ExportStmtSemiOpt = and(lazy(() => ExportExpr),         any (and(delim(), Semicolon)));
+// StmtSemi          := Stmt? (_ Semicolon)+;
+// StmtSemiOpt       := Stmt? (_ Semicolon)*;
+// ExportStmtSemi    := ExportExpr (_ Semicolon)+;
+// ExportStmtSemiOpt := ExportExpr (_ Semicolon)*;
+export const StmtSemi          = production("StmtSemi", and(optional(Stmt), many(and(delim(), Semicolon))));
+export const StmtSemiOpt       = production("StmtSemiOpt", and(optional(Stmt), any (and(delim(), Semicolon))));
+export const ExportStmtSemi    = production("ExportStmtSemi", and(lazy(() => ExportExpr), many(and(delim(), Semicolon))));
+export const ExportStmtSemiOpt = production("ExportStmtSemiOpt", and(lazy(() => ExportExpr), any (and(delim(), Semicolon))));
 
 // Program := _ ((StmtSemi | ExportStmtSemi) _)*
 //            ((StmtSemiOpt | ExportStmtSemiOpt) _)?;
@@ -54,7 +54,8 @@ export const Program = production("Program",
 		any(and(or(StmtSemi, ExportStmtSemi), delim())),
 		optional(and(or(StmtSemiOpt, ExportStmtSemiOpt), delim())),
 		eof()
-	)
+	),
+	{ preserveInnerDelim: true }
 );
 
 // Identifier    := General;
@@ -1149,7 +1150,8 @@ var BareBlockExpr = and(OpenBrace, delim(), BlockStmts, delim(), CloseBrace);
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 export const BlockExpr = production("BlockExpr",
-	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr)
+	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr),
+	{ preserveInnerDelim: true }
 );
 
 // DefBlockStmt := "def" _ BlockDefsInit _ BareBlockExpr;
@@ -1160,9 +1162,9 @@ export const BlockExpr = production("BlockExpr",
 // so DefBlockStmt fails-through cleanly to DefVarStmt for the
 // `def x: …` form.
 export const DefBlockStmt = production("DefBlockStmt",
-	and(KwDef, delim(), BlockDefsInit, delim(), BareBlockExpr)
+	and(KwDef, delim(), BlockDefsInit, delim(), BareBlockExpr),
+	{ preserveInnerDelim: true }
 );
-
 
 // =============================================================
 // §12 ASSIGNMENT
@@ -1263,10 +1265,10 @@ export const ReturnExpr = production("ReturnExpr",
 // all Stmt arms (def/defn/deft/expressions).
 var FuncBodyStmt = or(ReturnExpr, Stmt);
 
-// <FuncBodyStmtSemi>    := FuncBodyStmt (_ Semicolon)+;
-// <FuncBodyStmtSemiOpt> := FuncBodyStmt (_ Semicolon)*;
-var FuncBodyStmtSemi    = and(FuncBodyStmt, many(and(delim(), Semicolon)));
-var FuncBodyStmtSemiOpt = and(FuncBodyStmt, any (and(delim(), Semicolon)));
+// FuncBodyStmtSemi    := FuncBodyStmt (_ Semicolon)+;
+// FuncBodyStmtSemiOpt := FuncBodyStmt (_ Semicolon)*;
+export const FuncBodyStmtSemi    = production("FuncBodyStmtSemi", and(FuncBodyStmt, many(and(delim(), Semicolon))));
+export const FuncBodyStmtSemiOpt = production("FuncBodyStmtSemiOpt", and(FuncBodyStmt, any (and(delim(), Semicolon))));
 
 // <FuncBodyStmts> := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;
 var FuncBodyStmts = and(
@@ -1294,7 +1296,8 @@ export const FuncBodyPipeline = production("FuncBodyPipeline",
 
 // FuncBodyBlock := OpenBrace _ FuncBodyStmts _ CloseBrace;
 export const FuncBodyBlock = production("FuncBodyBlock",
-	and(OpenBrace, delim(), FuncBodyStmts, delim(), CloseBrace)
+	and(OpenBrace, delim(), FuncBodyStmts, delim(), CloseBrace),
+	{ preserveInnerDelim: true }
 );
 
 // <FuncBody> := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
@@ -1546,10 +1549,10 @@ export const DoFinalUnwrapExpr = production("DoFinalUnwrapExpr",
 // `def x:` happily and leave a dangling `:expr` from the user's `::`.
 var DoStmt = or(DoDefVarStmt, Stmt);
 
-// <DoStmtSemi>    := DoStmt? (_ Semicolon)+;
-// <DoStmtSemiOpt> := DoStmt? (_ Semicolon)*;
-var DoStmtSemi    = and(optional(DoStmt), many(and(delim(), Semicolon)));
-var DoStmtSemiOpt = and(optional(DoStmt), any (and(delim(), Semicolon)));
+// DoStmtSemi    := DoStmt? (_ Semicolon)+;
+// DoStmtSemiOpt := DoStmt? (_ Semicolon)*;
+export const DoStmtSemi    = production("DoStmtSemi", and(optional(DoStmt), many(and(delim(), Semicolon))));
+export const DoStmtSemiOpt = production("DoStmtSemiOpt", and(optional(DoStmt), any (and(delim(), Semicolon))));
 
 // <DoBlockStmts> := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
 //
@@ -1594,7 +1597,8 @@ var DoBareBlockExpr = and(OpenBrace, delim(), DoBlockStmts, delim(), CloseBrace)
 // contents splice into DoBlockExpr's parts. Parallel to BlockExpr/
 // BareBlockExpr in §11.
 export const DoBlockExpr = production("DoBlockExpr",
-	and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr)
+	and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr),
+	{ preserveInnerDelim: true }
 );
 
 // DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
@@ -2010,7 +2014,9 @@ export async function *parseFoi(input,opts = {}) {
 	var events = handle.subscribe(presets.parseCommitsAtDepth(1,{ includeDepths: true }));
 	var runPromise = handle.run();
 	for await (let ev of events) {
-		yield shapeNode(ev.node, shapers, config);
+		var node = shapeNode(ev.node, shapers, config);
+		if (node.type === "EmptyStmt" && !node.delims) continue;
+		yield node;
 	}
 	var result = await runPromise;
 	if (!result.ok) {
