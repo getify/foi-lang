@@ -417,11 +417,15 @@ var samples = [
 	{ label: "RecordTupleLit: mixed entry types",                src: "<&foo, x: 1, :bar, 42>;" },
 	{ label: "RecordTupleLit: nested",                           src: "<<1, 2>, <3, 4>>;" },
 	{ label: "RecordTupleLit: realistic (combined entries)",     src: "<&order, customer: customers[idx]>;" },
+	{ label: "RecordTupleLit: paren-wrapped entry",              src: "<(1), 2>;" },
+	{ label: "RecordTupleLit: nested-paren entry",               src: "<((1)), 2>;" },
+	{ label: "RecordTupleLit: paren-wrapped in ExplicitPropDef", src: "<x: (1)>;" },
 
 	// === SetLit ===
 	{ label: "SetLit: bare values",                              src: "<[1, 2, 3]>;" },
 	{ label: "SetLit: PickValue + bare",                         src: "<[&foo, x]>;" },
 	{ label: "SetLit: nested",                                   src: "<[<[1, 2]>, <[3, 4]>]>;" },
+	{ label: "SetLit: paren-wrapped entry",                      src: "<[(x), y]>;" },
 
 	// === PickValue (8th access-fold site) ===
 	{ label: "PickValue: bare Identifier",                       src: "<&foo>;" },

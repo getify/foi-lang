@@ -818,7 +818,7 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-<RecordTupleValue>     := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
+RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
                         | IdentifierExpr | (OpenParen _ RecordTupleValue _ CloseParen);
 
 PickValue              := Ampersand IdentBase MultiAccessExpr?;
@@ -832,11 +832,20 @@ SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket Cl
 <SetEntry>             := PickValue | RecordTupleValue;
 ```
 
-PEG ordering note for `<RecordTupleValue>`: `AsExpr` first — longer
+PEG ordering note for `RecordTupleValue`: `AsExpr` first — longer
 match with `:as` tail. Falls through to `CallExpr` and the rest on
 no `:as`. The remaining order is unchanged from prior design:
 `CallExpr` before `IdentifierExpr` so `foo.bar` parses as a chain;
 `DataStructLit` before `IdentifierExpr` (disjoint openers).
+
+`RecordTupleValue` is visible but UNWRAPS in its shaper — returns
+the inner node directly, lifting wrapper parens (from the paren-
+recursive arm) onto the inner node's `delims` in source-position
+order. AST surface is identical to a hidden-production version for
+non-paren entries; paren-wrapped entries gain their parens at entry
+granularity rather than at the enclosing literal level. Same
+unwrap-shaper pattern as `AsExpr` (§5) and `DepCondBoolExpr` arm-3
+(§15).
 
 ## §18 Type Definitions
 

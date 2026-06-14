@@ -1693,9 +1693,9 @@ export const ExplicitPropDef = production("ExplicitPropDef",
 // (PropertyExpr). Order is mechanical.
 var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 
-// <RecordTupleValue> := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
-//                     | DataStructLit | IdentifierExpr
-//                     | (OpenParen _ RecordTupleValue _ CloseParen);
+// RecordTupleValue := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
+//                   | DataStructLit | IdentifierExpr
+//                   | (OpenParen _ RecordTupleValue _ CloseParen);
 //
 // PEG order:
 // - AsExpr first — longer match with `:as` tail; falls through on no `:as`.
@@ -1706,7 +1706,15 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 // - DataStructLit before IdentifierExpr — disjoint openers
 //   (`<` vs IdentBase).
 // - Paren-recursive arm consumes `(` before recursing — no LR.
-var RecordTupleValue = or(
+//
+// Visible production (promoted from combinator alias): the paren-
+// recursive arm needs its own frame so its OpenParen/CloseParen
+// tokens land at entry granularity rather than splicing up to
+// RecordTupleLit/SetLit/ExplicitPropDef. Shaper unwraps — returns
+// the inner node, lifting any wrapper parens onto its delims (same
+// pattern as DepCondBoolExpr arm-3 and GroupedTypeExpr). AST
+// surface unchanged.
+var RecordTupleValue = production("RecordTupleValue", or(
 	lazy(() => AsExpr),
 	CallExpr,
 	EmptyLit,
@@ -1716,7 +1724,7 @@ var RecordTupleValue = or(
 	lazy(() => DataStructLit),
 	IdentifierExpr,
 	and(OpenParen, delim(), lazy(() => RecordTupleValue), delim(), CloseParen)
-);
+));
 
 // <RecordTupleEntry> := PickValue | RecordProperty | RecordTupleValue;
 //

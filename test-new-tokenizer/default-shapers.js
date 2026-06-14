@@ -1842,6 +1842,28 @@ export const defaultShapers = {
 	// §17 DATA STRUCTURE LITERALS
 	// =============================================================
 
+	// RecordTupleValue := AsExpr | CallExpr | EmptyLit | BooleanLit
+	//                   | NumberLit | StringLit | DataStructLit
+	//                   | IdentifierExpr
+	//                   | (OpenParen _ RecordTupleValue _ CloseParen);
+	//
+	// UNWRAPS — returns the inner node directly. Non-paren arms:
+	// no wrapper tokens, liftWrapperDelims is a no-op and returns
+	// the inner unchanged. Paren-recursive arm: OpenParen/CloseParen
+	// lift onto the inner node's delims in source-position order
+	// (same pattern as DepCondBoolExpr arm-3, GroupedTypeExpr).
+	// Machinery's start/end overwrite extends the inner node's span
+	// to cover the parens, matching AsExpr's behavior.
+	RecordTupleValue(frame,parts) {
+		var inner;
+		var wrapperDelims = [];
+		for (let p of parts) {
+			if (isNode(p)) inner = p;
+			else wrapperDelims.push(p); // OpenParen, CloseParen
+		}
+		return liftWrapperDelims(inner, wrapperDelims);
+	},
+
 	// RecordTupleLit := OpenAngle _ <RecordTupleEntryList> _ CloseAngle;
 	//
 	// Angles and commas → delims.
