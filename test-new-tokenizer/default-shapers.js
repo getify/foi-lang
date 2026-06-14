@@ -92,6 +92,32 @@ function withDelims(node, delims) {
 	return node;
 }
 
+// Merge wrapper-token delims onto a shaped inner node when an
+// unwrap-shaper returns its single payload. The wrapper's
+// structural punctuation (e.g. parens around a paren-recursive
+// arm) would otherwise vanish; this lifts them onto the surviving
+// inner node in source-position order. Both arrays are already
+// source-ordered, so a linear two-pointer merge by `.start`
+// suffices.
+function liftWrapperDelims(inner, wrapperDelims) {
+	if (wrapperDelims.length === 0) return inner;
+	var existing = inner.delims || [];
+	if (existing.length === 0) {
+		inner.delims = wrapperDelims;
+		return inner;
+	}
+	var out = [];
+	var i = 0, j = 0;
+	while (i < wrapperDelims.length && j < existing.length) {
+		if (wrapperDelims[i].start <= existing[j].start) out.push(wrapperDelims[i++]);
+		else                                              out.push(existing[j++]);
+	}
+	while (i < wrapperDelims.length) out.push(wrapperDelims[i++]);
+	while (j < existing.length)      out.push(existing[j++]);
+	inner.delims = out;
+	return inner;
+}
+
 // Helper for ChainExpr's fold (below). Given an `object`
 // expression and a single chain segment node, returns a typed
 // wrapper node:
@@ -1635,29 +1661,25 @@ export const defaultShapers = {
 	//
 	// Arm 1/2: operator tokens accumulate into `op` (drop into
 	// field). No structural delims.
-	// Arm 3 (paren-recursive): UNWRAPS — return the inner
-	// DepCondBoolExpr unchanged. Step 3: paren tokens vanish via
-	// the unwrap; Step 5 will lift any wrapper delims to the
-	// surviving inner node.
+	// Arm 3 (paren-recursive): UNWRAPS — returns the inner
+	// DepCondBoolExpr with the wrapper parens lifted onto its
+	// delims in source-position order (via liftWrapperDelims).
 	DepCondBoolExpr(frame,parts) {
 		var op = "";
 		var right;
-		var sawOpenParen = false;
+		var wrapperDelims = [];
 		for (let p of parts) {
 			if (isNode(p)) {
 				right = p;
 			}
-			else if (p.type === "OpenParen") {
-				sawOpenParen = true;
-			}
-			else if (p.type === "CloseParen") {
-				// paren-arm closer — vanishes with the unwrap
+			else if (p.type === "OpenParen" || p.type === "CloseParen") {
+				wrapperDelims.push(p);
 			}
 			else {
 				op += p.value;
 			}
 		}
-		if (sawOpenParen) return right;
+		if (wrapperDelims.length > 0) return liftWrapperDelims(right, wrapperDelims);
 		return { type: "DepCondBoolExpr", op, right };
 	},
 
@@ -1948,11 +1970,18 @@ export const defaultShapers = {
 
 	// GroupedTypeExpr := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)? | NoUnionTypeExpr) _ CloseBrace;
 	//
-	// Unwrap-shaper — returns the inner type node directly. Step
-	// 3: braces and any optional trailing Pipe vanish via the
-	// unwrap; Step 5 will lift these to the surviving inner node.
+	// Unwrap-shaper — returns the inner type node with the
+	// wrapper braces (and optional trailing Pipe in the union
+	// arm) lifted onto its delims in source-position order (via
+	// liftWrapperDelims).
 	GroupedTypeExpr(frame,parts) {
-		return parts.find(isNode);
+		var inner;
+		var wrapperDelims = [];
+		for (let p of parts) {
+			if (isNode(p)) inner = p;
+			else wrapperDelims.push(p); // OpenBrace, CloseBrace, optional Pipe
+		}
+		return liftWrapperDelims(inner, wrapperDelims);
 	},
 
 	// NestedTypeExpr := NamedType _ GroupedTypeExpr;
