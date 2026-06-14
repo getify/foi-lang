@@ -2560,9 +2560,9 @@ You can use [pattern matching](#pattern-matching) to determine which type of mon
 def m: getSomeMonad(42);
 
 ?(m){
-    ?[?as Id, ?as Right]: something(m)
-    ?[?as None]: something(m,"default!")
-    ?[?as Left]: something(m,"oops")
+    ?[?as Id, ?as Right]: something(m);
+    ?[?as None]: something(m,"default!");
+    ?[?as Left]: something(m,"oops");
     ?: something(Left@ "Unknown!","oops")
 };
 ```
@@ -4258,7 +4258,7 @@ def cost: (*)(getQty(order,item), getPrice(item)) :as float;
 Custom types can be defined, for use in subsequent annotations, with the `deft` keyword:
 
 ```java
-deft OrderStatus { empty | "pending" | "shipped" };
+deft OrderStatus empty | "pending" | "shipped";
 
 def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
