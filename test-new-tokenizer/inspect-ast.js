@@ -517,6 +517,49 @@ var samples = [
 	{ label: "α-claim: DoBlockExpr lift",                   src: "def r: Foo ~<< { def x:: 1;; ::x };;" },
 ];
 
+// =============================================================
+// α-SOFT — STMT-SEMI WITH preserveSoftDelims:true
+//
+// Exercises shapeFrame's lift-branch soft-delim partition
+// (parser-combinators.js Fix 2). Under preserveSoftDelims:true
+// and a shaper returning the lift form, the machinery splits
+// soft delims at node.end:
+//   - s.end <= node.end  → claimedSoft → merged into
+//     node.delims alongside hard delims via mergeBySourcePosition.
+//   - s.end >  node.end  → liftedSoft  → merged into __lift
+//     alongside the lifted hard tokens, also via
+//     mergeBySourcePosition.
+//
+// shapeStmtSemi is the only current lift-returning shaper, so
+// the parent in every sample below is Program. The diagnostic
+// expectations are written inline.
+// =============================================================
+
+var softSamples = [
+	// In-claim WS only.
+	// Expect: DefVarStmt.delims contains WS@8 between the
+	// shaper-emitted Colon@5 and the claimed Semi@9 (source-
+	// sorted). Program has no delims.
+	{ label: "α-soft: WS in claim",        src: "def x: 2 ;" },
+
+	// Past-claim WS only.
+	// Expect: DefVarStmt.delims hard-only ([Colon@5, Semi@8]).
+	// Program.delims = [WS@9, Semi@10] (source-ordered via
+	// mergeBySourcePosition(lift, liftedSoft)).
+	{ label: "α-soft: WS in lift",         src: "def x: 2; ;" },
+
+	// Both partitions, same frame.
+	// Expect: DefVarStmt.delims contains WS@8 (claimed) in
+	// source order with the hards. Program.delims = [WS@10,
+	// Semi@11] (lifted).
+	{ label: "α-soft: WS in both regions", src: "def x: 2 ; ;" },
+
+	// Past-claim Comment (plus surrounding WS).
+	// Expect: DefVarStmt.delims hard-only. Program.delims =
+	// [WS@9, Comment@10-16, WS@17, Semi@18] — all four lifted,
+	// interleaved by source position.
+	{ label: "α-soft: Comment in lift",    src: "def x: 2; ///c/// ;" },
+];
 
 for (let { label, src } of samples) {
 	console.log(`\n=== ${label} ===`);
@@ -530,3 +573,16 @@ for (let { label, src } of samples) {
 		console.log(`!! threw: ${err.message}`);
 	}
 }
+
+// for (let { label, src } of softSamples) {
+// 	console.log(`\n=== ${label} ===`);
+// 	console.log(`    src: ${src}`);
+// 	try {
+// 		for await (let tree of parseFoi(src, { preserveSoftDelims: true })) {
+// 			console.log(util.inspect(tree, { depth: null, colors: false }));
+// 		}
+// 	}
+// 	catch (err) {
+// 		console.log(`!! threw: ${err.message}`);
+// 	}
+// }
