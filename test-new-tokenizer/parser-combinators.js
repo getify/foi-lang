@@ -861,8 +861,10 @@ export function shapeNode(frame, shapers, options) {
 //     the shaper owns the span (e.g. shapeStmtSemi sets inner.end
 //     to the end of the last α-claimed token, NOT the wrapper
 //     frame's full range).
-//   - The soft-delim automerge is also skipped — the shaper is
-//     responsible for trivia placement when it returns lift.
+//   - The soft-delim automerge still fires, partitioned by the
+//     shaper's claim-region end: soft tokens inside the claim go
+//     onto node.delims; soft tokens past the claim interleave
+//     into __lift in source order.
 function shapeFrame(frame, shapers, options) {
 	var preserveSoftDelims = options?.preserveSoftDelims === true;
 	var childResults = frame.children.map(c => shapeFrame(c, shapers, options));
@@ -937,6 +939,13 @@ function shapeFrame(frame, shapers, options) {
 		if (preserveSoftDelims && !ownDelim) {
 			let softDelims = delims || [];
 			let hardDelims = node.delims || [];
+			// Defensive: normalize sort order of shaper-built hard
+			// delims before mergeBySourcePosition. Should already be
+			// sorted from an in-order parts walk, but this removes
+			// the invariant from shaper discipline.
+			if (hardDelims.length > 1) {
+				hardDelims.sort((a, b) => a.start - b.start);
+			}
 			if (softDelims.length === 0 && hardDelims.length === 0) {
 				// both empty
 			}
@@ -951,6 +960,38 @@ function shapeFrame(frame, shapers, options) {
 			}
 		}
 		return node;
+	}
+
+	if (preserveSoftDelims && !ownDelim) {
+		let softDelims = delims || [];
+		if (softDelims.length > 0) {
+			// Defensive: normalize sort order of shaper-built hard
+			// delims and lift before mergeBySourcePosition. Should
+			// already be sorted from in-order parts/lift walks, but
+			// this removes the invariant from shaper discipline.
+			let hardDelims = node.delims || [];
+			if (hardDelims.length > 1) {
+				hardDelims.sort((a, b) => a.start - b.start);
+			}
+			if (lift.length > 1) {
+				lift.sort((a, b) => a.start - b.start);
+			}
+			let nodeEnd = node.end;
+			let claimedSoft = [];
+			let liftedSoft = [];
+			for (let s of softDelims) {
+				if (nodeEnd != null && s.end <= nodeEnd) claimedSoft.push(s);
+				else                                     liftedSoft.push(s);
+			}
+			if (claimedSoft.length > 0) {
+				node.delims = hardDelims.length > 0
+					? mergeBySourcePosition(hardDelims, claimedSoft)
+					: claimedSoft;
+			}
+			if (liftedSoft.length > 0) {
+				lift = mergeBySourcePosition(lift, liftedSoft);
+			}
+		}
 	}
 
 	return { node, __lift: lift };
