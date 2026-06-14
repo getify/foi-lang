@@ -255,12 +255,18 @@ function shapeConciseBinding(typeName,parts) {
 // GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
 // GroupedBareOpExprNoEmpty from §5; GroupedDoExpr from §9
 // alongside BinaryAtom). All share the same structure: OpenParen +
-// inner-expression + CloseParen + optional AsAnnotationExpr. Each
-// shaper differs only in its type tag, so the per-production
-// shaper is a one-line delegate.
+// inner-expression + CloseParen + optional AsAnnotationExpr.
+//
+// The grammar-level variants exist purely for PEG parse-time
+// discrimination — each restricts what inner expression form is
+// allowed at its call site. Once a parse succeeds, that constraint
+// is already enforced, and the inner node's own type encodes what's
+// actually there. So all six shape to a single `GroupedExpr` node
+// type at the AST surface; no downstream consumer branches on which
+// variant matched.
 //
 // Surrounding parens are noise (recoverable from the type tag —
-// every Grouped*Expr signals user-written parens). Inner expression
+// `GroupedExpr` signals user-written parens). Inner expression
 // promotes to `expr`. Optional `:as` tail unwraps onto `as` per
 // the wrapper-unwrap-at-assignment convention.
 //
@@ -268,7 +274,7 @@ function shapeConciseBinding(typeName,parts) {
 // tail post-rework — they're atomic groups, so `:as` can attach
 // regardless of position (including as a binary operand, as in
 // `(x + y) :as int ~map f`).
-function shapeGrouped(typeName,parts) {
+function shapeGrouped(parts) {
 	var expr, as;
 	for (let p of parts) {
 		if (isNode(p)) {
@@ -277,7 +283,7 @@ function shapeGrouped(typeName,parts) {
 		}
 		// else: OpenParen, CloseParen — skip
 	}
-	var node = { type: typeName, expr };
+	var node = { type: "GroupedExpr", expr };
 	if (as) node.as = as;
 	return node;
 }
@@ -857,12 +863,12 @@ export const defaultShapers = {
 	//
 	// All delegate to shapeGrouped: drop parens, lift inner to
 	// `expr`, unwrap optional :as onto `as`.
-	GroupedExpr(frame,parts)              { return shapeGrouped("GroupedExpr",parts); },
-	GroupedExprNoBlock(frame,parts)       { return shapeGrouped("GroupedExprNoBlock",parts); },
-	GroupedOpExpr(frame,parts)            { return shapeGrouped("GroupedOpExpr",parts); },
-	GroupedBareOpExpr(frame,parts)        { return shapeGrouped("GroupedBareOpExpr",parts); },
-	GroupedBareOpExprNoEmpty(frame,parts) { return shapeGrouped("GroupedBareOpExprNoEmpty",parts); },
-	GroupedDoExpr(frame,parts)            { return shapeGrouped("GroupedDoExpr",parts); },
+	GroupedExpr(frame,parts)              { return shapeGrouped(parts); },
+	GroupedExprNoBlock(frame,parts)       { return shapeGrouped(parts); },
+	GroupedOpExpr(frame,parts)            { return shapeGrouped(parts); },
+	GroupedBareOpExpr(frame,parts)        { return shapeGrouped(parts); },
+	GroupedBareOpExprNoEmpty(frame,parts) { return shapeGrouped(parts); },
+	GroupedDoExpr(frame,parts)            { return shapeGrouped(parts); },
 
 
 	// =============================================================
