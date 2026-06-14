@@ -427,7 +427,7 @@ ChainExpr      := ChainBase
                   );
 
 <ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
-                | OpFuncExpr | GroupedExpr
+                | OpFuncExpr | GroupedExprNoBlock
                 | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
                 | IdentifierExpr;
 
@@ -709,9 +709,9 @@ PEG ordering note: in `FuncBodyPipeline`, `BlockExpr` precedes
 `ExprNoBlock` so `#> (x){y;}` parses as a BlockExpr (bare-identifier
 def `x`, body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock
 `(x)` with dangling `{y;}`. Same shape as the `<Expr>` ordering in §5.
-The filed concern about GroupedExpr-at-non-Expr-call-sites for
-FuncBodyPipeline still stands — this fix only addresses arm order,
-not the choice of inner-expression variant.
+FuncBodyPipeline's inner-expr alt keeps `GroupedExpr` (not narrowed like
+ChainBase or DoLoopComprExpr range) — `#> (Foo ~<< {...})` is a sensible
+pipeline-body form.
 
 ## §14 Conditionals / Guards
 
@@ -790,7 +790,7 @@ DoStmtSemi              := DoStmt? (_ Semicolon)+;
 DoStmtSemiOpt           := DoStmt? (_ Semicolon)*;
 DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
-DoLoopComprExpr         := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+DoLoopComprExpr         := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 <DoLoopIterationExpr>   := DoBlockExpr | DoLoopIterNoBlockExpr;
 <DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 ```
@@ -825,7 +825,7 @@ PickValue              := Ampersand IdentBase MultiAccessExpr?;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
 ConcisePropDef         := Colon PropertyExpr;
 ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;
-<ComputedPropName>     := Percent (PipelineTopic | IdentifierExpr | StringLit);
+<ComputedPropName>     := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
 
 SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle;
 <SetEntryList>         := (_ Comma)* (SetEntry (_ Comma (_ SetEntry)?)*)?;
@@ -905,20 +905,3 @@ FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ 
 FuncTypeArg           := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
 FuncTypeFinalArg      := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
 ```
-
----
-
-## Filed Open Concerns
-
-- **PEG ordering in `<ChainBase>`, `<ExprNoBlock>`** — firm up
-  during implementation against real source.
-- **`AssignmentExpr` and `:as` interaction** — `:=` excluded from
-  `:as`-bearing forms. May revisit if `x := (3 :as int)` vs
-  `(x := 3) :as int` ambiguity has a strongly preferred
-  interpretation in practice.
-- **`GroupedExpr` (full-Expr) at non-Expr call sites** — several
-  productions reference `GroupedExpr` where a more restrictive
-  variant might be more appropriate: `FuncBodyPipeline` (§13),
-  `DoLoopComprExpr` (§16), `ChainBase` (§7).
-- **`ComputedPropName` (§17)** accepts only `IdentifierExpr`
-  (bare/at/monad), not full access chains.

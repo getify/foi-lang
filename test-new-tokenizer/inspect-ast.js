@@ -449,7 +449,10 @@ var samples = [
 	{ label: "ExplicitPropDef: computed BuiltIn",                src: "<%Maybe: 1>;" },
 	{ label: "ExplicitPropDef: computed StringLit",              src: "<%\"k\": 1>;" },
 	{ label: "ExplicitPropDef: computed PipelineTopic",          src: "<%#: 1>;" },
-
+	{ label: "ComputedPropName: %foo.bar (chain access)",   src: "<%foo.bar: 5>;" },
+	{ label: "ComputedPropName: %foo[0] (index access)",    src: "<%foo[0]: 5>;" },
+	{ label: "ComputedPropName: %Maybe@42 (at-call)",       src: "<%Maybe@42: 5>;" },
+	{ label: "ComputedPropName: %None@ (bare None@)",       src: "<%None@: 5>;" },
 
 	// =============================================================
 	// §18 TYPE DEFINITIONS

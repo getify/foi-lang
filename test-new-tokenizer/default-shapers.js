@@ -1924,7 +1924,7 @@ export const defaultShapers = {
 		return { type: "DoComprExpr", targetType, body };
 	},
 
-	// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ <DoLoopIterationExpr>;
+	// DoLoopComprExpr := ExprNoBlock _ Tilde OpenAngle Star _ <DoLoopIterationExpr>;
 	//
 	// `~<*` tokens (Tilde + OpenAngle + Star) are the loop
 	// operator — anchored in type tag, drop as operator-class.

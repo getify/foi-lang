@@ -718,23 +718,28 @@ export const AtCallExpr = production("AtCallExpr",
 	)
 );
 
+// NEW
 // <ChainBase> := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
-//              | OpFuncExpr | GroupedExpr
+//              | OpFuncExpr | GroupedExprNoBlock
 //              | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
 //              | IdentifierExpr;
 //
 // PEG ordering (per grammar):
 // - MatchExpr / GuardedExpr precede AssignmentExpr — distinctive `?`/`!` openers.
 // - AssignmentExpr precedes IdentifierExpr — longer `:=` match wins when it follows.
-// - OpFuncExpr precedes GroupedExpr — both open with `(`, OpFuncExpr's stricter
+// - OpFuncExpr precedes GroupedExprNoBlock — both open with `(`, OpFuncExpr's stricter
 //   inner shape (must be Op | DotAngle | DotBracket | `[]`) fails-through cleanly.
+//
+// GroupedExprNoBlock (not GroupedExpr) — paren-wrapped BlockExpr,
+// DoComprExpr, and DoLoopComprExpr cannot serve as chain bases.
+// Bind to a name first (`def x: {...}; x.foo`) to chain on those.
 var ChainBase = or(
 	lazy(() => DefFuncExpr),
 	lazy(() => MatchExpr),
 	lazy(() => GuardedExpr),
 	lazy(() => AssignmentExpr),
 	lazy(() => OpFuncExpr),
-	GroupedExpr,
+	GroupedExprNoBlock,
 	EmptyLit,
 	BooleanLit,
 	NumberLit,
@@ -1632,15 +1637,18 @@ var DoLoopIterNoBlockExpr = or(
 // Same shape as §5/§13 ordering.
 var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
 
-// DoLoopComprExpr := (ExprNoBlock | GroupedExpr) _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+// NEW
+// DoLoopComprExpr := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 //
 // `~<*` is Tilde + OpenAngle + Star — three adjacent single-char
-// tokens. PEG ordering for range: ExprNoBlock first; if its
-// GroupedExprNoBlock arm can't reach the inner expr (BlockExpr,
-// DoCompr, etc.), the outer GroupedExpr arm fires.
+// tokens.
+//
+// Range is ExprNoBlock only — paren-wrapped BlockExpr, DoComprExpr,
+// and DoLoopComprExpr cannot serve as the loop range. Bind to a name
+// first to use those forms as a range.
 export const DoLoopComprExpr = production("DoLoopComprExpr",
 	and(
-		or(ExprNoBlock, GroupedExpr),
+		ExprNoBlock,
 		delim(),
 		Tilde, OpenAngle, Star,
 		delim(),
@@ -1663,15 +1671,22 @@ export const PickValue = production("PickValue",
 	and(Ampersand, IdentBase, optional(MultiAccessExpr))
 );
 
-// <ComputedPropName> := Percent (PipelineTopic | IdentifierExpr | StringLit);
+// NEW
+// <ComputedPropName> := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
 //
-// No trivia between Percent and inner. PipelineTopic listed first per
-// grammar; IdentifierExpr's BareIdentifier would also match a bare
-// PipelineTopic via IdentBase, so the order distinguishes the shape
-// of the inner node (bare PipelineTopic vs. BareIdentifier-wrapping).
+// No trivia between Percent and inner.
+//
+// PEG ordering:
+// - PipelineTopic first — bare `#`. IdentifierExpr's BareIdentifier
+//   would also match a bare PipelineTopic via IdentBase, so this order
+//   distinguishes the shape (bare PipelineTopic vs. BareIdentifier-wrap).
+// - CallExpr next — admits `foo.bar`, `foo[0]`, `Maybe@42`, `None@`, etc.
+//   ChainExpr requires ≥1 chain seg, so bare identifiers fall through.
+// - IdentifierExpr — bare identifier / at-form / monad constructor.
+// - StringLit — disjoint opener `"`.
 var ComputedPropName = and(
 	Percent,
-	or(PipelineTopic, IdentifierExpr, StringLit)
+	or(PipelineTopic, lazy(() => CallExpr), IdentifierExpr, StringLit)
 );
 
 // ConcisePropDef := Colon PropertyExpr;
