@@ -21,21 +21,27 @@
 //   - List-shaped productions collapse to a single array field.
 //   - Optional clauses (e.g. AsAnnotationExpr) become optional
 //     fields, omitted from the node when absent.
-//   - Wrapper-unwrap at assignment. When a child production exists
-//     only as a single-payload wrapper around one semantic value
-//     (e.g. AsAnnotationExpr around NamedType), parents unwrap to
-//     the payload at the slot assignment — the slot name on the
-//     parent (e.g. `parent.as`) conveys the role, so the wrapper
-//     layer is redundant at the consumer surface. The wrapper's
-//     own shaper still emits a node for completeness; parents
-//     reach through it.
+//   - Wrapper-unwrap at assignment (adaptive). When a child production
+//     exists only as a single-payload wrapper around one semantic
+//     value (e.g. AsAnnotationExpr around NamedType, FuncAsClause
+//     around Identifier), parents fold to the payload at the slot
+//     assignment when the wrapper has no delims — the slot name on
+//     the parent (e.g. `parent.as`) conveys the role. When the
+//     wrapper has delims (picked up under preserveSoftDelims:true,
+//     or from unconsumed hard structural tokens), parents keep the
+//     full wrapper to preserve them, and the slot becomes shape-
+//     polymorphic. Consumers normalize via type tag:
+//       var inner = wrap.type === "AsAnnotationExpr" ? wrap.annotation : wrap;
+//     Exception: FuncOverClause is always retained — its parens and
+//     commas are unconditional structural tokens with nowhere else
+//     to live.
 //   - start/end/delims rules: the machinery brand-stamps start/end
 //     on every shaped node. Soft delims (Whitespace, Comment) are
-//     merged into node.delims by the machinery when
-//     preserveSoftDelims is on (hard-vs-soft merge handled in a
-//     future step — for now shapers own delims entirely; under
-//     test-parser.js / inspect-ast.js defaults preserveSoftDelims
-//     is off, so shaper-emitted delims persist untouched).
+//     merged into node.delims by the machinery when preserveSoftDelims
+//     is on; the merge is by source position against any hard delims
+//     the shaper populated. Under preserveSoftDelims:false (default
+//     for test-parser.js / inspect-ast.js), no soft delims are
+//     captured and shaper-emitted hard delims persist untouched.
 //   - Multi-token operators (e.g. AddOp `$+`) concatenate their
 //     token values into a single string in the `op` field.
 //
@@ -52,26 +58,31 @@
 //   binds at exactly one tier — strictly between unary and binary.
 //   A single visible production, `AsExpr := <AsableExpr> _ AsAnnotationExpr`,
 //   carries the annotation for non-paren expressions. Its shaper
-//   UNWRAPS — lifts `as: annotation` onto its inner node and
-//   returns the inner. No `AsExpr` node type appears in the AST.
-//   The machinery's unconditional start/end overwrite extends the
-//   returned node's span to cover the `:as` tail (AsExpr frame
-//   spans from inner.start through annotation.end), which is
-//   exactly what we want.
+//   UNWRAPS — attaches the annotation onto its inner node's `.as`
+//   slot and returns the inner. No `AsExpr` node type appears in
+//   the AST. The machinery's unconditional start/end overwrite
+//   extends the returned node's span to cover the `:as` tail
+//   (AsExpr frame spans from inner.start through annotation.end).
+//
+//   `inner.as` is shape-polymorphic per the adaptive wrapper-unwrap
+//   rule (see Conventions): bare NamedType when AsAnnotationExpr
+//   has no delims (default mode), the full AsAnnotationExpr node
+//   when it has internal trivia (preserveSoftDelims:true with WS
+//   between `:as` and the type). Same rule applies to GroupedExpr.as
+//   (via shapeGrouped) and DefFuncExpr.as (via the FuncAsClause arm).
 //
 //   The six paren-grouping productions retain their own
 //   `(_ AsAnnotationExpr)?` tail — parens are atomic groups that
 //   can carry `:as` regardless of position (including as a binary
-//   operand). Their shapers (via shapeGrouped) attach `as`
-//   directly. The four restrictive paren inners additionally
-//   accept AsExpr as a first inner alt so that `(?x :as bool)` etc.
-//   parse inside the parens.
+//   operand). Their shapers (via shapeGrouped) attach `as` with
+//   the same adaptive fold-or-keep behavior. The four restrictive
+//   paren inners additionally accept AsExpr as a first inner alt
+//   so that `(?x :as bool)` etc. parse inside the parens.
 //
 //   All other expression productions — literals, identifiers,
 //   unary, chain/call/access, at-form, op-as-func, block — carry
 //   no `:as` tail at the grammar level. Their shapers do not
 //   handle `as`; AsExpr handles it for them.
-
 
 // =============================================================
 // HELPERS
@@ -287,19 +298,16 @@ function shapeConciseBinding(typeName,parts) {
 	}, delims);
 }
 
-// Helper for the six paren-grouping productions (GroupedExpr,
-// GroupedExprNoBlock, GroupedOpExpr, GroupedBareOpExpr,
-// GroupedBareOpExprNoEmpty from §5; GroupedDoExpr from §9
-// alongside BinaryAtom). All share the same structure: OpenParen +
-// inner-expression + CloseParen + optional AsAnnotationExpr.
-//
 // All six shape to a single `GroupedExpr` node type at the AST
 // surface; no downstream consumer branches on which variant
 // matched.
 //
 // Surrounding parens are structural — push to delims. Inner
-// expression promotes to `expr`. Optional `:as` tail unwraps onto
-// `as` per the wrapper-unwrap-at-assignment convention.
+// expression promotes to `expr`. Optional `:as` tail attaches
+// onto `as` adaptively (see AsExpr): bare NamedType when the
+// AsAnnotationExpr wrapper carries no delims, the full
+// AsAnnotationExpr node when it does. Consumers reading `.as`
+// must accept either shape.
 //
 // Parens are the only construct that still carries its own `:as`
 // tail post-rework — they're atomic groups, so `:as` can attach
@@ -310,7 +318,7 @@ function shapeGrouped(parts) {
 	var delims = [];
 	for (let p of parts) {
 		if (isNode(p)) {
-			if (p.type === "AsAnnotationExpr") as = p.annotation;
+			if (p.type === "AsAnnotationExpr") as = p.delims ? p : p.annotation;
 			else expr = p;
 		}
 		else delims.push(p);
@@ -915,16 +923,36 @@ export const defaultShapers = {
 
 	// AsAnnotationExpr := ":as" _ NamedType;
 	//
-	// `:as` keyword drops. No structural tokens.
+	// `:as` keyword drops (anchored in field-name semantics on
+	// the parent — `inner.as` presence means user wrote `:as`).
+	// No structural delims at this level; under preserveSoftDelims:true
+	// the machinery auto-merges any WS between `:as` and the type
+	// onto this node's delims, which AsExpr's adaptive unwrap then
+	// decides whether to keep or fold (see AsExpr).
 	AsAnnotationExpr(frame,parts) {
 		return { type: "AsAnnotationExpr", annotation: parts.find(isNode) };
 	},
 
 	// AsExpr — Parse-time wrapper only — emits no node of its own.
-	// Unwraps to the inner AsableExpr node, lifting `as: annotation`
-	// onto it. Step 3: AsExpr's own tokens (none — AsAnnotationExpr
-	// is a node, the inner AsableExpr is a node) simply vanish via
-	// the unwrap; Step 5 will lift any wrapper delims.
+	// Unwraps to the inner AsableExpr node, attaching the `:as`
+	// annotation onto `inner.as`.
+	//
+	// `inner.as` is shape-polymorphic, by source content:
+	//   - bare NamedType when AsAnnotationExpr has no delims
+	//     (default mode, or preserveSoftDelims:true with no trivia
+	//     between `:as` and the type)
+	//   - the full AsAnnotationExpr wrapper node when it has delims
+	//     (preserveSoftDelims:true with trivia in the gap)
+	//
+	// Folding to the bare NamedType in the no-delims case keeps the
+	// default-mode AST stable and avoids paying for an extra wrapper
+	// on every annotated expression. Retaining the wrapper in the
+	// has-delims case preserves the soft trivia for source-fidelity
+	// consumers. Consumers can normalize with:
+	//   var annotation = as.type === "AsAnnotationExpr" ? as.annotation : as;
+	//
+	// Same adaptive shape applies to GroupedExpr.as (via
+	// shapeGrouped) and DefFuncExpr.as (via the FuncAsClause arm).
 	AsExpr(frame,parts) {
 		var inner, as;
 		for (let p of parts) {
@@ -932,7 +960,12 @@ export const defaultShapers = {
 			if (p.type === "AsAnnotationExpr") as = p;
 			else inner = p;
 		}
-		inner.as = as.annotation;
+		// Adaptive: fold to bare annotation when AsAnnotationExpr
+		// has no delims (default mode); keep the wrapper to
+		// preserve internal trivia otherwise. Shape-polymorphic
+		// — consumers unwrap with: as.type === "AsAnnotationExpr"
+		// ? as.annotation : as.
+		inner.as = as.delims ? as : as.annotation;
 		return inner;
 	},
 
@@ -1526,7 +1559,13 @@ export const defaultShapers = {
 
 	// FuncAsClause := ":as" _ Identifier;
 	//
-	// ":as" keyword drops. No structural tokens.
+	// ":as" keyword drops (anchored in field-name semantics on the
+	// parent — DefFuncExpr.as presence means user wrote `:as`).
+	// No structural delims at this level; under preserveSoftDelims:true
+	// the machinery auto-merges any WS between `:as` and the
+	// Identifier onto this node's delims, which DefFuncExpr's
+	// adaptive unwrap then decides whether to keep or fold (see
+	// DefFuncExpr).
 	FuncAsClause(frame,parts) {
 		return { type: "FuncAsClause", annotation: parts.find(isNode) };
 	},
@@ -1585,6 +1624,16 @@ export const defaultShapers = {
 	// are structural → delims; an empty paren-pair still
 	// synthesizes a zero-content ParameterList (per the empty-
 	// merged convention with end:null).
+	//
+	// Field shapes:
+	//   - `over` is always the full FuncOverClause node (carries
+	//     `.names`, parens / commas / internal trivia in `.delims`).
+	//     Earlier versions folded to `over: Identifier[]` and lost
+	//     the structural punctuation; rolled back.
+	//   - `as` is shape-polymorphic, same rule as AsExpr's `inner.as`:
+	//     bare Identifier when FuncAsClause has no delims, the full
+	//     FuncAsClause wrapper when it does. Normalize with:
+	//       var annotation = as.type === "FuncAsClause" ? as.annotation : as;
 	DefFuncExpr(frame,parts) {
 		var name, at, over, as, body;
 		var paramSets = [];
@@ -1636,8 +1685,8 @@ export const defaultShapers = {
 				continue;
 			}
 			if (p.type === "FuncPrecond")        { preconditions.push(p); continue; }
-			if (p.type === "FuncOverClause")     { over = p.names; continue; }
-			if (p.type === "FuncAsClause")       { as = p.annotation; continue; }
+			if (p.type === "FuncOverClause")     { over = p; continue; }
+			if (p.type === "FuncAsClause")       { as = p.delims ? p : p.annotation; continue; }
 			if (
 				p.type === "FuncBodyExpr" ||
 				p.type === "FuncBodyPipeline" ||

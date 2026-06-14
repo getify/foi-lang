@@ -537,6 +537,12 @@ var samples = [
 	{ label: "α-soft: WS in lift region",        src: "def x: 2; ;",         opts: { preserveSoftDelims: true } },
 	{ label: "α-soft: WS in both partitions",    src: "def x: 2 ; ;",        opts: { preserveSoftDelims: true } },
 	{ label: "α-soft: comment in lift",          src: "def x: 2; ///c/// ;", opts: { preserveSoftDelims: true } },
+
+	// α-WRAPPER — adaptive wrapper retention for :as / :over
+	{ label: "α-wrap: AsExpr keeps wrapper",       src: "foo :as int;",                      opts: { preserveSoftDelims: true } },
+	{ label: "α-wrap: GroupedExpr keeps wrapper",  src: "(x) :as int;",                      opts: { preserveSoftDelims: true } },
+	{ label: "α-wrap: FuncAsClause keeps wrapper", src: "defn f() :as Int ^x;",              opts: { preserveSoftDelims: true } },
+	{ label: "α-wrap: FuncOverClause w/ inner WS", src: "defn ovr(x) :over(y, z) ^x;",       opts: { preserveSoftDelims: true } },
 ];
 
 for (let { label, src, opts } of samples) {

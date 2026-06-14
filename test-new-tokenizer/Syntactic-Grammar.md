@@ -288,9 +288,14 @@ DestructureCapture    := Hash Identifier;
    level. Ranges are deliberately NOT in <AsableExpr> — annotating
    a bare range requires explicit parens (`(1..5) :as List`).
 
-   AsExpr is a parse-time wrapper. Its shaper unwraps — it lifts
-   `as` onto its inner node and returns the inner. There is no
-   AsExpr node type in the AST. *)
+   AsExpr is a parse-time wrapper. Its shaper unwraps — it attaches
+   the annotation onto its inner node's `.as` slot and returns the
+   inner. There is no AsExpr node type in the AST. The `.as` slot
+   is shape-polymorphic by source content: bare NamedType when
+   AsAnnotationExpr has no delims (default mode), the full
+   AsAnnotationExpr wrapper when it does (preserveSoftDelims:true
+   with WS between `:as` and the type). Same fold-or-keep rule
+   applies to GroupedExpr.as and DefFuncExpr.as. *)
 AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
 <AsableExpr>           := BlockExpr | GuardedExpr | UnaryExpr
                         | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
@@ -645,8 +650,9 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
 ```ebnf
 (* BlockExpr loses its own `(_ AsAnnotationExpr)?` — annotation comes
    via AsExpr (§5), whose AsableExpr inner list includes BlockExpr.
-   AsExpr's unwrap-shaper lifts `as` onto the BlockExpr node, so the
-   AST shape for `{x;y} :as int` is unchanged from the prior design. *)
+   AsExpr's unwrap-shaper attaches `as` onto the BlockExpr node; in
+   default mode, AST shape for `{x;y} :as int` is unchanged from the
+   prior design. See §5 for the adaptive fold-or-keep rule on `.as`. *)
 
 BlockExpr             := BlockDefsInitOpt? _ BareBlockExpr;
 DefBlockStmt          := "def" _ BlockDefsInit _ BareBlockExpr;
@@ -712,6 +718,15 @@ def `x`, body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock
 FuncBodyPipeline's inner-expr alt keeps `GroupedExpr` (not narrowed like
 ChainBase or DoLoopComprExpr range) — `#> (Foo ~<< {...})` is a sensible
 pipeline-body form.
+
+DefFuncExpr shaper-shape notes:
+- `over` is always the full FuncOverClause node (carries `.names`
+  plus parens, commas, and any internal trivia in `.delims`). Not
+  folded — the structural punctuation around `:over(...)` would
+  otherwise be lost.
+- `as` is shape-polymorphic, same fold-or-keep rule as AsExpr's
+  `inner.as` (see §5): bare Identifier when FuncAsClause has no
+  delims, the full FuncAsClause wrapper when it does.
 
 ## §14 Conditionals / Guards
 
