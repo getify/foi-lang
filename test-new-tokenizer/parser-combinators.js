@@ -207,7 +207,7 @@ function makeContext(buffer, config) {
 // element and `matchedPositions` holds its `pctx.pos` at consumption
 // time. shapeNode uses the positions to interleave terminals with
 // child frames in source order — necessary because with
-// `preserveDelim: false` the parent's pos advances over delim
+// `preserveSoftDelims: false` the parent's pos advances over delim
 // tokens that aren't recorded in `matched`, so a naive
 // one-position-per-matched-entry count is wrong.
 // -------------------------------------------------------------
@@ -578,7 +578,7 @@ export function sepBy1(p, sep) {
 //     spacing string forms, whose interior Whitespace tokens are
 //     part of the literal's value.
 //
-//     Independent of the global config.preserveDelim, which
+//     Independent of the global config.preserveSoftDelims, which
 //     surfaces delim tokens in a separate `delims` array on every
 //     shaped node. When both are on, this production's delims
 //     appear in both `parts` (for the shaper) and `delims` (for
@@ -641,13 +641,13 @@ export function production(name, grammar, opts = {}) {
 // DELIMITER HANDLING (syntactic layer only)
 // Delimiter tokens (whitespace / comments) are recognized by
 // the user's tokenizer. delim() / delimWSReq() consume them
-// directly so the `preserveDelim` config flag can correctly
+// directly so the `preserveSoftDelims` config flag can correctly
 // decide whether delimiter tokens are recorded in the innermost
 // frame's `matched` array.
 // =============================================================
 
 function recordDelim(pctx, el) {
-	if (!(pctx.config.preserveTerminals && pctx.config.preserveDelim)) return;
+	if (!(pctx.config.preserveTerminals && pctx.config.preserveSoftDelims)) return;
 	var innerFrame = pctx.frameStack[pctx.frameStack.length - 1];
 	if (innerFrame && innerFrame.matched) {
 		innerFrame.matched.push(el);
@@ -704,11 +704,11 @@ export function delimWSReq() {
 export function parse(grammar, input, config) {
 	config = Object.assign({
 		preserveTerminals: false,
-		preserveDelim: false,
+		preserveSoftDelims: false,
 		memoize: false,
 	}, config || {});
-	if (config.preserveDelim && !config.preserveTerminals) {
-		throw new Error("parse(): preserveDelim requires preserveTerminals");
+	if (config.preserveSoftDelims && !config.preserveTerminals) {
+		throw new Error("parse(): preserveSoftDelims requires preserveTerminals");
 	}
 
 	var buffer = makeBufferedInput(input);
@@ -822,57 +822,72 @@ export const presets = {
 	},
 };
 
+// Linear two-pointer merge of two arrays already sorted by token
+// `.start`. Hard wins on ties (shouldn't occur — each token has a
+// unique start — but stable and harmless).
+function mergeBySourcePosition(hard, soft) {
+	var out = [];
+	var i = 0, j = 0;
+	while (i < hard.length && j < soft.length) {
+		if (hard[i].start <= soft[j].start) out.push(hard[i++]);
+		else                                 out.push(soft[j++]);
+	}
+	while (i < hard.length) out.push(hard[i++]);
+	while (j < soft.length) out.push(soft[j++]);
+	return out;
+}
 
 // shapeNode(frame, shapers?, options?)
 // Recursively transform a committed frame into an AST node.
 //
-// options: { preserveDelim?: boolean }
-//   When `preserveDelim` is truthy, every shaped node carries a
-//   `delims` field. It starts as null and becomes an array on
-//   the first delim token encountered at that node's own level
-//   (delims nested inside child productions belong to those
-//   children, not the parent). When `preserveDelim` is absent
-//   or falsy, the `delims` field is omitted entirely.
+// options: { preserveSoftDelims?: boolean }
+//   Controls the SOFT-delim surface only — Whitespace / Comment
+//   tokens from the lex layer. Hard delims (structural punctuation:
+//   semicolons, commas, parens, brackets, sigils, etc.) are attached
+//   by individual shapers via the `withDelims` helper and are
+//   independent of this flag.
 //
-// Default shape:
-//   { type, parts, start, end }                  // preserveDelim off
-//   { type, parts, delims, start, end }          // preserveDelim on
-//   - parts: semantic content only — non-delim terminals and
-//     shaped child nodes, merged in source order. Tokens are
-//     distinguishable from shaped nodes by having a `value`
-//     field (tokens) rather than `parts` (shaped nodes).
-//   - delims: delim tokens (Whitespace, Comment) at this node's
-//     own level, in source order. Only present when
-//     preserveDelim is on. null when this node matched none.
-//   - start, end: character-level positions in the original
-//     source text, spanning the full matched range (delims
-//     included). Tokens carry char positions directly from the
-//     lex layer; shaped nodes derive from the .start of the
-//     leftmost descendant and the .end of the rightmost
-//     descendant. These fields (and `delims`, when applicable)
-//     are written after the custom-shaper branch runs, so
-//     custom shapers cannot accidentally drop or mistype them.
+//   - preserveSoftDelims off (default): a node carries `delims`
+//     only when its shaper attached hard delims. The field is
+//     absent when empty (withDelims convention).
+//   - preserveSoftDelims on: hard delims (shaper-emitted) and soft
+//     delims (machinery-tracked) merge into a single `delims`
+//     array, sorted by source token position. The field is absent
+//     only when both sources are empty.
 //
 // shapers: { [productionName]: (frame, parts) => node }
-//   When a shaper is registered for a production, it receives
-//   the raw frame and the semantic `parts` array (delim-free,
-//   regardless of preserveDelim setting). The returned object
-//   is mutated to attach start/end — and `delims`, when
-//   preserveDelim is on — at the standard locations.
+//   When a shaper is registered for a production, it receives the
+//   raw frame and the semantic `parts` array (delim-free regardless
+//   of preserveSoftDelims). The returned object is mutated to attach
+//   start/end and the merged `delims` at the standard locations.
+//
+// Default shape:
+//   { type, parts, start, end, delims? }
+//   - parts: semantic content only — non-delim terminals and shaped
+//     child nodes, merged in source order. Tokens are distinguishable
+//     from shaped nodes by carrying a `value` field (vs `parts`).
+//   - delims (optional, source-ordered): hard tokens attached by the
+//     shaper, merged with soft tokens when preserveSoftDelims is on.
+//     Absent when both sources are empty.
+//   - start, end: character-level positions spanning the full matched
+//     range (delim-inclusive). Tokens carry char positions directly
+//     from lex; shaped nodes derive from leftmost/rightmost
+//     descendants. Written after the custom-shaper branch so shapers
+//     cannot accidentally drop or mistype them.
 //
 // Merge logic: each matched terminal carries its input position in
-// frame.matchedPositions (parallel array to frame.matched).
-// Children carry startPos/endPos. We walk children and, before each
-// one, drain any terminals whose recorded position falls before the
-// child's startPos. Robust to `preserveDelim: false` — delim tokens
-// advance pctx.pos without being added to matched, so the position-
-// gap between consecutive matched entries can be > 1.
+// frame.matchedPositions (parallel to frame.matched). Children carry
+// startPos/endPos. We walk children and, before each one, drain any
+// terminals whose recorded position falls before the child's startPos.
+// Robust to `preserveSoftDelims: false` — delim tokens advance
+// pctx.pos without being added to matched, so the position gap
+// between consecutive matched entries can be > 1.
 //
-// Empty-merged edge case: a production that retained zero
-// elements yields start/end of null. Visible productions in
-// practical grammars should not hit this; noted for completeness.
+// Empty-merged edge case: a production that retained zero elements
+// yields start/end of null. Visible productions in practical grammars
+// should not hit this; noted for completeness.
 export function shapeNode(frame, shapers, options) {
-	var preserveDelim = options?.preserveDelim === true;
+	var preserveSoftDelims = options?.preserveSoftDelims === true;
 	var shapedChildren = frame.children.map(c => shapeNode(c, shapers, options));
 	var tokens   = frame.matched          || [];
 	var tokenPos = frame.matchedPositions || [];
@@ -892,13 +907,13 @@ export function shapeNode(frame, shapers, options) {
 		merged.push(tokens[ti++]);
 	}
 
-	// Partition into semantic `parts` and (when preserveDelim is
+	// Partition into semantic `parts` and (when preserveSoftDelims is
 	// on) a lazily-allocated `delims` array.
 	//
 	// Delim tokens (Whitespace, Comment) are normally filtered out
 	// of `parts` — they're separator metadata, not content. The two
 	// surfaces are independent:
-	//   - `preserveDelim` (config, global): surface delims as a
+	//   - `preserveSoftDelims` (config, global): surface delims as a
 	//     separate `delims` array on every shaped node.
 	//   - `frame.preserveInnerDelim` (per-production, set via the
 	//     `preserveInnerDelim` option to `production()`): keep this
@@ -914,7 +929,7 @@ export function shapeNode(frame, shapers, options) {
 	var delims = null;
 	for (let p of merged) {
 		let d = isDelim(p);
-		if (d && preserveDelim) {
+		if (d && preserveSoftDelims) {
 			if (delims === null) delims = [];
 			delims.push(p);
 		}
@@ -934,6 +949,21 @@ export function shapeNode(frame, shapers, options) {
 		: { type: frame.production, parts };
 	node.start = charStart;
 	node.end   = charEnd;
-	if (preserveDelim) node.delims = delims;
+	if (preserveSoftDelims) {
+		let softDelims = delims || [];
+		let hardDelims = node.delims || [];
+		if (softDelims.length === 0 && hardDelims.length === 0) {
+			// both empty — leave node.delims absent (withDelims convention)
+		}
+		else if (hardDelims.length === 0) {
+			node.delims = softDelims;
+		}
+		else if (softDelims.length === 0) {
+			// hard-only — already on node from shaper, untouched
+		}
+		else {
+			node.delims = mergeBySourcePosition(hardDelims, softDelims);
+		}
+	}
 	return node;
 }

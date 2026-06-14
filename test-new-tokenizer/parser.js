@@ -1993,7 +1993,7 @@ export async function *parseFoi(input,opts = {}) {
 	var { shapers = defaultShapers, ...rest } = opts;
 	var config = {
 		preserveTerminals: true,
-		preserveDelim: false,
+		preserveSoftDelims: false,
 		memoize: true,
 		...rest,
 	};
