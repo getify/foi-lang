@@ -498,6 +498,106 @@ function shapePropertyExpr(keyParts) {
 	};
 }
 
+// α-claim shaper for StmtSemi-family productions (StmtSemi,
+// StmtSemiOpt, ExportStmtSemi, ExportStmtSemiOpt,
+// FuncBodyStmtSemi, FuncBodyStmtSemiOpt, DoStmtSemi,
+// DoStmtSemiOpt).
+//
+// α-rule: a stmt's claim region is its own span plus post-stmt
+// tokens up through the FIRST Semicolon. Everything past that
+// (additional semis, post-claim trivia) is orphan and lifts to
+// the parent stmt-list container via the machinery's __lift
+// channel. Absent a semi (e.g. last stmt of a scope with no
+// trailing `;`), the claim is empty and all non-node tokens
+// lift.
+//
+// Returns the lift form `{ node, __lift }`. The machinery
+// recognizes this shape and (a) skips its unconditional span
+// overwrite — this shaper owns the inner stmt's `end`, setting
+// it to the end of the last claimed token — and (b) splices the
+// lifted tokens into the parent's merged stream immediately
+// after the inner node.
+//
+// Empty-stmt synthesis:
+//   - Bare semi run (`;`, `;;`, …) with no Stmt: first semi
+//     becomes the EmptyStmt's terminator; extras lift. EmptyStmt
+//     carries the first semi in its delims; subsequent semis
+//     orphan to parent.
+//   - Fully empty StmtSemiOpt at end of input: EmptyStmt with no
+//     delims. Filtered by collectStmtList (containers) and by
+//     parseFoi's per-stmt yield loop.
+function shapeStmtSemi(parts) {
+	var inner;
+	var firstSemiIdx = -1;
+	for (let i = 0; i < parts.length; i++) {
+		let p = parts[i];
+		if (isNode(p)) {
+			if (!inner) inner = p;
+		}
+		else if (firstSemiIdx === -1 && p.type === "Semicolon") {
+			firstSemiIdx = i;
+		}
+	}
+
+	var claimed = [];
+	var lift = [];
+	if (firstSemiIdx !== -1) {
+		for (let i = 0; i < parts.length; i++) {
+			let p = parts[i];
+			if (isNode(p)) continue;
+			if (i <= firstSemiIdx) claimed.push(p);
+			else                   lift.push(p);
+		}
+	}
+	else {
+		for (let p of parts) {
+			if (!isNode(p)) lift.push(p);
+		}
+	}
+
+	var node;
+	if (inner) {
+		if (claimed.length > 0) {
+			let d = inner.delims || [];
+			for (let t of claimed) d.push(t);
+			inner.delims = d;
+			inner.end = claimed[claimed.length - 1].end;
+		}
+		node = inner;
+	}
+	else if (claimed.length > 0) {
+		node = withDelims({
+			type:  "EmptyStmt",
+			start: claimed[0].start,
+			end:   claimed[claimed.length - 1].end,
+		}, claimed);
+	}
+	else {
+		node = { type: "EmptyStmt", start: null, end: null };
+	}
+
+	return { node, __lift: lift };
+}
+
+// Collect children of a stmt-list container (Program, BlockExpr,
+// DefBlockStmt, FuncBodyBlock, DoBlockExpr). Filters fully-empty
+// EmptyStmts (no delims — synthesized for fully-empty
+// StmtSemiOpt at end of input). Non-node parts route to delims
+// (orphan semis lifted from child StmtSemi frames land here, as
+// do container-level structural tokens like braces).
+function collectStmtList(parts) {
+	var stmts = [];
+	var delims = [];
+	for (let p of parts) {
+		if (isNode(p)) {
+			if (p.type === "EmptyStmt" && !p.delims) continue;
+			stmts.push(p);
+		}
+		else delims.push(p);
+	}
+	return { stmts, delims };
+}
+
 
 export const defaultShapers = {
 
@@ -511,14 +611,21 @@ export const defaultShapers = {
 	// Pure list-of-statements. Semicolons are structural — push
 	// to delims; everything shaped is a top-level statement node.
 	Program(frame,parts) {
-		var stmts = [];
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) stmts.push(p);
-			else delims.push(p);
-		}
+		var { stmts, delims } = collectStmtList(parts);
 		return withDelims({ type: "Program", stmts }, delims);
 	},
+
+	// StmtSemi          := Stmt? (_ Semicolon)+;
+	// StmtSemiOpt       := Stmt? (_ Semicolon)*;
+	// ExportStmtSemi    := ExportExpr (_ Semicolon)+;
+	// ExportStmtSemiOpt := ExportExpr (_ Semicolon)*;
+	//
+	// α-claim via shapeStmtSemi: inner stmt eats trivia + first
+	// semi; rest lifts to parent.
+	StmtSemi         (frame,parts) { return shapeStmtSemi(parts); },
+	StmtSemiOpt      (frame,parts) { return shapeStmtSemi(parts); },
+	ExportStmtSemi   (frame,parts) { return shapeStmtSemi(parts); },
+	ExportStmtSemiOpt(frame,parts) { return shapeStmtSemi(parts); },
 
 	// Identifier := General;
 	//
@@ -1296,15 +1403,12 @@ export const defaultShapers = {
 	// structural → delims.
 	BlockExpr(frame,parts) {
 		var defs;
-		var stmts = [];
-		var delims = [];
+		var rest = [];
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "BlockDefsInitOpt") defs = p;
-				else stmts.push(p);
-			}
-			else delims.push(p); // OpenBrace, CloseBrace, Semicolon
+			if (isNode(p) && p.type === "BlockDefsInitOpt") defs = p;
+			else rest.push(p);
 		}
+		var { stmts, delims } = collectStmtList(rest);
 		var node = { type: "BlockExpr", stmts };
 		if (defs) node.defs = defs;
 		return withDelims(node, delims);
@@ -1315,19 +1419,18 @@ export const defaultShapers = {
 	// "def" keyword drops; braces and semicolons → delims.
 	DefBlockStmt(frame,parts) {
 		var defs;
-		var stmts = [];
-		var delims = [];
+		var rest = [];
 		for (let p of parts) {
 			if (isNode(p)) {
 				if (p.type === "BlockDefsInit") defs = p;
-				else stmts.push(p);
+				else rest.push(p);
 			}
 			else if (p.type === "Keyword") continue; // "def"
-			else delims.push(p); // OpenBrace, CloseBrace, Semicolon
+			else rest.push(p); // braces, lifted semis
 		}
+		var { stmts, delims } = collectStmtList(rest);
 		return withDelims({ type: "DefBlockStmt", defs, stmts }, delims);
 	},
-
 
 	// =============================================================
 	// §12 ASSIGNMENT
@@ -1461,14 +1564,16 @@ export const defaultShapers = {
 	//
 	// Braces and semicolons → delims.
 	FuncBodyBlock(frame,parts) {
-		var stmts = [];
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) stmts.push(p);
-			else delims.push(p); // OpenBrace, CloseBrace, Semicolon
-		}
+		var { stmts, delims } = collectStmtList(parts);
 		return withDelims({ type: "FuncBodyBlock", stmts }, delims);
 	},
+
+	// FuncBodyStmtSemi    := FuncBodyStmt (_ Semicolon)+;
+	// FuncBodyStmtSemiOpt := FuncBodyStmt (_ Semicolon)*;
+	//
+	// α-claim via shapeStmtSemi. See §1.
+	FuncBodyStmtSemi   (frame,parts) { return shapeStmtSemi(parts); },
+	FuncBodyStmtSemiOpt(frame,parts) { return shapeStmtSemi(parts); },
 
 	// DefFuncExpr := "defn" (_ Identifier At?)?
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
@@ -1757,19 +1862,26 @@ export const defaultShapers = {
 	// delims.
 	DoBlockExpr(frame,parts) {
 		var defs;
-		var stmts = [];
-		var delims = [];
+		var rest = [];
 		for (let p of parts) {
-			if (isNode(p)) {
-				if (p.type === "DoBlockDefsInitOpt") defs = p;
-				else stmts.push(p);
-			}
-			else delims.push(p); // OpenBrace, CloseBrace, Semicolon
+			if (isNode(p) && p.type === "DoBlockDefsInitOpt") defs = p;
+			else rest.push(p);
 		}
+		var { stmts, delims } = collectStmtList(rest);
 		var node = { type: "DoBlockExpr", stmts };
 		if (defs) node.defs = defs;
 		return withDelims(node, delims);
 	},
+
+	// DoStmtSemi    := DoStmt? (_ Semicolon)+;
+	// DoStmtSemiOpt := DoStmt? (_ Semicolon)*;
+	//
+	// α-claim via shapeStmtSemi. See §1. DoFinalUnwrapExpr is
+	// not a member of this family — it's a typed node carrying
+	// its own DoubleColon/Semicolons; flows through
+	// collectStmtList unchanged.
+	DoStmtSemi   (frame,parts) { return shapeStmtSemi(parts); },
+	DoStmtSemiOpt(frame,parts) { return shapeStmtSemi(parts); },
 
 	// DoDefVarStmt := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
 	//

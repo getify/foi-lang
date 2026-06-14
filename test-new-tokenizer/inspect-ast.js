@@ -481,6 +481,40 @@ var samples = [
 	// FuncTypeExpr — basic and complex (optional arg, optional braced-union return, rest)
 	{ label: "DefTypeStmt: FuncTypeExpr (basic)",              src: "deft F (int, string) ^ bool;" },
 	{ label: "DefTypeStmt: FuncTypeExpr (complex)",            src: "deft G (?int, *{bool | string}) ^?{int | Foo};" },
+
+	// =============================================================
+	// α-CLAIM — STMT-SEMI FAMILY
+	//
+	// Exercises shapeStmtSemi across the pattern × parent matrix.
+	//   Pattern axis: stmt+1/N/0 semis, bare semi runs, leading
+	//                 bare-semi → EmptyStmt synthesis.
+	//   Parent axis:  the 5 stmt-list containers — Program (§1),
+	//                 BlockExpr (§11), DefBlockStmt (§11),
+	//                 FuncBodyBlock (§13), DoBlockExpr (§16). Each
+	//                 non-Program sample also produces an outer
+	//                 Program lift via its trailing `;;`.
+	//
+	// The fully-empty StmtSemiOpt at EOF (the case that caused
+	// Program.end=null) is exercised by every sample not ending in
+	// `;` — Program's trailing-Opt always fires.
+	// =============================================================
+
+	// Pattern axis — Program parent
+	{ label: "α-claim: stmt + 1 semi (claim, no lift)",     src: "def x: 2;" },
+	{ label: "α-claim: stmt + 2 semis (1 lifts)",           src: "def x: 2;;" },
+	{ label: "α-claim: stmt + 3 semis (2 lift)",            src: "def x: 2;;;" },
+	{ label: "α-claim: stmt + no semi (no claim, no lift)", src: "def x: 2" },
+	{ label: "α-claim: bare 1 semi → EmptyStmt",            src: ";" },
+	{ label: "α-claim: bare 2 semis (1 lifts)",             src: ";;" },
+	{ label: "α-claim: leading EmptyStmt + stmt",           src: "; def x: 1;" },
+	{ label: "α-claim: two stmts, each with lift",          src: "def x: 1;; def y: 2;;" },
+
+	// Parent axis — non-Program containers
+	{ label: "α-claim: ExportStmtSemi + lift to Program",   src: "export { :foo };;" },
+	{ label: "α-claim: BlockExpr lift",                     src: "{ def a: 1;; };" },
+	{ label: "α-claim: DefBlockStmt lift",                  src: "def (x: 1) { def a: 1;; };" },
+	{ label: "α-claim: FuncBodyBlock lift",                 src: "def f: defn(){ def a: 1;; ^a };;" },
+	{ label: "α-claim: DoBlockExpr lift",                   src: "def r: Foo ~<< { def x:: 1;; ::x };;" },
 ];
 
 
