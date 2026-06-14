@@ -543,6 +543,17 @@ var samples = [
 	{ label: "α-wrap: GroupedExpr keeps wrapper",  src: "(x) :as int;",                      opts: { preserveSoftDelims: true } },
 	{ label: "α-wrap: FuncAsClause keeps wrapper", src: "defn f() :as Int ^x;",              opts: { preserveSoftDelims: true } },
 	{ label: "α-wrap: FuncOverClause w/ inner WS", src: "defn ovr(x) :over(y, z) ^x;",       opts: { preserveSoftDelims: true } },
+
+	// α-NESTED-AS — investigate filed clobber on (x :as int) :as bool.
+	// Default opts: the question is default-mode AST shape, not
+	// soft-delim behavior. Reading: does inner .as survive? does
+	// outer .as appear? are they on distinct nodes?
+	{ label: "α-nested-as: inner only", src: "(x :as int);" },
+	{ label: "α-nested-as: inner only", src: "(x :as int);", opts: { preserveSoftDelims: true } },
+	{ label: "α-nested-as: outer only", src: "(x) :as bool;" },
+	{ label: "α-nested-as: outer only", src: "(x) :as bool;", opts: { preserveSoftDelims: true } },
+	{ label: "α-nested-as: both",       src: "(x :as int) :as bool;" },
+	{ label: "α-nested-as: both",       src: "(x :as int) :as bool;", opts: { preserveSoftDelims: true } },
 ];
 
 for (let { label, src, opts } of samples) {

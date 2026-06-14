@@ -135,6 +135,12 @@ Concrete consequences:
   inside the paren-group via `AsExpr`; outer paren has no own `:as`
 - `(x + y) :as int ~map f` → parses; `GroupedOpExpr` carries its
   own `:as`, then `~map f` is the binary tail
+- **`(x) :as bool :as char` → PARSE ERROR** (paren-grouping is not
+  in `<AsableExpr>` — the paren's own tail consumes `:as bool`, then
+  the outer `:as char` has no AsExpr to land on)
+- **`(x :as int) :as bool :as char` → PARSE ERROR** (inner `:as int`
+  attaches to `x.as` fine; the outer `:as bool :as char` chain is
+  rejected for the same reason)
 
 The mechanism: `AsExpr` is reachable from `<Expr>` and
 `<ExprNoBlock>` dispatchers (outer-position expression slots), but
@@ -295,10 +301,22 @@ DestructureCapture    := Hash Identifier;
    AsAnnotationExpr has no delims (default mode), the full
    AsAnnotationExpr wrapper when it does (preserveSoftDelims:true
    with WS between `:as` and the type). Same fold-or-keep rule
-   applies to GroupedExpr.as and DefFuncExpr.as. *)
+   applies to GroupedExpr.as and DefFuncExpr.as.
+
+   <AsableExpr> excludes paren-grouping productions. Each paren-
+   grouping production carries its own (_ AsAnnotationExpr)? tail;
+   admitting paren forms in <AsableExpr> would allow chained `:as`
+   like `(x) :as bool :as char` to parse — the paren's own tail
+   would take `:as bool`, the outer AsExpr's tail would take `:as
+   char`, and AsExpr's shaper would then overwrite the `bool` that
+   shapeGrouped just attached to the same GroupedExpr node. Paren-
+   grouping remains reachable via <BinaryAtom> for non-`:as` uses
+   and via its own one-shot tail for the legitimate `(...) :as T`
+   form. *)
 AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
-<AsableExpr>           := BlockExpr | GuardedExpr | UnaryExpr
-                        | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+<AsableExpr>           := BlockExpr | GuardedExpr | UnaryExpr | AsableInner;
+<AsableInner>          := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
+                        | DataStructLit | IdentifierExpr | OpFuncExpr;
 
 (* Six paren-grouping productions. The two whose inner-expr forms
    include AsExpr via dispatch (GroupedExpr's Expr, GroupedExprNoBlock's

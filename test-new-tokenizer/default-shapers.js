@@ -79,6 +79,13 @@
 //   paren inners additionally accept AsExpr as a first inner alt
 //   so that `(?x :as bool)` etc. parse inside the parens.
 //
+//   Paren-grouping productions are NOT reachable from <AsableExpr>
+//   (see parser.js §5). That keeps the outer AsExpr's `inner.as = ...`
+//   from ever running on a GroupedExpr — eliminating the would-be
+//   clobber when both the paren's own tail and an outer AsExpr both
+//   try to attach a `:as` to the same node. `(x) :as bool :as char`
+//   is a parse error, not a silent overwrite.
+//
 //   All other expression productions — literals, identifiers,
 //   unary, chain/call/access, at-form, op-as-func, block — carry
 //   no `:as` tail at the grammar level. Their shapers do not

@@ -319,6 +319,9 @@ var failSamples = [
 	"x..y :as int;",        // same range family
 	"x :as int + y;",       // outer AsExpr matches `x :as int`; `+ y` dangling
 	"x :as int :as bool;",  // no chained :as without parens; AsableExpr excludes AsExpr
+	"(x) :as bool :as char;",         // chained :as on paren — paren-grouping not in AsableExpr, outer :as has nowhere to land
+	"(x :as int) :as bool :as char;", // same — inner :as is fine, outer chain rejected
+	"(x) :as bool :as char :as float;", // already rejected at the 3rd :as pre-fix; locks it as test
 ];
 
 var passed = 0;

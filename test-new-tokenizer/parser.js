@@ -355,8 +355,9 @@ var BareOperandExprNoEmpty = or(
 );
 
 // AsExpr := <AsableExpr> _ AsAnnotationExpr;
-// <AsableExpr> := BlockExpr | GuardedExpr | UnaryExpr
-//               | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+// <AsableExpr>  := BlockExpr | GuardedExpr | UnaryExpr | AsableInner;
+// <AsableInner> := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
+//                | DataStructLit | IdentifierExpr | OpFuncExpr;
 //
 // The central carrier of `:as` annotations on non-paren expressions.
 // Reachable from <Expr> and <ExprNoBlock> dispatchers (outer-position
@@ -364,25 +365,51 @@ var BareOperandExprNoEmpty = or(
 // restrictive paren variants. NOT reachable from <BinaryAtom> — that
 // is the mechanism that makes `x + y :as int` a parse error.
 //
+// PAREN-GROUPING productions are also deliberately NOT reachable
+// from <AsableExpr>. Each paren-grouping production carries its own
+// `(_ AsAnnotationExpr)?` tail; admitting paren forms here would
+// allow `(x) :as bool :as char` — the paren's own tail consumes
+// `:as bool`, the outer AsExpr's tail consumes `:as char`, and the
+// AsExpr shaper's `inner.as = ...` then overwrites the `bool` that
+// shapeGrouped already attached to the same GroupedExpr node.
+// Removing paren reach turns the chain into a parse error. Paren-
+// grouping remains reachable via <BinaryAtom> (for use as binary
+// operands and chain bases), where each paren still carries its own
+// one-shot `:as` tail for the legitimate `(...) :as T` form.
+//
+// <AsableInner> mirrors BareOperandExpr's content minus the two
+// paren-grouping arms (GroupedBareOpExpr, GroupedBareOpExprNoEmpty).
+// PEG order matches BareOperandExpr's effective inner order: EmptyLit
+// first (longest distinctive prefix), then CallExpr (so `"hi".len`
+// parses as a chain rather than StringLit with a dangling `.len`),
+// then the bare leaves.
+//
 // PEG order in <AsableExpr>:
-// - BlockExpr first (distinctive openers `(` with var-defs, or `{`).
+// - BlockExpr first (distinctive `{` opener).
 // - GuardedExpr (distinctive `?[`/`![`).
 // - UnaryExpr (`?`/`!`/named-unary).
-// - BareOperandExpr | GroupedOpExpr | GroupedDoExpr — same order
-//   as <BinaryAtom>'s tail.
+// - AsableInner — paren-free operand-level forms.
 //
 // Ranges deliberately omitted — `1..5 :as List` must be a parse
 // error. Annotating a range requires explicit parens.
 //
 // AsExpr is a parse-time wrapper: its shaper unwraps, lifting `as`
 // onto the inner node. No AsExpr node type appears in the AST.
+var AsableInner = or(
+	EmptyLit,
+	lazy(() => CallExpr),
+	BooleanLit,
+	NumberLit,
+	StringLit,
+	lazy(() => DataStructLit),
+	lazy(() => IdentifierExpr),
+	lazy(() => OpFuncExpr)
+);
 var AsableExpr = or(
 	lazy(() => BlockExpr),
 	lazy(() => GuardedExpr),
 	lazy(() => UnaryExpr),
-	BareOperandExpr,
-	lazy(() => GroupedOpExpr),
-	lazy(() => GroupedDoExpr)
+	AsableInner
 );
 export const AsExpr = production("AsExpr",
 	and(AsableExpr, delim(), AsAnnotationExpr)
