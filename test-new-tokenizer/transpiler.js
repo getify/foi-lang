@@ -283,6 +283,128 @@ var renderRecordEntry = (entry, recur) => {
 
 
 // =============================================================
+// DESTRUCTURE EMITTERS
+//
+// Lower DestructureTarget against a JS expression evaluating to
+// the source value. Strategy: single-eval source into a temp
+// `__t`, then one decl per destructure entry reading a path on
+// __t. The full DefVarStmt becomes one `var __t = <init>, ...;`
+// statement.
+//
+//   def <a: src.x, :b, #whole>: payload;
+//   → var __t = payload, a = __t.src.x, b = __t.b, whole = __t
+//
+// Foi's destructure is path-based (pick by access chain), not
+// shape-based — JS destructure patterns can't natively express
+// chained accessors (`{src: {x: a}}` would require nested
+// patterns, and breaks entirely on integer-index or computed-key
+// segments). Single-temp + chained decls is uniform across all
+// path complexity.
+//
+// __t follows the existing __c / __a / __rest / __xs convention
+// for compiler-synthesized names. Multiple sequential DefVarStmts
+// re-declare `var __t` safely (JS permits var redeclaration; each
+// stmt's entries read the just-assigned __t).
+// =============================================================
+
+// Renders a DestructureTarget's entries as a comma-separated
+// init-list suitable for embedding inside `var __t = init, ...`.
+// Returns null when any entry can't be lowered — caller falls
+// back at the DefVarStmt level.
+var renderDestructure = (target, recur) => {
+	var parts = [];
+	for (let entry of target.entries) {
+		let rendered = renderDestructureEntry(entry, recur);
+		if (rendered == null) return null;
+		parts.push(rendered);
+	}
+	return parts.join(", ");
+};
+
+// Renders a single destructure entry to `name = __t.path` form.
+var renderDestructureEntry = (entry, recur) => {
+	if (entry.type === "DestructureCapture") {
+		return entry.target.name + " = __t";
+	}
+	if (entry.type === "DestructureNamedDef") {
+		let pathStr = renderDestructurePath(entry.source, recur);
+		if (pathStr == null) return null;
+		return entry.target.name + " = " + pathStr;
+	}
+	if (entry.type === "DestructureConciseDef") {
+		let bindName = conciseBindingName(entry.source);
+		if (bindName == null) return null;
+		let pathStr = renderDestructurePath(entry.source, recur);
+		if (pathStr == null) return null;
+		return bindName + " = " + pathStr;
+	}
+	return null;
+};
+
+// Concise form derives the binding name from the terminal
+// segment of the source path:
+//
+//   :foo        → "foo"           (no access — Identifier base)
+//   :foo.bar    → "bar"           (terminal named accessor)
+//   :foo.5      → null            (integer member — no JS name)
+//   :foo[0]     → null            (index access — no JS name)
+var conciseBindingName = source => {
+	if (source.type === "Identifier") return source.name;
+	if (source.type === "MemberAccessExpr" && source.accessor) {
+		return source.accessor.name;
+	}
+	return null;
+};
+
+// Renders a destructure source path rooted at __t. Walks the
+// chain back to its base, substitutes __t for the base, then
+// re-emits chain segments on top.
+//
+//   src           → __t.src               (Identifier base)
+//   src.x         → __t.src.x
+//   [k]           → __t[k]                (BracketExpr base; NamedDef only)
+//   [k].x.5       → __t[k].x[5]
+//   foo[bar].baz  → __t.foo[bar].baz
+//
+// Returns null when a non-Member/Index segment appears anywhere
+// in the chain (RangeAccessExpr, PropertyPickExpr) or when the
+// base is unexpected — caller falls back at the entry level.
+var renderDestructurePath = (source, recur) => {
+	var stack = [];
+	var node = source;
+	while (
+		node.type === "MemberAccessExpr" ||
+		node.type === "IndexAccessExpr"
+	) {
+		stack.push(node);
+		node = node.object;
+	}
+	var rootStr;
+	if (node.type === "Identifier") {
+		rootStr = "__t." + node.name;
+	}
+	else if (node.type === "BracketExpr") {
+		rootStr = "__t[" + recur(node.expr) + "]";
+	}
+	else {
+		return null;
+	}
+	var out = rootStr;
+	for (let i = stack.length - 1; i >= 0; i--) {
+		let seg = stack[i];
+		if (seg.type === "MemberAccessExpr") {
+			if (seg.accessor) out += "." + seg.accessor.name;
+			else               out += "[" + seg.index + "]";
+		}
+		else { // IndexAccessExpr
+			out += "[" + recur(seg.expr) + "]";
+		}
+	}
+	return out;
+};
+
+
+// =============================================================
 // HANDLERS
 // =============================================================
 
@@ -354,13 +476,28 @@ var handlers = {
 	// =============================================================
 
 	// `def x: <expr>` → `var x = <expr>`. `var` matches Foi's
-	// function-scope semantics for `def`. DestructureTarget
-	// deferred — falls back; the lowering needs JS destructure
-	// pattern synthesis that's out of first slice.
+	// function-scope semantics for `def`.
+	//
+	// DestructureTarget target → single-eval init into `__t`,
+	// then one decl per destructure entry reading a path on __t:
+	//
+	//   def < a: src.x, :b, #whole >: payload;
+	//   → var __t = payload, a = __t.src.x, b = __t.b, whole = __t
+	//
+	// See renderDestructure / renderDestructurePath. Any entry
+	// that can't be lowered (RangeAccessExpr or PropertyPickExpr
+	// in a path, integer-index in a concise binding name) falls
+	// back at the DefVarStmt level — partial destructure isn't
+	// emittable.
 	DefVarStmt(node, recur) {
-		if (node.target.type !== "Identifier") return fallback(node);
-		return "var " + recur(node.target) + " = " + recur(node.init);
+		if (node.target.type === "Identifier") {
+			return "var " + recur(node.target) + " = " + recur(node.init);
+		}
+		var entries = renderDestructure(node.target, recur);
+		if (entries == null) return fallback(node);
+		return "var __t = " + recur(node.init) + ", " + entries;
 	},
+
 
 	// =============================================================
 	// §5 EXPRESSION SCAFFOLDING
@@ -559,6 +696,7 @@ var handlers = {
 	CompareBinExpr: (n, r) => emitBinTier(n, r, CMP_OPS),
 	AndBinExpr:     (n, r) => emitBinTier(n, r, AND_OPS),
 	OrBinExpr:      (n, r) => emitBinTier(n, r, OR_OPS),
+
 
 	// =============================================================
 	// §11 BLOCK EXPRESSIONS
