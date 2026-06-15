@@ -89,7 +89,9 @@ var escapeTemplateChunk = s => s
 // JS lowering. Unary entries are render functions taking the
 // already-emitted operand string (so non-prefix lowerings like
 // `?empty x` → `(x == null)` can express the wrap). Binary
-// entries are bare JS-op strings.
+// entries are either a bare JS-op string (transparent passthrough,
+// `?and` → `&&`) or a render fn taking (left, right) for forms
+// that need to wrap the whole expression (`!and` → `!(l && r)`).
 //
 // Missing entries fall through `emit*Tier` to `fallback(node)`,
 // surfacing the un-lowered op verbatim in the output as a
@@ -112,15 +114,28 @@ var MUL_OPS = { "*": "*", "/": "/" };
 
 var CMP_OPS = {
 	"?<":  "<",
+	"!<":  (l, r) => "!(" + l + " < "   + r + ")",
 	"?<=": "<=",
+	"!<=": (l, r) => "!(" + l + " <= "  + r + ")",
 	"?>":  ">",
+	"!>":  (l, r) => "!(" + l + " > "   + r + ")",
 	"?>=": ">=",
+	"!>=": (l, r) => "!(" + l + " >= "  + r + ")",
 	"?=":  "===",
+	"!=":  (l, r) => "!(" + l + " === " + r + ")",
 	"?<>": "!==",
+	"!<>": (l, r) => "!(" + l + " !== " + r + ")",
 };
 
-var AND_OPS = { "?and": "&&" };
-var OR_OPS  = { "?or":  "||" };
+var AND_OPS = {
+	"?and": "&&",
+	"!and": (l, r) => "!(" + l + " && " + r + ")",
+};
+
+var OR_OPS = {
+	"?or":  "||",
+	"!or":  (l, r) => "!(" + l + " || " + r + ")",
+};
 
 
 // =============================================================
@@ -154,6 +169,14 @@ var OP_FUNC_TABLE = {
 	"?<=": { kind: "pairs", op: "<=" },
 	"?>":  { kind: "pairs", op: ">" },
 	"?>=": { kind: "pairs", op: ">=" },
+	"!and": { kind: "notAnd" },
+	"!or":  { kind: "notOr" },
+	"!=":   { kind: "notPairs", op: "===" },
+	"!<>":  { kind: "notPairs", op: "!==" },
+	"!<":   { kind: "notPairs", op: "<"  },
+	"!<=":  { kind: "notPairs", op: "<=" },
+	"!>":   { kind: "notPairs", op: ">"  },
+	"!>=":  { kind: "notPairs", op: ">=" },
 };
 
 
@@ -172,9 +195,12 @@ var emitUnaryTier = (node, recur, opMap) => {
 };
 
 var emitBinTier = (node, recur, opMap) => {
-	var jsOp = opMap[node.op];
-	if (jsOp == null) return fallback(node);
-	return recur(node.left) + " " + jsOp + " " + recur(node.right);
+	var entry = opMap[node.op];
+	if (entry == null) return fallback(node);
+	var left  = recur(node.left);
+	var right = recur(node.right);
+	if (typeof entry === "function") return entry(left, right);
+	return left + " " + entry + " " + right;
 };
 
 
@@ -374,13 +400,17 @@ var handlers = {
 
 	// OpFuncExpr — operator as function reference. Bare-op arm only.
 	//
-	//   (+)(1,2,3,4)   → left-fold via reduce: 1+2+3+4
-	//   (-')(1,6,2)    → reverse args, then left-fold: 2-6-1 = -5
-	//   (?=)(x,y,z)    → all-pairs every: x===y && x===z && y===z
-	//   (?<)(a,b,c)    → all-pairs every: a<b && a<c && b<c
-	//   (?empty)(x)    → 1-arg lift: (x == null)
+	//   (+)(1,2,3,4)     → left-fold via reduce: 1+2+3+4
+	//   (-')(1,6,2)      → reverse args, then left-fold: 2-6-1 = -5
+	//   (?=)(x,y,z)      → all-pairs every: x===y && x===z && y===z
+	//   (?<)(a,b,c)      → all-pairs every: a<b && a<c && b<c
+	//   (?empty)(x)      → 1-arg lift: (x == null)
+	//   (!and)(a,b,c)    → De Morgan, any-falsy: a.some(x => !x)
+	//   (!or)(a,b,c)     → De Morgan, all-falsy: a.every(x => !x)
+	//   (!<)(a,b,c)      → De Morgan, some-pair-not-<: pairs.some with negated inner
 	//
-	// Binary ops lift to n-ary; unary ops stay 1-ary.
+	// Binary ops lift to n-ary; unary ops stay 1-ary. Negated forms
+	// use De Morgan — short-circuits naturally via .some/.every.
 	//
 	// All-pairs (not chained) for compare ops — matters for non-
 	// transitive `?<>` where chained would miss pairs. For symmetric
@@ -389,26 +419,41 @@ var handlers = {
 	//
 	// Non-bare arms (range `(..)`, angle-pick `(.<a,5>)`, range-
 	// access `(.[1..5])`, empty-bracket `([])`) and ops absent from
-	// OP_FUNC_TABLE (?<=>, ?in, ?has, ?as) fall back.
+	// OP_FUNC_TABLE (?<=>, !<=>, ?in, !in, ?has, !has, ?as, !as)
+	// fall back.
 	OpFuncExpr(node, recur) {
 		if (node.properties || node.range || node.op === "[]") {
 			return fallback(node);
 		}
 		var meta = OP_FUNC_TABLE[node.op];
 		if (!meta) return fallback(node);
+		var xs = node.primed ? "__xs.reverse()" : "__xs";
 		if (meta.kind === "unary") {
 			return "((__x) => " + meta.render("__x") + ")";
 		}
-		var xs = node.primed ? "__xs.reverse()" : "__xs";
 		if (meta.kind === "fold") {
 			return "((...__xs) => " + xs +
 				".reduce((__l, __r) => __l " + meta.op + " __r))";
 		}
-		// pairs
-		return "((...__xs) => " + xs +
-			".every((__l, __i) => __xs.every((__r, __j) => __j <= __i || __l " +
-			meta.op + " __r)))";
+		if (meta.kind === "pairs") {
+			return "((...__xs) => " + xs +
+				".every((__l, __i) => __xs.every((__r, __j) => __j <= __i || __l " +
+				meta.op + " __r)))";
+		}
+		if (meta.kind === "notAnd") {
+			return "((...__xs) => " + xs + ".some(__x => !__x))";
+		}
+		if (meta.kind === "notOr") {
+			return "((...__xs) => " + xs + ".every(__x => !__x))";
+		}
+		if (meta.kind === "notPairs") {
+			return "((...__xs) => " + xs +
+				".some((__l, __i) => __xs.some((__r, __j) => __j > __i && !(__l " +
+				meta.op + " __r))))";
+		}
+		return fallback(node);
 	},
+
 
 	// =============================================================
 	// §8 UNARY
@@ -456,20 +501,38 @@ var handlers = {
 	// §11 BLOCK EXPRESSIONS
 	// =============================================================
 
-	// Foi BlockExpr → JS IIFE arrow form. `defs`
-	// (BlockDefsInitOpt parameter set) deferred — falls back
-	// when present.
+	// BlockExpr → JS IIFE arrow. Last stmt gets implicit `return`
+	// injection so the block evaluates to its final expression —
+	// matches Foi's last-expression-wins semantics.
 	//
-	// `return` injection on the last stmt is also deferred: the
-	// block's value semantics in Foi (last-expression-wins) need
-	// a stmt-vs-expr classification that hasn't been wired yet.
-	// First-slice form runs the body for effect; the IIFE
-	// expression itself evaluates to undefined.
+	// DefVarStmt as last stmt (or empty block): no implicit return;
+	// trailing `return null;` is appended so the block evaluates to
+	// `null` — matches Foi's `empty` lowering for the no-value case.
+	//
+	// DefFuncExpr as last stmt: `return function name(...) {...}`
+	// is a valid JS function expression and evaluates to the
+	// function value — matches Foi's "block evaluates to last
+	// expression" when that expression is a function definition.
+	//
+	// `defs` (BlockDefsInitOpt parameter set) deferred — falls
+	// back when present.
 	BlockExpr(node, recur) {
 		if (node.defs) return fallback(node);
-		var body = node.stmts.map(s => recur(s) + ";").join(" ");
+		var stmts = node.stmts;
+		var lastIdx = stmts.length - 1;
+		var injected = false;
+		var body = stmts.map((s, i) => {
+			var rendered = recur(s);
+			if (i === lastIdx && s.type !== "DefVarStmt") {
+				rendered = "return " + rendered;
+				injected = true;
+			}
+			return rendered + ";";
+		}).join(" ");
+		if (!injected) body += " return null;";
 		return "(() => { " + body + " })()";
 	},
+
 
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS
