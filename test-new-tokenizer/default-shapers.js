@@ -148,9 +148,25 @@ function liftWrapperDelims(inner, wrapperDelims) {
 //   DotAngleExpr       → PropertyPickExpr { object, properties }
 //
 // Each returned node carries explicit start/end since these are
-// synthetic intermediates the machinery doesn't reach. No delims
-// — these synthesized nodes don't have raw tokens of their own;
-// the delims of the constituent segment nodes live on those nodes.
+// synthetic intermediates the machinery doesn't reach. The seg's
+// own delims (its structural tokens — parens / pipes / brackets /
+// angles / commas — plus any auto-merged soft delims under
+// preserveSoftDelims) propagate onto the synthesized node. Without
+// this propagation the seg's tokens vanish entirely from the AST
+// (only seg.end survives via node.end), and source recovery for
+// internal whitespace, comma spacing, and structural punctuation
+// is impossible.
+//
+// For the OUTERMOST folded node, ChainExpr's frame additionally
+// merges its own chain-level soft delims (WS between ChainBase
+// and ChainSeg, between segs) on top of these via the machinery's
+// mergeBySourcePosition. Intermediate folded nodes (non-outermost)
+// carry only their own seg.delims.
+//
+// Leading Periods on DotIdentifier / DotBracketExpr / DotAngleExpr
+// are NOT in seg.delims — anchored in the seg's type tag and
+// dropped at the seg's own shaper. Consumers re-synthesize from
+// the resulting node's type.
 //
 // PrefixCallSuffix always exposes uniform `args`. The bare-op-in-
 // parens form (`foo(+')`, gated by CallArgs' &(CloseParen)
@@ -166,8 +182,9 @@ function liftWrapperDelims(inner, wrapperDelims) {
 // lookup from positional index.
 function applyChainSeg(object,seg) {
 	var t = seg.type;
+	var node;
 	if (t === "PrefixCallSuffix") {
-		return {
+		node = {
 			type: "CallExpr",
 			callee: object,
 			args: seg.args,
@@ -175,8 +192,8 @@ function applyChainSeg(object,seg) {
 			end: seg.end,
 		};
 	}
-	if (t === "PartialCallSuffix") {
-		return {
+	else if (t === "PartialCallSuffix") {
+		node = {
 			type: "PartialCallExpr",
 			callee: object,
 			args: seg.args,
@@ -184,8 +201,8 @@ function applyChainSeg(object,seg) {
 			end: seg.end,
 		};
 	}
-	if (t === "DotIdentifier") {
-		let node = {
+	else if (t === "DotIdentifier") {
+		node = {
 			type: "MemberAccessExpr",
 			object,
 			start: object.start,
@@ -193,10 +210,9 @@ function applyChainSeg(object,seg) {
 		};
 		if (seg.accessor) node.accessor = seg.accessor;
 		else node.index = seg.index;
-		return node;
 	}
-	if (t === "BracketExpr") {
-		return {
+	else if (t === "BracketExpr") {
+		node = {
 			type: "IndexAccessExpr",
 			object,
 			expr: seg.expr,
@@ -204,8 +220,8 @@ function applyChainSeg(object,seg) {
 			end: seg.end,
 		};
 	}
-	if (t === "DotBracketExpr") {
-		return {
+	else if (t === "DotBracketExpr") {
+		node = {
 			type: "RangeAccessExpr",
 			object,
 			range: seg.range,
@@ -213,8 +229,8 @@ function applyChainSeg(object,seg) {
 			end: seg.end,
 		};
 	}
-	if (t === "DotAngleExpr") {
-		return {
+	else if (t === "DotAngleExpr") {
+		node = {
 			type: "PropertyPickExpr",
 			object,
 			properties: seg.properties,
@@ -222,7 +238,11 @@ function applyChainSeg(object,seg) {
 			end: seg.end,
 		};
 	}
-	throw new Error(`ChainExpr: unexpected segment type "${t}"`);
+	else {
+		throw new Error(`ChainExpr: unexpected segment type "${t}"`);
+	}
+	if (seg.delims) node.delims = seg.delims;
+	return node;
 }
 
 // Helper for the eight unified access-fold sites — AtExpr base,
