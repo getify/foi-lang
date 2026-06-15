@@ -817,7 +817,8 @@ export const ChainExpr = production("ChainExpr",
 				any(and(delim(), CallSuffix))
 			)
 		)
-	)
+	),
+	{ preserveInnerDelim: true }
 );
 
 // <CallExpr> := AtCallExpr | ChainExpr;

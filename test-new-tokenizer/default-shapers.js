@@ -157,11 +157,15 @@ function liftWrapperDelims(inner, wrapperDelims) {
 // internal whitespace, comma spacing, and structural punctuation
 // is impossible.
 //
-// For the OUTERMOST folded node, ChainExpr's frame additionally
-// merges its own chain-level soft delims (WS between ChainBase
-// and ChainSeg, between segs) on top of these via the machinery's
-// mergeBySourcePosition. Intermediate folded nodes (non-outermost)
-// carry only their own seg.delims.
+// Chain-level soft delims (WS / comments between ChainBase and
+// ChainSeg, between segs, between SingleQuote and post-prime
+// CallSuffix) are partitioned by ChainExpr's shaper — see
+// ChainExpr below — and attached to the folded node that results
+// from folding the seg AFTER each gap. Each folded node therefore
+// carries source-position fidelity for both its own seg.delims
+// AND any chain-level trivia preceding it. ChainExpr opts into
+// preserveInnerDelim so the machinery's auto-merge of soft delims
+// onto the outermost node is suppressed.
 //
 // Leading Periods on DotIdentifier / DotBracketExpr / DotAngleExpr
 // are NOT in seg.delims — anchored in the seg's type tag and
@@ -1335,45 +1339,62 @@ export const defaultShapers = {
 	// ChainExpr — base + ordered segments folded into JS-style
 	// nested typed nodes. ChainExpr itself emits no node — it's a
 	// parse vehicle only. SingleQuote captured into PrimedExpr
-	// synthesis. No outer node, so no delims at this level (the
-	// segment nodes carry their own delims).
+	// synthesis.
+	//
+	// preserveInnerDelim:true on the production — chain-level soft
+	// delims (WS / comments between ChainBase and ChainSeg,
+	// between segs, between SingleQuote and post-prime CallSuffix)
+	// flow into `parts` so the shaper can distribute them.
+	// `pending` accumulates soft delim tokens; when the next
+	// folded node arrives, pending merges onto its delims BEFORE
+	// the seg's own structural delims (all positionally precede
+	// seg.delims, so simple concat is source-ordered).
+	//
+	// Per grammar, no `_` precedes SingleQuote (postfix prime is
+	// adjacent to its preceding expression) — `pending` should be
+	// empty at SingleQuote. Defensive attach to PrimedExpr in case.
 	ChainExpr(frame,parts) {
-		var base;
-		var preSegs = [];
-		var postPrimeSegs = [];
-		var primeTokEnd;
+		var node;
+		var pending = [];
 		for (let p of parts) {
-			if (!isNode(p)) {
-				// SingleQuote — the prime operator.
-				primeTokEnd = p.end;
+			if (isNode(p)) {
+				if (node === undefined) {
+					node = p; // ChainBase
+				}
+				else {
+					// ChainSeg / CallSuffix — both fold via applyChainSeg.
+					node = applyChainSeg(node, p);
+					if (pending.length > 0) {
+						node.delims = node.delims
+							? [ ...pending, ...node.delims ]
+							: pending;
+						pending = [];
+					}
+				}
 			}
-			else if (base === undefined) {
-				base = p;
-			}
-			else if (primeTokEnd !== undefined) {
-				postPrimeSegs.push(p);
+			else if (p.type === "SingleQuote") {
+				node = {
+					type: "PrimedExpr",
+					inner: node,
+					start: node.start,
+					end: p.end,
+				};
+				if (pending.length > 0) {
+					node.delims = pending;
+					pending = [];
+				}
 			}
 			else {
-				preSegs.push(p);
+				// soft delim (Whitespace / LineComment / BlockComment)
+				pending.push(p);
 			}
 		}
-
-		var node = base;
-		for (let seg of preSegs) {
-			node = applyChainSeg(node, seg);
+		// Defensive: trailing pending shouldn't occur per grammar.
+		if (pending.length > 0) {
+			node.delims = node.delims
+				? [ ...node.delims, ...pending ]
+				: pending;
 		}
-		if (primeTokEnd !== undefined) {
-			node = {
-				type: "PrimedExpr",
-				inner: node,
-				start: node.start,
-				end: primeTokEnd,
-			};
-		}
-		for (let seg of postPrimeSegs) {
-			node = applyChainSeg(node, seg);
-		}
-
 		return node;
 	},
 

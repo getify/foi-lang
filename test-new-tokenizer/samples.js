@@ -760,4 +760,61 @@ export const samples = [
 	{ label: "FuncType opt-return WS-after-caret: (int) ^ ?int", src: "deft F (int) ^ ?int;", opts: { preserveSoftDelims: true } },
 	{ label: "FuncType opt-return WS-after-qmark: (int) ^? int", src: "deft F (int) ^? int;", opts: { preserveSoftDelims: true } },
 	{ label: "FuncType opt-return WS-both: (int) ^ ? int", src: "deft F (int) ^ ? int;", opts: { preserveSoftDelims: true } },
+
+	// =============================================================
+	// COMMENT COVERAGE — preserveSoftDelims:true mandatory
+	//
+	// Verifies LineComment (`// ... \n`) and BlockComment
+	// (`/// ... ///`) tokens flow through the soft-delim machinery
+	// across positions: trailing/leading statements, between
+	// statements, inside expressions, straddling structural
+	// punctuation. Comments are soft delims — same machinery as
+	// Whitespace; coverage here verifies the token *kind* doesn't
+	// matter to position-fidelity.
+	// =============================================================
+
+	{ label: "Comment line: trailing stmt",
+	  src: "def x: 1; // trail\n",                                opts: { preserveSoftDelims: true } },
+	{ label: "Comment line: trailing stmt, no newline",
+	  src: "def x: 1; // EOF-terminated",                         opts: { preserveSoftDelims: true } },
+	{ label: "Comment line: between stmts",
+	  src: "def x: 1;\n// between\ndef y: 2;",                    opts: { preserveSoftDelims: true } },
+	{ label: "Comment line: leading",
+	  src: "// leading\ndef x: 1;",                               opts: { preserveSoftDelims: true } },
+	{ label: "Comment block: inline single-line",
+	  src: "def x: 1 /// inline /// + 2;",                        opts: { preserveSoftDelims: true } },
+	{ label: "Comment block: multi-line",
+	  src: "def x: ///\n  multi\n  line\n///\n1;",                opts: { preserveSoftDelims: true } },
+	{ label: "Comment block: between stmts",
+	  src: "def x: 1; /// sep /// def y: 2;",                     opts: { preserveSoftDelims: true } },
+	{ label: "Comment block: straddling dot",
+	  src: "foo ///c/// .bar;",                                   opts: { preserveSoftDelims: true } },
+	{ label: "Comment block: inside paren-group",
+	  src: "(x /// note ///);",                                   opts: { preserveSoftDelims: true } },
+	{ label: "Comment line+block: adjacent",
+	  src: "def x: 1; // line\n/// block ///\ndef y: 2;",         opts: { preserveSoftDelims: true } },
+
+	// =============================================================
+	// MULTI-LINE / INDENTATION COVERAGE — preserveSoftDelims:true
+	//
+	// Verifies newline + leading-tab runs are preserved as part of
+	// soft-delim machinery and roundtrip cleanly. The Whitespace
+	// token spans all WsChar+ runs (newlines and tabs/spaces folded
+	// into one token), so machinery treatment is identical to
+	// inline WS — these samples exercise position-fidelity over
+	// larger spans across statement-list and grouped contexts.
+	// =============================================================
+
+	{ label: "Multi-line: def with newline before value",
+	  src: "def x:\n\t42;",                                       opts: { preserveSoftDelims: true } },
+	{ label: "Multi-line: RecordTupleLit indented",
+	  src: "<\n\t1,\n\t2,\n\t3\n>;",                              opts: { preserveSoftDelims: true } },
+	{ label: "Multi-line: defn body on next line",
+	  src: "defn add(x, y) {\n\t^x + y;\n};",                     opts: { preserveSoftDelims: true } },
+	{ label: "Multi-line: pattern match clauses",
+	  src: "?{\n\t?[x ?> 0]: 1;\n\t?: 0\n};",                     opts: { preserveSoftDelims: true } },
+	{ label: "Multi-line: chain access over lines",
+	  src: "foo\n\t.bar\n\t.baz;",                                opts: { preserveSoftDelims: true } },
+	{ label: "Multi-line: mixed with trailing line comment",
+	  src: "def x:\n\t42; // note\n",                             opts: { preserveSoftDelims: true } },
 ];

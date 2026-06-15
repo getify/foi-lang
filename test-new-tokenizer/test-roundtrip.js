@@ -268,36 +268,25 @@ var handlers = {
 	// =============================================================
 	// §7 CHAIN-FOLD SYNTHETIC NODES
 	// =============================================================
-	// applyChainSeg now propagates seg.delims onto the synthesized
-	// node, so the brackets, parens, pipes, angles, and commas —
-	// plus any auto-merged soft delims (e.g. WS between args, WS
-	// after commas) — are recoverable.
+	// applyChainSeg propagates seg.delims onto the synthesized
+	// node, so the Period (DotIdentifier / DotBracketExpr /
+	// DotAngleExpr), brackets, parens, pipes, angles, and commas
+	// — plus any auto-merged soft delims (WS between args, WS
+	// after commas, WS straddling the dot) — are recoverable.
+	// Chain-level soft delims between segs are distributed by
+	// ChainExpr's shaper onto the folded node that follows each
+	// gap, so WS positions across both sides of every dot in a
+	// chain are preserved.
 	//
-	// CallExpr / PartialCallExpr / IndexAccessExpr route through
-	// emitGeneric: their structural tokens are in delims and their
-	// child nodes (callee/args/expr) all carry source positions,
-	// so a sorted piece-walk reconstructs them.
-	//
-	// Leading Periods on DotIdentifier / DotBracketExpr / DotAngleExpr
-	// are anchored in the seg's type tag and never land in delims.
-	// MemberAccessExpr / RangeAccessExpr / PropertyPickExpr each
-	// re-synthesize their leading "." themselves.
-	//
-	// PropertyPickExpr additionally needs explicit handling: its
-	// `properties` array holds wrapper objects ({accessor} / {index})
-	// with no source positions, so they can't sort into a position-
-	// walked piece list. The handler drives off the delim sequence,
-	// slotting the next property after each OpenAngle / Comma group.
-	//
-	// Internal WS BETWEEN object and the leading dot (`foo .bar`,
-	// `rec .<a,b>`) is still a punt — seg.start (the Period's
-	// position) isn't preserved on the synthesized node, so WS-
-	// before-dot and WS-after-dot are indistinguishable in the AST.
-	// The handlers favor the WS-before-dot interpretation (consistent
-	// with the existing MemberAccessExpr behavior). No current
-	// samples force the WS-after-dot reading.
+	// CallExpr / PartialCallExpr / IndexAccessExpr / RangeAccessExpr
+	// / PropertyPickExpr route through emitGeneric: every structural
+	// token sits in delims and every child node carries source
+	// positions, so a sorted piece-walk reconstructs them. The
+	// only custom §7 handler is MemberAccessExpr — its integer
+	// variant has a positionless `index` string that needs
+	// gap-fill.
 
-// MemberAccessExpr — Period is now in delims (with its source
+	// MemberAccessExpr — Period is in delims (with its source
 	// position), so the accessor variant routes through emitGeneric
 	// uniformly. The integer variant keeps `.index` as a bare
 	// string with no position; gapFill places it at the first
@@ -396,6 +385,12 @@ var handlers = {
 	MulBinExpr:         (n, r) => emitBinTier("MulBinExpr", n, r),
 
 	// =============================================================
+	// §11 DEF-BLOCK STATEMENT
+	// =============================================================
+
+	DefBlockStmt: (n, r) => gapFill("def", n, r),
+
+	// =============================================================
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
 
@@ -483,14 +478,6 @@ var handlers = {
 		if (node.op) return gapFill(node.op, node, recur);
 		return emitGeneric(node, recur);
 	},
-
-	// =============================================================
-	// §11 DEF-BLOCK STATEMENT
-	// =============================================================
-	// (Placed here rather than between §4 and §13 to keep this
-	// batch's diff compact. Move when next touched.)
-
-	DefBlockStmt: (n, r) => gapFill("def", n, r),
 
 	// =============================================================
 	// §17 DATA STRUCTURE LITERALS
