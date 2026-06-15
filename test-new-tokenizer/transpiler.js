@@ -228,6 +228,61 @@ var emitCondClause = (clause, recur) => {
 
 
 // =============================================================
+// RECORD-ENTRY EMITTER
+//
+// Renders a single keyed RecordTupleLit entry (PickValue,
+// ConcisePropDef, or ExplicitPropDef) to a JS object-property
+// string. Returns null when the entry shape can't be lowered
+// — RecordTupleLit's handler then falls back at the literal
+// level (granular fallback policy).
+//
+//   ConcisePropDef:
+//     <:foo>          → foo                  (JS shorthand)
+//     <:5>            → null  (no clean JS semantic for numeric)
+//
+//   PickValue:
+//     <&foo>          → foo                  (JS shorthand)
+//     <&Maybe>        → Maybe                (BuiltIn → shorthand)
+//     <&foo.bar>      → bar: foo.bar         (terminal accessor as key)
+//     <&foo.bar.baz>  → baz: foo.bar.baz
+//     <&foo[0]>       → null  (no natural key for index)
+//     <&foo.5>        → null  (no natural key for integer member)
+//
+//   ExplicitPropDef:
+//     <x: 1>          → x: 1
+//     <5: x>          → 5: x
+//     <%foo: 1>       → [foo]: 1             (computed key)
+// =============================================================
+
+var renderRecordEntry = (entry, recur) => {
+	if (entry.type === "ConcisePropDef") {
+		let src = entry.source;
+		if (src.type === "Identifier") return src.name;
+		return null;
+	}
+	if (entry.type === "PickValue") {
+		let src = entry.source;
+		if (src.type === "Identifier" || src.type === "BuiltIn") {
+			return src.name;
+		}
+		if (src.type === "MemberAccessExpr" && src.accessor) {
+			return src.accessor.name + ": " + recur(src);
+		}
+		return null;
+	}
+	if (entry.type === "ExplicitPropDef") {
+		let key = entry.key;
+		let val = recur(entry.init);
+		if (key.type === "ComputedPropName") return "[" + recur(key.expr) + "]: " + val;
+		if (key.type === "Identifier")       return key.name + ": " + val;
+		if (key.type === "NumberLit")        return key.text + ": " + val;
+		return null;
+	}
+	return null;
+};
+
+
+// =============================================================
 // HANDLERS
 // =============================================================
 
@@ -396,6 +451,14 @@ var handlers = {
 			return recur(node.object) + "." + recur(node.accessor);
 		}
 		return recur(node.object) + "[" + node.index + "]";
+	},
+
+	// IndexAccessExpr { object, expr } — bracket access. `expr`
+	// can be any expression; emit straight JS bracket notation.
+	// Paired with the §17 cluster — every collection touched by
+	// `arr[i]` flows through this handler.
+	IndexAccessExpr(node, recur) {
+		return recur(node.object) + "[" + recur(node.expr) + "]";
 	},
 
 	// OpFuncExpr — operator as function reference. Bare-op arm only.
@@ -692,6 +755,68 @@ var handlers = {
 		return result;
 	},
 
+
+	// =============================================================
+	// §17 DATA STRUCTURE LITERALS
+	// =============================================================
+
+	// RecordTupleLit { entries } — Tuple/Record discriminator.
+	//
+	// Pure-positional (every entry is a bare value node) → JS
+	// array (idiomatic):
+	//   <1, 2, 3>       → [1, 2, 3]
+	//   <<1,2>,<3,4>>   → [[1, 2], [3, 4]]
+	//
+	// Any keyed entry present (PickValue / ConcisePropDef /
+	// ExplicitPropDef) → JS object. Bare entries become numeric
+	// properties keyed by their entry-list position; keyed entries
+	// render via renderRecordEntry. Paren-wrapped to disambiguate
+	// from a block in expr-statement position:
+	//   <x: 1, :y>            → ({ x: 1, y })
+	//   <&foo, 42>            → ({ foo, 1: 42 })
+	//   <&foo, x: 1, :bar, 42>→ ({ foo, x: 1, bar, 3: 42 })
+	//
+	// PickValue / ConcisePropDef / ExplicitPropDef have no
+	// top-level handlers — they're directives, only meaningful
+	// inside record/set literals. renderRecordEntry handles them.
+	RecordTupleLit(node, recur) {
+		var entries = node.entries;
+		var isKeyed = e =>
+			e.type === "PickValue" ||
+			e.type === "ConcisePropDef" ||
+			e.type === "ExplicitPropDef";
+		var anyKeyed = entries.some(isKeyed);
+		if (!anyKeyed) {
+			return "[" + entries.map(e => recur(e)).join(", ") + "]";
+		}
+		var parts = [];
+		for (let i = 0; i < entries.length; i++) {
+			let e = entries[i];
+			let rendered;
+			if (isKeyed(e)) {
+				rendered = renderRecordEntry(e, recur);
+			}
+			else {
+				rendered = i + ": " + recur(e);
+			}
+			if (rendered == null) return fallback(node);
+			parts.push(rendered);
+		}
+		return "({ " + parts.join(", ") + " })";
+	},
+
+	// SetLit { entries } → `new Set([...])`. PickValue in Set
+	// context is a pure value lookup (no key); per grammar
+	// SetEntry is PickValue | RecordTupleValue, so PropDefs
+	// can't appear here.
+	SetLit(node, recur) {
+		var parts = [];
+		for (let e of node.entries) {
+			if (e.type === "PickValue") parts.push(recur(e.source));
+			else parts.push(recur(e));
+		}
+		return "new Set([" + parts.join(", ") + "])";
+	},
 };
 
 
