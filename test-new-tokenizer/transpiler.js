@@ -564,23 +564,46 @@ var handlers = {
 	// §11 BLOCK EXPRESSIONS
 	// =============================================================
 
-	// BlockExpr → JS IIFE arrow. Last stmt gets implicit `return`
-	// injection so the block evaluates to its final expression —
-	// matches Foi's last-expression-wins semantics.
+	// BlockExpr { stmts, defs? } — `{ ... }` form, optionally
+	// preceded by a defs-init `( x: 1, y, ... )` clause.
 	//
-	// DefVarStmt as last stmt (or empty block): no implicit return;
-	// trailing `return null;` is appended so the block evaluates to
-	// `null` — matches Foi's `empty` lowering for the no-value case.
+	// Lowers to an IIFE — needed for expression-position usage
+	// (GuardedExpr / IndepMatchExpr consequents, call args, etc.)
+	// where a bare JS block would be a syntax error. defs entries
+	// become `var` declarations inside the IIFE body, function-
+	// scoped to the IIFE arrow:
 	//
-	// DefFuncExpr as last stmt: `return function name(...) {...}`
-	// is a valid JS function expression and evaluates to the
-	// function value — matches Foi's "block evaluates to last
-	// expression" when that expression is a function definition.
+	//   { x; }              → (() => { return x; })()
+	//   (x: 1) { x; }       → (() => { var x = 1; return x; })()
+	//   (x, y) { x; }       → (() => { var x; var y; return x; })()
+	//   (x: 1, y) { x; }    → (() => { var x = 1; var y; return x; })()
 	//
-	// `defs` (BlockDefsInitOpt parameter set) deferred — falls
-	// back when present.
+	// `var` (not `let`) is the locked declaration form — same as
+	// stmt-level `def x: 2;` → `var x = 2;`. The IIFE arrow is
+	// the function boundary, so `var` is already correctly scoped
+	// to the block — no need to reach for `let`. `var x;` (no
+	// init) declares x as undefined — matches Foi's declared-but-
+	// uninitialized semantics.
+	//
+	// DefBlockStmt is the asymmetric case: at stmt position it
+	// lowers to a bare JS block where `let` is required for
+	// block-scoping — see DefBlockStmt handler below.
+	//
+	// Return-injection rules (unchanged):
+	//   - Last stmt is a value-bearing expression → prepend `return`
+	//   - Last stmt is DefVarStmt → trailing `return null;` appended
+	//   - Last stmt is DefFuncExpr → naturally `return function...`
+	//     via the same prepend path
+	//   - Empty body → `return null;` only
+	//
+	// DestructureTarget in a defs entry falls back via the
+	// VarDefInitOpt handler.
 	BlockExpr(node, recur) {
-		if (node.defs) return fallback(node);
+		var defs = "";
+		if (node.defs) {
+			defs = node.defs.entries.map(e => "var " + recur(e) + ";").join(" ");
+			if (defs) defs += " ";
+		}
 		var stmts = node.stmts;
 		var lastIdx = stmts.length - 1;
 		var injected = false;
@@ -593,7 +616,30 @@ var handlers = {
 			return rendered + ";";
 		}).join(" ");
 		if (!injected) body += " return null;";
-		return "(() => { " + body + " })()";
+		return "(() => { " + defs + body + " })()";
+	},
+
+	// DefBlockStmt { defs, stmts } — `def (x: 1) { ... };` form.
+	// Always at stmt position (per grammar — DefBlockStmt is a
+	// Stmt, never reachable as an Expr operand), so lowers to a
+	// bare JS block with `let` decls for the defs entries.
+	//
+	//   def (x: 1) { x; };          → { let x = 1; x; }
+	//   def (x: 1, y: 2) { x + y; };→ { let x = 1; let y = 2; x + y; }
+	//
+	// No return-injection — bare blocks don't have a value, and
+	// DefBlockStmt's "result" is discarded at the JS level
+	// regardless (consistent with how the stmt would be used in
+	// any enclosing scope today). The `def` keyword anchors the
+	// type tag and carries no JS-side meaning here.
+	//
+	// BlockDefsInit's grammar requires init on every entry, so
+	// rendered entries are always `name = init` — never bare
+	// `name`. VarDefInit handler enforces this.
+	DefBlockStmt(node, recur) {
+		var defs = node.defs.entries.map(e => "let " + recur(e) + ";").join(" ");
+		var body = node.stmts.map(s => recur(s) + ";").join(" ");
+		return "{ " + defs + (body ? " " + body : "") + " }";
 	},
 
 
@@ -650,6 +696,14 @@ var handlers = {
 		var out = recur(node.target);
 		if (node.init) out += " = " + recur(node.init);
 		return out;
+	},
+
+	// VarDefInit { target, init } — required-init shape used by
+	// DefBlockStmt's BlockDefsInit. Same render as VarDefInitOpt;
+	// init is never optional here per grammar.
+	VarDefInit(node, recur) {
+		if (node.target.type !== "Identifier") return fallback(node);
+		return recur(node.target) + " = " + recur(node.init);
 	},
 
 	// FuncBodyBlock { stmts } — `{ ... }` form. Stmts emit in
