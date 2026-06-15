@@ -124,6 +124,40 @@ var OR_OPS  = { "?or":  "||" };
 
 
 // =============================================================
+// OP_FUNC_TABLE — bare-op OpFuncExpr lowering metadata.
+//
+//   kind: "fold"  — left-fold via reduce, n-ary (≥1 for value)
+//   kind: "pairs" — all-pairs every, n-ary (vacuous true on <2)
+//
+// Primed (`node.primed`) reverses args before fold/pairs; both
+// shapes emit `.reverse()` uniformly (no-op for symmetric ops).
+//
+// Ops absent here (`?<=>`, `?in`, `?has`, `?as`, unary forms)
+// fall back — each needs its own lowering decision.
+// =============================================================
+
+var OP_FUNC_TABLE = {
+	"?":      { kind: "unary", render: x => "!!" + x },
+	"!":      { kind: "unary", render: x => "!" + x },
+	"?empty": { kind: "unary", render: x => "(" + x + " == null)" },
+	"!empty": { kind: "unary", render: x => "(" + x + " != null)" },
+	"+":   { kind: "fold",  op: "+" },
+	"-":   { kind: "fold",  op: "-" },
+	"$+":  { kind: "fold",  op: "+" },
+	"*":   { kind: "fold",  op: "*" },
+	"/":   { kind: "fold",  op: "/" },
+	"?and":{ kind: "fold",  op: "&&" },
+	"?or": { kind: "fold",  op: "||" },
+	"?=":  { kind: "pairs", op: "===" },
+	"?<>": { kind: "pairs", op: "!==" },
+	"?<":  { kind: "pairs", op: "<" },
+	"?<=": { kind: "pairs", op: "<=" },
+	"?>":  { kind: "pairs", op: ">" },
+	"?>=": { kind: "pairs", op: ">=" },
+};
+
+
+// =============================================================
 // TIER EMITTERS
 //
 // Both share the same op-table dispatch contract — unknown op
@@ -284,6 +318,48 @@ var handlers = {
 		return recur(node.callee) + "(" + argList + ")";
 	},
 
+	// PartialCallExpr { callee, args }. PartialCallSuffix is the
+	// source production; ChainExpr's fold produces this uniform
+	// shape. Lowers to an IIFE-bind closure:
+	//
+	//   foo|a, b|
+	//   → ((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(foo, a, b)
+	//
+	// Single-eval of callee + supplied args at partial-app time
+	// matches Foi's "arguments are remembered for later" semantics.
+	// Plain `(...__rest) => foo(a, b, ...__rest)` would re-eval arg
+	// exprs per call — wrong for side-effecting args.
+	//
+	// Deferred (fall back when present):
+	//   - spread arg (TriplePeriod in delims) — JS-side spread of
+	//     captured-tuple needs its own lowering
+	//   - NamedArg variants — same JS-side decision as CallExpr
+	//
+	// Skip-position form `f|1,,2|` is NOT detected at AST level —
+	// Comma count in delims doesn't disambiguate skip vs trailing
+	// without source-position comparison against arg spans. Current
+	// lowering silently packs as `f(1,2)`. Defer detection until
+	// a sample forces it.
+	PartialCallExpr(node, recur) {
+		if (node.delims) {
+			for (let d of node.delims) {
+				if (d.type === "TriplePeriod") return fallback(node);
+			}
+		}
+		for (let a of node.args) {
+			if (
+				a.type === "ConciseNamedArg" ||
+				a.type === "ExplicitNamedArg"
+			) {
+				return fallback(node);
+			}
+		}
+		var callee = recur(node.callee);
+		var argList = node.args.map(a => recur(a)).join(", ");
+		var bindArgs = argList ? callee + ", " + argList : callee;
+		return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + bindArgs + ")";
+	},
+
 	// MemberAccessExpr { object, accessor? | index? }. Mutually
 	// exclusive: accessor is a node (Identifier or BuiltIn);
 	// index is a bare integer string from the `arr.5` / `arr.-1`
@@ -294,6 +370,44 @@ var handlers = {
 			return recur(node.object) + "." + recur(node.accessor);
 		}
 		return recur(node.object) + "[" + node.index + "]";
+	},
+
+	// OpFuncExpr — operator as function reference. Bare-op arm only.
+	//
+	//   (+)(1,2,3,4)   → left-fold via reduce: 1+2+3+4
+	//   (-')(1,6,2)    → reverse args, then left-fold: 2-6-1 = -5
+	//   (?=)(x,y,z)    → all-pairs every: x===y && x===z && y===z
+	//   (?<)(a,b,c)    → all-pairs every: a<b && a<c && b<c
+	//   (?empty)(x)    → 1-arg lift: (x == null)
+	//
+	// Binary ops lift to n-ary; unary ops stay 1-ary.
+	//
+	// All-pairs (not chained) for compare ops — matters for non-
+	// transitive `?<>` where chained would miss pairs. For symmetric
+	// ops (?=, ?<>) primed is a no-op; .reverse() still emits
+	// uniformly. Primed is meaningless for unary; ignored.
+	//
+	// Non-bare arms (range `(..)`, angle-pick `(.<a,5>)`, range-
+	// access `(.[1..5])`, empty-bracket `([])`) and ops absent from
+	// OP_FUNC_TABLE (?<=>, ?in, ?has, ?as) fall back.
+	OpFuncExpr(node, recur) {
+		if (node.properties || node.range || node.op === "[]") {
+			return fallback(node);
+		}
+		var meta = OP_FUNC_TABLE[node.op];
+		if (!meta) return fallback(node);
+		if (meta.kind === "unary") {
+			return "((__x) => " + meta.render("__x") + ")";
+		}
+		var xs = node.primed ? "__xs.reverse()" : "__xs";
+		if (meta.kind === "fold") {
+			return "((...__xs) => " + xs +
+				".reduce((__l, __r) => __l " + meta.op + " __r))";
+		}
+		// pairs
+		return "((...__xs) => " + xs +
+			".every((__l, __i) => __xs.every((__r, __j) => __j <= __i || __l " +
+			meta.op + " __r)))";
 	},
 
 	// =============================================================
