@@ -83,6 +83,91 @@ var escapeTemplateChunk = s => s
 
 
 // =============================================================
+// OP TABLES
+//
+// Foi op (as concatenated by shapeUnaryTier / shapeBinTier) →
+// JS lowering. Unary entries are render functions taking the
+// already-emitted operand string (so non-prefix lowerings like
+// `?empty x` → `(x == null)` can express the wrap). Binary
+// entries are bare JS-op strings.
+//
+// Missing entries fall through `emit*Tier` to `fallback(node)`,
+// surfacing the un-lowered op verbatim in the output as a
+// commented-out Foi snippet — easier to spot than a silent
+// mistranslation.
+// =============================================================
+
+var SYM_UNARY_OPS = {
+	"?": x => "!!" + x,
+	"!": x => "!"  + x,
+};
+
+var NAMED_UNARY_OPS = {
+	"?empty": x => "(" + x + " == null)",
+	"!empty": x => "(" + x + " != null)",
+};
+
+var ADD_OPS = { "+": "+", "-": "-", "$+": "+" };
+var MUL_OPS = { "*": "*", "/": "/" };
+
+var CMP_OPS = {
+	"?<":  "<",
+	"?<=": "<=",
+	"?>":  ">",
+	"?>=": ">=",
+	"?=":  "===",
+	"?<>": "!==",
+};
+
+var AND_OPS = { "?and": "&&" };
+var OR_OPS  = { "?or":  "||" };
+
+
+// =============================================================
+// TIER EMITTERS
+//
+// Both share the same op-table dispatch contract — unknown op
+// falls back at node granularity rather than emitting a broken
+// JS shape.
+// =============================================================
+
+var emitUnaryTier = (node, recur, opMap) => {
+	var fn = opMap[node.op];
+	if (fn == null) return fallback(node);
+	return fn(recur(node.right));
+};
+
+var emitBinTier = (node, recur, opMap) => {
+	var jsOp = opMap[node.op];
+	if (jsOp == null) return fallback(node);
+	return recur(node.left) + " " + jsOp + " " + recur(node.right);
+};
+
+
+// =============================================================
+// COND-CLAUSE EMITTER
+//
+// Renders a CondClause (§14 explicit form, or §15 synthesized
+// form inside IndepPatternStmt) as a JS boolean expression
+// string. Reaches THROUGH the BracketExpr wrapper to its inner
+// expr — the brackets are pure syntactic delimiters in Foi
+// (`?[c]`), with no JS equivalent.
+//
+// Effective polarity is `polarity ?? defaultPolarity` — §14
+// always sets `polarity` (grammar requires it); §15 synthesized
+// clauses may have either. Falls back to "?" defensively for
+// any clause missing both. `!` polarity wraps the JS test in
+// `!(...)` so it composes safely as a subexpression.
+// =============================================================
+
+var emitCondClause = (clause, recur) => {
+	var effective = clause.polarity || clause.defaultPolarity || "?";
+	var inner = recur(clause.test.expr);
+	return effective === "!" ? "!(" + inner + ")" : inner;
+};
+
+
+// =============================================================
 // HANDLERS
 // =============================================================
 
@@ -163,6 +248,19 @@ var handlers = {
 	},
 
 	// =============================================================
+	// §5 EXPRESSION SCAFFOLDING
+	// =============================================================
+
+	// GroupedExpr { expr, as? } — user-written parens. Preserve
+	// in JS to keep operator-precedence and ternary composition
+	// intact. `:as` annotation lowering deferred — falls back
+	// when present.
+	GroupedExpr(node, recur) {
+		if (node.as) return fallback(node);
+		return "(" + recur(node.expr) + ")";
+	},
+
+	// =============================================================
 	// §7 CHAIN-FOLD: CALL + MEMBER ACCESS
 	// =============================================================
 
@@ -199,21 +297,46 @@ var handlers = {
 	},
 
 	// =============================================================
-	// §9 ADDITIVE BINARY
+	// §8 UNARY
 	// =============================================================
-
-	// AddBinExpr { left, op, right } — left-assoc folded chain;
-	// op ∈ {"+", "-", "$+"}. `$+` is Foi's explicit list/string
-	// concat; JS `+` covers string concat natively. Revisits if
-	// the interpreter enforces stricter typing.
 	//
-	// Nested same-tier folds (a + b + c) recurse naturally
-	// through `recur(left)`. Mixed-tier (a + b * c) hits a
-	// MulBinExpr child which falls back until that handler lands.
-	AddBinExpr(node, recur) {
-		var op = node.op === "$+" ? "+" : node.op;
-		return recur(node.left) + " " + op + " " + recur(node.right);
-	},
+	// Both unary productions share the `{ op, right }` shape via
+	// shapeUnaryTier — no `left`, no delims. Lower via op-table
+	// of render functions; unknown ops fall back.
+	//
+	// Foi unary binds tighter than binary (operand restricted to
+	// BinaryAtom), so the operand string never carries lower-
+	// precedence operators that would need parenthesization at
+	// this level. The named-unary lowerings still wrap in parens
+	// so the resulting comparison composes safely as a subexpr.
+
+	SymbolicUnaryExpr: (n, r) => emitUnaryTier(n, r, SYM_UNARY_OPS),
+	NamedUnaryExpr:    (n, r) => emitUnaryTier(n, r, NAMED_UNARY_OPS),
+
+	// =============================================================
+	// §9 BINARY TIERS
+	// =============================================================
+	//
+	// Six iter tiers all share the `{ left, op, right }` shape
+	// via shapeBinTier — left-folded, no delims. Same emitBinTier
+	// driver across all of them; only the op-table varies.
+	//
+	// Nested same-tier chains (a + b + c) recurse naturally
+	// through `recur(left)` since the fold produces
+	// AddBinExpr-of-AddBinExpr. Mixed-tier (a + b * c) lets the
+	// MulBinExpr handler take its own subtree.
+	//
+	// TypeCompareBinExpr and FlowBinExpr deliberately omitted —
+	// each needs its own lowering shape (type-of dispatch,
+	// pipeline / comprehension call lowering) rather than a flat
+	// op-table mapping, so they fall back until those handlers
+	// land.
+
+	AddBinExpr:     (n, r) => emitBinTier(n, r, ADD_OPS),
+	MulBinExpr:     (n, r) => emitBinTier(n, r, MUL_OPS),
+	CompareBinExpr: (n, r) => emitBinTier(n, r, CMP_OPS),
+	AndBinExpr:     (n, r) => emitBinTier(n, r, AND_OPS),
+	OrBinExpr:      (n, r) => emitBinTier(n, r, OR_OPS),
 
 	// =============================================================
 	// §11 BLOCK EXPRESSIONS
@@ -310,6 +433,86 @@ var handlers = {
 	// enclosing FuncBodyBlock appends the `;`.
 	ReturnExpr(node, recur) {
 		return "return " + recur(node.expr);
+	},
+
+	// =============================================================
+	// §14 CONDITIONALS / GUARDS
+	// =============================================================
+
+	// GuardedExpr { clause, consequent } — `?[c]: x` / `![c]: x`.
+	// Lowers to a JS ternary with `null` else, matching Foi's
+	// "evaluates to empty when the guard fails" semantics:
+	//
+	//   ?[c]: x   →   c ? x : null
+	//   ![c]: x   →   !(c) ? x : null
+	//
+	// The clause is consumed via emitCondClause (reaches through
+	// CondClause's BracketExpr wrapper to the inner test expr,
+	// applies `!(...)` when polarity is "!"). Consequent is an
+	// Expr — recur produces a JS expression that composes inside
+	// the ternary.
+	//
+	// Consequent BlockExpr currently emits an IIFE with no
+	// implicit return (block return-injection is deferred), so
+	// `?[c]: { x; y }` evaluates to undefined when c is truthy.
+	// Pure-side-effect consequents work; value-returning ones
+	// don't until injection lands.
+	GuardedExpr(node, recur) {
+		var cond = emitCondClause(node.clause, recur);
+		return cond + " ? " + recur(node.consequent) + " : null";
+	},
+
+	// =============================================================
+	// §15 MATCH EXPRESSIONS
+	// =============================================================
+
+	// IndepMatchExpr { stmts } — `?{ ... }`. Lowers to a right-
+	// folded chain of JS ternaries. Trailing ElseStmt (if any)
+	// provides the chain's final else-value; without it, the
+	// fall-through value is `null` (Foi's "no match" maps to
+	// `empty`, which maps to `null` in this transpiler).
+	//
+	// Each IndepPatternStmt carries a synthesized CondClause —
+	// same shape as §14's GuardedExpr.clause, so emitCondClause
+	// handles both uniformly (including the implicit-? form
+	// `[c]:` which sets defaultPolarity instead of polarity).
+	//
+	// IndepPatternStmt and IndepPatternStmtNoSemi both collapse
+	// to type tag "IndepPatternStmt" at the shaper layer — only
+	// one branch needed here.
+	//
+	// Right-fold (right-to-left iteration) so the first matching
+	// clause's consequent appears outermost — the resulting JS
+	// `c1 ? e1 : c2 ? e2 : default` short-circuits on the first
+	// truthy condition, matching Foi's first-match-wins
+	// semantics. Each ternary is paren-wrapped for safety
+	// regardless of right-assoc context.
+	//
+	// DepMatchExpr (`?(topic){...}`) deliberately omitted —
+	// needs IIFE topic-binding plus operator-led test atoms
+	// (DepCondBoolExpr). Falls back until that handler lands.
+	IndepMatchExpr(node, recur) {
+		var stmts = node.stmts;
+		if (stmts.length === 0) return "null";
+
+		var last = stmts[stmts.length - 1];
+		var hasElse = last.type === "ElseStmt";
+		var result;
+		var topIdx;
+		if (hasElse) {
+			result = recur(last.consequent);
+			topIdx = stmts.length - 2;
+		}
+		else {
+			result = "null";
+			topIdx = stmts.length - 1;
+		}
+		for (let i = topIdx; i >= 0; i--) {
+			let s = stmts[i];
+			let cond = emitCondClause(s.clause, recur);
+			result = "(" + cond + " ? " + recur(s.consequent) + " : " + result + ")";
+		}
+		return result;
 	},
 
 };
