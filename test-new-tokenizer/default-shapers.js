@@ -1011,12 +1011,15 @@ export const defaultShapers = {
 	// §6 IDENTIFIER EXPRESSIONS / ACCESS / RANGE
 	// =============================================================
 
-	// DotIdentifier := Period _ (Identifier | BuiltIn | IntegerLit);
+// DotIdentifier := Period _ (Identifier | BuiltIn | IntegerLit);
 	//
-	// Period drops (anchored in type tag). Integer text is
-	// preserved raw — no delims needed.
+	// Period → delims (structural punctuation; position needed to
+	// round-trip WS straddling the dot, e.g. `foo. bar` vs `foo .bar`).
+	// Integer text preserved raw on `.index`; renderer recovers its
+	// position via single-anchor gap-walk over pieces.
 	DotIdentifier(frame,parts) {
 		var node = { type: "DotIdentifier" };
+		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) {
 				node.accessor = p;
@@ -1027,9 +1030,11 @@ export const defaultShapers = {
 			) {
 				node.index = p.value;
 			}
-			// else: Period — anchored in type tag, drop
+			else {
+				delims.push(p); // Period, plus any soft trivia
+			}
 		}
-		return node;
+		return withDelims(node, delims);
 	},
 
 	// BracketExpr := OpenBracket _ ExprNoBlock _ CloseBracket;
@@ -1047,34 +1052,49 @@ export const defaultShapers = {
 
 	// DotBracketExpr := Period OpenBracket _ <RangeExpr> _ CloseBracket;
 	//
-	// Period drops (anchored in type tag). Brackets → delims.
+	// Period → delims (same rationale as DotIdentifier). Brackets
+	// → delims.
 	DotBracketExpr(frame,parts) {
 		var range;
 		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) range = p;
-			else if (p.type === "Period") continue;
-			else delims.push(p); // OpenBracket, CloseBracket
+			else delims.push(p); // Period, OpenBracket, CloseBracket
 		}
 		return withDelims({ type: "DotBracketExpr", range }, delims);
 	},
 
 	// DotAngleExpr := Period OpenAngle _ <PropertyExpr> (_ Comma _ <PropertyExpr>)* _ CloseAngle;
 	//
-	// Period drops (anchored in type tag). Angles, commas, and
-	// EscapePlain (when prefixing integer accessors) → delims.
+	// Period → delims. Angles, commas, and EscapePlain (when
+	// prefixing integer accessors) → delims. Property entries are
+	// synthesized as PickAccessor / PickIndex nodes so they carry
+	// source positions — required for the renderer's gap-walk to
+	// place them correctly relative to surrounding delims when WS
+	// straddles commas or angle brackets.
 	DotAngleExpr(frame,parts) {
 		var properties = [];
 		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) {
-				properties.push({ accessor: p });
+				properties.push({
+					type: "PickAccessor",
+					accessor: p,
+					start: p.start,
+					end: p.end,
+				});
 			}
 			else if (p.type === "PositiveIntegerLit") {
-				properties.push({ index: p.value });
+				properties.push({
+					type: "PickIndex",
+					index: p.value,
+					start: p.start,
+					end: p.end,
+				});
 			}
-			else if (p.type === "Period") continue;
-			else delims.push(p); // OpenAngle, CloseAngle, Comma, Escape
+			else {
+				delims.push(p); // Period, OpenAngle, CloseAngle, Comma, Escape
+			}
 		}
 		return withDelims({ type: "DotAngleExpr", properties }, delims);
 	},
@@ -2258,17 +2278,21 @@ export const defaultShapers = {
 
 	// FuncTypeArg := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
 	//
-	// Qmark (when present) captured into `optional:true` — drops
-	// as field. No structural delims.
+	// Qmark (when present) is dual-purpose: captured into
+	// `optional:true` flag AND pushed to delims (position needed
+	// to round-trip WS between `?` and the type, e.g. `? int` vs
+	// `?int`). Same dual-purpose pattern as Star in
+	// FuncTypeFinalArg, and Caret in FuncTypeExpr.
 	FuncTypeArg(frame,parts) {
 		var node = { type: "FuncTypeArg", of: parts.find(isNode) };
+		var delims = [];
 		for (let p of parts) {
 			if (!isNode(p) && p.type === "Qmark") {
 				node.optional = true;
-				break;
+				delims.push(p);
 			}
 		}
-		return node;
+		return withDelims(node, delims);
 	},
 
 	// FuncTypeFinalArg := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
@@ -2294,12 +2318,13 @@ export const defaultShapers = {
 		return nodes[0];
 	},
 
-	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 	//
 	// Parens, commas → delims. Caret is dual-purpose: drives
-	// the args/return state machine AND pushes to delims (per
-	// the explicit dual-purpose rule). Qmark after Caret is
-	// captured into `optionalReturn:true` (drops as field).
+	// the args/return state machine AND pushes to delims. Qmark
+	// after Caret is dual-purpose: captures `optionalReturn:true`
+	// flag AND pushes to delims (position needed to round-trip
+	// WS straddling the `?`, e.g. `^ ?int` vs `^? int`).
 	FuncTypeExpr(frame,parts) {
 		var argTypes = [];
 		var returnType;
@@ -2317,6 +2342,7 @@ export const defaultShapers = {
 			}
 			else if (p.type === "Qmark" && seenCaret) {
 				optionalReturn = true;
+				delims.push(p); // dual-purpose: flag AND delim
 			}
 			else delims.push(p); // OpenParen, CloseParen, Comma
 		}
@@ -2324,5 +2350,4 @@ export const defaultShapers = {
 		if (optionalReturn) node.optionalReturn = true;
 		return withDelims(node, delims);
 	},
-
 };

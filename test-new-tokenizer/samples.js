@@ -717,4 +717,47 @@ export const samples = [
 	{ label: "α-nested-as: outer only", src: "(x) :as bool;", opts: { preserveSoftDelims: true } },
 	{ label: "α-nested-as: both",       src: "(x :as int) :as bool;" },
 	{ label: "α-nested-as: both",       src: "(x :as int) :as bool;", opts: { preserveSoftDelims: true } },
+
+	// =============================================================
+	// WS-permutation grid — chain-fold dot positions
+	// =============================================================
+	// Verifies internal WS straddling the dot is round-tripped in
+	// every position. Each pattern is grammatically valid per the
+	// `Period _ ...` rules in §6. preserveSoftDelims required —
+	// without it WS is discarded and the variants collapse to
+	// identical ASTs.
+
+	{ label: "Member WS-before-dot: foo .bar",       src: "foo .bar;",       opts: { preserveSoftDelims: true } },
+	{ label: "Member WS-after-dot: foo. bar",        src: "foo. bar;",       opts: { preserveSoftDelims: true } },
+	{ label: "Member WS-both: foo . bar",            src: "foo . bar;",      opts: { preserveSoftDelims: true } },
+
+	{ label: "Member-int WS-before: arr .5",         src: "arr .5;",         opts: { preserveSoftDelims: true } },
+	{ label: "Member-int WS-after: arr. 5",          src: "arr. 5;",         opts: { preserveSoftDelims: true } },
+	{ label: "Member-int WS-both: arr . 5",          src: "arr . 5;",        opts: { preserveSoftDelims: true } },
+	{ label: "Member-int neg WS-after: arr. -1",     src: "arr. -1;",        opts: { preserveSoftDelims: true } },
+	{ label: "Member-int neg WS-both: arr . -1",     src: "arr . -1;",       opts: { preserveSoftDelims: true } },
+
+	{ label: "Range WS-before-dot: arr .[1..5]",     src: "arr .[1..5];",    opts: { preserveSoftDelims: true } },
+	{ label: "Range WS-inside-open: arr.[ 1..5]",    src: "arr.[ 1..5];",    opts: { preserveSoftDelims: true } },
+	{ label: "Range WS-inside-close: arr.[1..5 ]",   src: "arr.[1..5 ];",    opts: { preserveSoftDelims: true } },
+	{ label: "Range WS-inside-both: arr.[ 1..5 ]",   src: "arr.[ 1..5 ];",   opts: { preserveSoftDelims: true } },
+
+	{ label: "Pick WS-before-dot: rec .<a,b>",       src: "rec .<a,b>;",     opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-inside-open: rec.< a,b>",      src: "rec.< a,b>;",     opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-before-comma: rec.<a ,b>",     src: "rec.<a ,b>;",     opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-after-comma: rec.<a, b>",      src: "rec.<a, b>;",     opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-around-comma: rec.<a , b>",    src: "rec.<a , b>;",    opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-inside-close: rec.<a,b >",     src: "rec.<a,b >;",     opts: { preserveSoftDelims: true } },
+	{ label: "Pick WS-everywhere: rec.< a , b >",    src: "rec.< a , b >;",  opts: { preserveSoftDelims: true } },
+	{ label: "Pick int WS-around-comma: rec.<a , 5>", src: "rec.<a , 5>;",   opts: { preserveSoftDelims: true } },
+
+	// =============================================================
+	// WS-permutation grid — FuncTypeExpr optional-return `?`
+	// =============================================================
+
+	{ label: "FuncTypeArg optional: deft F (?int) ^ int", src: "deft F (?int) ^ int;", opts: { preserveSoftDelims: true } },
+	{ label: "FuncType opt-return adjacent: (int) ^?int", src: "deft F (int) ^?int;", opts: { preserveSoftDelims: true } },
+	{ label: "FuncType opt-return WS-after-caret: (int) ^ ?int", src: "deft F (int) ^ ?int;", opts: { preserveSoftDelims: true } },
+	{ label: "FuncType opt-return WS-after-qmark: (int) ^? int", src: "deft F (int) ^? int;", opts: { preserveSoftDelims: true } },
+	{ label: "FuncType opt-return WS-both: (int) ^ ? int", src: "deft F (int) ^ ? int;", opts: { preserveSoftDelims: true } },
 ];

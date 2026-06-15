@@ -211,14 +211,6 @@ var emitProperties = (properties, recur) => {
 	return parts.join(",");
 };
 
-// Render a flat args list (CallExpr / PartialCallExpr) — comma-
-// separated, no recoverable inner spacing.
-var emitArgs = (args, recur) => {
-	var parts = [];
-	for (let a of args) parts.push(recur(a));
-	return parts.join(",");
-};
-
 
 // =============================================================
 // HANDLER MAP
@@ -305,91 +297,35 @@ var handlers = {
 	// with the existing MemberAccessExpr behavior). No current
 	// samples force the WS-after-dot reading.
 
+// MemberAccessExpr — Period is now in delims (with its source
+	// position), so the accessor variant routes through emitGeneric
+	// uniformly. The integer variant keeps `.index` as a bare
+	// string with no position; gapFill places it at the first
+	// source-position gap in the piece walk (where the integer
+	// token's position naturally falls relative to surrounding
+	// pieces). For `arr.5` with nothing after, no gap is detected
+	// mid-walk and the anchor appends at the end — also correct,
+	// since node.end is the integer's end.
 	MemberAccessExpr(node, recur) {
-		// object + "." + (accessor | index)
-		// accessor variant: walk pieces; inject "." right before
-		// the accessor node so source-position ordering carries
-		// through (handles WS-delim between object and accessor
-		// correctly). Index variant: ".<index>" is a unit — use
-		// gapFill so it lands in the gap between object and
-		// whatever follows (Semi, .as, etc.) rather than tacked
-		// on after the entire walk.
-		if (node.accessor) {
-			let pieces = collectPieces(node);
-			let out = "";
-			let dotEmitted = false;
-			for (let p of pieces) {
-				if (!dotEmitted && p === node.accessor) {
-					out += ".";
-					dotEmitted = true;
-				}
-				out += isNode(p) ? recur(p) : p.value;
-			}
-			return out;
-		}
-		return gapFill("." + node.index, node, recur);
+		if (node.accessor) return emitGeneric(node, recur);
+		return gapFill(node.index, node, recur);
 	},
 
-	// IndexAccessExpr, CallExpr, PartialCallExpr — no custom
-	// handler. emitGeneric walks (object|callee) + (expr|args) +
-	// delims in source-position order. With seg.delims propagated,
-	// brackets / parens / pipes / commas / internal WS are all
-	// present and emit naturally.
+	// IndexAccessExpr, CallExpr, PartialCallExpr, RangeAccessExpr,
+	// PropertyPickExpr — no custom handlers. emitGeneric walks
+	// (object|callee) + (expr|args|range|properties) + delims in
+	// source-position order. With Period now propagated in delims
+	// (DotIdentifier / DotBracketExpr / DotAngleExpr shapers) and
+	// PropertyPickExpr's properties carrying PickAccessor /
+	// PickIndex source positions, all structural punctuation and
+	// internal WS are recoverable via the standard piece walk.
 
-	RangeAccessExpr(node, recur) {
-		// object + "." + delims-with-range-interleaved. The leading
-		// "." is dropped by DotBracketExpr's shaper (anchored in
-		// type tag) — inject just before the OpenBracket delim so
-		// any WS BEFORE OpenBracket (chain-level brand-stamped WS
-		// between object and dot) emits between object and "."
-		// rather than between "." and "[".
-		var out = "";
-		var dotEmitted = false;
-		for (let p of collectPieces(node)) {
-			if (!dotEmitted && !isNode(p) && p.type === "OpenBracket") {
-				out += ".";
-				dotEmitted = true;
-			}
-			out += isNode(p) ? recur(p) : p.value;
-		}
-		return out;
-	},
-
-	PropertyPickExpr(node, recur) {
-		// object + "." + delims-with-properties-interleaved.
-		// Property wrappers ({accessor}/{index}) lack positions, so
-		// this can't route through emitGeneric — drive off the
-		// delim sequence instead. After each OpenAngle / Comma, the
-		// next property is "pending"; flush it just before the next
-		// Comma or CloseAngle (so any soft WS between the comma
-		// and the next property emits in the right place). Inject
-		// "." just before OpenAngle (same WS-before-dot favoring as
-		// RangeAccessExpr / MemberAccessExpr).
-		var out = recur(node.object);
-		var props = node.properties || [];
-		var delims = node.delims || [];
-		var propIdx = 0;
-		var pending = false;
-		var dotEmitted = false;
-		var flushProp = () => {
-			if (pending && propIdx < props.length) {
-				let p = props[propIdx++];
-				out += p.accessor ? recur(p.accessor) : p.index;
-				pending = false;
-			}
-		};
-		for (let d of delims) {
-			if (!dotEmitted && d.type === "OpenAngle") {
-				out += ".";
-				dotEmitted = true;
-			}
-			if (d.type === "Comma" || d.type === "CloseAngle") flushProp();
-			out += d.value;
-			if (d.type === "OpenAngle" || d.type === "Comma") pending = true;
-		}
-		flushProp();   // trailing-comma / safety
-		return out;
-	},
+	// PickAccessor / PickIndex — synth nodes carrying source span
+	// for DotAngleExpr property entries. PickAccessor wraps an
+	// Identifier node; PickIndex carries a bare integer string with
+	// the source position pinned on the wrapper's start/end.
+	PickAccessor: (n, r) => r(n.accessor),
+	PickIndex:    (n, r) => n.index,
 
 	PrimedExpr(node, recur) {
 		// inner + "'" + any post-pieces (.as from AsExpr unwrap,
@@ -603,46 +539,12 @@ var handlers = {
 		return out;
 	},
 
-	// FuncTypeArg — Qmark? captures into `optional` flag (drops
-	// at parse). Star captures into `rest` flag (the Star token
-	// itself stays in delims via FuncTypeFinalArg's shaper).
-	//
-	// When `optional`, re-synthesize `?` via gapFill — the anchor
-	// lands in the gap between node.start (the Qmark's position)
-	// and of.start. When `rest` or bare, emitGeneric handles it:
-	// Star sits in delims at its source position; bare just emits
-	// the inner `of` node.
-	FuncTypeArg(node, recur) {
-		if (node.optional) return gapFill("?", node, recur);
-		return emitGeneric(node, recur);
-	},
-
-	// FuncTypeExpr — `optionalReturn` flag captures the Qmark
-	// between Caret and returnType (the Qmark drops; Caret is
-	// dual-purpose per the shaper, staying in delims). Walk
-	// pieces; inject "?" just before returnType when the flag
-	// is set.
-	//
-	// Internal WS between Caret and the Qmark vs. between the
-	// Qmark and returnType is indistinguishable in the AST
-	// (Qmark itself is gone, only the flag survives). The handler
-	// favors WS-before-? — same punt as MemberAccessExpr / the
-	// chain-fold dot-position cases. No current samples exercise
-	// the WS-after-? reading.
-	FuncTypeExpr(node, recur) {
-		var pieces = collectPieces(node);
-		var qmarkEmitted = !node.optionalReturn;
-		var out = "";
-		for (let p of pieces) {
-			if (!qmarkEmitted && isNode(p) && p === node.returnType) {
-				out += "?";
-				qmarkEmitted = true;
-			}
-			out += isNode(p) ? recur(p) : p.value;
-		}
-		if (!qmarkEmitted) out += "?";
-		return out;
-	},
+	// FuncTypeArg, FuncTypeExpr — no custom handlers. The shapers
+	// now keep Qmark dual-purpose (flag AND delim), so the `?`
+	// token's position is preserved in node.delims. emitGeneric
+	// walks pieces in source order and the `?` emits naturally at
+	// its source position, just like Star (rest sigil) and Caret
+	// (return-type marker) already do.
 };
 
 
