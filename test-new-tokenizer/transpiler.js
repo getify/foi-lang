@@ -6,8 +6,10 @@
 // walk, stdout output.
 //
 // Dispatch contract: handlers[node.type] : (node, recur) => string.
-// Same shape as default-shapers and test-roundtrip — fourth
-// rehearsal of the (node, recur) skeleton.
+// Same shape as test-roundtrip's emitter; the eventual interpreter
+// will reuse the (node, recur) skeleton with a different return
+// type. (default-shapers runs at parse time and uses a different
+// shape — (frame, parts) => node.)
 //
 // Missing handler → `null /* <orig Foi source> */` at node
 // granularity. Partial transpilation is genuinely partial: gaps
@@ -525,8 +527,7 @@ var renderDestructureFunc = (node, paramSet, recur) => {
 
 
 // =============================================================
-// PIPELINE-BLOCK BODY EMITTER (shared by FuncBodyPipeline +
-// FlowBinExpr `#>`)
+// PIPELINE-BLOCK BODY EMITTER (FlowBinExpr `#>` BlockExpr arm)
 //
 // Given a BlockExpr RHS, a JS expression string evaluating to
 // the pipeline topic, and a `topicRefBox` { ref } the caller
@@ -552,11 +553,11 @@ var renderDestructureFunc = (node, paramSet, recur) => {
 //                               var <destructured>;`
 //
 // Returns the inner stmt sequence (no braces, no IIFE), or null
-// if any destructure entry can't be lowered. Caller wraps:
-//   - FuncBodyPipeline → `{ <stmts> }` (already inside function
-//     braces; no IIFE)
-//   - FlowBinExpr      → `(() => { <stmts> })()` (expression
-//     position; IIFE needed for value)
+// if any destructure entry can't be lowered. Sole caller is
+// the FlowBinExpr `#>` handler, which IIFE-wraps for expression
+// position: `(() => { <stmts> })()`. FuncBodyPipeline reaches
+// this same path via renderPipelineBody → synthesized FlowBinExpr
+// → recur → FlowBinExpr handler, so it picks up the IIFE wrap too.
 // =============================================================
 
 var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
@@ -707,8 +708,8 @@ var handlers = {
 	// =============================================================
 
 	// Pure list-of-statements. Each handler emits its content
-	// without a trailing `;`; Program injects `;\n` between
-	// stmts to produce JS-conformant output.
+	// without a trailing `;`; Program appends `;\n` after every
+	// stmt to produce JS-conformant output.
 	Program(node, recur) {
 		return node.stmts.map(s => recur(s) + ";\n").join("");
 	},
@@ -984,8 +985,9 @@ var handlers = {
 	// TypeCompareBinExpr and FlowBinExpr deliberately omitted —
 	// each needs its own lowering shape (type-of dispatch,
 	// pipeline / comprehension call lowering) rather than a flat
-	// op-table mapping, so they fall back until those handlers
-	// land.
+	// op-table mapping. TypeCompareBinExpr falls back at node
+	// granularity; FlowBinExpr has a dedicated handler below
+	// (currently `#>` only).
 
 	AddBinExpr:     (n, r) => emitBinTier(n, r, ADD_OPS),
 	MulBinExpr:     (n, r) => emitBinTier(n, r, MUL_OPS),
@@ -994,7 +996,7 @@ var handlers = {
 	OrBinExpr:      (n, r) => emitBinTier(n, r, OR_OPS),
 
 	// =============================================================
-	// §10 FLOW (continued)
+	// §9 FLOW (continued)
 	// =============================================================
 
 	// FlowBinExpr { left, op, right } — `<expr> <op> <rhs>`.
@@ -1115,13 +1117,14 @@ var handlers = {
 	// scoping — see DefBlockStmt handler below.
 	//
 	// DestructureTarget in a defs entry → fall back the whole
-	// BlockExpr. A defs-init position has no implicit source
-	// surfacing into this handler directly; when BlockExpr lands
-	// at FlowRHSImplIn / FuncBodyPipeline body, the FlowBinExpr /
-	// DefFuncExpr handler (when implemented) will own the
-	// implicit-source binding before recurring here. A direct
-	// recur with destructure entries means no enclosing source
-	// was bound, so bailing is correct.
+	// BlockExpr. The pipeline paths that handle destructure
+	// binding (FlowBinExpr's `#>` BlockExpr RHS arm, and
+	// FuncBodyPipeline via renderPipelineBody → synthesized
+	// FlowBinExpr) don't recur into this handler — they pass
+	// the BlockExpr node directly to emitPipelineBlockBody,
+	// which owns the implicit-source binding. Reaching this
+	// handler with destructure entries means no enclosing
+	// source was wired in, so bailing is correct.
 	BlockExpr(node, recur) {
 		for (let entry of node.defs.entries) {
 			if (entry.target.type !== "Identifier") return fallback(node);
@@ -1210,11 +1213,14 @@ var handlers = {
 	// Body forms:
 	//   - FuncBodyExpr / FuncBodyBlock route through their own
 	//     handlers (each returns a `{ ... }` brace-wrapped block).
-	//   - FuncBodyPipeline routes to renderPipelineBody — pipeline
-	//     RHS gets inlined into the function's brace body. First-
-	//     slice covers BareBlockExpr RHS only (topic discarded,
-	//     stmts emit with return-injection). BlockExpr RHS (Form 3)
-	//     and ExprNoBlock / GroupedExpr RHS fall back.
+	//   - FuncBodyPipeline routes to renderPipelineBody, which
+	//     synthesizes a FlowBinExpr chain (param as deepest-left
+	//     leaf) and dispatches through recur. The FlowBinExpr
+	//     handler owns all `#>` lowering rules — covers both
+	//     BareBlockExpr and BlockExpr RHS, with an IIFE per stage.
+	//     Output shape: `{ return <chain>; }`. Non-`#>` stages
+	//     (e.g. `~map`) and ExprNoBlock / GroupedExpr RHS still
+	//     fall back at FlowBinExpr (deferred).
 	//
 	// DestructureTarget params → routed to renderDestructureFunc,
 	// which synthesizes `__p<N>` for each destructure position,
@@ -1289,8 +1295,11 @@ var handlers = {
 	// FuncBodyBlock { stmts } — `{ ... }` form. Stmts emit in
 	// order, each followed by `;`. ReturnExpr stmts (from `^expr`
 	// inside the block) render as `return expr` and pick up the
-	// `;` naturally. Foi blocks with no ReturnExpr return
-	// undefined, matching JS function-body semantics.
+	// `;` naturally. Bootstrap commitment: a block with no
+	// ReturnExpr falls through with no JS-side `return`, leaving
+	// the function value as JS undefined. Whether Foi's settled
+	// semantic for the no-^ case is undefined / empty / something
+	// else is a downstream interpreter question.
 	FuncBodyBlock(node, recur) {
 		var body = node.stmts.map(s => recur(s) + ";").join(" ");
 		return "{ " + body + " }";

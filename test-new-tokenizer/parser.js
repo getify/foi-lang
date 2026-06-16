@@ -1070,8 +1070,7 @@ var FlowRHSStrict = OrDispatch;
 // is mechanical.
 //
 // ComprOp / PipelineOp / ComposeOp live in §10, defined AFTER
-// this point in the file. Forward-ref each via lazy() — same
-// pattern as the old single FlowOp reference.
+// this point in the file. Forward-ref each via lazy().
 var FlowOpAndRHS = or(
 	and(lazy(() => ComprOp),    delim(), FlowRHSImplIn),
 	and(lazy(() => PipelineOp), delim(), FlowRHSImplIn),
@@ -1178,7 +1177,7 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 // Three productions form the block family:
 //
 //   BareBlockExpr := OpenBrace _ BlockStmts _ CloseBrace;
-//                    (visible — no defs-init at all)
+//                    (no defs-init at all)
 //   BlockExpr     := BlockDefsInitOptImplIn _ BareBlockExpr;
 //                    (defs-init REQUIRED; lenient inner; implicit-input
 //                     positions only)
@@ -1188,7 +1187,7 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 //
 // Where each is reachable:
 //
-// - BareBlockExpr — visible at <Expr>, <AsableExpr>, <FlowRHSImplIn>,
+// - BareBlockExpr — reachable from <Expr>, <AsableExpr>, <FlowRHSImplIn>,
 //   FuncBodyPipeline body, and <MatchConsequent>/<MatchConsequentNoSemi>.
 //   Carries the bare-body case at every block-accepting slot.
 //

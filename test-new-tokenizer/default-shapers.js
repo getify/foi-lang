@@ -453,7 +453,7 @@ function shapePolarity(polarityTok) {
 // <IndepCondClause> stays hidden — its content splices in.
 // Parts contain: optional Qmark/Exmark, BracketExpr (the test),
 // then spliced <MatchConsequent>/<MatchConsequentNoSemi> content
-// (either [Colon, Expr-node, Semi] or [BlockExpr-node]).
+// (either [Colon, Expr-node, Semi] or [BareBlockExpr-node]).
 //
 // Synthesizes a CondClause node uniform with §14's
 // GuardedExpr.clause — same {polarity|defaultPolarity, test}
@@ -945,9 +945,9 @@ export const defaultShapers = {
 	// =============================================================
 
 	// BareIdentifier — thin-wrapper sub-archetype. Subsumes into
-	// its inner IdentBase node. Step 3: structural tokens (none
-	// here — BareIdentifier wraps a single IdentBase node) simply
-	// vanish; Step 5 will add proper wrapper-unwrap lift.
+	// its inner IdentBase node. No structural tokens at this
+	// level (BareIdentifier wraps a single IdentBase node), so
+	// the passthrough needs no wrapper-unwrap lift.
 	BareIdentifier(frame,parts) {
 		return parts.find(isNode);
 	},
@@ -1440,7 +1440,7 @@ export const defaultShapers = {
 	MulBinExpr(frame,parts)     { return shapeBinTier("MulBinExpr",parts); },
 
 
-// =============================================================
+	// =============================================================
 	// §11 BLOCK EXPRESSIONS
 	// =============================================================
 	//
@@ -1501,11 +1501,14 @@ export const defaultShapers = {
 	//     and BlockDefsInitOptImplIn (here, via FlowRHSImplIn /
 	//     FuncBodyPipeline body).
 	//
-	// Both have the same node shape (target + optional init);
-	// the type tag is the only structural difference. Downstream
-	// consumers (transpiler / interpreter / FlowBinExpr handler)
-	// branch on the tag to know whether DestructureTarget-no-init
-	// entries should bind from an enclosing implicit source.
+	// Both produce structurally identical AST nodes — the lenient
+	// productions alias to the strict shapers at the bottom of
+	// this file, so the type tag is uniform across both arms.
+	// The strict-vs-lenient distinction lives entirely at the
+	// parser layer: the strict form rejects DestructureTarget-no-
+	// init, the lenient form accepts it. Downstream consumers
+	// bind no-init entries from the enclosing implicit source
+	// based on parent context, not on a per-entry tag check.
 
 	// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
 	//                | (DestructureTarget  _ Colon _ ExprNoBlock);
@@ -1558,7 +1561,7 @@ export const defaultShapers = {
 		return withDelims({ type: "BareBlockExpr", stmts }, delims);
 	},
 
-	// BlockExpr := BlockDefsInitOptImplIn _ <BareBlockExpr>.
+	// BlockExpr := BlockDefsInitOptImplIn _ BareBlockExpr.
 	//
 	// Defs-init is REQUIRED (not optional) — BlockExpr now
 	// exclusively names the defs-init form. The bare-body case at
@@ -1595,7 +1598,7 @@ export const defaultShapers = {
 		return withDelims({ type: "BlockExpr", defs, body }, delims);
 	},
 
-// DefBlockStmt := "def" _ BlockDefsInitOpt _ <BareBlockExpr>.
+	// DefBlockStmt := "def" _ BlockDefsInitOpt _ BareBlockExpr.
 	//
 	// "def" keyword drops (anchored in type tag — the leading
 	// keyword distinguishes this from BlockExpr at the syntax
@@ -1770,9 +1773,9 @@ export const defaultShapers = {
 	// Parts walk under preserveInnerDelim:true — interleaved op tokens,
 	// soft delims, and nodes. Routing:
 	//
-	//   - Op tokens (Hash/CloseAngle for `#>`, Tilde/OpenAngle/Plus or
-	//     a single Comprehension token for FlowOps) before stage-1 body
-	//     → concat into `op` (the leading PipelineOp).
+	//   - Op tokens (Hash/CloseAngle for `#>`; Tilde/OpenAngle/CloseAngle/
+	//     Plus or a single Comprehension token for other FlowOps) before
+	//     stage-1 body
 	//   - Op tokens after stage-1 body → accumulate into `pendingOp`;
 	//     consumed when the next node arrives (folds into a new outer
 	//     FlowBinExpr).
@@ -2506,7 +2509,7 @@ export const defaultShapers = {
 		return nodes[0];
 	},
 
-// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 	//
 	// Parens, commas → delims. Caret is dual-purpose: drives
 	// the args/return state machine AND pushes to delims. Qmark
