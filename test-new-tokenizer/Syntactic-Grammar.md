@@ -810,7 +810,14 @@ FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
 FuncBodyExpr          := Caret _ (ExprNoBlock | GroupedExpr);
-FuncBodyPipeline      := PipelineOp _ (BlockExpr | BareBlockExpr | ExprNoBlock | GroupedExpr);
+
+(* The leading `#>` is sugar: `defn foo(x) #> ...` is conceptually
+   `defn foo(x) ^ x #> ...`. The function's first positional argument
+   seeds the pipeline as the initial topic; the tail is the full
+   FlowBinExpr chain — any mix of pipeline / comprehension / compose
+   stages, no parenthesization required to switch ops mid-chain. *)
+FuncBodyPipeline      := PipelineOp _ <FlowRHSImplIn> (_ <FlowOpAndRHS>)*;
+
 FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 
 <FuncBodyStmts>       := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;

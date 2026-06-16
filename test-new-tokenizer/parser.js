@@ -1465,27 +1465,39 @@ export const FuncBodyExpr = production("FuncBodyExpr",
 	and(Caret, delim(), or(ExprNoBlock, GroupedExpr))
 );
 
-// FuncBodyPipeline := PipelineOp _ (BlockExpr | BareBlockExpr | ExprNoBlock | GroupedExpr);
+// FuncBodyPipeline := PipelineOp _ FlowRHSImplIn (_ FlowOpAndRHS)*;
 //
-// PEG order:
-// - BlockExpr first so `#> (x){y;}` parses as a BlockExpr (def `x`,
-//   body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock `(x)`
-//   with dangling `{y;}`. BlockExpr at this position uses the lenient
-//   BlockDefsInitOptImplIn — the function's positional argument is
-//   the implicit input that destructure-no-init binds from, so
-//   `defn f(x) #> (<:a, :b>) { ... };` parses with `<:a, :b>`
-//   destructuring from `x`.
-// - BareBlockExpr next handles the no-defs case `#> { y; }`. Disjoint
-//   from BlockExpr (which requires a `(...)` prefix) and from
-//   ExprNoBlock / GroupedExpr (neither opens with `{`).
-// - ExprNoBlock / GroupedExpr handle non-block pipeline bodies.
+// Conceptually sugar for `^ <first-positional-param> #> ...` — the
+// function's first positional arg seeds the pipeline as the initial
+// topic; the tail is the full FlowBinExpr chain.
 //
-// Same two-block-arm shape as <FlowRHSImplIn> in §9.
+// Stage 1 RHS is FlowRHSImplIn (identical to FlowBinExpr's PipelineOp
+// RHS narrowing): BlockExpr | BareBlockExpr | OrDispatch. Stages 2+
+// are the same FlowOpAndRHS iter FlowBinExpr uses — any mix of
+// pipeline / comprehension / compose stages, no parens required to
+// switch ops mid-chain.
+//
+// PEG: BlockExpr first so `#> (x){y;}` parses as BlockExpr (def `x`,
+// body `{y;}`). BlockExpr at this position uses BlockDefsInitOptImplIn
+// — the function's positional arg is the implicit input that
+// destructure-no-init binds from. BareBlockExpr next handles the
+// no-defs case `#> { y; }`. OrDispatch last carries every non-block
+// form. Stage-1 ExprNoBlock / GroupedExpr arms from the prior single-
+// RHS form are unified into OrDispatch — every reachable body form
+// remains expressible via BinaryAtom's grouped variants.
+//
+// preserveInnerDelim:true so the shaper sees inter-stage soft delims
+// directly and can route them: pre-stage-1 trivia onto FuncBodyPipeline.
+// delims, inter-stage trivia onto the outermost synthesized FlowBinExpr
+// (matching the delim placement a real FlowBinExpr at standalone
+// position would carry). See the FuncBodyPipeline shaper in
+// default-shapers.js for the routing logic.
 export const FuncBodyPipeline = production("FuncBodyPipeline",
 	and(
-		PipelineOp, delim(),
-		or(BlockExpr, BareBlockExpr, ExprNoBlock, GroupedExpr)
-	)
+		PipelineOp, delim(), FlowRHSImplIn,
+		any(and(delim(), FlowOpAndRHS))
+	),
+	{ preserveInnerDelim: true }
 );
 
 // FuncBodyBlock := OpenBrace _ FuncBodyStmts _ CloseBrace;

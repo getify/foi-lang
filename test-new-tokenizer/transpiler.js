@@ -607,37 +607,51 @@ var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
 // =============================================================
 // PIPELINE-BODY LOWERING (DefFuncExpr w/ FuncBodyPipeline)
 //
-// `defn foo(x) #> <RHS>;` inlines the pipeline RHS into the
-// function's brace body. Topic = the function's first positional
-// param (per Foi's `#` convention).
+// `defn foo(x) #> ...` is conceptually sugar for `defn foo(x) ^ x #> ...`.
+// This lowering literalizes the sugar: synthesize a left-folded
+// FlowBinExpr chain whose deepest-left leaf is the param identifier
+// and whose stages are (op:"#>", right:stage-1-RHS) followed by
+// fbp.body's chain stages. Hand off to the FlowBinExpr handler via
+// recur — it owns every `#>` lowering rule (topic save, per-entry
+// defs, destructure binding, body emission, BlockExpr / BareBlockExpr
+// arms). Zero duplication; no FuncBodyPipeline-specific stage walker.
 //
-// RHS arms:
-//   - BareBlockExpr → topic discarded; stmts emit with return-
-//     injection. Unwrapped — already inside the function braces.
-//   - BlockExpr     → delegates to emitPipelineBlockBody. The
-//     `__topic` save means body-level shadowing of the param
-//     name (Identifier rebind or destructure-introduced
-//     binding) doesn't corrupt `#` resolution.
-//   - ExprNoBlock / GroupedExpr — "pipeline body is a callable"
-//     semantics. Deferred.
+// Single-stage: fbp.body is the stage-1 RHS node directly (not a
+// FlowBinExpr). walk() pushes it as a single operand; refold builds
+// FlowBinExpr{left: param, op:"#>", right: stage-1-RHS}. The
+// FlowBinExpr handler dispatches to its BareBlockExpr / BlockExpr /
+// fallback arms.
+//
+// Multi-stage: fbp.body is itself a left-folded FlowBinExpr (built
+// by the FuncBodyPipeline shaper). walk() flattens it to operands+ops;
+// prepending (param, "#>") and re-folding produces the same shape
+// `param #> A #> B ...` would have at standalone expression position.
+// The FlowBinExpr handler recurses naturally on `left` through the
+// chain; each `#>` stage emits its IIFE, non-`#>` stages (e.g. `~map`)
+// hit FlowBinExpr's existing fallback — symmetric with standalone
+// `data #> A ~map B` falling back at the outer `~map`. When ~map etc.
+// handlers land, this lowering benefits automatically.
+//
+// Output shape: `{ return <chain-emitted>; }`. The chain emits as an
+// IIFE per stage (FlowBinExpr's expression-position lowering). More
+// verbose than the prior bespoke FuncBodyPipeline-specific lowering
+// (which inlined directly into the function braces without IIFEs),
+// but semantically equivalent and produced by the single unified code
+// path — matching the "AST inside is the same" intent.
 //
 // First-slice param constraints (unchanged):
 //   - Single-positional ParameterList (no multi-param, no
 //     GatherParameter, no destructure params).
 //   - Identifier param only.
 //
-// Topic resolution: the self-referential `dispatch` closure
-// closes over `topicRefBox.ref` (initially the param name, may
-// be flipped to "__topic" by emitPipelineBlockBody) and
-// intercepts PipelineTopic before the bare handler-map. Because
-// `dispatch` passes *itself* into every recurred handler, the
-// interception survives arbitrary AST depth. Nested `#>` bodies
-// build their own inner closures; lexical scoping handles
-// shadowing for free.
+// Synthesized FlowBinExpr nodes carry no start/end — the FlowBinExpr
+// handler's fallback (for currently-unsupported chains) emits
+// `null /* ?FlowBinExpr */`. The function shell still emits, keeping
+// partial transpilation visible at the right granularity.
 //
-// Returns the brace-wrapped function body `{ ... }`, or null
-// when the param shape, RHS arm, or any destructure entry isn't
-// lowerable — caller falls back the whole DefFuncExpr.
+// Returns the brace-wrapped function body `{ return <chain>; }`,
+// or null when the param shape isn't supported — caller falls back
+// the whole DefFuncExpr.
 // =============================================================
 
 var renderPipelineBody = (node, paramSet, recur) => {
@@ -646,28 +660,39 @@ var renderPipelineBody = (node, paramSet, recur) => {
 	var p = paramSet.params[0];
 	if (p.target.type !== "Identifier") return null;
 
-	var topic = p.target.name;
-	var rhs = node.body.body;
+	var paramIdent = p.target;
+	var fbp = node.body;
 
-	var topicRefBox = { ref: topic };
-	var dispatch = n => {
-		if (n == null) return "";
-		if (n.type === "PipelineTopic") return topicRefBox.ref;
-		var h = handlers[n.type];
-		return h ? h(n, dispatch) : fallback(n);
+	// Flatten fbp.body (single node OR FlowBinExpr subtree) into
+	// operands+ops. Prepend (paramIdent, fbp.op="#>") as the new
+	// outermost-left stage. Re-fold left-associative.
+	var operands = [];
+	var ops = [];
+	var walk = n => {
+		if (n.type === "FlowBinExpr") {
+			walk(n.left);
+			ops.push(n.op);
+			operands.push(n.right);
+		}
+		else {
+			operands.push(n);
+		}
 	};
+	walk(fbp.body);
+	operands.unshift(paramIdent);
+	ops.unshift(fbp.op);
 
-	if (rhs.type === "BareBlockExpr") {
-		return "{ " + emitBlockBody(rhs.stmts, dispatch, true) + " }";
+	var virtual = operands[0];
+	for (let i = 0; i < ops.length; i++) {
+		virtual = {
+			type:  "FlowBinExpr",
+			left:  virtual,
+			op:    ops[i],
+			right: operands[i + 1],
+		};
 	}
 
-	if (rhs.type === "BlockExpr") {
-		var inner = emitPipelineBlockBody(rhs, topic, dispatch, topicRefBox);
-		if (inner == null) return null;
-		return "{ " + inner + " }";
-	}
-
-	return null;
+	return "{ return " + recur(virtual) + "; }";
 };
 
 

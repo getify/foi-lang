@@ -1749,18 +1749,89 @@ export const defaultShapers = {
 		return { type: "FuncBodyExpr", body: parts.find(isNode) };
 	},
 
-	// FuncBodyPipeline := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
+	// FuncBodyPipeline := PipelineOp _ FlowRHSImplIn (_ FlowOpAndRHS)*;
 	//
-	// Multi-token pipeline op (e.g. `#>` = Hash + CloseAngle)
-	// concatenates into `op`. No structural delims.
+	// Sugar for `^ <param> #> ...` — see grammar §13 prose and parser.js.
+	// Per the "conceptually rewrite to ^ x #> ..." principle, the body
+	// subtree should be AST-shape-identical to what the chain would
+	// produce at standalone expression position. So:
+	//
+	//   - 0 chain stages → body = the stage-1 RHS node directly.
+	//     `defn foo(x) #> A` → body: A. (Unchanged from prior shape.)
+	//   - ≥1 chain stages → body = a left-folded FlowBinExpr identical
+	//     to what `A #> B #> C` (or `A #> B ~map C` etc.) shapes to at
+	//     standalone-expression position. Stage 1's RHS becomes the
+	//     deepest-left leaf; each subsequent FlowOpAndRHS folds in as
+	//     a new outer FlowBinExpr wrapping the prior accumulator.
+	//     `defn foo(x) #> A #> B` → body:
+	//       FlowBinExpr{ left: A, op: "#>", right: B,
+	//                    start: A.start, end: B.end, delims: [...] }.
+	//
+	// Parts walk under preserveInnerDelim:true — interleaved op tokens,
+	// soft delims, and nodes. Routing:
+	//
+	//   - Op tokens (Hash/CloseAngle for `#>`, Tilde/OpenAngle/Plus or
+	//     a single Comprehension token for FlowOps) before stage-1 body
+	//     → concat into `op` (the leading PipelineOp).
+	//   - Op tokens after stage-1 body → accumulate into `pendingOp`;
+	//     consumed when the next node arrives (folds into a new outer
+	//     FlowBinExpr).
+	//   - Soft delims (Whitespace / Comment) before stage-1 body →
+	//     FuncBodyPipeline's own delims. These cover trivia between the
+	//     leading `#>` and stage-1 RHS; the round-trip handler
+	//     (gapFill(n.op, ...)) emits `op` in the gap before them.
+	//   - Soft delims after stage-1 body → outermost synthesized
+	//     FlowBinExpr's delims. emitBinTier (round-trip) flattens the
+	//     left-folded tree and walks delims+operands by position,
+	//     emitting ops in the gaps. Matching the placement a real
+	//     FlowBinExpr at standalone position would carry.
+	//
+	// Stage-1 RHS is FlowRHSImplIn = BlockExpr | BareBlockExpr |
+	// OrDispatch. OrDispatch is one tier below FlowBinExpr in the
+	// precedence chain, so the stage-1 RHS node itself is never a
+	// FlowBinExpr — no concern about confusing the synthesized outer
+	// FlowBinExpr with a "real" inner one.
 	FuncBodyPipeline(frame,parts) {
 		var op = "";
 		var body;
+		var pendingOp = "";
+		var fbpDelims = [];
+		var chainDelims = [];
 		for (let p of parts) {
-			if (isNode(p)) body = p;
-			else op += p.value;
+			if (isNode(p)) {
+				if (!body) {
+					body = p;
+				}
+				else {
+					body = {
+						type:  "FlowBinExpr",
+						left:  body,
+						op:    pendingOp,
+						right: p,
+						start: body.start,
+						end:   p.end,
+					};
+					pendingOp = "";
+				}
+				continue;
+			}
+			// Token — op token or soft delim.
+			if (p.type === "Whitespace" || p.type === "Comment") {
+				if (!body) fbpDelims.push(p);
+				else       chainDelims.push(p);
+				continue;
+			}
+			// Op token.
+			if (!body) op += p.value;
+			else       pendingOp += p.value;
 		}
-		return { type: "FuncBodyPipeline", op, body };
+		// Inter-stage trivia attaches to outermost synthesized FlowBinExpr
+		// only when stages 2+ actually folded one. Single-stage: chainDelims
+		// is empty by construction (no tokens after the lone body node).
+		if (body && body.type === "FlowBinExpr" && chainDelims.length > 0) {
+			body.delims = chainDelims;
+		}
+		return withDelims({ type: "FuncBodyPipeline", op, body }, fbpDelims);
 	},
 
 	// FuncBodyBlock := OpenBrace _ <FuncBodyStmts> _ CloseBrace;

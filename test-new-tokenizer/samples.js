@@ -310,6 +310,30 @@ export const samples = [
 	{ label: "BlockExpr: defn #> destructure no-init",
 	  src: "defn f(x) #> (<:a, :b>) { a + b; };" },
 
+	// Lenient VarDefInitOptImplIn — Identifier-with-init and
+	// DestructureTarget-with-explicit-init arms at implicit-input
+	// positions. The no-init arms are covered above; these exercise
+	// the with-init arms (and for destructure, the "explicit overrides
+	// implicit" branch of the lenient form).
+	{ label: "BlockExpr: defn #> ident-with-init",
+	  src: "defn foo(x) #> (x: 3) { x + #; };" },
+	{ label: "BlockExpr: defn #> destructure w/ explicit init",
+	  src: "defn foo(x) #> (<:x>: src) { x + #; };" },
+	{ label: "BlockExpr: #> destructure w/ explicit init",
+	  src: "data #> (<:x>: src) { x + #; };" },
+
+	// Multi-stage FuncBodyPipeline — exercises the `(_ FlowOpAndRHS)*`
+	// chain iter and the FuncBodyPipeline shaper's chainDelims routing
+	// (inter-stage trivia → outermost synthesized FlowBinExpr.delims).
+	{ label: "FuncBodyPipeline: defn #> multi-stage",
+	  src: "defn foo(x) #> { x + #; } #> { #; };" },
+
+	// Multi-stage standalone FlowBinExpr — chained PipelineOp with
+	// both stages using FlowRHSImplIn block arms. Existing
+	// `data #> f +> g` is mixed-op and stage-2 ComposeOp (no block arm).
+	{ label: "FlowBinExpr: #> chain w/ destructure stage-1",
+	  src: "data #> (<:x>: src) { x + #; } #> { #; };" },
+
 	// DefBlockStmt — strict-optional inner (Identifier-init optional;
 	// DestructureTarget-init REQUIRED — no implicit source at top-level `def (...)`)
 	{ label: "DefBlockStmt: def (x: 1) { x; }",            src: "def (x: 1) { x; };" },
