@@ -50,6 +50,12 @@ var SKIP_KEYS = new Set([ "type", "start", "end", "delims" ]);
 
 // Collect child nodes from enumerable properties (skipping SKIP_KEYS)
 // plus this node's delim tokens, sorted by source position.
+//
+// Synthetic ImpliedEmpty nodes (from PrefixCallSuffix skip slots)
+// are filtered — they carry the "implied empty value" semantic for
+// downstream consumers but have no source representation. Null
+// entries in arrays (PartialCallSuffix skip slots) are filtered
+// implicitly by isNode (which rejects null).
 var collectPieces = node => {
 	var pieces = [];
 	for (let key of Object.keys(node)) {
@@ -57,10 +63,12 @@ var collectPieces = node => {
 		let v = node[key];
 		if (Array.isArray(v)) {
 			for (let item of v) {
-				if (isNode(item)) pieces.push(item);
+				if (isNode(item) && item.type !== "ImpliedEmpty") {
+					pieces.push(item);
+				}
 			}
 		}
-		else if (isNode(v)) {
+		else if (isNode(v) && v.type !== "ImpliedEmpty") {
 			pieces.push(v);
 		}
 	}

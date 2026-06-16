@@ -813,6 +813,15 @@ var handlers = {
 	// §7 CHAIN-FOLD: CALL + MEMBER ACCESS
 	// =============================================================
 
+	// ImpliedEmpty — synthetic node from PrefixCallSuffix's skip-
+	// position detection. Carries "implied empty value at this
+	// position" semantic. Lowers to JS `undefined` because JS
+	// default-arg semantics only fire on `undefined`, not on
+	// `null` (so `f(1, undefined, 3)` triggers position 1's default
+	// param the way Foi's `f(1, empty, 3)` would; `null` would
+	// pass through as a real null value).
+	ImpliedEmpty: () => "undefined",
+
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
 	// production; ChainExpr's fold produces this uniform shape
 	// (bare-op-in-parens shortcut is normalized upstream).
@@ -835,26 +844,36 @@ var handlers = {
 
 	// PartialCallExpr { callee, args }. PartialCallSuffix is the
 	// source production; ChainExpr's fold produces this uniform
-	// shape. Lowers to an IIFE-bind closure:
+	// shape. Lowers to an IIFE-bind closure that single-evals the
+	// callee + supplied args at partial-app time, matching Foi's
+	// "arguments are remembered for later" semantics. Plain
+	// `(...__rest) => foo(a, b, ...__rest)` would re-eval arg
+	// exprs per call — wrong for side-effecting args.
+	//
+	// Skip slots arrive as `null` entries in args (per the
+	// PartialCallSuffix shaper's JS-array-literal semantic).
+	// The null carries no value — the rest-call fills the slot.
+	//
+	// No-skip form (every arg slot bound):
 	//
 	//   foo|a, b|
 	//   → ((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(foo, a, b)
 	//
-	// Single-eval of callee + supplied args at partial-app time
-	// matches Foi's "arguments are remembered for later" semantics.
-	// Plain `(...__rest) => foo(a, b, ...__rest)` would re-eval arg
-	// exprs per call — wrong for side-effecting args.
+	// Skip-bearing form: walk args; null → __rest slot, node →
+	// __a slot. Trailing rest spreads from the tail.
+	//
+	//   f|1,,2|
+	//   → ((__c, ...__a) => (...__rest) =>
+	//        __c(__a[0], __rest[0], __a[1], ...__rest.slice(1)))(f, 1, 2)
+	//
+	//   f|,,3|
+	//   → ((__c, ...__a) => (...__rest) =>
+	//        __c(__rest[0], __rest[1], __a[0], ...__rest.slice(2)))(f, 3)
 	//
 	// Deferred (fall back when present):
 	//   - spread arg (TriplePeriod in delims) — JS-side spread of
 	//     captured-tuple needs its own lowering
 	//   - NamedArg variants — same JS-side decision as CallExpr
-	//
-	// Skip-position form `f|1,,2|` is NOT detected at AST level —
-	// Comma count in delims doesn't disambiguate skip vs trailing
-	// without source-position comparison against arg spans. Current
-	// lowering silently packs as `f(1,2)`. Defer detection until
-	// a sample forces it.
 	PartialCallExpr(node, recur) {
 		if (node.delims) {
 			for (let d of node.delims) {
@@ -863,16 +882,50 @@ var handlers = {
 		}
 		for (let a of node.args) {
 			if (
-				a.type === "ConciseNamedArg" ||
-				a.type === "ExplicitNamedArg"
+				a != null && (
+					a.type === "ConciseNamedArg" ||
+					a.type === "ExplicitNamedArg"
+				)
 			) {
 				return fallback(node);
 			}
 		}
 		var callee = recur(node.callee);
-		var argList = node.args.map(a => recur(a)).join(", ");
-		var bindArgs = argList ? callee + ", " + argList : callee;
-		return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + bindArgs + ")";
+		var args = node.args;
+		var boundArgs = args.filter(a => a != null);
+
+		// Zero bound args: just bind callee.
+		if (boundArgs.length === 0) {
+			return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + callee + ")";
+		}
+
+		var argList = boundArgs.map(a => recur(a)).join(", ");
+		var bindArgs = callee + ", " + argList;
+		var hasSkips = args.some(a => a == null);
+
+		// No-skip fast path — preserves the simpler spread shape.
+		if (!hasSkips) {
+			return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + bindArgs + ")";
+		}
+
+		// Skip path: walk args; null → __rest slot, node → __a slot.
+		var slotExprs = [];
+		var restIdx = 0;
+		var boundIdx = 0;
+		for (let a of args) {
+			if (a == null) {
+				slotExprs.push("__rest[" + restIdx + "]");
+				restIdx++;
+			}
+			else {
+				slotExprs.push("__a[" + boundIdx + "]");
+				boundIdx++;
+			}
+		}
+		var innerCall = "__c(" + slotExprs.join(", ") +
+			", ...__rest.slice(" + restIdx + "))";
+		return "((__c, ...__a) => (...__rest) => " +
+			innerCall + ")(" + bindArgs + ")";
 	},
 
 	// MemberAccessExpr { object, accessor? | index? }. Mutually

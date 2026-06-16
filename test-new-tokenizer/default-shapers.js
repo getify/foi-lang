@@ -1217,24 +1217,79 @@ export const defaultShapers = {
 	// the bare-op shortcut path is captured into the synthesized
 	// OpFuncExpr (drops as state for primed). Op tokens accumulate
 	// into the synthetic OpFuncExpr.
+	//
+	// Skip-position slots surface as synthetic ImpliedEmpty nodes
+	// in `args`. JS-array-literal semantics on the CallArgList
+	// grammar: each Comma defines a slot boundary; the Comma
+	// immediately before the closing Paren is tolerated as
+	// trailing and creates no extra slot.
+	//
+	//   foo(1,,2) → args [<1>, ImpliedEmpty, <2>]
+	//   foo(,,3)  → args [ImpliedEmpty, ImpliedEmpty, <3>]
+	//   foo(1,2,) → args [<1>, <2>]                       (trailing comma)
+	//   foo(1,,)  → args [<1>, ImpliedEmpty]              (skip + trailing)
+	//   foo()     → args []
+	//
+	// ImpliedEmpty carries the "implied empty VALUE at this
+	// position" semantic — the call receives `empty` here, as if
+	// the user wrote `empty` explicitly. Distinct from
+	// PartialCallSuffix's `null` (no-value slot filled by rest-
+	// call) — these are semantically different.
+	//
+	// `start: lastStruct.end + 1` — the source position immediately
+	// after the previous structural token (OpenParen for leading
+	// skips, prior Comma for inner skips). Matches the synthesized-
+	// empty-ParameterList precedent. `end: null` signals "no source
+	// span / synthetic" — round-trip's collectPieces filters
+	// ImpliedEmpty nodes by type before sort; the start value gives
+	// clean ordering for any other consumer that doesn't filter
+	// (transpiler, future interpreter, error reporting).
+	//
+	// `awaitingArg` state matches PartialCallSuffix; the OpenParen
+	// (first paren only — inner parens from NamedArgExpr's paren-
+	// recursive arm shouldn't re-arm the state) sets it true.
+	// Bare-op shortcut path is unaffected — bare-op forms have no
+	// Commas inside.
 	PrefixCallSuffix(frame,parts) {
 		var args = [];
 		var op = "";
 		var opStart, opEnd;
 		var primed = false;
 		var delims = [];
+		var awaitingArg = false;
+		var openParenSeen = false;
+		var lastStructEnd = null;
 		for (let p of parts) {
-			if (isNode(p)) args.push(p);
+			if (isNode(p)) {
+				args.push(p);
+				awaitingArg = false;
+			}
 			else if (p.type === "SingleQuote") {
 				primed = true;
 				opEnd = p.end;
 			}
-			else if (
-				p.type === "OpenParen" ||
-				p.type === "CloseParen" ||
-				p.type === "Comma"
-			) {
+			else if (p.type === "OpenParen") {
 				delims.push(p);
+				if (!openParenSeen) {
+					awaitingArg = true;
+					openParenSeen = true;
+					lastStructEnd = p.end;
+				}
+			}
+			else if (p.type === "CloseParen") {
+				delims.push(p);
+			}
+			else if (p.type === "Comma") {
+				delims.push(p);
+				if (awaitingArg) {
+					args.push({
+						type: "ImpliedEmpty",
+						start: lastStructEnd + 1,
+						end: null,
+					});
+				}
+				awaitingArg = true;
+				lastStructEnd = p.end;
 			}
 			else {
 				// Op-form: accumulate operator token text and span
@@ -1260,12 +1315,49 @@ export const defaultShapers = {
 	// PartialCallSuffix := Pipe CallArgs Pipe;
 	//
 	// Pipes and commas are structural → delims.
+	//
+	// Skip-position slots surface as `null` entries in `args`,
+	// matching JS-array-literal semantics for the underlying
+	// CallArgList grammar (`(_ Comma)* (CallArgExpr (_ Comma (_
+	// CallArgExpr)?)*)?`). Every Comma defines a slot boundary;
+	// the Comma immediately before the closing Pipe is tolerated
+	// as trailing and creates no extra slot.
+	//
+	//   f|1,,2| → args [<1>, null, <2>]
+	//   f|,,3|  → args [null, null, <3>]
+	//   f|1,2,| → args [<1>, <2>]            (trailing comma)
+	//   f|1,,|  → args [<1>, null]           (skip slot + trailing)
+	//   f||     → args []
+	//
+	// State: `awaitingArg` becomes true after the opening Pipe
+	// or any Comma; false after consuming an arg node. A Comma
+	// while `awaitingArg` is true pushes a null slot. The closing
+	// Pipe doesn't fire any push, so a trailing comma decays into
+	// `awaitingArg=true` at loop exit and gets ignored —
+	// trailing-comma tolerance falls out of this rule for free.
 	PartialCallSuffix(frame,parts) {
 		var args = [];
 		var delims = [];
+		var awaitingArg = false;
+		var pipeCount = 0;
 		for (let p of parts) {
-			if (isNode(p)) args.push(p);
-			else delims.push(p); // Pipe, Comma
+			if (isNode(p)) {
+				args.push(p);
+				awaitingArg = false;
+			}
+			else if (p.type === "Pipe") {
+				delims.push(p);
+				pipeCount++;
+				if (pipeCount === 1) awaitingArg = true;
+			}
+			else if (p.type === "Comma") {
+				delims.push(p);
+				if (awaitingArg) args.push(null);
+				awaitingArg = true;
+			}
+			else {
+				delims.push(p);
+			}
 		}
 		return withDelims({ type: "PartialCallSuffix", args }, delims);
 	},

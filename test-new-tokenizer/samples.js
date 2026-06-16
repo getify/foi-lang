@@ -165,6 +165,19 @@ export const samples = [
 	{ label: "PartialCallExpr: foo|1,2|",            src: "foo|1,2|;" },
 	{ label: "PartialCallExpr (OpFunc arg): foo|(+)|", src: "foo|(+)|;" },
 
+	// === Skip-position slots — JS-array-literal semantics ===
+	// Exercises the awaitingArg state machine in PrefixCallSuffix
+	// (ImpliedEmpty synthesis) and PartialCallSuffix (null insertion),
+	// plus trailing-comma decay in both.
+	{ label: "CallExpr skip (middle): foo(1,,3)",            src: "foo(1,,3);" },
+	{ label: "CallExpr skip (leading): foo(,,3)",            src: "foo(,,3);" },
+	{ label: "CallExpr trailing comma: foo(1,2,)",           src: "foo(1,2,);" },
+	{ label: "CallExpr multi-skip (guide): myFn(1,,3,,,6)",  src: "myFn(1,,3,,,6);" },
+	{ label: "PartialCallExpr skip: foo|1,,3|",              src: "foo|1,,3|;" },
+	{ label: "PartialCallExpr skip + trailing: foo|1,,|",    src: "foo|1,,|;" },
+	{ label: "PartialCallExpr (empty): foo||",               src: "foo||;" },
+	{ label: "PartialCallExpr primed + spread: xyz'|...nums|", src: "xyz'|...nums|;" },
+
 	// === Mixed chains — verifies fold ordering ===
 	{ label: "Mixed: foo.bar(1,2)",                  src: "foo.bar(1,2);" },
 	{ label: "Mixed: foo(1,2).baz",                  src: "foo(1,2).baz;" },
