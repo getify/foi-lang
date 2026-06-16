@@ -1,10 +1,18 @@
-// grammar-check.js — LR cycle detector for the Foi syntactic grammar.
+// grammar-check.js — LR cycle detector + orphan detector for the Foi syntactic grammar.
 //
 // Parses the EBNF code blocks out of Syntactic-Grammar.md, builds a
 // directed graph where P → Q iff P can call Q before consuming any
 // token (the "first-call" relation), then runs Tarjan's SCC. Any
 // non-trivial SCC or self-loop is a left-recursion cycle that will
 // blow the stack at parse time.
+//
+// Also builds an "all-refs" graph (every reference in every body,
+// regardless of position) and does BFS from the grammar root
+// (`Program` by default; overridable via CLI). Any production not
+// reachable from the root is an orphan — typically a vestige of a
+// refactor where a production got re-routed or replaced but the
+// original definition wasn't deleted. Orphan check is warning-level,
+// not fatal; LR cycles remain exit-1.
 
 import fs from "node:fs";
 
@@ -162,13 +170,19 @@ var parseBody = tokens => {
 
 
 // =============================================================
-// NULLABILITY & FIRST-CALL ANALYSIS
+// NULLABILITY, FIRST-CALL, AND ALL-REF ANALYSIS
 //
-// nullable(P): can P match empty (consume zero tokens)?
-// firstCalls(P): set of productions reachable before any token is consumed.
+// nullable(P):    can P match empty (consume zero tokens)?
+// firstCalls(P):  set of productions reachable BEFORE any token is consumed.
+//                 Used for LR-cycle detection — only first-position edges matter
+//                 there, since LR is "can recurse without consuming."
+// allRefs(P):     set of productions referenced ANYWHERE in P's body, regardless
+//                 of position. Used for orphan / reachability analysis — a
+//                 production referenced after some tokens have been consumed
+//                 is still "live" from the consumer's perspective.
 //
-// A token-consuming terminal (any ref not defined as a LHS in this
-// grammar, e.g. OpenParen, Whitespace, General) stops the cascade.
+// For nullable/firstCalls: a token-consuming terminal (any ref not defined as a
+// LHS in this grammar, e.g. OpenParen, Whitespace, General) stops the cascade.
 // A literal "value" also consumes.
 // =============================================================
 
@@ -176,9 +190,11 @@ var analyze = productions => {
 	var prods = new Map(productions.map(p => [ p.name, p ]));
 	var nullable = new Map();
 	var firstCalls = new Map();
+	var allRefs = new Map();
 	for (let p of productions) {
 		nullable.set(p.name, false);
 		firstCalls.set(p.name, new Set());
+		allRefs.set(p.name, new Set());
 	}
 
 	var exprNullable = e => {
@@ -223,6 +239,27 @@ var analyze = productions => {
 		return out;
 	};
 
+	// All-refs: walk the entire body tree, collect every ref regardless of
+	// position. Distinct from exprFirstCalls in two ways: (1) does NOT short-
+	// circuit a seq on first non-nullable term, and (2) does NOT care about
+	// nullability at all — every ref counts.
+	var exprAllRefs = e => {
+		var out = new Set();
+		var walk = node => {
+			if (node.kind === "ref") {
+				if (prods.has(node.name)) out.add(node.name);
+				return;
+			}
+			if (node.kind === "literal") return;
+			if (node.kind === "suffix")    { walk(node.inner); return; }
+			if (node.kind === "lookahead") { walk(node.inner); return; }
+			if (node.kind === "alt") { for (let s of node.seqs)  walk(s); return; }
+			if (node.kind === "seq") { for (let t of node.terms) walk(t); return; }
+		};
+		walk(e);
+		return out;
+	};
+
 	// Fixed-point on nullable (productions can refer to each other).
 	var changed = true;
 	while (changed) {
@@ -234,11 +271,12 @@ var analyze = productions => {
 		}
 	}
 
-	// Compute firstCalls (single pass — only immediate edges; transitive
-	// reachability is captured by SCC analysis).
+	// Single-pass for firstCalls and allRefs (immediate edges only; transitive
+	// reachability is handled by SCC analysis / BFS in the callers).
 	for (let p of productions) firstCalls.set(p.name, exprFirstCalls(p.bodyAST));
+	for (let p of productions) allRefs.set(p.name,    exprAllRefs(p.bodyAST));
 
-	return { nullable, firstCalls };
+	return { nullable, firstCalls, allRefs };
 };
 
 
@@ -289,10 +327,36 @@ var findSCCs = (productions, firstCalls) => {
 
 
 // =============================================================
+// REACHABILITY
+//
+// BFS from `root` through the all-refs graph. Returns a Set of reachable
+// production names, or null if `root` isn't defined in this grammar.
+// Productions defined but not in the returned set are orphans.
+// =============================================================
+
+var reachableFrom = (root, productions, allRefs) => {
+	var names = new Set(productions.map(p => p.name));
+	if (!names.has(root)) return null;
+	var reached = new Set();
+	var stack = [ root ];
+	while (stack.length > 0) {
+		var n = stack.pop();
+		if (reached.has(n)) continue;
+		reached.add(n);
+		for (let r of (allRefs.get(n) || new Set())) {
+			if (!reached.has(r)) stack.push(r);
+		}
+	}
+	return reached;
+};
+
+
+// =============================================================
 // MAIN
 // =============================================================
 
 var srcPath = process.argv[2] || "Syntactic-Grammar.md";
+var ROOT    = process.argv[3] || "Program";
 var src = fs.readFileSync(srcPath, "utf-8");
 
 var blocks = extractEBNFBlocks(src);
@@ -334,7 +398,12 @@ if (parseErrors.length > 0) {
 	}
 }
 
-var { nullable, firstCalls } = analyze(productions);
+var { nullable, firstCalls, allRefs } = analyze(productions);
+
+// Accumulate failure across all checks — exit code reflected at end. This
+// replaces the old behavior of exit-1-on-cycles short-circuiting nullable
+// (and now orphan) reports. All three signals always print.
+var failed = false;
 
 // Find LR cycles: non-trivial SCCs or self-loops.
 var sccs = findSCCs(productions, firstCalls);
@@ -357,9 +426,30 @@ else {
 			console.log(`    ${n} first-calls (within cycle): ${edges.join(", ")}`);
 		}
 	}
-	process.exit(1);
+	failed = true;
 }
 
 var nullables = productions.filter(p => nullable.get(p.name)).map(p => p.name);
 console.log(`\n=== NULLABLE PRODUCTIONS (${nullables.length}) ===`);
 console.log(nullables.length ? nullables.join(", ") : "(none)");
+
+// Orphan / reachability check. Promote to fatal by adding `failed = true`
+// in the orphans-found branch if you want CI to fail on dead productions.
+console.log(`\n=== ORPHAN PRODUCTIONS (reachability from '${ROOT}') ===`);
+var reached = reachableFrom(ROOT, productions, allRefs);
+if (reached === null) {
+	console.log(`⚠ Root production '${ROOT}' not found in the grammar — skipping orphan check.`);
+	console.log(`   Override with: node grammar-check.js <spec-path> <root-production>`);
+}
+else {
+	var orphans = productions.filter(p => !reached.has(p.name)).map(p => p.name);
+	if (orphans.length === 0) {
+		console.log(`✓ All ${productions.length} productions reachable from '${ROOT}'.`);
+	}
+	else {
+		console.log(`✗ Found ${orphans.length} orphan production(s) — referenced by no live grammar path:`);
+		for (let o of orphans) console.log(`  - ${o}`);
+	}
+}
+
+if (failed) process.exit(1);

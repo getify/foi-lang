@@ -121,6 +121,7 @@ Concrete consequences:
 - `foo() :as int` → parses; `as` attaches to the outermost typed
   chain node (e.g. `CallExpr`)
 - `foo.bar@ :as Maybe` → parses; `as` attaches to the `AtExpr`
+- `{ y; } :as int` → parses; `as` attaches to the `BareBlockExpr`
 - **`x + y :as int` → PARSE ERROR** (must be `(x + y) :as int`)
 - **`x + y :as int + z` → PARSE ERROR**
 - **`1..5 :as List` → PARSE ERROR** (must be `(1..5) :as List`)
@@ -151,21 +152,32 @@ only the bare forms (no `:as`), which is what makes
 alternative so that `(?x :as bool)`, `(foo() :as int)`, etc.
 continue to parse inside parens.
 
-**Productions that carry `:as`:**
+**Productions that carry `:as` directly:**
 - `AsExpr` (§5) — the central carrier
 - All six paren-grouping productions (`GroupedExpr`,
   `GroupedExprNoBlock`, `GroupedOpExpr`, `GroupedBareOpExpr`,
   `GroupedBareOpExprNoEmpty`, `GroupedDoExpr`)
 
-**Productions that do NOT carry `:as`** (must be parenthesized or
-wrapped via `AsExpr` to receive an annotation): everything else,
-including `BinaryExpr` (and all tier iter variants),
-`AssignmentExpr`, `ClosedRangeExpr` / `LeadingRangeExpr` /
-`TrailingRangeExpr`, `DoComprExpr`, `DoLoopComprExpr`, `MatchExpr`,
-all literal leaves (`NumberLit`, `BooleanLit`, `EmptyLit`, four
-`StringLit` variants, `RecordTupleLit`, `SetLit`), `IdentifierExpr`'s
-three arms, `OpFuncExpr`, `ChainExpr`, `AtCallExpr`, `UnaryExpr`'s
-two arms, `BlockExpr`, `GuardedExpr`.
+**Productions that don't carry `:as` directly but are wrappable
+via `AsExpr`** (annotation reaches them through `<AsableExpr>`):
+`BareBlockExpr`, `GuardedExpr`, `UnaryExpr`'s two arms, and the
+`<AsableInner>` leaves — `EmptyLit`, `CallExpr` (i.e. `ChainExpr`
+and `AtCallExpr` via their `<CallExpr>` parent), `BooleanLit`,
+`NumberLit`, all four `StringLit` variants, `RecordTupleLit`,
+`SetLit`, the three `IdentifierExpr` arms, `OpFuncExpr`.
+
+**Productions with no `:as` path at all** (must be parenthesized
+to be annotated — `(...)` wrapping reaches a paren-grouping
+production, which carries its own `(_ AsAnnotationExpr)?` tail):
+`BinaryExpr` and all tier iter variants (`FlowBinExpr`,
+`OrBinExpr`, `AndBinExpr`, `TypeCompareBinExpr`, `CompareBinExpr`,
+`AddBinExpr`, `MulBinExpr`), `AssignmentExpr`, `ClosedRangeExpr` /
+`LeadingRangeExpr` / `TrailingRangeExpr`, `DoComprExpr`,
+`DoLoopComprExpr`, `MatchExpr`, and `BlockExpr`. `BlockExpr` sits
+in this bucket not because it's a binary form but because it's
+only reachable from implicit-input positions (FlowRHSImplIn,
+FuncBodyPipeline body) — there is no outer-expression slot where
+an `AsExpr` could wrap it.
 
 ---
 
@@ -191,8 +203,6 @@ PipelineTopic       := Hash;
 ```ebnf
 (* No leaf in §2 carries its own (_ AsAnnotationExpr)?. The `:as`
    tail on a leaf is supplied by an enclosing AsExpr (§5). *)
-
-<Literal>          := NumberLit | StringLit | BooleanLit | EmptyLit;
 
 (* NumberLit: either a bare decimal Number token, an Escape+Number
    pair (via lex's hidden EscapedNumber dispatch, which splices its
@@ -276,7 +286,7 @@ DestructureCapture    := Hash Identifier;
 
    See the `:as` Precedence section above. *)
 
-<Expr>                 := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+<Expr>          := DoComprExpr | DoLoopComprExpr | AsExpr | BareBlockExpr | ExprNoBlock | GroupedExpr;
 
 <ExprNoBlock>          := DefFuncExpr | AssignmentExpr | MatchExpr | GuardedExpr | AsExpr | OperandExpr | GroupedExprNoBlock;
 
@@ -289,10 +299,12 @@ DestructureCapture    := Hash Identifier;
 
 (* AsExpr — the sole non-paren carrier of `:as`. Inner is restricted
    to <AsableExpr>: anything tighter than binary (chain/access via
-   BareOperandExpr's CallExpr arm, unary, leaves, parens that allow
-   operand-level inner) plus BlockExpr/GuardedExpr at the outer
-   level. Ranges are deliberately NOT in <AsableExpr> — annotating
-   a bare range requires explicit parens (`(1..5) :as List`).
+   BareOperandExpr's CallExpr arm, unary, leaves) plus BareBlockExpr
+   and GuardedExpr at the outer level. BlockExpr (the defs-init form,
+   §11) is deliberately NOT in <AsableExpr> — it is only reachable
+   from implicit-input positions and has no annotation path. Ranges
+   are deliberately NOT in <AsableExpr> — annotating a bare range
+   requires explicit parens (`(1..5) :as List`).
 
    AsExpr is a parse-time wrapper. Its shaper unwraps — it attaches
    the annotation onto its inner node's `.as` slot and returns the
@@ -314,7 +326,7 @@ DestructureCapture    := Hash Identifier;
    and via its own one-shot tail for the legitimate `(...) :as T`
    form. *)
 AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
-<AsableExpr>           := BlockExpr | GuardedExpr | UnaryExpr | AsableInner;
+<AsableExpr>           := BareBlockExpr | GuardedExpr | UnaryExpr | AsableInner;
 <AsableInner>          := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
                         | DataStructLit | IdentifierExpr | OpFuncExpr;
 
@@ -341,7 +353,7 @@ AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward r
 
 PEG ordering notes:
 
-- In `<Expr>`, `AsExpr` precedes `BlockExpr` and `ExprNoBlock` —
+- In `<Expr>`, `AsExpr` precedes `BareBlockExpr` and `ExprNoBlock` —
   the longer match (with `:as` tail) wins. On no `:as`, `AsExpr`
   fails fast at the missing tail and falls through.
 - In `<ExprNoBlock>`, `AsExpr` precedes `OperandExpr` and
@@ -351,12 +363,17 @@ PEG ordering notes:
   and then fail at the `:as` tail when the body's own greedy
   `Expr` already ate any `:as`. Same fall-through semantics on
   no `:as`.
-- In `<Expr>`, `BlockExpr` precedes `ExprNoBlock` so inputs like
-  `(x){y;}` (a BlockExpr with bare-identifier def) parse as a
-  BlockExpr rather than `(x)` as GroupedExprNoBlock with dangling
-  `{y;}`. BlockExpr fails-through cleanly when no `{` follows the
-  optional defs-init, so bare `(x)` still reaches GroupedExprNoBlock
-  via ExprNoBlock.
+- In `<Expr>`, `BareBlockExpr` opens with `{` — disjoint from every
+  other `<Expr>` arm's opener, so its ordering relative to
+  `ExprNoBlock` / `GroupedExpr` is mechanical. The standalone form
+  `(defs){body};` (which previously parsed via an optional-defs-init
+  BlockExpr arm) is now intentionally rejected: `BlockExpr` (the
+  defs-init form, §11) is reachable only from implicit-input
+  positions (FlowRHSImplIn, FuncBodyPipeline body), not from
+  `<Expr>`, and a free-standing `(defs)` group has no source for
+  the defs-init to bind from. `(x){y;};` is a parse error rather
+  than two separate statements because there's no semicolon
+  between `(x)` and `{y;}`.
 - In `<BareOperandExprNoEmpty>`, `CallExpr` (= AtCallExpr | ChainExpr)
   precedes the bare literal and identifier forms so `"hi".len`
   parses as `ChainExpr` rather than `StringLit` with dangling `.len`.
@@ -539,17 +556,40 @@ SymbolicUnaryExpr := (Qmark | Exmark) _ BinaryAtom;
    `:as` and also allows AsExpr inside).
 
    Flow tier extensions: LHS may be a CondClause (for `~each`-style
-   range-as-conditional); RHS may be a BlockExpr (for
-   comprehension iteration / pipeline body). Other tiers allow
-   neither. Semantic validity for non-`~each`/non-comprehension
-   ops with these extensions is checked downstream. *)
+   range-as-conditional); RHS at ComprOp / PipelineOp may be a
+   BlockExpr (defs-init + body) or a BareBlockExpr (bare body) —
+   the implicit input (each comprehension item / pipeline topic)
+   is the source the BlockExpr's defs-init binds from, and the
+   BareBlockExpr arm handles the no-defs case. ComposeOp RHS
+   admits no block arm — see the per-op RHS narrowing comment
+   below. Other tiers allow none of these extensions. Semantic
+   validity for non-`~each`/non-comprehension ops with these
+   extensions is checked downstream. *)
 
 <BinaryExpr>     := FlowDispatch;
 
 <FlowDispatch>   := FlowBinExpr | OrDispatch;
-FlowBinExpr      := FlowLHS (_ FlowOp _ FlowRHS)+;
+(* Per-op RHS narrowing:
+   - ComprOp and PipelineOp RHS receive an implicit input element
+     (each comprehension item / pipeline topic). Both block arms
+     are admitted: BlockExpr — defs-init `(...)` + body, with the
+     lenient inner BlockDefsInitOptImplIn so destructure-no-init
+     can bind from the implicit input — and BareBlockExpr for the
+     no-defs case. See <FlowRHSImplIn>.
+   - ComposeOp RHS receives a function value (compose lifts a chain
+     of functions). There is no implicit element at compose, so a
+     defs-init has no source to bind from, and a bare body without
+     defs is not a function value. <FlowRHSStrict> therefore
+     collapses to OrDispatch — no block arm at all. The compose
+     operand must be a function-valued expression. *)
+
+FlowBinExpr      := FlowLHS (_ FlowOpAndRHS)+;
+<FlowOpAndRHS>   := (ComprOp     _ FlowRHSImplIn)
+                  | (PipelineOp  _ FlowRHSImplIn)
+                  | (ComposeOp   _ FlowRHSStrict);
+<FlowRHSImplIn>  := BlockExpr | BareBlockExpr | OrDispatch;
+<FlowRHSStrict>  := OrDispatch;
 <FlowLHS>        := CondClause | OrDispatch;
-<FlowRHS>        := BlockExpr | OrDispatch;
 
 <OrDispatch>     := OrBinExpr | AndDispatch;
 OrBinExpr        := AndDispatch (_ OrOp _ AndDispatch)+;
@@ -666,26 +706,77 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
 ## §11 Block Expressions
 
 ```ebnf
-(* BlockExpr loses its own `(_ AsAnnotationExpr)?` — annotation comes
-   via AsExpr (§5), whose AsableExpr inner list includes BlockExpr.
-   AsExpr's unwrap-shaper attaches `as` onto the BlockExpr node; in
-   default mode, AST shape for `{x;y} :as int` is unchanged from the
-   prior design. See §5 for the adaptive fold-or-keep rule on `.as`. *)
+(* Three block-related visible productions, with intentionally
+   different reach.
 
-BlockExpr             := BlockDefsInitOpt? _ BareBlockExpr;
-DefBlockStmt          := "def" _ BlockDefsInit _ BareBlockExpr;
-<BareBlockExpr>       := OpenBrace _ BlockStmts _ CloseBrace;
-<BlockStmts>          := (StmtSemi _)* StmtSemiOpt?;
+   BareBlockExpr is the bare-body form: `{ stmts }` with no
+   defs-init. It is reachable from <Expr> and <AsableExpr> (so
+   `{ x; };` parses standalone and `{ x; } :as int` parses via
+   AsExpr), from <FlowRHSImplIn> (the no-defs arm of compr /
+   pipeline RHS), from FuncBodyPipeline (the no-defs arm of a
+   pipeline-bodied function), and from MatchConsequent /
+   MatchConsequentNoSemi (the bare-block arm of a match consequent
+   — match consequents have no implicit input, so a defs-init
+   would have no source).
 
-BlockDefsInit         := OpenParen _ VarDefInitList _ CloseParen;
-BlockDefsInitOpt      := OpenParen _ VarDefInitOptList _ CloseParen;
+   BlockExpr is the defs-init form: `(defs) { stmts }`, with the
+   defs-init container REQUIRED — not optional. The defs-init
+   uses BlockDefsInitOptImplIn (lenient inner), so
+   DestructureTarget entries may omit their init expression and
+   bind from the enclosing context's implicit input. BlockExpr is
+   reachable ONLY from implicit-input positions: <FlowRHSImplIn>
+   (ComprOp / PipelineOp RHS) and FuncBodyPipeline (pipeline body
+   of a function definition). It is NOT in <Expr>, NOT in
+   <AsableExpr>, NOT at MatchConsequent, NOT at ComposeOp RHS,
+   NOT at FuncBodyExpr / FuncBodyBlock. The reason: a defs-init
+   only has meaning when something supplies the implicit input
+   that destructure-no-init can bind from. Standalone
+   `(defs) { body };` is syntactically rejected — no
+   <Expr> alternative or <Stmt> arm reaches it.
 
-<VarDefInitList>      := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
-<VarDefInitOptList>   := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
+   DefBlockStmt is the named-binding statement form:
+   `def (defs) { stmts };`. It uses BlockDefsInitOpt — the
+   strict-optional inner form, where Identifier entries may omit
+   their init (declared-uninitialized) but DestructureTarget
+   entries require their init explicitly. There is no implicit
+   input at a top-level `def (...)`; destructure-no-init at this
+   position would have no source, so the grammar requires the
+   `<...>: src` tail. `def (x) { ... };` parses;
+   `def (<:a>) { ... };` is a parse error; `def (<:a>: src) { ... };`
+   parses.
 
-VarDefInit            := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
-VarDefInitOpt         := (Identifier        (_ Colon _ ExprNoBlock)?)
-                       | (DestructureTarget (_ Colon _ ExprNoBlock)?);
+   VarDefInitOpt vs VarDefInitOptImplIn mirrors this fork at the
+   entry level. VarDefInitOpt is the strict-optional form
+   (Identifier-init optional, DestructureTarget-init required),
+   used at DefBlockStmt's BlockDefsInitOpt where no implicit
+   source exists. VarDefInitOptImplIn is the lenient form
+   (both Identifier-init and DestructureTarget-init optional),
+   used at implicit-input sites: ParameterList (the positional
+   argument is the source) and BlockDefsInitOptImplIn (via
+   FlowRHSImplIn / FuncBodyPipeline, the comprehension element /
+   pipeline topic / function arg is the source).
+
+   None of the three productions carries a `:as` tail. BareBlockExpr
+   reaches `:as` only via AsExpr-wrap; BlockExpr has no annotation
+   path at all (it isn't in <AsableExpr> and its reachable contexts
+   aren't outer-expression slots); DefBlockStmt is a statement, not
+   an expression. See the `:as` Precedence section. *)
+
+BlockExpr               := BlockDefsInitOptImplIn _ BareBlockExpr;
+DefBlockStmt            := "def" _ BlockDefsInitOpt _ BareBlockExpr;
+BareBlockExpr           := OpenBrace _ BlockStmts _ CloseBrace;
+<BlockStmts>            := (StmtSemi _)* StmtSemiOpt?;
+
+BlockDefsInitOpt        := OpenParen _ VarDefInitOptList _ CloseParen;
+BlockDefsInitOptImplIn  := OpenParen _ VarDefInitOptImplInList _ CloseParen;
+
+<VarDefInitOptList>        := (_ Comma)* (VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
+<VarDefInitOptImplInList>  := (_ Comma)* (VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
+
+VarDefInitOpt           := (Identifier        (_ Colon _ ExprNoBlock)?)
+                         | (DestructureTarget  _ Colon _ ExprNoBlock);   (* strict: init required *)
+VarDefInitOptImplIn     := (Identifier        (_ Colon _ ExprNoBlock)?)
+                         | (DestructureTarget (_ Colon _ ExprNoBlock)?); (* lenient: init optional *)
 ```
 
 ## §12 Assignment
@@ -709,7 +800,7 @@ DefFuncExpr           := "defn" (_ Identifier At?)?
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
                          _ FuncBody;
 
-ParameterList         := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+ParameterList         := VarDefInitOptImplIn (_ Comma _ VarDefInitOptImplIn)*;
 GatherParameter       := Star Identifier;
 
 <FuncPrecondList>     := FuncPrecond (_ FuncPrecond)*;
@@ -719,7 +810,7 @@ FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
 FuncBodyExpr          := Caret _ (ExprNoBlock | GroupedExpr);
-FuncBodyPipeline      := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
+FuncBodyPipeline      := PipelineOp _ (BlockExpr | BareBlockExpr | ExprNoBlock | GroupedExpr);
 FuncBodyBlock         := OpenBrace _ FuncBodyStmts _ CloseBrace;
 
 <FuncBodyStmts>       := (FuncBodyStmtSemi _)* FuncBodyStmtSemiOpt?;
@@ -729,13 +820,24 @@ FuncBodyStmtSemiOpt   := FuncBodyStmt (_ Semicolon)*;
 ReturnExpr            := Caret _ Expr;
 ```
 
-PEG ordering note: in `FuncBodyPipeline`, `BlockExpr` precedes
-`ExprNoBlock` so `#> (x){y;}` parses as a BlockExpr (bare-identifier
-def `x`, body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock
-`(x)` with dangling `{y;}`. Same shape as the `<Expr>` ordering in §5.
-FuncBodyPipeline's inner-expr alt keeps `GroupedExpr` (not narrowed like
-ChainBase or DoLoopComprExpr range) — `#> (Foo ~<< {...})` is a sensible
-pipeline-body form.
+PEG ordering notes for `FuncBodyPipeline`:
+
+- `BlockExpr` first so `#> (x){y;}` parses as a BlockExpr
+  (bare-identifier def `x`, body `{y;}`) rather than ExprNoBlock's
+  GroupedExprNoBlock `(x)` with dangling `{y;}`. BlockExpr at this
+  position uses BlockDefsInitOptImplIn (the lenient inner form) —
+  the function's positional argument is the implicit input that
+  destructure-no-init binds from, so `defn f(x) #> (<:a, :b>) { ... };`
+  parses with `<:a, :b>` destructuring from `x`.
+- `BareBlockExpr` next handles the no-defs case `#> { y; }`.
+  Disjoint from BlockExpr (which requires a `(...)` prefix) and
+  from ExprNoBlock / GroupedExpr (neither opens with `{`).
+- `ExprNoBlock` and `GroupedExpr` handle non-block pipeline bodies.
+  GroupedExpr isn't narrowed (unlike ChainBase or DoLoopComprExpr's
+  iter range) — `#> (Foo ~<< {...})` is a sensible pipeline-body
+  form.
+
+Same two-block-arm shape as `<FlowRHSImplIn>` in §9.
 
 DefFuncExpr shaper-shape notes:
 - `over` is always the full FuncOverClause node (carries `.names`
@@ -785,8 +887,8 @@ DepCondBoolExpr        := AsTypeOp _ NamedType
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 
 ElseStmt               := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
-<MatchConsequent>      := (Colon _ Expr _ Semicolon) | BlockExpr;
-<MatchConsequentNoSemi>:= (Colon _ Expr) | BlockExpr;
+<MatchConsequent>      := (Colon _ Expr _ Semicolon) | BareBlockExpr;
+<MatchConsequentNoSemi>:= (Colon _ Expr) | BareBlockExpr;
 ```
 
 `IndepPatternStmt` / `IndepPatternStmtNoSemi` and
@@ -802,6 +904,15 @@ operator-led arm — `[?and x :as int]` is a parse error. To annotate,
 use `[?and (x :as int)]` (the paren-recursive arm wraps the inner
 operand). This is consistent with the rule that `:as` cannot attach
 as a bare binary-operand suffix.
+
+Note: `<MatchConsequent>` and `<MatchConsequentNoSemi>` use
+`BareBlockExpr`, not `BlockExpr`. Match consequents have no implicit
+input — a defs-init at this position would have no source for
+destructure-no-init to bind from. The `(Colon _ Expr ...)` arm
+handles the `: expr` consequent form; the `BareBlockExpr` arm
+handles the `{ stmts }` consequent form. To bind names locally
+inside a match consequent, use a `def` statement inside the
+bare-block body.
 
 ## §16 Do-Comprehensions
 

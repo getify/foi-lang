@@ -154,6 +154,7 @@ var InterpExpr = production("InterpExpr",
 // <StringLit> := PlainStr | SpacingEscapedStr | InterpStr | SpacingInterpStr;
 var StringLit = or(PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr);
 
+
 // =============================================================
 // §3 IMPORTS / EXPORTS
 // =============================================================
@@ -277,24 +278,30 @@ export const AsAnnotationExpr = production("AsAnnotationExpr",
 // Syntactic-Grammar.md.
 var OptAsAnnotation = optional(and(delim(), AsAnnotationExpr));
 
-// <Expr> := DoComprExpr | DoLoopComprExpr | AsExpr | BlockExpr | ExprNoBlock | GroupedExpr;
+// <Expr> := DoComprExpr | DoLoopComprExpr | AsExpr | BareBlockExpr | ExprNoBlock | GroupedExpr;
 //
 // PEG ordering:
 // - DoCompr / DoLoopCompr first (niche; distinctive `~<<` / `~<*` openers
 //   reached after a leading Identifier/BuiltIn or ExprNoBlock; ordering
-//   them first keeps them reachable before BlockExpr/ExprNoBlock try
+//   them first keeps them reachable before BareBlockExpr/ExprNoBlock try
 //   to consume the leading token).
-// - AsExpr before BlockExpr/ExprNoBlock — longer match (`...` + `:as`
+// - AsExpr before BareBlockExpr/ExprNoBlock — longer match (`...` + `:as`
 //   tail) wins. Falls through cleanly on no `:as`.
-// - BlockExpr precedes ExprNoBlock so `(x){y;}` parses as a BlockExpr
-//   (bare-identifier def `x`, body `{y;}`) rather than ExprNoBlock's
-//   GroupedExprNoBlock `(x)` with dangling `{y;}`. BlockExpr fails-through
-//   cleanly when no `{` follows the optional defs-init.
+// - BareBlockExpr opens with `{` — disjoint from every other `<Expr>`
+//   arm's opener, so its ordering relative to ExprNoBlock / GroupedExpr
+//   is mechanical. The standalone `(defs){body};` form (which previously
+//   parsed via an optional-defs-init BlockExpr arm) is now intentionally
+//   rejected: BlockExpr (the defs-init form, §11) is reachable only from
+//   implicit-input positions (FlowRHSImplIn, FuncBodyPipeline body), not
+//   from <Expr>, and a free-standing `(defs)` group has no source for the
+//   defs-init to bind from. `(x){y;};` is a parse error rather than two
+//   separate statements because there's no semicolon between `(x)` and
+//   `{y;}`.
 var Expr = or(
 	lazy(() => DoComprExpr),
 	lazy(() => DoLoopComprExpr),
 	lazy(() => AsExpr),
-	lazy(() => BlockExpr),
+	lazy(() => BareBlockExpr),
 	lazy(() => ExprNoBlock),
 	lazy(() => GroupedExpr)
 );
@@ -355,7 +362,7 @@ var BareOperandExprNoEmpty = or(
 );
 
 // AsExpr := <AsableExpr> _ AsAnnotationExpr;
-// <AsableExpr>  := BlockExpr | GuardedExpr | UnaryExpr | AsableInner;
+// <AsableExpr>  := BareBlockExpr | GuardedExpr | UnaryExpr | AsableInner;
 // <AsableInner> := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
 //                | DataStructLit | IdentifierExpr | OpFuncExpr;
 //
@@ -385,10 +392,16 @@ var BareOperandExprNoEmpty = or(
 // then the bare leaves.
 //
 // PEG order in <AsableExpr>:
-// - BlockExpr first (distinctive `{` opener).
+// - BareBlockExpr first (distinctive `{` opener).
 // - GuardedExpr (distinctive `?[`/`![`).
 // - UnaryExpr (`?`/`!`/named-unary).
 // - AsableInner — paren-free operand-level forms.
+//
+// BlockExpr (the defs-init form, §11) is deliberately NOT in
+// <AsableExpr>. It is only reachable from implicit-input positions
+// (FlowRHSImplIn, FuncBodyPipeline body) and has no annotation path
+// at all — there's no outer-expression slot where an AsExpr could
+// wrap it. See the `:as` Precedence section in Syntactic-Grammar.md.
 //
 // Ranges deliberately omitted — `1..5 :as List` must be a parse
 // error. Annotating a range requires explicit parens.
@@ -406,7 +419,7 @@ var AsableInner = or(
 	lazy(() => OpFuncExpr)
 );
 var AsableExpr = or(
-	lazy(() => BlockExpr),
+	lazy(() => BareBlockExpr),
 	lazy(() => GuardedExpr),
 	lazy(() => UnaryExpr),
 	AsableInner
@@ -745,7 +758,6 @@ export const AtCallExpr = production("AtCallExpr",
 	)
 );
 
-// NEW
 // <ChainBase> := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
 //              | OpFuncExpr | GroupedExprNoBlock
 //              | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
@@ -757,7 +769,7 @@ export const AtCallExpr = production("AtCallExpr",
 // - OpFuncExpr precedes GroupedExprNoBlock — both open with `(`, OpFuncExpr's stricter
 //   inner shape (must be Op | DotAngle | DotBracket | `[]`) fails-through cleanly.
 //
-// GroupedExprNoBlock (not GroupedExpr) — paren-wrapped BlockExpr,
+// GroupedExprNoBlock (not GroupedExpr) — paren-wrapped BareBlockExpr,
 // DoComprExpr, and DoLoopComprExpr cannot serve as chain bases.
 // Bind to a name first (`def x: {...}; x.foo`) to chain on those.
 var ChainBase = or(
@@ -1023,15 +1035,50 @@ export const OrBinExpr = production("OrBinExpr",
 // <OrDispatch> := OrBinExpr | AndDispatch;
 var OrDispatch = or(OrBinExpr, AndDispatch);
 
-// FlowBinExpr := FlowLHS (_ FlowOp _ FlowRHS)+;
-// <FlowLHS>   := CondClause | OrDispatch;
-// <FlowRHS>   := BlockExpr  | OrDispatch;
+// <FlowLHS>        := CondClause | OrDispatch;
+// <FlowRHSImplIn>  := BlockExpr | BareBlockExpr | OrDispatch;
+// <FlowRHSStrict>  := OrDispatch;
 //
-// CondClause (§14) and BlockExpr (§11) are forward-refs via lazy().
-var FlowLHS = or(lazy(() => CondClause), OrDispatch);
-var FlowRHS = or(lazy(() => BlockExpr),  OrDispatch);
+// Per-op RHS narrowing — see Syntactic-Grammar.md §9.
+//
+// ComprOp / PipelineOp RHS receive an implicit input element (each
+// comprehension item / pipeline topic). Both block arms are admitted:
+// BlockExpr (defs-init `(...)` + body, using the lenient inner
+// BlockDefsInitOptImplIn so destructure-no-init can bind from the
+// implicit input) and BareBlockExpr (no-defs case).
+//
+// ComposeOp RHS receives a function value (compose lifts a chain of
+// functions). There is no implicit element at compose, so a defs-init
+// has no source to bind from, and a bare body without defs is not a
+// function value. FlowRHSStrict therefore collapses to OrDispatch —
+// no block arm at all. The compose operand must be a function-valued
+// expression.
+//
+// CondClause (§14), BlockExpr (§11), and BareBlockExpr (§11) are
+// forward-refs via lazy().
+var FlowLHS       = or(lazy(() => CondClause), OrDispatch);
+var FlowRHSImplIn = or(lazy(() => BlockExpr), lazy(() => BareBlockExpr), OrDispatch);
+var FlowRHSStrict = OrDispatch;
+
+// FlowBinExpr      := FlowLHS (_ FlowOpAndRHS)+;
+// <FlowOpAndRHS>   := (ComprOp     _ FlowRHSImplIn)
+//                   | (PipelineOp  _ FlowRHSImplIn)
+//                   | (ComposeOp   _ FlowRHSStrict);
+//
+// PEG order on FlowOpAndRHS: ComprOp / PipelineOp / ComposeOp
+// have disjoint openers (Tilde / Hash / Plus|OpenAngle), so order
+// is mechanical.
+//
+// ComprOp / PipelineOp / ComposeOp live in §10, defined AFTER
+// this point in the file. Forward-ref each via lazy() — same
+// pattern as the old single FlowOp reference.
+var FlowOpAndRHS = or(
+	and(lazy(() => ComprOp),    delim(), FlowRHSImplIn),
+	and(lazy(() => PipelineOp), delim(), FlowRHSImplIn),
+	and(lazy(() => ComposeOp),  delim(), FlowRHSStrict)
+);
 export const FlowBinExpr = production("FlowBinExpr",
-	and(FlowLHS, many(and(delim(), lazy(() => FlowOp), delim(), FlowRHS)))
+	and(FlowLHS, many(and(delim(), FlowOpAndRHS)))
 );
 
 // <FlowDispatch> := FlowBinExpr | OrDispatch;
@@ -1127,32 +1174,91 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 // =============================================================
 // §11 BLOCK EXPRESSIONS
 // =============================================================
+//
+// Three productions form the block family:
+//
+//   BareBlockExpr := OpenBrace _ BlockStmts _ CloseBrace;
+//                    (visible — no defs-init at all)
+//   BlockExpr     := BlockDefsInitOptImplIn _ BareBlockExpr;
+//                    (defs-init REQUIRED; lenient inner; implicit-input
+//                     positions only)
+//   DefBlockStmt  := "def" _ BlockDefsInitOpt _ BareBlockExpr;
+//                    (strict-optional inner; stmt position, no implicit
+//                     input source)
+//
+// Where each is reachable:
+//
+// - BareBlockExpr — visible at <Expr>, <AsableExpr>, <FlowRHSImplIn>,
+//   FuncBodyPipeline body, and <MatchConsequent>/<MatchConsequentNoSemi>.
+//   Carries the bare-body case at every block-accepting slot.
+//
+// - BlockExpr — only at <FlowRHSImplIn> (ComprOp / PipelineOp RHS) and
+//   FuncBodyPipeline body. Both are implicit-input positions: the
+//   enclosing context supplies the source the defs-init binds from
+//   (each comprehension item / pipeline topic / positional argument
+//   into the function). Defs-init is required — the bare-body form
+//   at these positions goes through BareBlockExpr instead.
+//
+// - DefBlockStmt — only at <Stmt>. No implicit input source at a
+//   top-level `def (...)` position, so destructure-no-init has nothing
+//   to bind from. The strict-optional inner enforces this:
+//   `def (x) { ... };` parses (Identifier-no-init is allowed —
+//   declares x as undefined); `def (<:a>) { ... };` is a parse error;
+//   `def (<:a>: src) { ... };` parses with explicit init.
+//
+// Standalone rejection: `(defs) { body };` with no enclosing
+// implicit-input context is intentionally not in the grammar. Free-
+// standing defs-init has no source to bind from, so admitting it
+// would be semantically meaningless. See §5's <Expr> PEG note.
+//
+// VarDefInitOpt vs. VarDefInitOptImplIn mirrors this fork at the
+// entry level:
+//   - VarDefInitOpt (strict-optional): Identifier-init optional,
+//     DestructureTarget-init required. Used at DefBlockStmt's
+//     BlockDefsInitOpt where no implicit source exists.
+//   - VarDefInitOptImplIn (lenient): both optional. Used at implicit-
+//     input sites — ParameterList (the positional argument is the
+//     source) and BlockDefsInitOptImplIn (via FlowRHSImplIn /
+//     FuncBodyPipeline body).
+//
+// `:as` reachability:
+//   - BareBlockExpr reaches `:as` via AsExpr-wrap (it's in <AsableExpr>).
+//   - BlockExpr has NO annotation path at all — it isn't in
+//     <AsableExpr>, and its reachable contexts aren't outer-expression
+//     slots where an AsExpr could wrap it. To annotate within a
+//     ComprOp/PipelineOp/FuncBodyPipeline block, annotate the inner
+//     expression instead.
+//   - DefBlockStmt is a statement, not an expression — no `:as` path.
 
-// VarDefInit    := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
 // VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
-//                | (DestructureTarget (_ Colon _ ExprNoBlock)?);
-export const VarDefInit = production("VarDefInit",
-	and(
-		or(Identifier, DestructureTarget),
-		delim(), Colon, delim(),
-		ExprNoBlock
+//                | (DestructureTarget  _ Colon _ ExprNoBlock);
+//
+// Strict-optional form: DestructureTarget requires init. DefBlockStmt
+// (this production's only consumer via BlockDefsInitOpt) has no
+// implicit source.
+export const VarDefInitOpt = production("VarDefInitOpt",
+	or(
+		and(Identifier,        optional(and(delim(), Colon, delim(), ExprNoBlock))),
+		and(DestructureTarget,          and(delim(), Colon, delim(), ExprNoBlock))
 	)
 );
 
-export const VarDefInitOpt = production("VarDefInitOpt",
+// VarDefInitOptImplIn := (Identifier        (_ Colon _ ExprNoBlock)?)
+//                      | (DestructureTarget (_ Colon _ ExprNoBlock)?);
+//
+// Lenient form for implicit-input positions: ParameterList (positional
+// arg is source) and BlockDefsInitOptImplIn (via FlowRHSImplIn /
+// FuncBodyPipeline body — the comprehension/pipeline element / function
+// arg is source).
+export const VarDefInitOptImplIn = production("VarDefInitOptImplIn",
 	or(
 		and(Identifier,        optional(and(delim(), Colon, delim(), ExprNoBlock))),
 		and(DestructureTarget, optional(and(delim(), Colon, delim(), ExprNoBlock)))
 	)
 );
 
-// <VarDefInitList>    := VarDefInit (_ Comma _ VarDefInit)* (_ Comma)?;
-// <VarDefInitOptList> := (_ Comma)* (VarDefInitOpt (_ Comma (_ VarDefInitOpt)?)*)?;
-var VarDefInitList = and(
-	VarDefInit,
-	any(and(delim(), Comma, delim(), VarDefInit)),
-	optional(and(delim(), Comma))
-);
+// <VarDefInitOptList>       := (_ Comma)* (VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
+// <VarDefInitOptImplInList> := (_ Comma)* (VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
 var VarDefInitOptList = and(
 	any(and(delim(), Comma)),
 	optional(and(
@@ -1160,14 +1266,21 @@ var VarDefInitOptList = and(
 		any(and(delim(), Comma, optional(and(delim(), VarDefInitOpt))))
 	))
 );
-
-// BlockDefsInit    := OpenParen _ VarDefInitList _ CloseParen;
-// BlockDefsInitOpt := OpenParen _ VarDefInitOptList _ CloseParen;
-export const BlockDefsInit = production("BlockDefsInit",
-	and(OpenParen, delim(), VarDefInitList, delim(), CloseParen)
+var VarDefInitOptImplInList = and(
+	any(and(delim(), Comma)),
+	optional(and(
+		VarDefInitOptImplIn,
+		any(and(delim(), Comma, optional(and(delim(), VarDefInitOptImplIn))))
+	))
 );
+
+// BlockDefsInitOpt       := OpenParen _ VarDefInitOptList       _ CloseParen;
+// BlockDefsInitOptImplIn := OpenParen _ VarDefInitOptImplInList _ CloseParen;
 export const BlockDefsInitOpt = production("BlockDefsInitOpt",
 	and(OpenParen, delim(), VarDefInitOptList, delim(), CloseParen)
+);
+export const BlockDefsInitOptImplIn = production("BlockDefsInitOptImplIn",
+	and(OpenParen, delim(), VarDefInitOptImplInList, delim(), CloseParen)
 );
 
 // <BlockStmts> := (StmtSemi _)* StmtSemiOpt?;
@@ -1176,28 +1289,66 @@ var BlockStmts = and(
 	optional(StmtSemiOpt)
 );
 
-// <BareBlockExpr> := OpenBrace _ BlockStmts _ CloseBrace;
-var BareBlockExpr = and(OpenBrace, delim(), BlockStmts, delim(), CloseBrace);
-
-// BlockExpr := BlockDefsInitOpt? _ BareBlockExpr;
+// BareBlockExpr := OpenBrace _ BlockStmts _ CloseBrace.
 //
-// No `:as` tail — annotation comes via AsExpr (§5).
-export const BlockExpr = production("BlockExpr",
-	and(optional(BlockDefsInitOpt), delim(), BareBlockExpr),
+// Visible production. Carries the bare-body case at every block-
+// accepting slot in the grammar. preserveInnerDelim:true so the
+// shaper sees inner trivia between stmts (needed for round-trip).
+//
+// No `:as` tail on the production itself — annotation comes via
+// AsExpr (§5), where BareBlockExpr is the first arm of <AsableExpr>.
+export const BareBlockExpr = production("BareBlockExpr",
+	and(OpenBrace, delim(), BlockStmts, delim(), CloseBrace),
 	{ preserveInnerDelim: true }
 );
 
-// DefBlockStmt := "def" _ BlockDefsInit _ BareBlockExpr;
+// BlockExpr := BlockDefsInitOptImplIn _ BareBlockExpr.
+//
+// Defs-init is REQUIRED (not optional) — BlockExpr now exclusively
+// names the defs-init form. The bare-body form at every implicit-
+// input slot goes through BareBlockExpr.
+//
+// Only reachable from implicit-input positions: <FlowRHSImplIn>
+// (ComprOp / PipelineOp RHS) and FuncBodyPipeline body. The
+// enclosing context supplies the source that destructure-no-init
+// entries bind from — hence the lenient inner BlockDefsInitOptImplIn.
+//
+// No `:as` tail and no annotation path at all. BlockExpr is not in
+// <AsableExpr> and its reachable contexts are not outer-expression
+// slots. To annotate within a ComprOp/PipelineOp/FuncBodyPipeline
+// block, annotate the inner expression instead.
+//
+// preserveInnerDelim:true so trivia between BlockDefsInitOptImplIn
+// and the BareBlockExpr child is preserved for round-trip. The
+// child's own internal trivia is handled by its own preserveInnerDelim.
+export const BlockExpr = production("BlockExpr",
+	and(BlockDefsInitOptImplIn, delim(), BareBlockExpr),
+	{ preserveInnerDelim: true }
+);
+
+// DefBlockStmt := "def" _ BlockDefsInitOpt _ BareBlockExpr.
 //
 // `<Stmt>` orders DefBlockStmt before DefVarStmt — both open with
 // `def`, but DefBlockStmt requires a `(...)` defs-init that
 // DefVarStmt's identifier/destructure-target target can't match,
 // so DefBlockStmt fails-through cleanly to DefVarStmt for the
 // `def x: …` form.
+//
+// Uses the strict-optional BlockDefsInitOpt (Identifier-init
+// optional, DestructureTarget-init required) — there is no implicit
+// input at a top-level `def (...)` position, so a destructure-no-init
+// entry would have no source to bind from. `def (x) { ... };` parses
+// (Identifier-no-init declares x as undefined); `def (<:a>) { ... };`
+// is a parse error; `def (<:a>: src) { ... };` parses.
+//
+// preserveInnerDelim:true so trivia between the `def` keyword,
+// BlockDefsInitOpt, and the BareBlockExpr child is preserved for
+// round-trip.
 export const DefBlockStmt = production("DefBlockStmt",
-	and(KwDef, delim(), BlockDefsInit, delim(), BareBlockExpr),
+	and(KwDef, delim(), BlockDefsInitOpt, delim(), BareBlockExpr),
 	{ preserveInnerDelim: true }
 );
+
 
 // =============================================================
 // §12 ASSIGNMENT
@@ -1234,14 +1385,14 @@ export const AssignmentExpr = production("AssignmentExpr",
 var KwDefn = tokVal("Keyword", "defn");
 var KwOver = tokVal("Keyword", ":over");
 
-// ParameterList := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+// ParameterList := VarDefInitOptImplIn (_ Comma _ VarDefInitOptImplIn)*;
 //
-// VarDefInitOpt from §11 — Identifier with optional `:` initializer,
-// or DestructureTarget.
+// Lenient — the positional argument at each param position is the
+// implicit source for destructure-no-init.
 export const ParameterList = production("ParameterList",
 	and(
-		VarDefInitOpt,
-		any(and(delim(), Comma, delim(), VarDefInitOpt))
+		VarDefInitOptImplIn,
+		any(and(delim(), Comma, delim(), VarDefInitOptImplIn))
 	)
 );
 
@@ -1314,16 +1465,26 @@ export const FuncBodyExpr = production("FuncBodyExpr",
 	and(Caret, delim(), or(ExprNoBlock, GroupedExpr))
 );
 
-// FuncBodyPipeline := PipelineOp _ (BlockExpr | ExprNoBlock | GroupedExpr);
+// FuncBodyPipeline := PipelineOp _ (BlockExpr | BareBlockExpr | ExprNoBlock | GroupedExpr);
 //
-// PEG order: BlockExpr before ExprNoBlock so `#> (x){y;}` parses
-// as a BlockExpr (def `x`, body `{y;}`) rather than ExprNoBlock's
-// GroupedExprNoBlock `(x)` with dangling `{y;}` — same shape as §5's
-// Expr ordering fix.
+// PEG order:
+// - BlockExpr first so `#> (x){y;}` parses as a BlockExpr (def `x`,
+//   body `{y;}`) rather than ExprNoBlock's GroupedExprNoBlock `(x)`
+//   with dangling `{y;}`. BlockExpr at this position uses the lenient
+//   BlockDefsInitOptImplIn — the function's positional argument is
+//   the implicit input that destructure-no-init binds from, so
+//   `defn f(x) #> (<:a, :b>) { ... };` parses with `<:a, :b>`
+//   destructuring from `x`.
+// - BareBlockExpr next handles the no-defs case `#> { y; }`. Disjoint
+//   from BlockExpr (which requires a `(...)` prefix) and from
+//   ExprNoBlock / GroupedExpr (neither opens with `{`).
+// - ExprNoBlock / GroupedExpr handle non-block pipeline bodies.
+//
+// Same two-block-arm shape as <FlowRHSImplIn> in §9.
 export const FuncBodyPipeline = production("FuncBodyPipeline",
 	and(
 		PipelineOp, delim(),
-		or(BlockExpr, ExprNoBlock, GroupedExpr)
+		or(BlockExpr, BareBlockExpr, ExprNoBlock, GroupedExpr)
 	)
 );
 
@@ -1387,18 +1548,26 @@ export const GuardedExpr = production("GuardedExpr",
 // §15 MATCH EXPRESSIONS
 // =============================================================
 
-// MatchConsequent      := (Colon _ Expr _ Semicolon) | BlockExpr;
+// MatchConsequent      := (Colon _ Expr _ Semicolon) | BareBlockExpr;
 //
-// PEG: Colon-arm first (disjoint from BlockExpr's OpenBrace opener).
+// PEG: Colon-arm first (disjoint from BareBlockExpr's OpenBrace opener).
+//
+// BareBlockExpr only — not BlockExpr. A match consequent has no
+// implicit input source, so a defs-init `(x: 1) { ... }` at this
+// position would have nothing to bind from. To bind names locally
+// inside a match consequent, use a `def` statement inside the
+// bare-block body.
 var MatchConsequent = or(
 	and(Colon, delim(), Expr, delim(), Semicolon),
-	BlockExpr
+	BareBlockExpr
 );
 
-// MatchConsequentNoSemi := (Colon _ Expr) | BlockExpr;
+// MatchConsequentNoSemi := (Colon _ Expr) | BareBlockExpr;
+//
+// Same BareBlockExpr-only rationale as MatchConsequent.
 var MatchConsequentNoSemi = or(
 	and(Colon, delim(), Expr),
-	BlockExpr
+	BareBlockExpr
 );
 
 // ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
@@ -1437,7 +1606,7 @@ export const IndepPatternStmtNoSemi = production("IndepPatternStmtNoSemi",
 //
 // PEG ordering within the trailing alt: ElseStmt before
 // IndepPatternStmtNoSemi — ElseStmt opens with optional Qmark+
-// MatchConsequentNoSemi (bare `:expr` or BlockExpr), distinct from
+// MatchConsequentNoSemi (bare `:expr` or BareBlockExpr), distinct from
 // IndepPatternStmtNoSemi's required BracketExpr opener. Lead arm
 // (one-or-more IndepPatternStmt) before the single-stmt arms so
 // repeated clauses are gathered.
@@ -1628,7 +1797,9 @@ var DoBareBlockExpr = and(OpenBrace, delim(), DoBlockStmts, delim(), CloseBrace)
 //
 // `<DoBareBlockExpr>` stays hidden; its OpenBrace/stmts/CloseBrace
 // contents splice into DoBlockExpr's parts. Parallel to BlockExpr/
-// BareBlockExpr in §11.
+// BareBlockExpr in §11, but DoBlockExpr keeps the optional defs-init
+// shape (do-comprehensions have their own implicit-input semantics
+// distinct from the §11 BlockExpr / BareBlockExpr fork).
 export const DoBlockExpr = production("DoBlockExpr",
 	and(optional(DoBlockDefsInitOpt), delim(), DoBareBlockExpr),
 	{ preserveInnerDelim: true }
@@ -1665,13 +1836,12 @@ var DoLoopIterNoBlockExpr = or(
 // Same shape as §5/§13 ordering.
 var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
 
-// NEW
 // DoLoopComprExpr := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 //
 // `~<*` is Tilde + OpenAngle + Star — three adjacent single-char
 // tokens.
 //
-// Range is ExprNoBlock only — paren-wrapped BlockExpr, DoComprExpr,
+// Range is ExprNoBlock only — paren-wrapped BareBlockExpr, DoComprExpr,
 // and DoLoopComprExpr cannot serve as the loop range. Bind to a name
 // first to use those forms as a range.
 export const DoLoopComprExpr = production("DoLoopComprExpr",
@@ -1699,7 +1869,6 @@ export const PickValue = production("PickValue",
 	and(Ampersand, IdentBase, optional(MultiAccessExpr))
 );
 
-// NEW
 // <ComputedPropName> := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
 //
 // No trivia between Percent and inner.

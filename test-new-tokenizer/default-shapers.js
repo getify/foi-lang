@@ -1440,26 +1440,79 @@ export const defaultShapers = {
 	MulBinExpr(frame,parts)     { return shapeBinTier("MulBinExpr",parts); },
 
 
+// =============================================================
+	// §11 BLOCK EXPRESSIONS
 	// =============================================================
-	// §11 BLOCKS / DEF-BLOCK STATEMENT
-	// =============================================================
-
-	// VarDefInit := (Identifier | DestructureTarget) _ Colon _ ExprNoBlock;
 	//
-	// Colon is structural → delims.
-	VarDefInit(frame,parts) {
-		var nodes = [];
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) nodes.push(p);
-			else delims.push(p); // Colon
-		}
-		var [ target, init ] = nodes;
-		return withDelims({ type: "VarDefInit", target, init }, delims);
-	},
+	// Three visible productions form the block family, with
+	// intentionally different reach (see parser.js §11 and the
+	// "Block Expressions" section of Syntactic-Grammar.md):
+	//
+	//   BareBlockExpr := OpenBrace _ BlockStmts _ CloseBrace;
+	//                    (no defs-init at all)
+	//   BlockExpr     := BlockDefsInitOptImplIn _ BareBlockExpr;
+	//                    (defs-init REQUIRED; lenient inner;
+	//                     implicit-input positions only)
+	//   DefBlockStmt  := "def" _ BlockDefsInitOpt _ BareBlockExpr;
+	//                    (strict-optional inner; stmt position, no
+	//                     implicit input source)
+	//
+	// AST shape — `body` is the nested BareBlockExpr node:
+	//
+	//   BareBlockExpr { type, stmts, delims? }
+	//   BlockExpr     { type, defs, body }     // body = BareBlockExpr
+	//   DefBlockStmt  { type, defs, body }     // body = BareBlockExpr
+	//
+	// BlockExpr's statements are NOT flattened onto the parent —
+	// they live at body.stmts. Same for DefBlockStmt. Round-trip
+	// and transpile walkers recurse `node.body` to reach the
+	// statement list (and pick up the body's own delims for the
+	// braces and inter-stmt semicolons). This is a deliberate
+	// shape change from the previous flat-stmts layout — the
+	// nested form mirrors the new grammar where BareBlockExpr is
+	// itself a visible production owning the brace-delimited body.
+	//
+	// BlockExpr and DefBlockStmt carry only the trivia between
+	// their direct children (def-keyword / defs-init / body) in
+	// their own delims (via preserveInnerDelim:true on the
+	// production). All internal-to-body trivia — braces,
+	// inter-stmt semicolons, soft delims between stmts — is owned
+	// by BareBlockExpr's delims.
+	//
+	// `:as` reachability:
+	//   - BareBlockExpr reaches `:as` only via AsExpr-wrap (it's
+	//     the first arm of <AsableExpr> in §5).
+	//   - BlockExpr has NO annotation path — it's not in
+	//     <AsableExpr> and its reachable contexts (FlowRHSImplIn,
+	//     FuncBodyPipeline body) aren't outer-expression slots.
+	//     To annotate within a ComprOp / PipelineOp /
+	//     FuncBodyPipeline block, annotate the inner expression.
+	//   - DefBlockStmt is a statement, not an expression — no
+	//     `:as` path.
+	//
+	// VarDefInitOpt vs VarDefInitOptImplIn mirrors the strict /
+	// lenient fork at the entry level:
+	//   - VarDefInitOpt (strict-optional): Identifier-init
+	//     optional, DestructureTarget-init REQUIRED. Used at
+	//     DefBlockStmt's BlockDefsInitOpt — no implicit source.
+	//   - VarDefInitOptImplIn (lenient): both Identifier-init and
+	//     DestructureTarget-init optional. Used at implicit-input
+	//     sites — ParameterList (§13, positional arg is source)
+	//     and BlockDefsInitOptImplIn (here, via FlowRHSImplIn /
+	//     FuncBodyPipeline body).
+	//
+	// Both have the same node shape (target + optional init);
+	// the type tag is the only structural difference. Downstream
+	// consumers (transpiler / interpreter / FlowBinExpr handler)
+	// branch on the tag to know whether DestructureTarget-no-init
+	// entries should bind from an enclosing implicit source.
 
 	// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
-	//                | (DestructureTarget (_ Colon _ ExprNoBlock)?);
+	//                | (DestructureTarget  _ Colon _ ExprNoBlock);
+	//
+	// Strict-optional form. Colon (when init present) is structural
+	// → delims. Same shaper body handles both arms — count of
+	// nodes determines whether init is present.
 	VarDefInitOpt(frame,parts) {
 		var nodes = [];
 		var delims = [];
@@ -1473,20 +1526,10 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 
-	// BlockDefsInit := OpenParen _ <VarDefInitList> _ CloseParen;
-	//
-	// Parens and commas are structural → delims.
-	BlockDefsInit(frame,parts) {
-		var entries = [];
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) entries.push(p);
-			else delims.push(p); // OpenParen, CloseParen, Comma
-		}
-		return withDelims({ type: "BlockDefsInit", entries }, delims);
-	},
-
 	// BlockDefsInitOpt := OpenParen _ <VarDefInitOptList> _ CloseParen;
+	//
+	// Strict family — entries are VarDefInitOpt. Parens and
+	// commas are structural → delims.
 	BlockDefsInitOpt(frame,parts) {
 		var entries = [];
 		var delims = [];
@@ -1497,40 +1540,91 @@ export const defaultShapers = {
 		return withDelims({ type: "BlockDefsInitOpt", entries }, delims);
 	},
 
-	// BlockExpr := BlockDefsInitOpt? _ <BareBlockExpr>;
+	// BareBlockExpr := OpenBrace _ <BlockStmts> _ CloseBrace.
 	//
-	// <BareBlockExpr> is hidden — its OpenBrace/Semicolons/
-	// CloseBrace splice into parts. Braces and semicolons are
-	// structural → delims.
-	BlockExpr(frame,parts) {
-		var defs;
-		var rest = [];
-		for (let p of parts) {
-			if (isNode(p) && p.type === "BlockDefsInitOpt") defs = p;
-			else rest.push(p);
-		}
-		var { stmts, delims } = collectStmtList(rest);
-		var node = { type: "BlockExpr", stmts };
-		if (defs) node.defs = defs;
-		return withDelims(node, delims);
+	// Visible production. Owns ALL the structural tokens of the
+	// brace-delimited body — OpenBrace, lifted inter-stmt
+	// Semicolons (via the StmtSemi α-claim lift channel), and
+	// CloseBrace. Parents (BlockExpr / DefBlockStmt) do not
+	// duplicate these in their own delims.
+	//
+	// preserveInnerDelim:true on the production means soft delims
+	// (WS, comments) between stmts auto-merge into this node's
+	// delims by source position alongside the hard structural
+	// tokens. collectStmtList handles the partition of lifted
+	// stmt nodes from structural tokens.
+	BareBlockExpr(frame,parts) {
+		var { stmts, delims } = collectStmtList(parts);
+		return withDelims({ type: "BareBlockExpr", stmts }, delims);
 	},
 
-	// DefBlockStmt := "def" _ BlockDefsInit _ <BareBlockExpr>;
+	// BlockExpr := BlockDefsInitOptImplIn _ <BareBlockExpr>.
 	//
-	// "def" keyword drops; braces and semicolons → delims.
-	DefBlockStmt(frame,parts) {
-		var defs;
-		var rest = [];
+	// Defs-init is REQUIRED (not optional) — BlockExpr now
+	// exclusively names the defs-init form. The bare-body case at
+	// every implicit-input slot goes through BareBlockExpr
+	// directly.
+	//
+	// AST shape: { defs, body }. body is the BareBlockExpr node.
+	// Statements live at body.stmts (not flattened onto the
+	// parent); brace and inter-stmt-semi delims live at
+	// body.delims.
+	//
+	// preserveInnerDelim:true on the production means any trivia
+	// (WS, comments) between the BlockDefsInitOptImplIn child and
+	// the BareBlockExpr child auto-merges into this parent's
+	// delims. The defs-init child's own internal trivia (parens,
+	// commas) and the body's own internal trivia stay on their
+	// respective children.
+	//
+	// Per the grammar there are exactly two node arms in this
+	// production's parts — the defs-init and the body — so the
+	// non-body node is by definition the defs. No type-tag check
+	// on the defs side; if a future refactor swaps in a different
+	// defs-init production name, this shaper still works.
+	BlockExpr(frame,parts) {
+		var defs, body;
+		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) {
-				if (p.type === "BlockDefsInit") defs = p;
-				else rest.push(p);
+				if (p.type === "BareBlockExpr") body = p;
+				else                            defs = p;
+			}
+			else delims.push(p); // soft delims (WS / Comment) between defs and body
+		}
+		return withDelims({ type: "BlockExpr", defs, body }, delims);
+	},
+
+// DefBlockStmt := "def" _ BlockDefsInitOpt _ <BareBlockExpr>.
+	//
+	// "def" keyword drops (anchored in type tag — the leading
+	// keyword distinguishes this from BlockExpr at the syntax
+	// layer).
+	//
+	// AST shape: { defs, body } — same shape as BlockExpr.
+	// Statements live at body.stmts; braces and inter-stmt semis
+	// live at body.delims.
+	//
+	// Uses BlockDefsInitOpt (strict-optional) — there is no
+	// implicit input source at a top-level `def (...)` position,
+	// so DestructureTarget entries in the defs-init require their
+	// own init expression. Enforced at the parser level via the
+	// strict VarDefInitOpt form.
+	//
+	// Same defensive defs assignment as BlockExpr — the non-body
+	// node is by definition the defs, no type-tag check needed.
+	DefBlockStmt(frame,parts) {
+		var defs, body;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "BareBlockExpr") body = p;
+				else                            defs = p;
 			}
 			else if (p.type === "Keyword") continue; // "def"
-			else rest.push(p); // braces, lifted semis
+			else delims.push(p); // soft delims (WS / Comment)
 		}
-		var { stmts, delims } = collectStmtList(rest);
-		return withDelims({ type: "DefBlockStmt", defs, stmts }, delims);
+		return withDelims({ type: "DefBlockStmt", defs, body }, delims);
 	},
 
 	// =============================================================
@@ -1567,8 +1661,10 @@ export const defaultShapers = {
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
 
-	// ParameterList := VarDefInitOpt (_ Comma _ VarDefInitOpt)*;
+	// ParameterList := VarDefInitOptImplIn (_ Comma _ VarDefInitOptImplIn)*;
 	//
+	// Lenient entries — the positional argument at each param
+	// position is the implicit source for destructure-no-init.
 	// Comma is structural → delims.
 	ParameterList(frame,parts) {
 		var params = [];
@@ -2372,3 +2468,33 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 };
+
+// =============================================================
+// §11 LENIENT-FORM ALIASES
+// =============================================================
+//
+// The §11 strict/lenient fork at the entry and defs-init levels:
+//
+//   VarDefInitOpt       /  VarDefInitOptImplIn
+//   BlockDefsInitOpt    /  BlockDefsInitOptImplIn
+//
+// produces structurally identical AST nodes — the strict-vs-
+// lenient distinction lives entirely at the parser layer
+// (whether DestructureTarget-no-init is grammatically accepted).
+// All downstream consumers (transpiler, round-trip oracle, future
+// interpreter) treat the two forms uniformly.
+//
+// (Note: there is no BlockExpr-level counterpart in this alias
+// table. The grammar restructure folded the prior BlockExprImplIn
+// production; the surviving block fork is BlockExpr — defs-init
+// REQUIRED, lenient inner — vs BareBlockExpr — no defs-init.
+// These are structurally distinct productions with distinct
+// shapers, not a strict/lenient alias pair.)
+//
+// Reuse the strict-form shaper functions by reference. Each
+// emits its hardcoded `type:` string ("VarDefInitOpt",
+// "BlockDefsInitOpt"), so lenient-production frames shape to
+// the same type tag as their strict counterparts. No `this`
+// dependency in the shaper bodies makes this safe.
+defaultShapers.VarDefInitOptImplIn    = defaultShapers.VarDefInitOpt;
+defaultShapers.BlockDefsInitOptImplIn = defaultShapers.BlockDefsInitOpt;

@@ -265,22 +265,68 @@ export const samples = [
 
 
 	// =============================================================
-	// §11 BLOCKS / DEF-BLOCK STATEMENT
+	// §11 BLOCK EXPRESSIONS / DEF-BLOCK STATEMENT
 	// =============================================================
+	//
+	// Three visible productions: BareBlockExpr (no defs-init,
+	// reachable at every block-accepting slot), BlockExpr (defs-init
+	// REQUIRED, only at implicit-input positions — FlowRHSImplIn and
+	// FuncBodyPipeline body), DefBlockStmt (stmt position, no
+	// implicit source). Standalone `(defs){body};` is intentionally
+	// rejected by the grammar — the corresponding negatives live in
+	// test-parser.js failSamples.
 
-	// BlockExpr — defs-init + body + :as archetype
-	{ label: "BlockExpr: bare",                      src: "{ x; };" },
-	{ label: "BlockExpr: with defs",                 src: "(x: 1) { x; };" },
-	{ label: "BlockExpr: defs + :as",                src: "(x: 1) { x; } :as int;" },
+	// BareBlockExpr — bare-body archetype
+	{ label: "BareBlockExpr: standalone",                  src: "{ x; };" },
+	{ label: "BareBlockExpr: empty body",                  src: "{ };" },
+	{ label: "BareBlockExpr: multi-stmt",                  src: "{ x; y; z; };" },
 
-	// BlockDefsInitOpt — exercises VarDefInitOpt's init-less form
-	{ label: "BlockExpr: defs no init",              src: "(x, y) { x; };" },
-	{ label: "BlockExpr: mixed defs",                src: "(x: 1, y) { x; };" },
+	// BareBlockExpr at <Expr> via AsExpr-wrap (it's the first arm of <AsableExpr>)
+	{ label: "BareBlockExpr: :as via AsExpr-wrap",         src: "{ x; } :as int;" },
 
-	// DefBlockStmt — required defs + body
+	// BareBlockExpr at DefVarStmt RHS (reached via <Expr>)
+	{ label: "BareBlockExpr: at DefVarStmt RHS",           src: "def x: { y; };" },
+
+	// BareBlockExpr at FlowRHSImplIn — no-defs arm at ComprOp / PipelineOp RHS
+	{ label: "BareBlockExpr: ~map no-defs",                src: "list ~map { x; };" },
+	{ label: "BareBlockExpr: #> no-defs",                  src: "data #> { x; };" },
+
+	// BareBlockExpr at FuncBodyPipeline body (no-defs arm)
+	{ label: "BareBlockExpr: defn #> no-defs body",        src: "defn f(x) #> { x; };" },
+
+	// BlockExpr (defs-init required) — Identifier entries at implicit-input positions
+	// FlowRHSImplIn → BlockExpr → BlockDefsInitOptImplIn → VarDefInitOptImplIn
+	{ label: "BlockExpr: ~map ident defs",                 src: "list ~map (x) { x; };" },
+	{ label: "BlockExpr: ~map mixed defs",                 src: "list ~map (x: 1, y) { x; };" },
+	{ label: "BlockExpr: #> ident defs",                   src: "data #> (x) { x; };" },
+	{ label: "BlockExpr: defn #> ident defs",              src: "defn f(x) #> (y) { y; };" },
+
+	// BlockExpr w/ destructure-no-init — lenient inner binds from the implicit source
+	// (comprehension element / pipeline topic / function positional arg)
+	{ label: "BlockExpr: ~map destructure no-init",
+	  src: "list ~map (<:a, :b>) { a + b; };" },
+	{ label: "BlockExpr: #> destructure no-init",
+	  src: "data #> (<:a, :b>) { a + b; };" },
+	{ label: "BlockExpr: defn #> destructure no-init",
+	  src: "defn f(x) #> (<:a, :b>) { a + b; };" },
+
+	// DefBlockStmt — strict-optional inner (Identifier-init optional;
+	// DestructureTarget-init REQUIRED — no implicit source at top-level `def (...)`)
 	{ label: "DefBlockStmt: def (x: 1) { x; }",            src: "def (x: 1) { x; };" },
 	{ label: "DefBlockStmt: def (x: 1, y: 2) { x + y; }",  src: "def (x: 1, y: 2) { x + y; };" },
+	{ label: "DefBlockStmt: ident no-init",                src: "def (x) { y; };" },
+	{ label: "DefBlockStmt: destructure w/ explicit init",
+	  src: "def (<:a, :b>: src) { a + b; };" },
 
+	// BareBlockExpr at MatchConsequent / MatchConsequentNoSemi
+	// (match consequents have no implicit source, so only the BareBlockExpr
+	// arm — not BlockExpr — is reachable here)
+	{ label: "BareBlockExpr: IndepMatch consequent",
+	  src: "?{ ?[c] { y; } };" },
+	{ label: "BareBlockExpr: IndepMatch else (Qmark + bare)",
+	  src: "?{ ?[c]: x; ? { y; } };" },
+	{ label: "BareBlockExpr: DepMatch consequent",
+	  src: '?(x){ ?["a"] { y; } };' },
 
 	// =============================================================
 	// §12 ASSIGNMENT
@@ -308,6 +354,13 @@ export const samples = [
 	{ label: "defn: gather parameter",               src: "defn gather(*args) ^args;" },
 	{ label: "defn: with FuncPrecond",               src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
 
+	// §13 — defn with destructure parameter (ParameterList → VarDefInitOptImplIn)
+	{ label: "defn: destructure param (no default)",
+	  src: "defn f(<:a, :b>) ^a + b;" },
+	{ label: "defn: destructure param (with default)",
+	  src: "defn f(<:a, :b>: defs) ^a + b;" },
+	{ label: "defn: destructure + ident param",
+	  src: "defn f(<:a, :b>, c) ^a + b + c;" },
 
 	// =============================================================
 	// §14 CONDITIONALS / GUARDS
@@ -534,9 +587,14 @@ export const samples = [
 		"(?as);" +
 		"x ?in arr;" },
 
-	// §11 — BlockExpr variants compound
+	// §11 — Block-family variants compound. Exercises adjacent §11
+	// stmts in a Program — BareBlockExpr standalone, BareBlockExpr
+	// at FlowRHSImplIn (no-defs), BlockExpr at FlowRHSImplIn (with
+	// defs — only reachable from implicit-input positions), and
+	// DefBlockStmt. Standalone (defs){body} is rejected by the
+	// grammar and is not exercised here.
 	{ label: "compound §11: block variants",
-	  src: "{ a; b; }; (x){ y; }; (x: 5, y){ x + y; }; def (a: 1) { a; };" },
+	  src: "{ a; b; }; list ~map { y; }; list ~map (x: 5, y) { x + y; }; def (a: 1) { a; };" },
 
 	// §12 — AssignmentExpr forms
 	{ label: "compound §12: assignment forms",

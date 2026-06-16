@@ -181,6 +181,47 @@ var OP_FUNC_TABLE = {
 
 
 // =============================================================
+// BLOCK-BODY EMITTER
+//
+// Shared lowering for the stmts portion of BareBlockExpr,
+// BlockExpr, DefBlockStmt, and (eventually) DefFuncExpr's
+// FuncBodyPipeline branch. Two modes:
+//
+//   withReturn:false → plain stmt list: `s1; s2; s3;` used by
+//                      DefBlockStmt (bare JS block, no value-
+//                      returning context).
+//
+//   withReturn:true  → return-injecting form for IIFE bodies
+//                      and value-returning function bodies.
+//                      Last non-DefVarStmt stmt is prepended
+//                      with `return `; empty body or DefVarStmt-
+//                      last gets a trailing `return null;`.
+//
+// Callers wrap the result with their own punctuation (IIFE,
+// braces, function body, etc.).
+// =============================================================
+
+var emitBlockBody = (stmts, recur, withReturn) => {
+	if (!withReturn) {
+		return stmts.map(s => recur(s) + ";").join(" ");
+	}
+	if (stmts.length === 0) return "return null;";
+	var lastIdx = stmts.length - 1;
+	var injected = false;
+	var body = stmts.map((s, i) => {
+		var rendered = recur(s);
+		if (i === lastIdx && s.type !== "DefVarStmt") {
+			rendered = "return " + rendered;
+			injected = true;
+		}
+		return rendered + ";";
+	}).join(" ");
+	if (!injected) body += " return null;";
+	return body;
+};
+
+
+// =============================================================
 // TIER EMITTERS
 //
 // Both share the same op-table dispatch contract — unknown op
@@ -287,9 +328,8 @@ var renderRecordEntry = (entry, recur) => {
 //
 // Lower DestructureTarget against a JS expression evaluating to
 // the source value. Strategy: single-eval source into a temp
-// `__t`, then one decl per destructure entry reading a path on
-// __t. The full DefVarStmt becomes one `var __t = <init>, ...;`
-// statement.
+// (whose name is supplied by the caller), then one decl per
+// destructure entry reading a path on that temp.
 //
 //   def <a: src.x, :b, #whole>: payload;
 //   → var __t = payload, a = __t.src.x, b = __t.b, whole = __t
@@ -301,40 +341,46 @@ var renderRecordEntry = (entry, recur) => {
 // segments). Single-temp + chained decls is uniform across all
 // path complexity.
 //
-// __t follows the existing __c / __a / __rest / __xs convention
-// for compiler-synthesized names. Multiple sequential DefVarStmts
-// re-declare `var __t` safely (JS permits var redeclaration; each
-// stmt's entries read the just-assigned __t).
+// tempName is the JS-side root identifier the destructure paths
+// resolve against. Each caller-context allocates its own:
+//   - DefVarStmt         → "__t"           (single; sequential
+//                                            top-level DefVarStmts
+//                                            safely re-`var __t`
+//                                            per JS semantics)
+//   - DefFuncExpr params → "__p0", "__p1"  (JS param name itself —
+//                                            no separate temp)
+//
+// All synthesized names follow the existing __c / __a / __rest /
+// __xs convention for compiler-introduced identifiers.
 // =============================================================
 
 // Renders a DestructureTarget's entries as a comma-separated
-// init-list suitable for embedding inside `var __t = init, ...`.
+// init-list suitable for embedding inside `var <tempName> = init, ...`.
 // Returns null when any entry can't be lowered — caller falls
-// back at the DefVarStmt level.
-var renderDestructure = (target, recur) => {
+// back at the container level.
+var renderDestructure = (target, recur, tempName) => {
 	var parts = [];
 	for (let entry of target.entries) {
-		let rendered = renderDestructureEntry(entry, recur);
+		let rendered = renderDestructureEntry(entry, recur, tempName);
 		if (rendered == null) return null;
 		parts.push(rendered);
 	}
 	return parts.join(", ");
 };
 
-// Renders a single destructure entry to `name = __t.path` form.
-var renderDestructureEntry = (entry, recur) => {
+var renderDestructureEntry = (entry, recur, tempName) => {
 	if (entry.type === "DestructureCapture") {
-		return entry.target.name + " = __t";
+		return entry.target.name + " = " + tempName;
 	}
 	if (entry.type === "DestructureNamedDef") {
-		let pathStr = renderDestructurePath(entry.source, recur);
+		let pathStr = renderDestructurePath(entry.source, recur, tempName);
 		if (pathStr == null) return null;
 		return entry.target.name + " = " + pathStr;
 	}
 	if (entry.type === "DestructureConciseDef") {
 		let bindName = conciseBindingName(entry.source);
 		if (bindName == null) return null;
-		let pathStr = renderDestructurePath(entry.source, recur);
+		let pathStr = renderDestructurePath(entry.source, recur, tempName);
 		if (pathStr == null) return null;
 		return bindName + " = " + pathStr;
 	}
@@ -356,20 +402,20 @@ var conciseBindingName = source => {
 	return null;
 };
 
-// Renders a destructure source path rooted at __t. Walks the
-// chain back to its base, substitutes __t for the base, then
-// re-emits chain segments on top.
+// Renders a destructure source path rooted at <tempName>. Walks
+// the chain back to its base, substitutes <tempName> for the
+// base, then re-emits chain segments on top.
 //
-//   src           → __t.src               (Identifier base)
-//   src.x         → __t.src.x
-//   [k]           → __t[k]                (BracketExpr base; NamedDef only)
-//   [k].x.5       → __t[k].x[5]
-//   foo[bar].baz  → __t.foo[bar].baz
+//   src           → <tempName>.src               (Identifier base)
+//   src.x         → <tempName>.src.x
+//   [k]           → <tempName>[k]                (BracketExpr base; NamedDef only)
+//   [k].x.5       → <tempName>[k].x[5]
+//   foo[bar].baz  → <tempName>.foo[bar].baz
 //
 // Returns null when a non-Member/Index segment appears anywhere
 // in the chain (RangeAccessExpr, PropertyPickExpr) or when the
 // base is unexpected — caller falls back at the entry level.
-var renderDestructurePath = (source, recur) => {
+var renderDestructurePath = (source, recur, tempName) => {
 	var stack = [];
 	var node = source;
 	while (
@@ -381,10 +427,10 @@ var renderDestructurePath = (source, recur) => {
 	}
 	var rootStr;
 	if (node.type === "Identifier") {
-		rootStr = "__t." + node.name;
+		rootStr = tempName + "." + node.name;
 	}
 	else if (node.type === "BracketExpr") {
-		rootStr = "__t[" + recur(node.expr) + "]";
+		rootStr = tempName + "[" + recur(node.expr) + "]";
 	}
 	else {
 		return null;
@@ -401,6 +447,227 @@ var renderDestructurePath = (source, recur) => {
 		}
 	}
 	return out;
+};
+
+
+// =============================================================
+// DESTRUCTURE-PARAMETER LOWERING (DefFuncExpr)
+//
+// When DefFuncExpr's first (and only) param-set contains one or
+// more DestructureTarget params, each such position is lowered as:
+//
+//   - JS-side param name: synthesized __pN (N = positional index)
+//   - Optional `= <init>` JS default on the param itself when
+//     Foi-side default is present
+//   - A `var name = __pN.path` prelude decl per destructure entry,
+//     injected at the head of the function body
+//
+//   defn f(<:a, :b>, c) ^a + b + c;
+//   → function f(__p0, c) { var a = __p0.a, b = __p0.b; return a + b + c; }
+//
+//   defn f(<:a, :b>: defs) ^a + b;
+//   → function f(__p0 = defs) { var a = __p0.a, b = __p0.b; return a + b; }
+//
+// Identifier params pass through unchanged. The function keeps
+// its `function name(...)` / `(...) => ...` shape — no IIFE
+// wrapper (the prelude lives inside the existing body braces).
+//
+// FuncBodyPipeline body falls back — no brace-injection point.
+// FuncBodyExpr and FuncBodyBlock both render as `{ ... }` and
+// accept prelude decls before their existing content.
+// =============================================================
+
+var renderFuncBodyWithPrelude = (body, prelude, recur) => {
+	if (body.type === "FuncBodyPipeline") return null;
+	var pre = prelude ? prelude + " " : "";
+	if (body.type === "FuncBodyExpr") {
+		return "{ " + pre + "return " + recur(body.body) + "; }";
+	}
+	if (body.type === "FuncBodyBlock") {
+		var inner = body.stmts.map(s => recur(s) + ";").join(" ");
+		return "{ " + pre + inner + " }";
+	}
+	return null;
+};
+
+var renderDestructureFunc = (node, paramSet, recur) => {
+	var jsParams = [];
+	var preludeDecls = [];
+	for (let i = 0; i < paramSet.params.length; i++) {
+		let p = paramSet.params[i];
+		if (p.target.type === "Identifier") {
+			let s = p.target.name;
+			if (p.init) s += " = " + recur(p.init);
+			jsParams.push(s);
+			continue;
+		}
+		if (p.target.type === "DestructureTarget") {
+			let pname = "__p" + i;
+			let s = pname;
+			if (p.init) s += " = " + recur(p.init);
+			jsParams.push(s);
+			let entries = renderDestructure(p.target, recur, pname);
+			if (entries == null) return null;
+			preludeDecls.push("var " + entries + ";");
+			continue;
+		}
+		return null;
+	}
+	var prelude = preludeDecls.join(" ");
+	var bodyStr = renderFuncBodyWithPrelude(node.body, prelude, recur);
+	if (bodyStr == null) return null;
+	var paramsStr = jsParams.join(", ");
+	if (node.name) {
+		return "function " + recur(node.name) + "(" + paramsStr + ") " + bodyStr;
+	}
+	return "(" + paramsStr + ") => " + bodyStr;
+};
+
+
+// =============================================================
+// PIPELINE-BLOCK BODY EMITTER (shared by FuncBodyPipeline +
+// FlowBinExpr `#>`)
+//
+// Given a BlockExpr RHS, a JS expression string evaluating to
+// the pipeline topic, and a `topicRefBox` { ref } the caller
+// uses to wire `#` resolution, emits:
+//
+//   var __topic = <topicExprStr>;
+//   <per-entry defs>
+//   <body stmts with return-injection>
+//
+// Mutates topicRefBox.ref = "__topic" so the caller's dispatch
+// closure resolves `#` to the saved topic for the rest of this
+// scope. (Per-entry defs may rebind the topic param's name or
+// introduce destructure bindings that shadow it; saving up-front
+// is uniformly correct across every collision shape — concise,
+// named, capture, or Identifier target.)
+//
+// Per-entry defs lower:
+//   Identifier-no-init:        `var x;`
+//   Identifier-with-init:      `var x = <init>;`
+//   DestructureTarget-no-init: `var __t<i> = __topic;
+//                               var <destructured>;`
+//   DestructureTarget-w/-init: `var __t<i> = <init>;
+//                               var <destructured>;`
+//
+// Returns the inner stmt sequence (no braces, no IIFE), or null
+// if any destructure entry can't be lowered. Caller wraps:
+//   - FuncBodyPipeline → `{ <stmts> }` (already inside function
+//     braces; no IIFE)
+//   - FlowBinExpr      → `(() => { <stmts> })()` (expression
+//     position; IIFE needed for value)
+// =============================================================
+
+var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
+	var defParts = [ "var __topic = " + topicExprStr + ";" ];
+	topicRefBox.ref = "__topic";
+	for (let i = 0; i < rhs.defs.entries.length; i++) {
+		let entry = rhs.defs.entries[i];
+		if (entry.target.type === "Identifier") {
+			// Position-0 Identifier-no-init is the topic-naming
+			// slot in lenient form — binds `__topic`. Explicit
+			// init at position 0 overrides; trailing no-init
+			// entries are declared-undefined (matches `def b;`
+			// precedent).
+			if (i === 0 && !entry.init) {
+				defParts.push("var " + entry.target.name + " = __topic;");
+			}
+			else {
+				// VarDefInitOpt handler renders `name` or
+				// `name = init` exactly as needed.
+				defParts.push("var " + dispatch(entry) + ";");
+			}
+			continue;
+		}
+		if (entry.target.type === "DestructureTarget") {
+			// Lenient form: no entry-level init → bind from
+			// __topic. Entry-level init present → bind from it
+			// (explicit always wins over implicit).
+			let tempName = "__t" + i;
+			let source = entry.init ? dispatch(entry.init) : "__topic";
+			let destructured = renderDestructure(entry.target, dispatch, tempName);
+			if (destructured == null || destructured === "") {
+				return null;
+			}
+			defParts.push(
+				"var " + tempName + " = " + source +
+				"; var " + destructured + ";"
+			);
+			continue;
+		}
+		return null;
+	}
+	var defs = defParts.join(" ");
+	var bodyStr = emitBlockBody(rhs.body.stmts, dispatch, true);
+	return defs + " " + bodyStr;
+};
+
+
+// =============================================================
+// PIPELINE-BODY LOWERING (DefFuncExpr w/ FuncBodyPipeline)
+//
+// `defn foo(x) #> <RHS>;` inlines the pipeline RHS into the
+// function's brace body. Topic = the function's first positional
+// param (per Foi's `#` convention).
+//
+// RHS arms:
+//   - BareBlockExpr → topic discarded; stmts emit with return-
+//     injection. Unwrapped — already inside the function braces.
+//   - BlockExpr     → delegates to emitPipelineBlockBody. The
+//     `__topic` save means body-level shadowing of the param
+//     name (Identifier rebind or destructure-introduced
+//     binding) doesn't corrupt `#` resolution.
+//   - ExprNoBlock / GroupedExpr — "pipeline body is a callable"
+//     semantics. Deferred.
+//
+// First-slice param constraints (unchanged):
+//   - Single-positional ParameterList (no multi-param, no
+//     GatherParameter, no destructure params).
+//   - Identifier param only.
+//
+// Topic resolution: the self-referential `dispatch` closure
+// closes over `topicRefBox.ref` (initially the param name, may
+// be flipped to "__topic" by emitPipelineBlockBody) and
+// intercepts PipelineTopic before the bare handler-map. Because
+// `dispatch` passes *itself* into every recurred handler, the
+// interception survives arbitrary AST depth. Nested `#>` bodies
+// build their own inner closures; lexical scoping handles
+// shadowing for free.
+//
+// Returns the brace-wrapped function body `{ ... }`, or null
+// when the param shape, RHS arm, or any destructure entry isn't
+// lowerable — caller falls back the whole DefFuncExpr.
+// =============================================================
+
+var renderPipelineBody = (node, paramSet, recur) => {
+	if (paramSet.type !== "ParameterList") return null;
+	if (paramSet.params.length !== 1) return null;
+	var p = paramSet.params[0];
+	if (p.target.type !== "Identifier") return null;
+
+	var topic = p.target.name;
+	var rhs = node.body.body;
+
+	var topicRefBox = { ref: topic };
+	var dispatch = n => {
+		if (n == null) return "";
+		if (n.type === "PipelineTopic") return topicRefBox.ref;
+		var h = handlers[n.type];
+		return h ? h(n, dispatch) : fallback(n);
+	};
+
+	if (rhs.type === "BareBlockExpr") {
+		return "{ " + emitBlockBody(rhs.stmts, dispatch, true) + " }";
+	}
+
+	if (rhs.type === "BlockExpr") {
+		var inner = emitPipelineBlockBody(rhs, topic, dispatch, topicRefBox);
+		if (inner == null) return null;
+		return "{ " + inner + " }";
+	}
+
+	return null;
 };
 
 
@@ -478,7 +745,7 @@ var handlers = {
 	// `def x: <expr>` → `var x = <expr>`. `var` matches Foi's
 	// function-scope semantics for `def`.
 	//
-	// DestructureTarget target → single-eval init into `__t`,
+	// DestructureTarget target → single-eval init into temp `__t`,
 	// then one decl per destructure entry reading a path on __t:
 	//
 	//   def < a: src.x, :b, #whole >: payload;
@@ -489,15 +756,19 @@ var handlers = {
 	// in a path, integer-index in a concise binding name) falls
 	// back at the DefVarStmt level — partial destructure isn't
 	// emittable.
+	//
+	// `__t` follows the existing __c / __a / __rest / __xs
+	// convention; sequential top-level DefVarStmts re-declare
+	// `var __t` safely per JS semantics (each stmt's entries read
+	// the just-assigned __t).
 	DefVarStmt(node, recur) {
 		if (node.target.type === "Identifier") {
 			return "var " + recur(node.target) + " = " + recur(node.init);
 		}
-		var entries = renderDestructure(node.target, recur);
+		var entries = renderDestructure(node.target, recur, "__t");
 		if (entries == null) return fallback(node);
 		return "var __t = " + recur(node.init) + ", " + entries;
 	},
-
 
 	// =============================================================
 	// §5 EXPRESSION SCAFFOLDING
@@ -697,86 +968,205 @@ var handlers = {
 	AndBinExpr:     (n, r) => emitBinTier(n, r, AND_OPS),
 	OrBinExpr:      (n, r) => emitBinTier(n, r, OR_OPS),
 
+	// =============================================================
+	// §10 FLOW (continued)
+	// =============================================================
+
+	// FlowBinExpr { left, op, right } — `<expr> <op> <rhs>`.
+	// Left-associative; chained `a #> b #> c` parses as
+	// FlowBinExpr(FlowBinExpr(a, b), c), so recurring `left`
+	// handles chains naturally.
+	//
+	// First-slice covers PipelineOp (`#>`) only. ComprOps
+	// (`~map`, `~filter`, etc.) need a separate lowering shape
+	// (comprehension-call rather than topic-injection) and
+	// fall back until that handler lands.
+	//
+	// PipelineOp RHS arms — symmetric with FuncBodyPipeline's
+	// renderPipelineBody, minus the function-body wrapper:
+	//   - BlockExpr     → IIFE-wrap emitPipelineBlockBody's
+	//                     output. Topic = recur(left) saved into
+	//                     __topic; per-entry defs + body stmts
+	//                     with return-injection.
+	//   - BareBlockExpr → IIFE-wrap; topic discarded; stmts emit
+	//                     with return-injection. (No defs, so
+	//                     no __topic save needed; `#` inside
+	//                     resolves via the dispatch closure to
+	//                     a saved temp.)
+	//   - ExprNoBlock / GroupedExpr → "pipeline body is a
+	//     callable" semantics. Deferred — falls back.
+	//
+	// BareBlockExpr arm: still saves the topic into `__t` (not
+	// `__topic`, since no defs collide) so `#` inside the body
+	// has a stable JS-side name. Arbitrary LHS expressions can't
+	// be substituted verbatim into every `#` site without
+	// re-evaluation — and re-evaluation is wrong if LHS has
+	// side effects.
+	FlowBinExpr(node, recur) {
+		var op = node.op;
+		if (op !== "#>") return fallback(node);
+		var rhs = node.right;
+
+		var topicRefBox = { ref: null };
+		var dispatch = n => {
+			if (n == null) return "";
+			if (n.type === "PipelineTopic") return topicRefBox.ref;
+			var h = handlers[n.type];
+			return h ? h(n, dispatch) : fallback(n);
+		};
+
+		var lhsStr = recur(node.left);
+
+		if (rhs.type === "BareBlockExpr") {
+			topicRefBox.ref = "__t";
+			return "(() => { var __t = " + lhsStr + "; " +
+				emitBlockBody(rhs.stmts, dispatch, true) + " })()";
+		}
+
+		if (rhs.type === "BlockExpr") {
+			// emitPipelineBlockBody sets topicRefBox.ref to
+			// "__topic" as part of the save.
+			var inner = emitPipelineBlockBody(rhs, lhsStr, dispatch, topicRefBox);
+			if (inner == null) return fallback(node);
+			return "(() => { " + inner + " })()";
+		}
+
+		return fallback(node);
+	},
+
 
 	// =============================================================
 	// §11 BLOCK EXPRESSIONS
 	// =============================================================
 
-	// BlockExpr { stmts, defs? } — `{ ... }` form, optionally
-	// preceded by a defs-init `( x: 1, y, ... )` clause.
+	// BareBlockExpr { stmts } — `{ ... }` form, no defs-init.
 	//
-	// Lowers to an IIFE — needed for expression-position usage
-	// (GuardedExpr / IndepMatchExpr consequents, call args, etc.)
-	// where a bare JS block would be a syntax error. defs entries
-	// become `var` declarations inside the IIFE body, function-
-	// scoped to the IIFE arrow:
+	// Lowers to an IIFE with the same return-injection rule as
+	// BlockExpr. BareBlockExpr is reachable only at expression
+	// positions (<AsableExpr> first arm, DefVarStmt RHS via <Expr>,
+	// MatchConsequent / MatchConsequentNoSemi, FlowRHSImplIn no-defs
+	// arm, FuncBodyPipeline no-defs arm), so a bare JS block `{...}`
+	// won't do — needs to evaluate to a value.
 	//
-	//   { x; }              → (() => { return x; })()
-	//   (x: 1) { x; }       → (() => { var x = 1; return x; })()
-	//   (x, y) { x; }       → (() => { var x; var y; return x; })()
-	//   (x: 1, y) { x; }    → (() => { var x = 1; var y; return x; })()
+	// When BareBlockExpr appears as the `body` child of BlockExpr
+	// or DefBlockStmt, the parent handler reads `node.body.stmts`
+	// directly and inlines the lowering into its own emit — this
+	// handler isn't invoked in those cases.
 	//
-	// `var` (not `let`) is the locked declaration form — same as
-	// stmt-level `def x: 2;` → `var x = 2;`. The IIFE arrow is
-	// the function boundary, so `var` is already correctly scoped
-	// to the block — no need to reach for `let`. `var x;` (no
-	// init) declares x as undefined — matches Foi's declared-but-
-	// uninitialized semantics.
-	//
-	// DefBlockStmt is the asymmetric case: at stmt position it
-	// lowers to a bare JS block where `let` is required for
-	// block-scoping — see DefBlockStmt handler below.
-	//
-	// Return-injection rules (unchanged):
+	// Return-injection rules (mirrored in BlockExpr):
 	//   - Last stmt is a value-bearing expression → prepend `return`
 	//   - Last stmt is DefVarStmt → trailing `return null;` appended
 	//   - Last stmt is DefFuncExpr → naturally `return function...`
 	//     via the same prepend path
 	//   - Empty body → `return null;` only
-	//
-	// DestructureTarget in a defs entry falls back via the
-	// VarDefInitOpt handler.
-	BlockExpr(node, recur) {
-		var defs = "";
-		if (node.defs) {
-			defs = node.defs.entries.map(e => "var " + recur(e) + ";").join(" ");
-			if (defs) defs += " ";
-		}
-		var stmts = node.stmts;
-		var lastIdx = stmts.length - 1;
-		var injected = false;
-		var body = stmts.map((s, i) => {
-			var rendered = recur(s);
-			if (i === lastIdx && s.type !== "DefVarStmt") {
-				rendered = "return " + rendered;
-				injected = true;
-			}
-			return rendered + ";";
-		}).join(" ");
-		if (!injected) body += " return null;";
-		return "(() => { " + defs + body + " })()";
+	BareBlockExpr(node, recur) {
+		return "(() => { " + emitBlockBody(node.stmts, recur, true) + " })()";
 	},
 
-	// DefBlockStmt { defs, stmts } — `def (x: 1) { ... };` form.
+	// BlockExpr { defs, body } — `(defs) { body }` form. `body` is
+	// the nested BareBlockExpr child; statements live at body.stmts.
+	// Defs-init is required by the grammar (BlockExpr exclusively
+	// names the defs-init form post-refactor; the no-defs case at
+	// every implicit-input slot goes through BareBlockExpr).
+	//
+	// Lowers to an IIFE — needed for expression-position usage
+	// (FlowRHSImplIn at ComprOp/PipelineOp RHS, FuncBodyPipeline
+	// body) where a bare JS block would be a syntax error. defs
+	// entries become `var` declarations inside the IIFE body,
+	// function-scoped to the IIFE arrow:
+	//
+	//   (x: 1) { x; }       → (() => { var x = 1; return x; })()
+	//   (x, y) { x; }       → (() => { var x; var y; return x; })()
+	//   (x: 1, y) { x; }    → (() => { var x = 1; var y; return x; })()
+	//
+	// `var` (not `let`) is the locked declaration form — same as
+	// stmt-level `def x: 2;` → `var x = 2;`. The IIFE arrow is the
+	// function boundary, so `var` is already correctly scoped to
+	// the block. `var x;` (no init) declares x as undefined —
+	// matches Foi's declared-but-uninitialized semantics.
+	//
+	// DefBlockStmt is the asymmetric case: at stmt position it
+	// lowers to a bare JS block where `let` is required for block
+	// scoping — see DefBlockStmt handler below.
+	//
+	// DestructureTarget in a defs entry → fall back the whole
+	// BlockExpr. A defs-init position has no implicit source
+	// surfacing into this handler directly; when BlockExpr lands
+	// at FlowRHSImplIn / FuncBodyPipeline body, the FlowBinExpr /
+	// DefFuncExpr handler (when implemented) will own the
+	// implicit-source binding before recurring here. A direct
+	// recur with destructure entries means no enclosing source
+	// was bound, so bailing is correct.
+	BlockExpr(node, recur) {
+		for (let entry of node.defs.entries) {
+			if (entry.target.type !== "Identifier") return fallback(node);
+		}
+		var defs = node.defs.entries.map(e => "var " + recur(e) + ";").join(" ");
+		if (defs) defs += " ";
+		return "(() => { " + defs + emitBlockBody(node.body.stmts, recur, true) + " })()";
+	},
+
+	// DefBlockStmt { defs, body } — `def (x: 1) { ... };` form.
 	// Always at stmt position (per grammar — DefBlockStmt is a
 	// Stmt, never reachable as an Expr operand), so lowers to a
 	// bare JS block with `let` decls for the defs entries.
 	//
-	//   def (x: 1) { x; };          → { let x = 1; x; }
-	//   def (x: 1, y: 2) { x + y; };→ { let x = 1; let y = 2; x + y; }
+	//   def (x: 1) { x; };           → { let x = 1; x; }
+	//   def (x: 1, y: 2) { x + y; }; → { let x = 1; let y = 2; x + y; }
+	//   def (x) { x; };              → { let x; x; }
+	//
+	// DestructureTarget entries (strict grammar REQUIRES their
+	// init at this position — no implicit source at top-level
+	// `def (...)`) lower via a per-entry `__t<i>` temp + path
+	// bindings, mirroring DefVarStmt's pattern but using `let`
+	// for block scoping:
+	//
+	//   def (<:a, :b>: src) { a + b; };
+	//   → { let __t0 = src, a = __t0.a, b = __t0.b; a + b; }
+	//
+	//   def (x: 1, <:a>: src) { x + a; };
+	//   → { let x = 1; let __t1 = src, a = __t1.a; x + a; }
+	//
+	// Per-entry indexed temp (`__t<i>` where i is the entries-
+	// list position) so multiple destructures within a single
+	// defs-init don't collide.
 	//
 	// No return-injection — bare blocks don't have a value, and
 	// DefBlockStmt's "result" is discarded at the JS level
-	// regardless (consistent with how the stmt would be used in
-	// any enclosing scope today). The `def` keyword anchors the
-	// type tag and carries no JS-side meaning here.
+	// regardless. The `def` keyword anchors the type tag and
+	// carries no JS-side meaning here.
 	//
-	// BlockDefsInit's grammar requires init on every entry, so
-	// rendered entries are always `name = init` — never bare
-	// `name`. VarDefInit handler enforces this.
+	// Any destructure entry `renderDestructure` can't lower
+	// (RangeAccessExpr / PropertyPickExpr in a source path,
+	// integer-index in a concise binding name) → fall back the
+	// whole DefBlockStmt; partial destructure isn't emittable.
 	DefBlockStmt(node, recur) {
-		var defs = node.defs.entries.map(e => "let " + recur(e) + ";").join(" ");
-		var body = node.stmts.map(s => recur(s) + ";").join(" ");
+		var defParts = [];
+		for (let i = 0; i < node.defs.entries.length; i++) {
+			let entry = node.defs.entries[i];
+			if (entry.target.type === "Identifier") {
+				defParts.push("let " + recur(entry) + ";");
+				continue;
+			}
+			if (entry.target.type === "DestructureTarget") {
+				// Strict grammar requires init present here;
+				// defensive guard for malformed AST.
+				if (!entry.init) return fallback(node);
+				let tempName = "__t" + i;
+				let destructured = renderDestructure(entry.target, recur, tempName);
+				if (destructured == null || destructured === "") {
+					return fallback(node);
+				}
+				defParts.push(
+					"let " + tempName + " = " + recur(entry.init) +
+					", " + destructured + ";"
+				);
+				continue;
+			}
+			return fallback(node);
+		}
+		var defs = defParts.join(" ");
+		var body = emitBlockBody(node.body.stmts, recur, false);
 		return "{ " + defs + (body ? " " + body : "") + " }";
 	},
 
@@ -792,9 +1182,28 @@ var handlers = {
 	//   - paramSets.length > 1 (currying — needs nested-lambda lowering)
 	//   - preconditions, over, as, at (each needs its own lowering)
 	//
-	// Body forms (FuncBodyExpr / FuncBodyBlock / FuncBodyPipeline)
-	// each render to a brace-wrapped statement block; pipeline
-	// form falls back until a sample forces it.
+	// Body forms:
+	//   - FuncBodyExpr / FuncBodyBlock route through their own
+	//     handlers (each returns a `{ ... }` brace-wrapped block).
+	//   - FuncBodyPipeline routes to renderPipelineBody — pipeline
+	//     RHS gets inlined into the function's brace body. First-
+	//     slice covers BareBlockExpr RHS only (topic discarded,
+	//     stmts emit with return-injection). BlockExpr RHS (Form 3)
+	//     and ExprNoBlock / GroupedExpr RHS fall back.
+	//
+	// DestructureTarget params → routed to renderDestructureFunc,
+	// which synthesizes `__p<N>` for each destructure position,
+	// keeps Identifier params as-is, and injects a `var name =
+	// __pN.path` prelude into the function body:
+	//
+	//   defn f(<:a, :b>, c) ^a + b + c;
+	//   → function f(__p0, c) { var a = __p0.a, b = __p0.b; return a + b + c; }
+	//
+	// FuncBodyPipeline body inside the destructure-param branch
+	// still falls back (renderFuncBodyWithPrelude has no brace-
+	// injection point for pipeline). Identifier-only ParameterLists
+	// bypass that path and take the FuncBodyPipeline-aware route
+	// below.
 	DefFuncExpr(node, recur) {
 		if (
 			node.paramSets.length !== 1 ||
@@ -805,8 +1214,24 @@ var handlers = {
 		) {
 			return fallback(node);
 		}
-		var params = recur(node.paramSets[0]);
-		var body = recur(node.body);
+		var paramSet = node.paramSets[0];
+		if (
+			paramSet.type === "ParameterList" &&
+			paramSet.params.some(p => p.target.type === "DestructureTarget")
+		) {
+			let result = renderDestructureFunc(node, paramSet, recur);
+			if (result != null) return result;
+			return fallback(node);
+		}
+		var params = recur(paramSet);
+		var body;
+		if (node.body.type === "FuncBodyPipeline") {
+			body = renderPipelineBody(node, paramSet, recur);
+			if (body == null) return fallback(node);
+		}
+		else {
+			body = recur(node.body);
+		}
 		if (node.name) {
 			return "function " + recur(node.name) + "(" + params + ") " + body;
 		}
@@ -834,14 +1259,6 @@ var handlers = {
 		var out = recur(node.target);
 		if (node.init) out += " = " + recur(node.init);
 		return out;
-	},
-
-	// VarDefInit { target, init } — required-init shape used by
-	// DefBlockStmt's BlockDefsInit. Same render as VarDefInitOpt;
-	// init is never optional here per grammar.
-	VarDefInit(node, recur) {
-		if (node.target.type !== "Identifier") return fallback(node);
-		return recur(node.target) + " = " + recur(node.init);
 	},
 
 	// FuncBodyBlock { stmts } — `{ ... }` form. Stmts emit in

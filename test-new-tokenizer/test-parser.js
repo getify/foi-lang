@@ -122,6 +122,12 @@ var failSamples = [
 	"(x) :as bool :as char;",         // chained :as on paren — paren-grouping not in AsableExpr, outer :as has nowhere to land
 	"(x :as int) :as bool :as char;", // same — inner :as is fine, outer chain rejected
 	"(x) :as bool :as char :as float;", // already rejected at the 3rd :as pre-fix; locks it as test
+	"def (<:a>) { a };",
+	"f +> (<:a>) { a; };",
+	"(x: 1) { x; };",          // standalone (defs){body} rejected
+	"(x: 1) { x; } :as int;",  // same — BlockExpr not in <AsableExpr> anyway
+	"(x, y) { x; };",          // same
+	"(x: 1, y) { x; };",       // same
 ];
 
 var passed = 0;
