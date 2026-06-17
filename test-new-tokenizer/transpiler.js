@@ -143,16 +143,30 @@ var OR_OPS = {
 // =============================================================
 // OP_FUNC_TABLE — bare-op OpFuncExpr lowering metadata.
 //
-//   kind: "fold"  — left-fold via reduce, n-ary (≥1 for value)
-//   kind: "pairs" — all-pairs every, n-ary (vacuous true on <2)
+//   kind: "unary"    — 1-arg, render fn produces body
+//   kind: "fold"     — left-fold via reduce, n-ary (≥1 for value)
+//   kind: "pairs"    — all-pairs every, n-ary (vacuous true on <2)
+//   kind: "notAnd"   — De Morgan: any-falsy
+//   kind: "notOr"    — De Morgan: all-falsy
+//   kind: "notPairs" — De Morgan: some-pair-not-op
+//   kind: "range3"   — strict 3-ary inclusive range check
+//   kind: "in2"      — strict 2-ary membership; runtime-dispatched
+//                      on container: array/string → .includes,
+//                      object → numeric-key value scan
+//   kind: "has2"     — strict 2-ary key-presence check
 //
-// Primed (`node.primed`) reverses args before fold/pairs; both
-// shapes emit `.reverse()` uniformly (no-op for symmetric ops).
+// Primed (`node.primed`) reverses arg order for n-ary kinds and
+// swaps arg positions for fixed-arity kinds (range3, in2, has2).
+// `.reverse()` is a no-op for symmetric ops; emit shape stays
+// uniform regardless.
 //
-// Ops absent here (`?<=>`, `?in`, `?has`, `?as`, unary forms)
-// fall back — each needs its own lowering decision.
+// `negate: true` on range3 / in2 / has2 wraps the test body in
+// `!(...)` — used for `!<=>`, `!in`, `!has` without duplicating
+// body construction.
+//
+// Remaining absent ops (`?as`, `!as`) fall back — runtime type-
+// check semantics not yet committed for the bootstrap.
 // =============================================================
-
 var OP_FUNC_TABLE = {
 	"?":      { kind: "unary", render: x => "!!" + x },
 	"!":      { kind: "unary", render: x => "!" + x },
@@ -179,6 +193,12 @@ var OP_FUNC_TABLE = {
 	"!<=":  { kind: "notPairs", op: "<=" },
 	"!>":   { kind: "notPairs", op: ">"  },
 	"!>=":  { kind: "notPairs", op: ">=" },
+	"?<=>": { kind: "range3" },
+	"!<=>": { kind: "range3", negate: true },
+	"?in":  { kind: "in2" },
+	"!in":  { kind: "in2", negate: true },
+	"?has": { kind: "has2" },
+	"!has": { kind: "has2", negate: true },
 };
 
 
@@ -1200,6 +1220,63 @@ var handlers = {
 		return recur(node.object) + "[" + recur(node.expr) + "]";
 	},
 
+	// RangeAccessExpr { object, range } — `.[range]` slice access.
+	// Lowers to JS .slice(). Range end is inclusive per Foi
+	// semantics, so closed/trailing forms emit `to + 1` as the
+	// slice end. Object recurred once; .slice() reads receiver
+	// and args left-to-right with no re-evaluation concerns.
+	//
+	//   arr.[1..5]   → arr.slice(1, 5 + 1)
+	//   arr.[5..]    → arr.slice(5)
+	//   arr.[..10]   → arr.slice(0, 10 + 1)
+	//
+	// Works uniformly on arrays (Tuples) and strings. Records
+	// don't implement .slice() — runtime throws, matching Foi's
+	// "range access is undefined on unordered records" semantics.
+	RangeAccessExpr(node, recur) {
+		var obj = recur(node.object);
+		var range = node.range;
+		if (range.type === "ClosedRangeExpr") {
+			return obj + ".slice(" + recur(range.from) + ", " + recur(range.to) + " + 1)";
+		}
+		if (range.type === "LeadingRangeExpr") {
+			return obj + ".slice(" + recur(range.from) + ")";
+		}
+		if (range.type === "TrailingRangeExpr") {
+			return obj + ".slice(0, " + recur(range.to) + " + 1)";
+		}
+		return fallback(node);
+	},
+
+	// PropertyPickExpr { object, properties } — `.<a, b, 5>`
+	// angle-pick. Picks the listed fields off the source and
+	// returns a fresh record. Source bound into __o once (uniform
+	// shape — avoids double-eval on side-effecting bases; no
+	// peephole for simple identifiers).
+	//
+	//   rec.<a, b>   → ((__o) => ({ a: __o.a, b: __o.b }))(rec)
+	//   rec.<a, 5>   → ((__o) => ({ a: __o.a, 5: __o[5] }))(rec)
+	//
+	// PickAccessor entries (Identifier or BuiltIn) emit
+	// `name: __o.name`. PickIndex entries (bare integer string)
+	// emit `<i>: __o[<i>]` — JS coerces numeric keys to strings
+	// at object storage, matching pick-by-position semantics for
+	// Tuples and harmless for Records.
+	PropertyPickExpr(node, recur) {
+		var entries = node.properties.map(p => {
+			if (p.type === "PickAccessor") {
+				let name = recur(p.accessor);
+				return name + ": __o." + name;
+			}
+			if (p.type === "PickIndex") {
+				return p.index + ": __o[" + p.index + "]";
+			}
+			return null;
+		});
+		if (entries.some(e => e == null)) return fallback(node);
+		return "((__o) => ({ " + entries.join(", ") + " }))(" + recur(node.object) + ")";
+	},
+
 	// PrimedExpr { inner } — postfix `'` (argument-reversal
 	// modifier) wrapping a chain-fold expression. Standalone form:
 	// lower to a function value that reverses its args before
@@ -1220,7 +1297,9 @@ var handlers = {
 		return "((...__a) => " + recur(node.inner) + "(...__a.reverse()))";
 	},
 
-	// OpFuncExpr — operator as function reference. Bare-op arm only.
+	// OpFuncExpr — operator as function reference.
+	//
+	// Bare-op arm:
 	//
 	//   (+)(1,2,3,4)     → left-fold via reduce: 1+2+3+4
 	//   (-')(1,6,2)      → reverse args, then left-fold: 2-6-1 = -5
@@ -1241,13 +1320,75 @@ var handlers = {
 	// ops (?=, ?<>) primed is a no-op; .reverse() still emits
 	// uniformly. Primed is meaningless for unary; ignored.
 	//
-	// Non-bare arms (range `(..)`, angle-pick `(.<a,5>)`, range-
-	// access `(.[1..5])`, empty-bracket `([])`) and ops absent from
-	// OP_FUNC_TABLE (?<=>, !<=>, ?in, !in, ?has, !has, ?as, !as)
-	// fall back.
+	// Lifted-access arms:
+	//
+	//   (.<a,b>)(rec)    → fresh record with the picked fields
+	//   (.[1..5])(arr)   → array/string slice, inclusive end
+	//
+	// Both are 1-arg function values; the source is bound once
+	// into __o regardless of caller shape. Primed is meaningless
+	// for these (1-arg); emitted shape is identical regardless.
+	// Mirrors the standalone PropertyPickExpr / RangeAccessExpr
+	// lowerings minus the bind-site application.
+	//
+	// Empty-bracket arm:
+	//
+	//   ([])(obj, i)     → obj[i] — strict 2-ary; primed swaps
+	//
+	// Fixed-arity range/membership/has — driven by OP_FUNC_TABLE
+	// kinds range3 / in2 / has2:
+	//
+	//   (?<=>)(lo, x, hi)  → x >= lo && x <= hi
+	//   (!<=>)(lo, x, hi)  → !(x >= lo && x <= hi)
+	//   (?in)(x, c)        → element-of, runtime-dispatched on c
+	//   (!in)(x, c)        → !(?in)
+	//   (?has)(c, k)       → k in c
+	//   (!has)(c, k)       → !(?has)
+	//
+	// `..` (bare range op) and `?as` / `!as` still fall back.
 	OpFuncExpr(node, recur) {
-		if (node.properties || node.range || node.op === "[]") {
-			return fallback(node);
+		// Empty-bracket lifted: ([])(obj, i) → obj[i]. Strict
+		// 2-ary; primed swaps to ((__i, __o) => __o[__i]).
+		// Partial application is the standard PartialCallExpr
+		// path — nothing special at this site.
+		if (node.op === "[]") {
+			let params = node.primed ? "(__i, __o)" : "(__o, __i)";
+			return "(" + params + " => __o[__i])";
+		}
+
+		// Angle-pick lifted: (.<a, b>) → ((__o) => ({ a: __o.a, b: __o.b }))
+		if (node.properties) {
+			let entries = node.properties.map(p => {
+				if (p.type === "PickAccessor") {
+					let name = recur(p.accessor);
+					return name + ": __o." + name;
+				}
+				if (p.type === "PickIndex") {
+					return p.index + ": __o[" + p.index + "]";
+				}
+				return null;
+			});
+			if (entries.some(e => e == null)) return fallback(node);
+			return "((__o) => ({ " + entries.join(", ") + " }))";
+		}
+
+		// Range-access lifted: (.[1..5]) → ((__o) => __o.slice(1, 5 + 1))
+		if (node.range) {
+			let range = node.range;
+			let sliceArgs;
+			if (range.type === "ClosedRangeExpr") {
+				sliceArgs = recur(range.from) + ", " + recur(range.to) + " + 1";
+			}
+			else if (range.type === "LeadingRangeExpr") {
+				sliceArgs = recur(range.from);
+			}
+			else if (range.type === "TrailingRangeExpr") {
+				sliceArgs = "0, " + recur(range.to) + " + 1";
+			}
+			else {
+				return fallback(node);
+			}
+			return "((__o) => __o.slice(" + sliceArgs + "))";
 		}
 		// Bare-prime form: `(')` — the prime operator as a first-
 		// class function value. `node.op` undefined with `primed:
@@ -1286,6 +1427,27 @@ var handlers = {
 			return "((...__xs) => " + xs +
 				".some((__l, __i) => __xs.some((__r, __j) => __j > __i && !(__l " +
 				meta.op + " __r))))";
+		}
+		if (meta.kind === "range3") {
+			let params = node.primed ? "(__hi, __x, __lo)" : "(__lo, __x, __hi)";
+			let inner = "__x >= __lo && __x <= __hi";
+			let body = meta.negate ? "!(" + inner + ")" : inner;
+			return "(" + params + " => " + body + ")";
+		}
+		if (meta.kind === "in2") {
+			let params = node.primed ? "(__c, __x)" : "(__x, __c)";
+			let inner =
+				"Array.isArray(__c) || typeof __c === \"string\" " +
+				"? __c.includes(__x) " +
+				": Object.keys(__c).some(__k => /^\\d+$/.test(__k) && __c[__k] === __x)";
+			let body = meta.negate ? "!(" + inner + ")" : inner;
+			return "(" + params + " => " + body + ")";
+		}
+		if (meta.kind === "has2") {
+			let params = node.primed ? "(__k, __c)" : "(__c, __k)";
+			let inner = "__k in __c";
+			let body = meta.negate ? "!(" + inner + ")" : inner;
+			return "(" + params + " => " + body + ")";
 		}
 		return fallback(node);
 	},
