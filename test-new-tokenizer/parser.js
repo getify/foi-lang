@@ -643,13 +643,15 @@ var SingleQuote  = tokType("SingleQuote");
 var BuiltinNone  = tokVal("Builtin", "None");
 
 // PrefixCallSuffix  := OpenParen CallArgs CloseParen;
-// PartialCallSuffix := Pipe       CallArgs Pipe;
 export const PrefixCallSuffix = production("PrefixCallSuffix",
-	and(OpenParen, lazy(() => CallArgs), CloseParen)
+	and(OpenParen, lazy(() => CallArgs), CloseParen),
+	{ preserveInnerDelim: true }
 );
 
+// PartialCallSuffix := Pipe       CallArgs Pipe;
 export const PartialCallSuffix = production("PartialCallSuffix",
-	and(Pipe, lazy(() => CallArgs), Pipe)
+	and(Pipe, lazy(() => CallArgs), Pipe),
+	{ preserveInnerDelim: true }
 );
 
 // <CallSuffix> := PrefixCallSuffix | PartialCallSuffix;

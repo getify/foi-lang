@@ -178,6 +178,19 @@ export const samples = [
 	{ label: "PartialCallExpr (empty): foo||",               src: "foo||;" },
 	{ label: "PartialCallExpr primed + spread: xyz'|...nums|", src: "xyz'|...nums|;" },
 
+	// === Spread cluster — TriplePeriod-prefixed args ===
+	// Shaper wraps each spread arg in a SpreadArg node. CallExpr
+	// emits direct JS spread. PartialCallExpr switches to per-arg-
+	// named bind shape (uniform across skip/no-skip × primed/no-
+	// primed). The xyz' sample above falls into this same path.
+	{ label: "CallExpr spread: foo(...args)",                src: "foo(...args);" },
+	{ label: "CallExpr spread + positional: foo(1,...args,2)", src: "foo(1,...args,2);" },
+	{ label: "CallExpr primed + spread: foo'(1,...args)",    src: "foo'(1,...args);" },
+	{ label: "CallExpr spread w/ inner WS: foo(... args)",   src: "foo(... args);", opts: { preserveSoftDelims: true } },
+	{ label: "PartialCallExpr spread: foo|...args|",         src: "foo|...args|;" },
+	{ label: "PartialCallExpr spread + positional: foo|1,...args,2|", src: "foo|1,...args,2|;" },
+	{ label: "PartialCallExpr skip + spread: foo|1,,...args,2|", src: "foo|1,,...args,2|;" },
+
 	// === Mixed chains — verifies fold ordering ===
 	{ label: "Mixed: foo.bar(1,2)",                  src: "foo.bar(1,2);" },
 	{ label: "Mixed: foo(1,2).baz",                  src: "foo(1,2).baz;" },

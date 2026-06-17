@@ -1218,6 +1218,14 @@ export const defaultShapers = {
 	// OpFuncExpr (drops as state for primed). Op tokens accumulate
 	// into the synthetic OpFuncExpr.
 	//
+	// preserveInnerDelim:true on the production — soft delims
+	// (Whitespace / LineComment / BlockComment) flow into `parts`
+	// so the spread accumulator can capture trivia between a
+	// TriplePeriod and its arg into the synthesized SpreadArg's
+	// own delims. Outside spread context, soft delims push to
+	// this node's delims directly — same destination as the
+	// auto-merge claim path would have produced.
+	//
 	// Skip-position slots surface as synthetic ImpliedEmpty nodes
 	// in `args`. JS-array-literal semantics on the CallArgList
 	// grammar: each Comma defines a slot boundary; the Comma
@@ -1248,8 +1256,32 @@ export const defaultShapers = {
 	// `awaitingArg` state matches PartialCallSuffix; the OpenParen
 	// (first paren only — inner parens from NamedArgExpr's paren-
 	// recursive arm shouldn't re-arm the state) sets it true.
-	// Bare-op shortcut path is unaffected — bare-op forms have no
-	// Commas inside.
+	// Soft delims don't affect awaitingArg — they're transparent
+	// to the slot-machine. Bare-op shortcut path is unaffected —
+	// bare-op forms have no Commas or soft delims inside (grammar
+	// `Op SingleQuote? &(CloseParen)` has no `_` calls).
+	//
+	// Spread sigil (TriplePeriod) prefixing an arg synthesizes a
+	// SpreadArg wrapper around the arg node:
+	//
+	//   { type: "SpreadArg", inner: <argNode>,
+	//     start: TriplePeriod.start, end: argNode.end,
+	//     delims: [TriplePeriod, ...softDelimsBetween] }
+	//
+	//   foo(...x)        → args [SpreadArg<x>]
+	//   foo(1,...x,2)    → args [<1>, SpreadArg<x>, <2>]
+	//   foo(1,,...x,,2)  → args [<1>, ImpliedEmpty, SpreadArg<x>, ImpliedEmpty, <2>]
+	//   foo(... args)    → SpreadArg.delims captures TriplePeriod + the WS
+	//
+	// TriplePeriod's source position rides on SpreadArg.delims so
+	// round-trip's emitGeneric piece walk recovers it (it sorts
+	// before inner by start). Consumers reading args[] see the
+	// SpreadArg type directly. `spreadBuf` accumulates TriplePeriod
+	// plus any soft delims between it and the arg node; the next
+	// arg node consumes the buffer and wraps. Grammar guarantees a
+	// TriplePeriod is always followed by an arg expression before
+	// the next structural Comma / CloseParen, so the buffer never
+	// dangles at loop end.
 	PrefixCallSuffix(frame,parts) {
 		var args = [];
 		var op = "";
@@ -1259,9 +1291,23 @@ export const defaultShapers = {
 		var awaitingArg = false;
 		var openParenSeen = false;
 		var lastStructEnd = null;
+		var spreadBuf = null;
 		for (let p of parts) {
 			if (isNode(p)) {
-				args.push(p);
+				if (spreadBuf) {
+					let triplePeriod = spreadBuf[0];
+					args.push({
+						type: "SpreadArg",
+						inner: p,
+						start: triplePeriod.start,
+						end: p.end,
+						delims: spreadBuf,
+					});
+					spreadBuf = null;
+				}
+				else {
+					args.push(p);
+				}
 				awaitingArg = false;
 			}
 			else if (p.type === "SingleQuote") {
@@ -1291,6 +1337,21 @@ export const defaultShapers = {
 				awaitingArg = true;
 				lastStructEnd = p.end;
 			}
+			else if (p.type === "TriplePeriod") {
+				spreadBuf = [p];
+			}
+			else if (
+				p.type === "Whitespace" ||
+				p.type === "LineComment" ||
+				p.type === "BlockComment"
+			) {
+				// soft delim — into SpreadArg buffer if pending,
+				// else into this node's delims (same destination
+				// the auto-merge claim would have produced under
+				// !preserveInnerDelim)
+				if (spreadBuf) spreadBuf.push(p);
+				else delims.push(p);
+			}
 			else {
 				// Op-form: accumulate operator token text and span
 				if (op === "") opStart = p.start;
@@ -1316,6 +1377,14 @@ export const defaultShapers = {
 	//
 	// Pipes and commas are structural → delims.
 	//
+	// preserveInnerDelim:true on the production — soft delims
+	// (Whitespace / LineComment / BlockComment) flow into `parts`
+	// so the spread accumulator can capture trivia between a
+	// TriplePeriod and its arg into the synthesized SpreadArg's
+	// own delims. Outside spread context, soft delims push to
+	// this node's delims directly — same destination as the
+	// auto-merge claim path would have produced.
+	//
 	// Skip-position slots surface as `null` entries in `args`,
 	// matching JS-array-literal semantics for the underlying
 	// CallArgList grammar (`(_ Comma)* (CallArgExpr (_ Comma (_
@@ -1335,14 +1404,46 @@ export const defaultShapers = {
 	// Pipe doesn't fire any push, so a trailing comma decays into
 	// `awaitingArg=true` at loop exit and gets ignored —
 	// trailing-comma tolerance falls out of this rule for free.
+	// Soft delims don't affect awaitingArg.
+	//
+	// Spread sigil (TriplePeriod) prefixing an arg synthesizes a
+	// SpreadArg wrapper — same shape as in PrefixCallSuffix:
+	//
+	//   { type: "SpreadArg", inner: <argNode>,
+	//     start: TriplePeriod.start, end: argNode.end,
+	//     delims: [TriplePeriod, ...softDelimsBetween] }
+	//
+	//   f|...x|       → args [SpreadArg<x>]
+	//   f|1,...x,2|   → args [<1>, SpreadArg<x>, <2>]
+	//   f|1,,...x,2|  → args [<1>, null, SpreadArg<x>, <2>]
+	//
+	// `spreadBuf` accumulates TriplePeriod plus any soft delims
+	// between it and the arg node; the next arg node consumes the
+	// buffer. Grammar guarantees a TriplePeriod is always followed
+	// by an arg expression before the next structural token, so
+	// the buffer never dangles at loop end.
 	PartialCallSuffix(frame,parts) {
 		var args = [];
 		var delims = [];
 		var awaitingArg = false;
 		var pipeCount = 0;
+		var spreadBuf = null;
 		for (let p of parts) {
 			if (isNode(p)) {
-				args.push(p);
+				if (spreadBuf) {
+					let triplePeriod = spreadBuf[0];
+					args.push({
+						type: "SpreadArg",
+						inner: p,
+						start: triplePeriod.start,
+						end: p.end,
+						delims: spreadBuf,
+					});
+					spreadBuf = null;
+				}
+				else {
+					args.push(p);
+				}
 				awaitingArg = false;
 			}
 			else if (p.type === "Pipe") {
@@ -1354,6 +1455,19 @@ export const defaultShapers = {
 				delims.push(p);
 				if (awaitingArg) args.push(null);
 				awaitingArg = true;
+			}
+			else if (p.type === "TriplePeriod") {
+				spreadBuf = [p];
+			}
+			else if (
+				p.type === "Whitespace" ||
+				p.type === "LineComment" ||
+				p.type === "BlockComment"
+			) {
+				// soft delim — into SpreadArg buffer if pending,
+				// else into this node's delims
+				if (spreadBuf) spreadBuf.push(p);
+				else delims.push(p);
 			}
 			else {
 				delims.push(p);

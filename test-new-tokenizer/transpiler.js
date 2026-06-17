@@ -853,43 +853,64 @@ var handlers = {
 	ImpliedEmpty: () => "undefined",
 
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
-	// production; ChainExpr's fold produces this uniform shape
-	// (bare-op-in-parens shortcut is normalized upstream).
+	// production; ChainExpr's fold produces this uniform shape.
+	// Generic emission: recur callee + paren-wrapped arg list.
+	// Two callee-shape shortcuts and one arg-shape special case:
 	//
-	// NamedArg variants (ConciseNamedArg, ExplicitNamedArg) need
-	// JS-side lowering decisions — fall back when present.
-	// Positional-only path for first slice.
-	//
-	// Two prime-related shortcuts at call site:
-	//
-	//   - Primed callee (`foo'(a,b,c)`) — reverse args at call
-	//     site, emit direct call on the inner expression rather
-	//     than going through PrimedExpr's reverse-wrapping
-	//     function value. Matches Foi guide: `f'(a,b,c)` → `f(c,
+	//   - PrimedExpr callee (`foo'(a,b,c)`) — pre-reverse the
+	//     args array so the emitted call applies them already in
+	//     reversed order. Matches Foi guide: `f'(a,b,c)` → `f(c,
 	//     b, a)`. Skipped when the PrimedExpr carries `:as`.
+	//
+	//     SPREAD INTERACTION: static array-reverse on args[]
+	//     reorders argument positions but cannot reverse the
+	//     contents of a spread (length unknown at compile time).
+	//     `foo'(a, ...x, b)` requires `foo(b, ...x.toReversed(), a)`
+	//     semantically — equivalent to `foo(...[a, ...x, b].reverse())`.
+	//     When spread is present we emit that runtime-reverse
+	//     form instead of the static-reverse shortcut.
 	//
 	//   - Bare-prime callee applied to a function (`(')(foo)`) —
 	//     emit the same shape as `foo'` directly, skipping the
 	//     wrapper IIFE OpFuncExpr's bare-prime handler would
 	//     otherwise produce. Requires exactly one regular arg
-	//     (not null, not ImpliedEmpty, not a NamedArg). Multi-arg
-	//     forms aren't semantically meaningful for the unary prime
-	//     operator; fall through to the generic OpFuncExpr-bare-
-	//     prime emission so user gets an n-ary-call shape that
-	//     errors at runtime rather than producing wrong-arity JS.
+	//     (not null, not ImpliedEmpty, not a NamedArg, not a
+	//     SpreadArg). Multi-arg forms aren't semantically
+	//     meaningful for the unary prime operator; fall through
+	//     to the generic OpFuncExpr-bare-prime emission so user
+	//     gets an n-ary-call shape that errors at runtime rather
+	//     than producing wrong-arity JS.
+	//
+	//   - SpreadArg in args (`foo(...x)`, `foo(1, ...x, 2)`) —
+	//     emit `..." + recur(inner)` at the spread position, JS
+	//     spread does the rest. NamedArg bailout looks through
+	//     SpreadArg.inner.
 	CallExpr(node, recur) {
+		var hasSpread = false;
 		for (let a of node.args) {
+			let inner = a.type === "SpreadArg" ? a.inner : a;
 			if (
-				a.type === "ConciseNamedArg" ||
-				a.type === "ExplicitNamedArg"
+				inner.type === "ConciseNamedArg" ||
+				inner.type === "ExplicitNamedArg"
 			) {
 				return fallback(node);
 			}
+			if (a.type === "SpreadArg") hasSpread = true;
 		}
 		var callee = node.callee;
 		var args = node.args;
+		var renderArg = a =>
+			a.type === "SpreadArg"
+				? "..." + recur(a.inner)
+				: recur(a);
 		if (callee.type === "PrimedExpr" && !callee.as) {
 			callee = callee.inner;
+			if (hasSpread) {
+				// Runtime reverse — static array-reverse can't
+				// reverse spread contents.
+				let argList = args.map(renderArg).join(", ");
+				return recur(callee) + "(...[" + argList + "].reverse())";
+			}
 			args = args.slice().reverse();
 		}
 		else if (
@@ -898,12 +919,13 @@ var handlers = {
 			!callee.as &&
 			args.length === 1 &&
 			args[0] != null &&
-			args[0].type !== "ImpliedEmpty"
+			args[0].type !== "ImpliedEmpty" &&
+			args[0].type !== "SpreadArg"
 		) {
 			return "((...__a) => " + recur(args[0]) +
 				"(...__a.reverse()))";
 		}
-		var argList = args.map(a => recur(a)).join(", ");
+		var argList = args.map(renderArg).join(", ");
 		return recur(callee) + "(" + argList + ")";
 	},
 
@@ -949,31 +971,101 @@ var handlers = {
 	//   → ((__c, ...__a) => (...__rest) =>
 	//        __c(...[__a[0], __rest[0], __a[1], ...__rest.slice(1)].reverse()))(f, 1, 3)
 	//
+	// Spread-bearing form: when any SpreadArg is present, the
+	// static `__a[i]` indexing breaks (a spread occupies a runtime-
+	// variable number of slots), so we switch to a per-arg-named
+	// bind shape. Each bound regular arg gets its own `__aN`
+	// parameter; each spread gets `__sprN` bound to `[...expr]`
+	// (the iterable is evaluated and captured to an array at
+	// partial-app time, preserving "remembered for later"
+	// semantics for spread sources like generators); each null
+	// slot resolves to `__rest[N]` from the rest-call.
+	//
+	//   f|...x|
+	//   → ((__c, __spr0) => (...__rest) =>
+	//        __c(...__spr0, ...__rest))(f, [...x])
+	//
+	//   f|1, ...x, 2|
+	//   → ((__c, __a0, __spr0, __a1) => (...__rest) =>
+	//        __c(__a0, ...__spr0, __a1, ...__rest))(f, 1, [...x], 2)
+	//
+	//   f|1,, ...x, 2|
+	//   → ((__c, __a0, __spr0, __a1) => (...__rest) =>
+	//        __c(__a0, __rest[0], ...__spr0, __a1, ...__rest.slice(1)))(f, 1, [...x], 2)
+	//
+	//   f'|1, ...x|
+	//   → ((__c, __a0, __spr0) => (...__rest) =>
+	//        __c(...[__a0, ...__spr0, ...__rest].reverse()))(f, 1, [...x])
+	//
+	// Trailing rest emits as `...__rest` when no skips were seen,
+	// otherwise `...__rest.slice(restIdx)` — the slice(0) variant
+	// is functionally equivalent but noisier, and the no-skip
+	// no-spread fast-path elsewhere in this handler already emits
+	// the simpler form for that case.
+	//
 	// Deferred (fall back when present):
-	//   - spread arg (TriplePeriod in delims) — JS-side spread of
-	//     captured-tuple needs its own lowering
-	//   - NamedArg variants — same JS-side decision as CallExpr
+	//   - NamedArg variants — same JS-side decision as CallExpr.
+	//     SpreadArg-wrapped NamedArg also falls back (bailout
+	//     looks through SpreadArg.inner).
 	PartialCallExpr(node, recur) {
-		if (node.delims) {
-			for (let d of node.delims) {
-				if (d.type === "TriplePeriod") return fallback(node);
-			}
-		}
+		var hasSpread = false;
 		for (let a of node.args) {
+			if (a == null) continue;
+			let inner = a.type === "SpreadArg" ? a.inner : a;
 			if (
-				a != null && (
-					a.type === "ConciseNamedArg" ||
-					a.type === "ExplicitNamedArg"
-				)
+				inner.type === "ConciseNamedArg" ||
+				inner.type === "ExplicitNamedArg"
 			) {
 				return fallback(node);
 			}
+			if (a.type === "SpreadArg") hasSpread = true;
 		}
 		var calleeNode = node.callee;
 		var primed = calleeNode.type === "PrimedExpr" && !calleeNode.as;
 		if (primed) calleeNode = calleeNode.inner;
 		var callee = recur(calleeNode);
 		var args = node.args;
+
+		// Spread present — per-arg-named bind shape (uniform
+		// across with/without skips, with/without primed).
+		if (hasSpread) {
+			let params = ["__c"];
+			let binds = [callee];
+			let slots = [];
+			let argIdx = 0;
+			let spreadIdx = 0;
+			let restIdx = 0;
+			for (let a of args) {
+				if (a == null) {
+					slots.push("__rest[" + restIdx + "]");
+					restIdx++;
+				}
+				else if (a.type === "SpreadArg") {
+					let name = "__spr" + spreadIdx;
+					params.push(name);
+					binds.push("[..." + recur(a.inner) + "]");
+					slots.push("..." + name);
+					spreadIdx++;
+				}
+				else {
+					let name = "__a" + argIdx;
+					params.push(name);
+					binds.push(recur(a));
+					slots.push(name);
+					argIdx++;
+				}
+			}
+			slots.push(
+				restIdx === 0
+					? "...__rest"
+					: "...__rest.slice(" + restIdx + ")"
+			);
+			let inner = slots.join(", ");
+			if (primed) inner = "...[" + inner + "].reverse()";
+			return "((" + params.join(", ") + ") => (...__rest) => __c(" +
+				inner + "))(" + binds.join(", ") + ")";
+		}
+
 		var boundArgs = args.filter(a => a != null);
 		var innerArgs;
 
