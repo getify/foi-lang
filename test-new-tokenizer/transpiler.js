@@ -829,6 +829,24 @@ var handlers = {
 	// NamedArg variants (ConciseNamedArg, ExplicitNamedArg) need
 	// JS-side lowering decisions — fall back when present.
 	// Positional-only path for first slice.
+	//
+	// Two prime-related shortcuts at call site:
+	//
+	//   - Primed callee (`foo'(a,b,c)`) — reverse args at call
+	//     site, emit direct call on the inner expression rather
+	//     than going through PrimedExpr's reverse-wrapping
+	//     function value. Matches Foi guide: `f'(a,b,c)` → `f(c,
+	//     b, a)`. Skipped when the PrimedExpr carries `:as`.
+	//
+	//   - Bare-prime callee applied to a function (`(')(foo)`) —
+	//     emit the same shape as `foo'` directly, skipping the
+	//     wrapper IIFE OpFuncExpr's bare-prime handler would
+	//     otherwise produce. Requires exactly one regular arg
+	//     (not null, not ImpliedEmpty, not a NamedArg). Multi-arg
+	//     forms aren't semantically meaningful for the unary prime
+	//     operator; fall through to the generic OpFuncExpr-bare-
+	//     prime emission so user gets an n-ary-call shape that
+	//     errors at runtime rather than producing wrong-arity JS.
 	CallExpr(node, recur) {
 		for (let a of node.args) {
 			if (
@@ -838,8 +856,25 @@ var handlers = {
 				return fallback(node);
 			}
 		}
-		var argList = node.args.map(a => recur(a)).join(", ");
-		return recur(node.callee) + "(" + argList + ")";
+		var callee = node.callee;
+		var args = node.args;
+		if (callee.type === "PrimedExpr" && !callee.as) {
+			callee = callee.inner;
+			args = args.slice().reverse();
+		}
+		else if (
+			callee.type === "OpFuncExpr" &&
+			callee.op == null && callee.primed &&
+			!callee.as &&
+			args.length === 1 &&
+			args[0] != null &&
+			args[0].type !== "ImpliedEmpty"
+		) {
+			return "((...__a) => " + recur(args[0]) +
+				"(...__a.reverse()))";
+		}
+		var argList = args.map(a => recur(a)).join(", ");
+		return recur(callee) + "(" + argList + ")";
 	},
 
 	// PartialCallExpr { callee, args }. PartialCallSuffix is the
@@ -870,6 +905,20 @@ var handlers = {
 	//   → ((__c, ...__a) => (...__rest) =>
 	//        __c(__rest[0], __rest[1], __a[0], ...__rest.slice(2)))(f, 3)
 	//
+	// Primed callee: at final invocation, reverse the COMPLETE
+	// accumulated arg sequence (bound + rest) before applying to
+	// callee. Matches Foi guide: `(-')|1|(6)` → `-(6, 1) = 5`.
+	// Uniform across all three shape arms — wrap the arg sequence
+	// in `[...].reverse()` and re-spread.
+	//
+	//   foo'|1, 2|
+	//   → ((__c, ...__a) => (...__rest) =>
+	//        __c(...[...__a, ...__rest].reverse()))(foo, 1, 2)
+	//
+	//   f'|1,,3|
+	//   → ((__c, ...__a) => (...__rest) =>
+	//        __c(...[__a[0], __rest[0], __a[1], ...__rest.slice(1)].reverse()))(f, 1, 3)
+	//
 	// Deferred (fall back when present):
 	//   - spread arg (TriplePeriod in delims) — JS-side spread of
 	//     captured-tuple needs its own lowering
@@ -890,13 +939,19 @@ var handlers = {
 				return fallback(node);
 			}
 		}
-		var callee = recur(node.callee);
+		var calleeNode = node.callee;
+		var primed = calleeNode.type === "PrimedExpr" && !calleeNode.as;
+		if (primed) calleeNode = calleeNode.inner;
+		var callee = recur(calleeNode);
 		var args = node.args;
 		var boundArgs = args.filter(a => a != null);
+		var innerArgs;
 
 		// Zero bound args: just bind callee.
 		if (boundArgs.length === 0) {
-			return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + callee + ")";
+			innerArgs = primed ? "...__rest.reverse()" : "...__rest";
+			return "((__c, ...__a) => (...__rest) => __c(" + innerArgs +
+				"))(" + callee + ")";
 		}
 
 		var argList = boundArgs.map(a => recur(a)).join(", ");
@@ -905,7 +960,11 @@ var handlers = {
 
 		// No-skip fast path — preserves the simpler spread shape.
 		if (!hasSkips) {
-			return "((__c, ...__a) => (...__rest) => __c(...__a, ...__rest))(" + bindArgs + ")";
+			innerArgs = primed
+				? "...[...__a, ...__rest].reverse()"
+				: "...__a, ...__rest";
+			return "((__c, ...__a) => (...__rest) => __c(" + innerArgs +
+				"))(" + bindArgs + ")";
 		}
 
 		// Skip path: walk args; null → __rest slot, node → __a slot.
@@ -922,10 +981,10 @@ var handlers = {
 				boundIdx++;
 			}
 		}
-		var innerCall = "__c(" + slotExprs.join(", ") +
-			", ...__rest.slice(" + restIdx + "))";
-		return "((__c, ...__a) => (...__rest) => " +
-			innerCall + ")(" + bindArgs + ")";
+		var slotList = slotExprs.join(", ") + ", ...__rest.slice(" + restIdx + ")";
+		innerArgs = primed ? "...[" + slotList + "].reverse()" : slotList;
+		return "((__c, ...__a) => (...__rest) => __c(" + innerArgs +
+			"))(" + bindArgs + ")";
 	},
 
 	// MemberAccessExpr { object, accessor? | index? }. Mutually
@@ -948,10 +1007,33 @@ var handlers = {
 		return recur(node.object) + "[" + recur(node.expr) + "]";
 	},
 
+	// PrimedExpr { inner } — postfix `'` (argument-reversal
+	// modifier) wrapping a chain-fold expression. Standalone form:
+	// lower to a function value that reverses its args before
+	// applying to the inner expression.
+	//
+	//   foo'      → ((...__a) => foo(...__a.reverse()))
+	//   foo.bar'  → ((...__a) => foo.bar(...__a.reverse()))
+	//
+	// CallExpr / PartialCallExpr with a PrimedExpr callee bypass
+	// this via their own primed-callee shortcuts (cleaner direct
+	// shape — `foo'(1,2,3)` → `foo(3, 2, 1)` rather than going
+	// through the wrapper). This handler covers every other
+	// position: DefVarStmt RHS, function call arg, binary operand,
+	// etc.
+	//
+	// `:as` annotation lowering deferred — falls back when present.
+	PrimedExpr(node, recur) {
+		if (node.as) return fallback(node);
+		return "((...__a) => " + recur(node.inner) + "(...__a.reverse()))";
+	},
+
 	// OpFuncExpr — operator as function reference. Bare-op arm only.
 	//
 	//   (+)(1,2,3,4)     → left-fold via reduce: 1+2+3+4
 	//   (-')(1,6,2)      → reverse args, then left-fold: 2-6-1 = -5
+	//   (')              → bare-prime as function value: __f => f'
+	//   (')(foo)         → equivalent to `foo'` (see CallExpr shortcut)
 	//   (?=)(x,y,z)      → all-pairs every: x===y && x===z && y===z
 	//   (?<)(a,b,c)      → all-pairs every: a<b && a<c && b<c
 	//   (?empty)(x)      → 1-arg lift: (x == null)
@@ -974,6 +1056,18 @@ var handlers = {
 	OpFuncExpr(node, recur) {
 		if (node.properties || node.range || node.op === "[]") {
 			return fallback(node);
+		}
+		// Bare-prime form: `(')` — the prime operator as a first-
+		// class function value. `node.op` undefined with `primed:
+		// true` uniquely identifies the standalone prime (other
+		// primed forms like `(+')` carry both fields). Lowers to a
+		// higher-order wrapper that takes a function and returns
+		// its argument-reversing variant. `(')(foo)` evaluates to
+		// the same function value `foo'` would produce; the direct
+		// shortcut path lives in CallExpr (see Patch 5 / Patch 2
+		// stack).
+		if (node.op == null && node.primed) {
+			return "(__f => (...__a) => __f(...__a.reverse()))";
 		}
 		var meta = OP_FUNC_TABLE[node.op];
 		if (!meta) return fallback(node);
