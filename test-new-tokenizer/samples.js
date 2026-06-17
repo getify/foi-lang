@@ -347,6 +347,17 @@ export const samples = [
 	{ label: "FlowBinExpr: #> chain w/ destructure stage-1",
 	  src: "data #> (<:x>: src) { x + #; } #> { #; };" },
 
+	{ label: "FlowBinExpr: #> callable RHS (identifier)",
+	  src: "data #> inc;" },
+	{ label: "FlowBinExpr: #> callable RHS (curried call)",
+	  src: "data #> add(1);" },
+	{ label: "FlowBinExpr: #> callable RHS w/ # placement",
+	  src: "data #> add(1, #);" },
+	{ label: "FlowBinExpr: #> callable multi-# placement",
+	  src: "data #> foo(#, 2, #);" },
+	{ label: "FuncBodyPipeline: callable-chain canonical",
+	  src: "defn compute(x) #> add(1) #> triple #> half;" },
+
 	// DefBlockStmt — strict-optional inner (Identifier-init optional;
 	// DestructureTarget-init REQUIRED — no implicit source at top-level `def (...)`)
 	{ label: "DefBlockStmt: def (x: 1) { x; }",            src: "def (x: 1) { x; };" },
@@ -391,6 +402,13 @@ export const samples = [
 	{ label: "defn: gather parameter",               src: "defn gather(*args) ^args;" },
 	{ label: "defn: with FuncPrecond",               src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
 
+	{ label: "defn: curried (3 paramSets)",          src: "defn f(x)(y)(z) ^x + y + z;" },
+	{ label: "defn: anonymous curried",              src: "defn(x)(y) ^x + y;" },
+	{ label: "defn: curried + destructure outer",    src: "defn f(<:a>)(y) ^a + y;" },
+	{ label: "defn: curried + destructure inner",    src: "defn f(x)(<:a>) ^x + a;" },
+	{ label: "defn: curried + gather inner",         src: "defn f(x)(*args) ^x;" },
+	{ label: "defn: curried + pipeline body",        src: "defn pipe(x)(y) #> add(1);" },
+
 	// §13 — defn with destructure parameter (ParameterList → VarDefInitOptImplIn)
 	{ label: "defn: destructure param (no default)",
 	  src: "defn f(<:a, :b>) ^a + b;" },
@@ -398,6 +416,16 @@ export const samples = [
 	  src: "defn f(<:a, :b>: defs) ^a + b;" },
 	{ label: "defn: destructure + ident param",
 	  src: "defn f(<:a, :b>, c) ^a + b + c;" },
+
+	{ label: "defn: destructure + pipeline body",
+	  src: "defn foo(<:z>) #> inc;" },
+	{ label: "defn: destructure + pipeline w/ # placement",
+	  src: "defn foo(<:z>) #> add(z, #);" },
+	{ label: "defn: curried destructure + pipeline body",
+	  src: "defn foo(<:x>)(<:y>)(<:z>) #> inc #> { x + y + #; };" },
+	{ label: "defn: destructure-with-init + pipeline",
+	  src: "defn foo(<:z>: src) #> inc;" },
+
 
 	// =============================================================
 	// §14 CONDITIONALS / GUARDS

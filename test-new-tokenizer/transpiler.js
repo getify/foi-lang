@@ -453,30 +453,37 @@ var renderDestructurePath = (source, recur, tempName) => {
 
 
 // =============================================================
-// DESTRUCTURE-PARAMETER LOWERING (DefFuncExpr)
+// PER-TIER PARAM RENDERING (DefFuncExpr)
 //
-// When DefFuncExpr's first (and only) param-set contains one or
-// more DestructureTarget params, each such position is lowered as:
+// Each paramSet (DefFuncExpr.paramSets[i]) renders independently
+// to:
+//   - jsParams: a parenthesizable param-list string
+//                ("a, b" | "__p0, c" | "...args" | "")
+//   - prelude:  a destructure-prelude string injected at the head
+//                of the tier's body ("var a = __p0.a, b = __p0.b;")
+//                or "" when the tier has no destructure params
 //
-//   - JS-side param name: synthesized __pN (N = positional index)
-//   - Optional `= <init>` JS default on the param itself when
-//     Foi-side default is present
-//   - A `var name = __pN.path` prelude decl per destructure entry,
-//     injected at the head of the function body
+// DestructureTarget params at position N are lowered as a
+// synthesized __pN JS param plus a `var name = __pN.path` prelude
+// decl per destructure entry. Identifier params pass through.
+// GatherParameter sets emit `...name`.
 //
-//   defn f(<:a, :b>, c) ^a + b + c;
-//   → function f(__p0, c) { var a = __p0.a, b = __p0.b; return a + b + c; }
+// Used by DefFuncExpr for both single-paramSet (the legacy path,
+// flat name/anonymous emission) and multi-paramSet (nested-arrow
+// folding inside-out with the outermost tier carrying the name
+// when present). Across tiers, every destructure position reuses
+// __p<i> — inner-tier shadowing is benign since each tier's
+// prelude binds named locals before the inner arrow constructs.
 //
-//   defn f(<:a, :b>: defs) ^a + b;
-//   → function f(__p0 = defs) { var a = __p0.a, b = __p0.b; return a + b; }
+// renderFuncBodyWithPrelude (below) injects a prelude into either
+// FuncBodyExpr or FuncBodyBlock; FuncBodyPipeline returns null
+// (no brace-injection point — caller falls back when the
+// innermost tier needs a prelude alongside a pipeline body).
 //
-// Identifier params pass through unchanged. The function keeps
-// its `function name(...)` / `(...) => ...` shape — no IIFE
-// wrapper (the prelude lives inside the existing body braces).
-//
-// FuncBodyPipeline body falls back — no brace-injection point.
-// FuncBodyExpr and FuncBodyBlock both render as `{ ... }` and
-// accept prelude decls before their existing content.
+// Returns null when any param shape can't be lowered (non-
+// Identifier/DestructureTarget target, or destructure entries
+// that renderDestructure rejects) — caller falls back at the
+// DefFuncExpr level.
 // =============================================================
 
 var renderFuncBodyWithPrelude = (body, prelude, recur) => {
@@ -492,7 +499,11 @@ var renderFuncBodyWithPrelude = (body, prelude, recur) => {
 	return null;
 };
 
-var renderDestructureFunc = (node, paramSet, recur) => {
+var renderTierParams = (paramSet, recur) => {
+	if (paramSet.type === "GatherParameter") {
+		return { jsParams: "..." + paramSet.name, prelude: "" };
+	}
+	if (paramSet.type !== "ParameterList") return null;
 	var jsParams = [];
 	var preludeDecls = [];
 	for (let i = 0; i < paramSet.params.length; i++) {
@@ -515,14 +526,10 @@ var renderDestructureFunc = (node, paramSet, recur) => {
 		}
 		return null;
 	}
-	var prelude = preludeDecls.join(" ");
-	var bodyStr = renderFuncBodyWithPrelude(node.body, prelude, recur);
-	if (bodyStr == null) return null;
-	var paramsStr = jsParams.join(", ");
-	if (node.name) {
-		return "function " + recur(node.name) + "(" + paramsStr + ") " + bodyStr;
-	}
-	return "(" + paramsStr + ") => " + bodyStr;
+	return {
+		jsParams: jsParams.join(", "),
+		prelude: preludeDecls.join(" "),
+	};
 };
 
 
@@ -610,47 +617,56 @@ var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
 //
 // `defn foo(x) #> ...` is conceptually sugar for `defn foo(x) ^ x #> ...`.
 // This lowering literalizes the sugar: synthesize a left-folded
-// FlowBinExpr chain whose deepest-left leaf is the param identifier
-// and whose stages are (op:"#>", right:stage-1-RHS) followed by
+// FlowBinExpr chain whose deepest-left leaf is the first-positional
+// seed and whose stages are (op:"#>", right:stage-1-RHS) followed by
 // fbp.body's chain stages. Hand off to the FlowBinExpr handler via
 // recur — it owns every `#>` lowering rule (topic save, per-entry
-// defs, destructure binding, body emission, BlockExpr / BareBlockExpr
-// arms). Zero duplication; no FuncBodyPipeline-specific stage walker.
+// defs, destructure binding, body emission, BlockExpr / BareBlockExpr /
+// callable arms). Zero duplication; no FuncBodyPipeline-specific
+// stage walker.
+//
+// Topic-seeding rule: the first positional ARGUMENT seeds, regardless
+// of whether the param-shape destructures names out of it. Destructure
+// is an orthogonal binding side-effect — the destructured locals are
+// available in stages via `#` placement or via lexical reference, but
+// what flows into stage 1 is the whole positional value.
+//
+//   defn foo(x) #> bar;         → bar(x)
+//   defn foo(<:a, :b>) #> bar;  → bar({a, b})   ← the record flows,
+//                                                   not `a` or `b`
 //
 // Single-stage: fbp.body is the stage-1 RHS node directly (not a
 // FlowBinExpr). walk() pushes it as a single operand; refold builds
-// FlowBinExpr{left: param, op:"#>", right: stage-1-RHS}. The
-// FlowBinExpr handler dispatches to its BareBlockExpr / BlockExpr /
-// fallback arms.
+// FlowBinExpr{left: seedIdent, op:"#>", right: stage-1-RHS}.
 //
 // Multi-stage: fbp.body is itself a left-folded FlowBinExpr (built
 // by the FuncBodyPipeline shaper). walk() flattens it to operands+ops;
-// prepending (param, "#>") and re-folding produces the same shape
-// `param #> A #> B ...` would have at standalone expression position.
+// prepending (seedIdent, "#>") and re-folding produces the same shape
+// `seed #> A #> B ...` would have at standalone expression position.
 // The FlowBinExpr handler recurses naturally on `left` through the
 // chain; each `#>` stage emits its IIFE, non-`#>` stages (e.g. `~map`)
-// hit FlowBinExpr's existing fallback — symmetric with standalone
-// `data #> A ~map B` falling back at the outer `~map`. When ~map etc.
-// handlers land, this lowering benefits automatically.
+// hit FlowBinExpr's existing fallback.
 //
-// Output shape: `{ return <chain-emitted>; }`. The chain emits as an
-// IIFE per stage (FlowBinExpr's expression-position lowering). More
-// verbose than the prior bespoke FuncBodyPipeline-specific lowering
-// (which inlined directly into the function braces without IIFEs),
-// but semantically equivalent and produced by the single unified code
-// path — matching the "AST inside is the same" intent.
+// Output shape: `{ <prelude> return <chain-emitted>; }`. Prelude is
+// the destructure binding for the seed positional when target is a
+// DestructureTarget; empty otherwise.
 //
-// First-slice param constraints (unchanged):
+// First-positional param constraints:
 //   - Single-positional ParameterList (no multi-param, no
-//     GatherParameter, no destructure params).
-//   - Identifier param only.
+//     GatherParameter).
+//   - Target is Identifier OR DestructureTarget.
+//     - Identifier: seedName = the param's name.
+//     - DestructureTarget: seedName = "__p0" (synthesized — same
+//       name renderTierParams uses for position 0, so the JS-side
+//       param declaration matches automatically), with a
+//       `var <entries>;` prelude prepended to the body.
 //
 // Synthesized FlowBinExpr nodes carry no start/end — the FlowBinExpr
 // handler's fallback (for currently-unsupported chains) emits
 // `null /* ?FlowBinExpr */`. The function shell still emits, keeping
 // partial transpilation visible at the right granularity.
 //
-// Returns the brace-wrapped function body `{ return <chain>; }`,
+// Returns the brace-wrapped function body `{ ... return <chain>; }`,
 // or null when the param shape isn't supported — caller falls back
 // the whole DefFuncExpr.
 // =============================================================
@@ -659,13 +675,27 @@ var renderPipelineBody = (node, paramSet, recur) => {
 	if (paramSet.type !== "ParameterList") return null;
 	if (paramSet.params.length !== 1) return null;
 	var p = paramSet.params[0];
-	if (p.target.type !== "Identifier") return null;
 
-	var paramIdent = p.target;
+	var seedName;
+	var prelude = "";
+	if (p.target.type === "Identifier") {
+		seedName = p.target.name;
+	}
+	else if (p.target.type === "DestructureTarget") {
+		seedName = "__p0";
+		let entries = renderDestructure(p.target, recur, seedName);
+		if (entries == null) return null;
+		prelude = "var " + entries + "; ";
+	}
+	else {
+		return null;
+	}
+
+	var seedIdent = { type: "Identifier", name: seedName };
 	var fbp = node.body;
 
 	// Flatten fbp.body (single node OR FlowBinExpr subtree) into
-	// operands+ops. Prepend (paramIdent, fbp.op="#>") as the new
+	// operands+ops. Prepend (seedIdent, fbp.op="#>") as the new
 	// outermost-left stage. Re-fold left-associative.
 	var operands = [];
 	var ops = [];
@@ -680,7 +710,7 @@ var renderPipelineBody = (node, paramSet, recur) => {
 		}
 	};
 	walk(fbp.body);
-	operands.unshift(paramIdent);
+	operands.unshift(seedIdent);
 	ops.unshift(fbp.op);
 
 	var virtual = operands[0];
@@ -693,7 +723,7 @@ var renderPipelineBody = (node, paramSet, recur) => {
 		};
 	}
 
-	return "{ return " + recur(virtual) + "; }";
+	return "{ " + prelude + "return " + recur(virtual) + "; }";
 };
 
 
@@ -1162,29 +1192,47 @@ var handlers = {
 	//                     output. Topic = recur(left) saved into
 	//                     __topic; per-entry defs + body stmts
 	//                     with return-injection.
-	//   - BareBlockExpr → IIFE-wrap; topic discarded; stmts emit
-	//                     with return-injection. (No defs, so
-	//                     no __topic save needed; `#` inside
-	//                     resolves via the dispatch closure to
-	//                     a saved temp.)
-	//   - ExprNoBlock / GroupedExpr → "pipeline body is a
-	//     callable" semantics. Deferred — falls back.
+	//   - BareBlockExpr → IIFE-wrap; topic saved into __t; stmts
+	//                     emit with return-injection.
+	//   - Callable RHS  → IIFE-wrap; topic saved into __t. The
+	//     RHS evaluates to a function; topic substitutes for any
+	//     `#` references in the RHS, or is appended as the
+	//     implicit final argument when no `#` appears.
 	//
-	// BareBlockExpr arm: still saves the topic into `__t` (not
-	// `__topic`, since no defs collide) so `#` inside the body
-	// has a stable JS-side name. Arbitrary LHS expressions can't
-	// be substituted verbatim into every `#` site without
-	// re-evaluation — and re-evaluation is wrong if LHS has
-	// side effects.
+	//        data #> inc          → ((__t) => (inc)(__t))(data)
+	//        data #> add(1)       → ((__t) => (add(1))(__t))(data)
+	//        data #> add(1, #)    → ((__t) => add(1, __t))(data)
+	//        data #> foo(#, 2, #) → ((__t) => foo(__t, 2, __t))(data)
+	//
+	//     RHS is paren-wrapped in the no-`#` shape so the
+	//     trailing `(__t)` call binds tighter than any infix
+	//     operator that might appear at the RHS root (rare but
+	//     possible via GroupedExpr / BinaryAtom). Detection of
+	//     `#` presence is via topicRefBox.used, set by dispatch
+	//     when it lowers a PipelineTopic node.
+	//
+	// BareBlockExpr / Callable arms save the topic into `__t`
+	// (not `__topic`, since no defs collide) so `#` inside the
+	// body / RHS has a stable JS-side name. Arbitrary LHS
+	// expressions can't be substituted verbatim into every `#`
+	// site without re-evaluation — and re-evaluation is wrong
+	// if LHS has side effects.
+	//
+	// Foi-side guarantee: callable-arm RHS must evaluate to a
+	// function. Non-function RHS throws at runtime — JS-faithful
+	// to the source.
 	FlowBinExpr(node, recur) {
 		var op = node.op;
 		if (op !== "#>") return fallback(node);
 		var rhs = node.right;
 
-		var topicRefBox = { ref: null };
+		var topicRefBox = { ref: null, used: false };
 		var dispatch = n => {
 			if (n == null) return "";
-			if (n.type === "PipelineTopic") return topicRefBox.ref;
+			if (n.type === "PipelineTopic") {
+				topicRefBox.used = true;
+				return topicRefBox.ref;
+			}
 			var h = handlers[n.type];
 			return h ? h(n, dispatch) : fallback(n);
 		};
@@ -1198,14 +1246,18 @@ var handlers = {
 		}
 
 		if (rhs.type === "BlockExpr") {
-			// emitPipelineBlockBody sets topicRefBox.ref to
-			// "__topic" as part of the save.
-			var inner = emitPipelineBlockBody(rhs, lhsStr, dispatch, topicRefBox);
+			let inner = emitPipelineBlockBody(rhs, lhsStr, dispatch, topicRefBox);
 			if (inner == null) return fallback(node);
 			return "(() => { " + inner + " })()";
 		}
 
-		return fallback(node);
+		// Callable RHS — Identifier, CallExpr, MemberAccessExpr,
+		// OpFuncExpr, GroupedExpr, etc. (every non-block arm of
+		// FlowRHSImplIn's OrDispatch).
+		topicRefBox.ref = "__t";
+		var rhsStr = dispatch(rhs);
+		var callExpr = topicRefBox.used ? rhsStr : "(" + rhsStr + ")(__t)";
+		return "((__t) => " + callExpr + ")(" + lhsStr + ")";
 	},
 
 
@@ -1351,40 +1403,46 @@ var handlers = {
 	// =============================================================
 
 	// `defn name(params) <body>` → `function name(params) <body>`
-	// `defn (params) <body>`      → `(params) => <body>`
+	// `defn (params) <body>`     → `(params) => <body>`
 	//
-	// First-slice limits — fall back when any apply:
-	//   - paramSets.length > 1 (currying — needs nested-lambda lowering)
-	//   - preconditions, over, as, at (each needs its own lowering)
+	// Multi-paramSet (currying) lowers as nested arrows inside-
+	// out, with the outermost tier carrying the name when present:
 	//
-	// Body forms:
-	//   - FuncBodyExpr / FuncBodyBlock route through their own
-	//     handlers (each returns a `{ ... }` brace-wrapped block).
-	//   - FuncBodyPipeline routes to renderPipelineBody, which
-	//     synthesizes a FlowBinExpr chain (param as deepest-left
-	//     leaf) and dispatches through recur. The FlowBinExpr
-	//     handler owns all `#>` lowering rules — covers both
-	//     BareBlockExpr and BlockExpr RHS, with an IIFE per stage.
-	//     Output shape: `{ return <chain>; }`. Non-`#>` stages
-	//     (e.g. `~map`) and ExprNoBlock / GroupedExpr RHS still
-	//     fall back at FlowBinExpr (deferred).
+	//   defn add(x)(y) ^x + y;
+	//   → function add(x) { return (y) => { return x + y; }; }
 	//
-	// DestructureTarget params → routed to renderDestructureFunc,
-	// which synthesizes `__p<N>` for each destructure position,
-	// keeps Identifier params as-is, and injects a `var name =
-	// __pN.path` prelude into the function body:
+	//   defn(x)(y) ^x + y;
+	//   → (x) => (y) => { return x + y; }
 	//
-	//   defn f(<:a, :b>, c) ^a + b + c;
-	//   → function f(__p0, c) { var a = __p0.a, b = __p0.b; return a + b + c; }
+	// Body attaches to the innermost function; outer tiers close
+	// over their params lexically (visible to the body via JS
+	// closure). FuncBodyPipeline's first-positional-seeds-topic
+	// rule applies to the INNERMOST tier — `defn foo(x)(y) #> ...`
+	// seeds `y`, not `x`.
 	//
-	// FuncBodyPipeline body inside the destructure-param branch
-	// still falls back (renderFuncBodyWithPrelude has no brace-
-	// injection point for pipeline). Identifier-only ParameterLists
-	// bypass that path and take the FuncBodyPipeline-aware route
-	// below.
+	// Per-tier shapes (renderTierParams):
+	//   - identifier ParameterList → `(a, b) =>`
+	//   - destructure ParameterList → `(__pN, ...) => { var prelude; return ... }`
+	//   - GatherParameter → `(...args) =>`
+	//   - empty ParameterList → `() =>`
+	//
+	// Fall-back conditions:
+	//   - preconditions / over / as / at (each needs its own
+	//     lowering; `at` widening intentionally deferred per
+	//     backlog item #6 — multi-paramSet scope is narrow)
+	//   - any tier renderTierParams rejects (non-Identifier/
+	//     DestructureTarget target, or unrenderable destructure)
+	//   - innermost tier ParameterList that isn't single-positional
+	//     (multi-param, GatherParameter at innermost) when body is
+	//     FuncBodyPipeline — renderPipelineBody's single-positional
+	//     constraint stands. DestructureTarget at the single
+	//     positional IS supported — renderPipelineBody internalizes
+	//     the destructure prelude.
+	//   - renderPipelineBody returns null for any other reason
+	//     (multi-param, gather, etc. at the innermost tier with
+	//     pipeline body)
 	DefFuncExpr(node, recur) {
 		if (
-			node.paramSets.length !== 1 ||
 			node.preconditions ||
 			node.over ||
 			node.as ||
@@ -1392,28 +1450,66 @@ var handlers = {
 		) {
 			return fallback(node);
 		}
-		var paramSet = node.paramSets[0];
-		if (
-			paramSet.type === "ParameterList" &&
-			paramSet.params.some(p => p.target.type === "DestructureTarget")
-		) {
-			let result = renderDestructureFunc(node, paramSet, recur);
-			if (result != null) return result;
-			return fallback(node);
+
+		var sets = node.paramSets;
+		var innermostIdx = sets.length - 1;
+
+		var tiers = [];
+		for (let s of sets) {
+			let t = renderTierParams(s, recur);
+			if (t == null) return fallback(node);
+			tiers.push(t);
 		}
-		var params = recur(paramSet);
-		var body;
+
+		var innermostSet = sets[innermostIdx];
+		var innermostTier = tiers[innermostIdx];
+		var innermostBody;
 		if (node.body.type === "FuncBodyPipeline") {
-			body = renderPipelineBody(node, paramSet, recur);
-			if (body == null) return fallback(node);
+			innermostBody = renderPipelineBody(node, innermostSet, recur);
+			if (innermostBody == null) return fallback(node);
+		}
+		else if (innermostTier.prelude) {
+			innermostBody = renderFuncBodyWithPrelude(node.body, innermostTier.prelude, recur);
+			if (innermostBody == null) return fallback(node);
 		}
 		else {
-			body = recur(node.body);
+			innermostBody = recur(node.body);
 		}
+
+		// Single-paramSet — innermost IS outermost; emit directly,
+		// no chain wrapping (innermostBody is already brace-form).
+		if (sets.length === 1) {
+			if (node.name) {
+				return "function " + recur(node.name) + "(" + innermostTier.jsParams + ") " + innermostBody;
+			}
+			return "(" + innermostTier.jsParams + ") => " + innermostBody;
+		}
+
+		// Multi-paramSet — fold inner tiers inside-out as arrows
+		// over the next-inner chain; outermost handled separately
+		// for the `function name` form.
+		var chain = "(" + innermostTier.jsParams + ") => " + innermostBody;
+		for (let i = innermostIdx - 1; i >= 1; i--) {
+			let t = tiers[i];
+			if (t.prelude) {
+				chain = "(" + t.jsParams + ") => { " + t.prelude + " return " + chain + "; }";
+			}
+			else {
+				chain = "(" + t.jsParams + ") => " + chain;
+			}
+		}
+
+		var outerTier = tiers[0];
 		if (node.name) {
-			return "function " + recur(node.name) + "(" + params + ") " + body;
+			if (outerTier.prelude) {
+				return "function " + recur(node.name) + "(" + outerTier.jsParams + ") { " + outerTier.prelude + " return " + chain + "; }";
+			}
+			return "function " + recur(node.name) + "(" + outerTier.jsParams + ") { return " + chain + "; }";
 		}
-		return "(" + params + ") => " + body;
+		if (outerTier.prelude) {
+			return "(" + outerTier.jsParams + ") => { " + outerTier.prelude + " return " + chain + "; }";
+		}
+		return "(" + outerTier.jsParams + ") => " + chain;
 	},
 
 	// ParameterList { params: [VarDefInitOpt, ...] }. Joins the
