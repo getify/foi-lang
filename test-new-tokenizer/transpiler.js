@@ -475,30 +475,36 @@ var renderDestructurePath = (source, recur, tempName) => {
 // =============================================================
 // PER-TIER PARAM RENDERING (DefFuncExpr)
 //
-// Each paramSet (DefFuncExpr.paramSets[i]) renders independently
-// to:
+// Each paramSet (DefFuncExpr.paramSets[i], with tier index i)
+// renders independently to:
 //   - jsParams: a parenthesizable param-list string
-//                ("a, b" | "__p0, c" | "...args" | "")
+//                ("a, b" | "__p0_0, c" | "...args" | "")
 //   - prelude:  a destructure-prelude string injected at the head
-//                of the tier's body ("var a = __p0.a, b = __p0.b;")
+//                of the tier's body ("var a = __p0_0.a, b = __p0_0.b;")
 //                or "" when the tier has no destructure params
 //
-// DestructureTarget params at position N are lowered as a
-// synthesized __pN JS param plus a `var name = __pN.path` prelude
-// decl per destructure entry. Identifier params pass through.
-// GatherParameter sets emit `...name`.
+// DestructureTarget params at position N within tier T are lowered
+// as a synthesized __p<T>_<N> JS param plus a `var name = __p<T>_<N>.path`
+// prelude decl per destructure entry. Identifier params pass
+// through. GatherParameter sets emit `...name`.
+//
+// Tier-indexed naming (__p<T>_<N>, always — no special-casing on
+// collision) ensures no synthesized param at any inner tier
+// shadows an outer-tier synthesized param. Outer-tier synthesized
+// names stay reachable from inner-tier bodies via closure, which
+// matters for FuncBodyPipeline lowering: the seed expression
+// derived from the OUTERMOST paramSet lives at the outer tier
+// but is referenced from the innermost body where the chain emits.
 //
 // Used by DefFuncExpr for both single-paramSet (the legacy path,
 // flat name/anonymous emission) and multi-paramSet (nested-arrow
 // folding inside-out with the outermost tier carrying the name
-// when present). Across tiers, every destructure position reuses
-// __p<i> — inner-tier shadowing is benign since each tier's
-// prelude binds named locals before the inner arrow constructs.
+// when present).
 //
 // renderFuncBodyWithPrelude (below) injects a prelude into either
 // FuncBodyExpr or FuncBodyBlock; FuncBodyPipeline returns null
-// (no brace-injection point — caller falls back when the
-// innermost tier needs a prelude alongside a pipeline body).
+// (no brace-injection point — caller routes the prelude through
+// renderPipelineBody instead, which owns the body brace).
 //
 // Returns null when any param shape can't be lowered (non-
 // Identifier/DestructureTarget target, or destructure entries
@@ -550,7 +556,7 @@ var renderPrecondPrelude = (preconditions, recur) => {
 	}).join(" ");
 };
 
-var renderTierParams = (paramSet, recur) => {
+var renderTierParams = (paramSet, tierIdx, recur) => {
 	if (paramSet.type === "GatherParameter") {
 		return { jsParams: "..." + paramSet.name, prelude: "" };
 	}
@@ -566,7 +572,7 @@ var renderTierParams = (paramSet, recur) => {
 			continue;
 		}
 		if (p.target.type === "DestructureTarget") {
-			let pname = "__p" + i;
+			let pname = "__p" + tierIdx + "_" + i;
 			let s = pname;
 			if (p.init) s += " = " + recur(p.init);
 			jsParams.push(s);
@@ -664,122 +670,229 @@ var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
 
 
 // =============================================================
+// PIPELINE STAGE EMITTER (FlowBinExpr `#>` RHS handling)
+//
+// Emits one pipeline stage: `<lhsStr> #> <rhs>` as a JS expression
+// string. lhsStr is already-rendered JS — the topic value flowing
+// in. rhs is the unrendered AST node for the stage RHS.
+//
+// Three RHS arms (mirror FlowRHSImplIn alternates):
+//   - BareBlockExpr → IIFE-wrap; topic saved into `__t`; stmts
+//                     emit via dispatch with return-injection.
+//                     `#` resolves to `__t`.
+//   - BlockExpr     → defs-init + body, emitted by
+//                     emitPipelineBlockBody (handles per-entry
+//                     destructure binding with topic source);
+//                     wrapped in IIFE. Returns null on
+//                     unrenderable entries.
+//   - Callable RHS  → IIFE; topic saved into `__t`. RHS evaluates
+//                     to a function. When `#` appears in RHS it
+//                     substitutes for the topic; otherwise the
+//                     RHS is paren-wrapped and called with `__t`
+//                     as the implicit final argument.
+//
+// Used by:
+//   - FlowBinExpr `#>` handler — passes `recur(node.left)` as
+//     lhsStr.
+//   - renderPipelineBody — derives the seed expression string
+//     from the outermost paramSet, then folds lhsStr through
+//     each stage by calling emitPipelineStage iteratively.
+//
+// Returns the JS string for the stage, or null when the BlockExpr
+// arm rejects (caller falls back at its own granularity).
+// =============================================================
+
+var emitPipelineStage = (rhs, lhsStr, recur) => {
+	var topicRefBox = { ref: null, used: false };
+	var dispatch = n => {
+		if (n == null) return "";
+		if (n.type === "PipelineTopic") {
+			topicRefBox.used = true;
+			return topicRefBox.ref;
+		}
+		var h = handlers[n.type];
+		return h ? h(n, dispatch) : fallback(n);
+	};
+
+	if (rhs.type === "BareBlockExpr") {
+		topicRefBox.ref = "__t";
+		return "(() => { var __t = " + lhsStr + "; " +
+			emitBlockBody(rhs.stmts, dispatch, true) + " })()";
+	}
+
+	if (rhs.type === "BlockExpr") {
+		let inner = emitPipelineBlockBody(rhs, lhsStr, dispatch, topicRefBox);
+		if (inner == null) return null;
+		return "(() => { " + inner + " })()";
+	}
+
+	// Callable RHS — Identifier, CallExpr, MemberAccessExpr,
+	// OpFuncExpr, GroupedExpr, etc. (every non-block arm of
+	// FlowRHSImplIn's OrDispatch).
+	topicRefBox.ref = "__t";
+	var rhsStr = dispatch(rhs);
+	var callExpr = topicRefBox.used ? rhsStr : "(" + rhsStr + ")(__t)";
+	return "((__t) => " + callExpr + ")(" + lhsStr + ")";
+};
+
+
+// =============================================================
 // PIPELINE-BODY LOWERING (DefFuncExpr w/ FuncBodyPipeline)
 //
 // `defn foo(x) #> ...` is conceptually sugar for `defn foo(x) ^ x #> ...`.
-// This lowering literalizes the sugar: synthesize a left-folded
-// FlowBinExpr chain whose deepest-left leaf is the first-positional
-// seed and whose stages are (op:"#>", right:stage-1-RHS) followed by
-// fbp.body's chain stages. Hand off to the FlowBinExpr handler via
-// recur — it owns every `#>` lowering rule (topic save, per-entry
-// defs, destructure binding, body emission, BlockExpr / BareBlockExpr /
-// callable arms). Zero duplication; no FuncBodyPipeline-specific
-// stage walker.
+// This lowering literalizes the sugar: derive a seed expression
+// string from the OUTERMOST paramSet's first positional, then fold
+// lhsStr through the staged chain by calling emitPipelineStage
+// per stage.
 //
-// Topic-seeding rule: the first positional ARGUMENT seeds, regardless
-// of whether the param-shape destructures names out of it. Destructure
-// is an orthogonal binding side-effect — the destructured locals are
-// available in stages via `#` placement or via lexical reference, but
-// what flows into stage 1 is the whole positional value.
+// Seeding from the outermost tier (not the innermost) treats the
+// paren-grouping in `defn foo(x)(y, z)` as a CALL-SHAPE affordance
+// rather than a closure-chain semantic. A defn's parameter list
+// is one logical paramlist regardless of paren-grouping; the
+// pipeline always flows the function's first positional argument.
+// This keeps semantics stable under tier-splitting refactors and
+// under partial application: `foo(3)(4, 5)`, `foo(3, 4, 5)` (if
+// legal), and `foo|3|(4, 5)` all flow `3` through the same chain.
 //
-//   defn foo(x) #> bar;         → bar(x)
-//   defn foo(<:a, :b>) #> bar;  → bar({a, b})   ← the record flows,
-//                                                   not `a` or `b`
+// Seed derivation from the outermost paramSet (= node.paramSets[0]):
 //
-// Single-stage: fbp.body is the stage-1 RHS node directly (not a
-// FlowBinExpr). walk() pushes it as a single operand; refold builds
-// FlowBinExpr{left: seedIdent, op:"#>", right: stage-1-RHS}.
+//   - ParameterList, params.length === 0:
+//       no seed → null (caller falls back the whole DefFuncExpr).
 //
-// Multi-stage: fbp.body is itself a left-folded FlowBinExpr (built
-// by the FuncBodyPipeline shaper). walk() flattens it to operands+ops;
-// prepending (seedIdent, "#>") and re-folding produces the same shape
-// `seed #> A #> B ...` would have at standalone expression position.
-// The FlowBinExpr handler recurses naturally on `left` through the
-// chain; each `#>` stage emits its IIFE, non-`#>` stages (e.g. `~map`)
-// hit FlowBinExpr's existing fallback.
+//   - ParameterList, position 0 = Identifier:
+//       seedExprStr = the identifier's name.
 //
-// Output shape: `{ <prelude> return <chain-emitted>; }`. Prelude is
-// the destructure binding for the seed positional when target is a
-// DestructureTarget; empty otherwise.
+//   - ParameterList, position 0 = DestructureTarget:
+//       seedExprStr = "__p0_0" — matches renderTierParams'
+//       synthesized JS param name for the outermost tier (0),
+//       position 0. The destructure prelude (`var a = __p0_0.a; ...`)
+//       lives at the OUTERMOST tier's body brace, emitted by the
+//       multi-tier chain machinery in DefFuncExpr. Closure carries
+//       __p0_0 and the destructured locals into the innermost
+//       body where this chain emits.
 //
-// First-positional param constraints:
-//   - Single-positional ParameterList (no multi-param, no
-//     GatherParameter).
-//   - Target is Identifier OR DestructureTarget.
-//     - Identifier: seedName = the param's name.
-//     - DestructureTarget: seedName = "__p0" (synthesized — same
-//       name renderTierParams uses for position 0, so the JS-side
-//       param declaration matches automatically), with a
-//       `var <entries>;` prelude prepended to the body.
+//   - GatherParameter:
+//       Supported only when paramSets.length === 1. Multi-tier
+//       with gather anywhere → null (transpiler scope; grammar-
+//       level gather positioning is a separate decision). For
+//       single-tier, seedExprStr = "<gathername>[0]" — the first
+//       positional argument the function received. NOT the gather
+//       array itself; if the caller wants the whole arg-list to
+//       flow, they pass a Tuple at the call site.
 //
-// Synthesized FlowBinExpr nodes carry no start/end — the FlowBinExpr
-// handler's fallback (for currently-unsupported chains) emits
-// `null /* ?FlowBinExpr */`. The function shell still emits, keeping
-// partial transpilation visible at the right granularity.
+//   - Any other position-0 target shape:
+//       null.
 //
-// Returns the brace-wrapped function body `{ ... return <chain>; }`,
-// or null when the param shape isn't supported — caller falls back
-// the whole DefFuncExpr.
+// Topic-seeding rule (orthogonal to destructure): the first
+// positional ARGUMENT seeds. Destructure is an independent
+// binding side-effect — destructured locals are reachable from
+// stages via `#` placement or via lexical reference, but what
+// flows into stage 1 is the seed value itself.
+//
+//   defn foo(x) #> bar;              → bar(x)
+//   defn foo(<:a, :b>) #> bar;       → bar(__p0_0)  ← record flows
+//   defn foo(x, y) #> add(#, y);     → add(x, y)     ← x seeds; y closes
+//   defn foo(x)(y, z) #> add(#, y);  → add(x, y)     ← x seeds (outermost)
+//   defn foo(*args) #> bar;          → bar(args[0])  ← first arg flows
+//
+// Stage iteration:
+//
+//   Single-stage: fbp.body is the stage-1 RHS node directly (not
+//   a FlowBinExpr). Walk pushes it with fbp.op as its connector.
+//
+//   Multi-stage: fbp.body is itself a left-folded FlowBinExpr
+//   (built by the FuncBodyPipeline shaper). Walk flattens to
+//   operands+ops; deepest-left operand is stage 1 (connector =
+//   fbp.op), subsequent operands carry their own connector via
+//   the FlowBinExpr structure.
+//
+//   Per-stage: if the op is anything other than `#>`, lhsStr is
+//   replaced with `null /* ?FlowBinExpr */` and iteration
+//   continues — matching the FlowBinExpr handler's wholesale-
+//   fallback semantic at standalone position. Subsequent `#>`
+//   stages still emit, wrapping the marker.
+//
+// Output shape: `{ <innerTierPrelude> <precondPrelude> return <chain>; }`.
+// innerTierPrelude carries destructure decls for the INNERMOST
+// tier's params (covers innermost destructure positions, NOT
+// outer-tier destructures — those live at their own tier's
+// brace via the multi-tier chain machinery). precondPrelude
+// carries precond `if`-return stmts firing at the innermost
+// tier (the locked point where every param is in scope). Either
+// may be empty.
+//
+// Returns the brace-wrapped function body string, or null when
+// the outermost paramSet provides no usable seed — caller falls
+// back the whole DefFuncExpr.
 // =============================================================
 
-var renderPipelineBody = (node, paramSet, precondPrelude, recur) => {
-	if (paramSet.type !== "ParameterList") return null;
-	if (paramSet.params.length !== 1) return null;
-	var p = paramSet.params[0];
-
-	var seedName;
-	var prelude = "";
-	if (p.target.type === "Identifier") {
-		seedName = p.target.name;
+var renderPipelineBody = (node, outerSet, innerTierPrelude, precondPrelude, recur) => {
+	var seedExprStr;
+	if (outerSet.type === "GatherParameter") {
+		// Gather-as-seed only legal when there's exactly one tier.
+		// Multi-tier with gather anywhere → fall back (transpiler
+		// scope; grammar-level positioning is a separate question).
+		if (node.paramSets.length !== 1) return null;
+		seedExprStr = outerSet.name + "[0]";
 	}
-	else if (p.target.type === "DestructureTarget") {
-		seedName = "__p0";
-		let entries = renderDestructure(p.target, recur, seedName);
-		if (entries == null) return null;
-		prelude = "var " + entries + "; ";
+	else if (outerSet.type === "ParameterList") {
+		if (outerSet.params.length === 0) return null;
+		let p0 = outerSet.params[0];
+		if (p0.target.type === "Identifier") {
+			seedExprStr = p0.target.name;
+		}
+		else if (p0.target.type === "DestructureTarget") {
+			seedExprStr = "__p0_0";
+		}
+		else {
+			return null;
+		}
 	}
 	else {
 		return null;
 	}
 
-	var seedIdent = { type: "Identifier", name: seedName };
 	var fbp = node.body;
 
-	// Flatten fbp.body (single node OR FlowBinExpr subtree) into
-	// operands+ops. Prepend (seedIdent, fbp.op="#>") as the new
-	// outermost-left stage. Re-fold left-associative.
-	var operands = [];
-	var ops = [];
+	// Walk fbp.body to collect stages in left-to-right order.
+	// Single-stage: fbp.body is the stage-1 RHS node directly;
+	// connector is fbp.op. Multi-stage: fbp.body is a left-folded
+	// FlowBinExpr, deepest-left node is stage-1's RHS, each fold
+	// carries its own connector.
+	var stages = [];
 	var walk = n => {
 		if (n.type === "FlowBinExpr") {
 			walk(n.left);
-			ops.push(n.op);
-			operands.push(n.right);
+			stages.push({ op: n.op, right: n.right });
 		}
 		else {
-			operands.push(n);
+			stages.push({ op: fbp.op, right: n });
 		}
 	};
 	walk(fbp.body);
-	operands.unshift(seedIdent);
-	ops.unshift(fbp.op);
 
-	var virtual = operands[0];
-	for (let i = 0; i < ops.length; i++) {
-		virtual = {
-			type:  "FlowBinExpr",
-			left:  virtual,
-			op:    ops[i],
-			right: operands[i + 1],
-		};
+	var lhsStr = seedExprStr;
+	for (let stage of stages) {
+		if (stage.op !== "#>") {
+			// Non-`#>` stage falls back wholesale at this point in
+			// the chain — matches FlowBinExpr handler's behavior at
+			// standalone position. Subsequent `#>` stages still emit
+			// and wrap the marker.
+			lhsStr = "null /* ?FlowBinExpr */";
+			continue;
+		}
+		let out = emitPipelineStage(stage.right, lhsStr, recur);
+		if (out == null) return null;
+		lhsStr = out;
 	}
 
-	// Destructure prelude (when present) ends with trailing space;
-	// precond prelude doesn't — append trailing space after it so
-	// the literal "return" lands separated.
-	var pre = prelude;
-	if (precondPrelude) pre += precondPrelude + " ";
-	return "{ " + pre + "return " + recur(virtual) + "; }";
+	// Both preludes terminate with `;` and no trailing space;
+	// append " " before "return" for each non-empty piece so the
+	// literal "return" lands separated.
+	var pre = "";
+	if (innerTierPrelude) pre += innerTierPrelude + " ";
+	if (precondPrelude)   pre += precondPrelude + " ";
+	return "{ " + pre + "return " + lhsStr + "; }";
 };
 
 
@@ -1546,42 +1659,10 @@ var handlers = {
 	// function. Non-function RHS throws at runtime — JS-faithful
 	// to the source.
 	FlowBinExpr(node, recur) {
-		var op = node.op;
-		if (op !== "#>") return fallback(node);
-		var rhs = node.right;
-
-		var topicRefBox = { ref: null, used: false };
-		var dispatch = n => {
-			if (n == null) return "";
-			if (n.type === "PipelineTopic") {
-				topicRefBox.used = true;
-				return topicRefBox.ref;
-			}
-			var h = handlers[n.type];
-			return h ? h(n, dispatch) : fallback(n);
-		};
-
+		if (node.op !== "#>") return fallback(node);
 		var lhsStr = recur(node.left);
-
-		if (rhs.type === "BareBlockExpr") {
-			topicRefBox.ref = "__t";
-			return "(() => { var __t = " + lhsStr + "; " +
-				emitBlockBody(rhs.stmts, dispatch, true) + " })()";
-		}
-
-		if (rhs.type === "BlockExpr") {
-			let inner = emitPipelineBlockBody(rhs, lhsStr, dispatch, topicRefBox);
-			if (inner == null) return fallback(node);
-			return "(() => { " + inner + " })()";
-		}
-
-		// Callable RHS — Identifier, CallExpr, MemberAccessExpr,
-		// OpFuncExpr, GroupedExpr, etc. (every non-block arm of
-		// FlowRHSImplIn's OrDispatch).
-		topicRefBox.ref = "__t";
-		var rhsStr = dispatch(rhs);
-		var callExpr = topicRefBox.used ? rhsStr : "(" + rhsStr + ")(__t)";
-		return "((__t) => " + callExpr + ")(" + lhsStr + ")";
+		var out = emitPipelineStage(node.right, lhsStr, recur);
+		return out == null ? fallback(node) : out;
 	},
 
 
@@ -1753,9 +1834,9 @@ var handlers = {
 	// outer-tier params could theoretically fire earlier in the call
 	// chain but that needs free-variable analysis; deferred.
 	//
-	// Per-tier shapes (renderTierParams):
+	// Per-tier shapes (renderTierParams with tier index T):
 	//   - identifier ParameterList → `(a, b) =>`
-	//   - destructure ParameterList → `(__pN, ...) => { var prelude; return ... }`
+	//   - destructure ParameterList → `(__p<T>_<N>, ...) => { var prelude; return ... }`
 	//   - GatherParameter → `(...args) =>`
 	//   - empty ParameterList → `() =>`
 	//
@@ -1766,36 +1847,44 @@ var handlers = {
 	// is symmetric with non-`@` calls, so the def-side flag
 	// carries no JS-side meaning.
 	//
+	// Pipeline-body seeding: the OUTERMOST paramSet's first
+	// positional seeds the chain. Trailing positionals at the
+	// outermost tier and every param at inner tiers are reachable
+	// from chain stages via lexical scope / closure. Multi-tier
+	// is one logical paramlist for seeding purposes; paren-grouping
+	// is a call-shape affordance, not a semantic boundary.
+	//
 	// Fall-back conditions:
 	//   - any tier renderTierParams rejects (non-Identifier/
 	//     DestructureTarget target, or unrenderable destructure)
-	//   - innermost tier ParameterList that isn't single-positional
-	//     (multi-param, GatherParameter at innermost) when body is
-	//     FuncBodyPipeline — renderPipelineBody's single-positional
-	//     constraint stands. DestructureTarget at the single
-	//     positional IS supported — renderPipelineBody internalizes
-	//     the destructure prelude.
-	//   - renderPipelineBody returns null for any other reason
-	//     (multi-param, gather, etc. at the innermost tier with
-	//     pipeline body)
+	//   - renderPipelineBody returns null:
+	//     · empty outermost ParameterList (no seed available)
+	//     · first-positional target neither Identifier nor
+	//       DestructureTarget
+	//     · multi-tier with GatherParameter anywhere (gather-as-seed
+	//       is single-tier only at the transpiler level)
 	DefFuncExpr(node, recur) {
 		var sets = node.paramSets;
 		var innermostIdx = sets.length - 1;
 
 		var tiers = [];
-		for (let s of sets) {
-			let t = renderTierParams(s, recur);
+		for (let i = 0; i < sets.length; i++) {
+			let t = renderTierParams(sets[i], i, recur);
 			if (t == null) return fallback(node);
 			tiers.push(t);
 		}
 
 		var precondPrelude = renderPrecondPrelude(node.preconditions, recur);
 
-		var innermostSet = sets[innermostIdx];
 		var innermostTier = tiers[innermostIdx];
 		var innermostBody;
 		if (node.body.type === "FuncBodyPipeline") {
-			innermostBody = renderPipelineBody(node, innermostSet, precondPrelude, recur);
+			// Seed comes from the OUTERMOST paramSet (sets[0]);
+			// innerTierPrelude is the INNERMOST tier's destructure
+			// decls (lands inside the pipeline body brace). Outer-
+			// tier destructure preludes land at their own brace via
+			// the multi-tier chain machinery below.
+			innermostBody = renderPipelineBody(node, sets[0], innermostTier.prelude, precondPrelude, recur);
 			if (innermostBody == null) return fallback(node);
 		}
 		else {
