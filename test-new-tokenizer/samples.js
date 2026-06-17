@@ -453,7 +453,12 @@ export const samples = [
 	// CondClause at non-GuardedExpr call sites — same shape, different parents
 	{ label: "CondClause as FlowBinExpr LHS",        src: "?[isComplete] ~each { go(); };" },
 	{ label: "CondClause inside FuncPrecond",        src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
-
+	{ label: "FuncPrecond: negated polarity",        src: "defn require_pos(x) ![x ?> 0]: empty ^x;" },
+	{ label: "FuncPrecond: multiple",                src: "defn clamp(x) ?[x ?< 0]: 0 ?[x ?> 100]: 100 ^x;" },
+	{ label: "FuncPrecond: with destructure",        src: "defn unpacker(<:a>) ?[a ?< 0]: 0 ^a;" },
+	{ label: "FuncPrecond: with curried",            src: "defn divide(x)(y) ?[y ?= 0]: empty ^x / y;" },
+	{ label: "FuncPrecond: with block body",         src: "defn block_guarded(x) ?[x ?< 0]: 0 { ^x; };" },
+	{ label: "FuncPrecond: with explicit ^x pipeline body", src: "defn pipe_guarded(x) ?[x ?< 0]: 0 ^x #> inc;" },
 
 	// =============================================================
 	// §15 MATCH EXPRESSIONS

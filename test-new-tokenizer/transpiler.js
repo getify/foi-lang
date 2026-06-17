@@ -499,6 +499,37 @@ var renderFuncBodyWithPrelude = (body, prelude, recur) => {
 	return null;
 };
 
+
+// =============================================================
+// PRECOND PRELUDE EMITTER (DefFuncExpr w/ FuncPrecondList)
+//
+// Each FuncPrecond `?[cond]: consequent` or `![cond]: consequent`
+// lowers to a JS `if (<cond>) return <consequent>;` stmt prepended
+// at the function body head (after any destructure prelude — preconds
+// may reference destructured names). Sequential `if`-return matches
+// Foi's first-match-wins semantics for free.
+//
+// emitCondClause handles polarity uniformly:
+//   ?[c]: x   →   if (c) return x;
+//   ![c]: x   →   if (!(c)) return x;
+//
+// Bootstrap injection strategy (curried multi-paramSet): preconds
+// inject at the INNERMOST tier where all params are known. Preconds
+// referencing only outer-tier params could theoretically fire at an
+// earlier tier but that needs free-variable analysis; deferred.
+//
+// Returns "" for missing/empty preconds — DefFuncExpr's combined-
+// prelude builder filters empties.
+// =============================================================
+
+var renderPrecondPrelude = (preconditions, recur) => {
+	if (!preconditions || preconditions.length === 0) return "";
+	return preconditions.map(pc => {
+		var cond = emitCondClause(pc.clause, recur);
+		return "if (" + cond + ") return " + recur(pc.consequent) + ";";
+	}).join(" ");
+};
+
 var renderTierParams = (paramSet, recur) => {
 	if (paramSet.type === "GatherParameter") {
 		return { jsParams: "..." + paramSet.name, prelude: "" };
@@ -671,7 +702,7 @@ var emitPipelineBlockBody = (rhs, topicExprStr, dispatch, topicRefBox) => {
 // the whole DefFuncExpr.
 // =============================================================
 
-var renderPipelineBody = (node, paramSet, recur) => {
+var renderPipelineBody = (node, paramSet, precondPrelude, recur) => {
 	if (paramSet.type !== "ParameterList") return null;
 	if (paramSet.params.length !== 1) return null;
 	var p = paramSet.params[0];
@@ -723,7 +754,12 @@ var renderPipelineBody = (node, paramSet, recur) => {
 		};
 	}
 
-	return "{ " + prelude + "return " + recur(virtual) + "; }";
+	// Destructure prelude (when present) ends with trailing space;
+	// precond prelude doesn't — append trailing space after it so
+	// the literal "return" lands separated.
+	var pre = prelude;
+	if (precondPrelude) pre += precondPrelude + " ";
+	return "{ " + pre + "return " + recur(virtual) + "; }";
 };
 
 
@@ -832,10 +868,8 @@ var handlers = {
 
 	// GroupedExpr { expr, as? } — user-written parens. Preserve
 	// in JS to keep operator-precedence and ternary composition
-	// intact. `:as` annotation lowering deferred — falls back
-	// when present.
+	// intact. `:as` annotation dropped as transpilation no-op.
 	GroupedExpr(node, recur) {
-		if (node.as) return fallback(node);
 		return "(" + recur(node.expr) + ")";
 	},
 
@@ -860,7 +894,7 @@ var handlers = {
 	//   - PrimedExpr callee (`foo'(a,b,c)`) — pre-reverse the
 	//     args array so the emitted call applies them already in
 	//     reversed order. Matches Foi guide: `f'(a,b,c)` → `f(c,
-	//     b, a)`. Skipped when the PrimedExpr carries `:as`.
+	//     b, a)`.
 	//
 	//     SPREAD INTERACTION: static array-reverse on args[]
 	//     reorders argument positions but cannot reverse the
@@ -903,7 +937,7 @@ var handlers = {
 			a.type === "SpreadArg"
 				? "..." + recur(a.inner)
 				: recur(a);
-		if (callee.type === "PrimedExpr" && !callee.as) {
+		if (callee.type === "PrimedExpr") {
 			callee = callee.inner;
 			if (hasSpread) {
 				// Runtime reverse — static array-reverse can't
@@ -916,7 +950,6 @@ var handlers = {
 		else if (
 			callee.type === "OpFuncExpr" &&
 			callee.op == null && callee.primed &&
-			!callee.as &&
 			args.length === 1 &&
 			args[0] != null &&
 			args[0].type !== "ImpliedEmpty" &&
@@ -1021,7 +1054,7 @@ var handlers = {
 			if (a.type === "SpreadArg") hasSpread = true;
 		}
 		var calleeNode = node.callee;
-		var primed = calleeNode.type === "PrimedExpr" && !calleeNode.as;
+		var primed = calleeNode.type === "PrimedExpr";
 		if (primed) calleeNode = calleeNode.inner;
 		var callee = recur(calleeNode);
 		var args = node.args;
@@ -1144,9 +1177,8 @@ var handlers = {
 	// position: DefVarStmt RHS, function call arg, binary operand,
 	// etc.
 	//
-	// `:as` annotation lowering deferred — falls back when present.
+	// `:as` annotation dropped as transpilation no-op.
 	PrimedExpr(node, recur) {
-		if (node.as) return fallback(node);
 		return "((...__a) => " + recur(node.inner) + "(...__a.reverse()))";
 	},
 
@@ -1512,16 +1544,26 @@ var handlers = {
 	// rule applies to the INNERMOST tier — `defn foo(x)(y) #> ...`
 	// seeds `y`, not `x`.
 	//
+	// Preconditions (FuncPrecondList) lower via renderPrecondPrelude
+	// to a sequence of `if (cond) return consequent;` stmts injected
+	// at the innermost-tier body head, AFTER the destructure prelude
+	// (preconds may reference destructured names). Bootstrap strategy
+	// for curried multi-paramSet: ALL preconds inject at the innermost
+	// tier where every param is in scope. Preconds referencing only
+	// outer-tier params could theoretically fire earlier in the call
+	// chain but that needs free-variable analysis; deferred.
+	//
 	// Per-tier shapes (renderTierParams):
 	//   - identifier ParameterList → `(a, b) =>`
 	//   - destructure ParameterList → `(__pN, ...) => { var prelude; return ... }`
 	//   - GatherParameter → `(...args) =>`
 	//   - empty ParameterList → `() =>`
 	//
+	// :as and :over dropped as transpilation no-ops.
+	//
 	// Fall-back conditions:
-	//   - preconditions / over / as / at (each needs its own
-	//     lowering; `at` widening intentionally deferred per
-	//     backlog item #6 — multi-paramSet scope is narrow)
+	//   - at (widening intentionally deferred per backlog item #6 —
+	//     multi-paramSet scope is narrow)
 	//   - any tier renderTierParams rejects (non-Identifier/
 	//     DestructureTarget target, or unrenderable destructure)
 	//   - innermost tier ParameterList that isn't single-positional
@@ -1534,12 +1576,7 @@ var handlers = {
 	//     (multi-param, gather, etc. at the innermost tier with
 	//     pipeline body)
 	DefFuncExpr(node, recur) {
-		if (
-			node.preconditions ||
-			node.over ||
-			node.as ||
-			node.at
-		) {
+		if (node.at) {
 			return fallback(node);
 		}
 
@@ -1553,19 +1590,30 @@ var handlers = {
 			tiers.push(t);
 		}
 
+		var precondPrelude = renderPrecondPrelude(node.preconditions, recur);
+
 		var innermostSet = sets[innermostIdx];
 		var innermostTier = tiers[innermostIdx];
 		var innermostBody;
 		if (node.body.type === "FuncBodyPipeline") {
-			innermostBody = renderPipelineBody(node, innermostSet, recur);
-			if (innermostBody == null) return fallback(node);
-		}
-		else if (innermostTier.prelude) {
-			innermostBody = renderFuncBodyWithPrelude(node.body, innermostTier.prelude, recur);
+			innermostBody = renderPipelineBody(node, innermostSet, precondPrelude, recur);
 			if (innermostBody == null) return fallback(node);
 		}
 		else {
-			innermostBody = recur(node.body);
+			// Combine destructure + precond preludes; either may be
+			// empty. Filter empties so the joined result has no
+			// stray spaces. When BOTH are empty, fall through to
+			// bare body recur (preserves the no-prelude fast path).
+			let combinedPrelude = [innermostTier.prelude, precondPrelude]
+				.filter(Boolean)
+				.join(" ");
+			if (combinedPrelude) {
+				innermostBody = renderFuncBodyWithPrelude(node.body, combinedPrelude, recur);
+				if (innermostBody == null) return fallback(node);
+			}
+			else {
+				innermostBody = recur(node.body);
+			}
 		}
 
 		// Single-paramSet — innermost IS outermost; emit directly,
