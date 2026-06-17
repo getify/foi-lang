@@ -127,9 +127,9 @@ export const samples = [
 	{ label: "TrailingRangeExpr (in DotBracket): arr.[..5]", src: "arr.[..5];" },
 	{ label: "ClosedRangeExpr :as int (parenthesized)",      src: "(1..5) :as int;" },
 
-	// MonadConstructor — bare @
-	{ label: "MonadConstructor: @",                  src: "@;" },
-	{ label: "MonadConstructor :as Maybe",           src: "@ :as Maybe;" },
+	// IdentityFunc — bare @ (the value identity function)
+	{ label: "IdentityFunc: @",                      src: "@;" },
+	{ label: "IdentityFunc :as Maybe",               src: "@ :as Maybe;" },
 
 	// AtExpr — IdentBase + optional access + @
 	{ label: "AtExpr (bare base): foo@",             src: "foo@;" },
@@ -232,7 +232,8 @@ export const samples = [
 	{ label: "AtCallExpr Sub-form A w/access: foo.bar@ x", src: "foo.bar@ x;" },
 	{ label: "AtCallExpr Sub-form B: foo @ x",       src: "foo @ x;" },
 	{ label: "AtCallExpr Sub-form B w/access: foo.bar @ x", src: "foo.bar @ x;" },
-	{ label: "AtCallExpr Sub-form C: @ x",           src: "@ x;" },
+	{ label: "IdentityCallExpr (spaced): @ x",       src: "@ x;" },
+	{ label: "IdentityCallExpr (no-space): @2",      src: "@2;" },
 
 
 	// =============================================================

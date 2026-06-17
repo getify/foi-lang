@@ -886,6 +886,44 @@ var handlers = {
 	// pass through as a real null value).
 	ImpliedEmpty: () => "undefined",
 
+	// =============================================================
+	// §7 @ FAMILY — IdentityFunc / IdentityCallExpr / AtExpr / AtCallExpr
+	// =============================================================
+	//
+	// Bare `@` is the value identity function (`@2 ?= 2`). The
+	// `@` sigil's call-form variants are syntactic sugar that
+	// lower identically to non-`@` forms — what specific runtime
+	// value the callee resolves to (`Id@`, `Maybe@`, `IO@`, etc.)
+	// is the stdlib/runtime's concern, not the transpiler's.
+
+	// IdentityFunc { } — standalone bare `@` as a function value
+	// (e.g. `def f: @;`). Lowers to a JS arrow that returns its
+	// sole argument.
+	IdentityFunc: () => "((__v) => __v)",
+
+	// IdentityCallExpr { arg } — bare `@` applied to an argument.
+	// One indivisible construct: `@2` evaluates to `2`, `@ x` to
+	// `x`. Emit just the arg — no wrapping call, no IIFE.
+	// PartialCallExpr-on-IdentityFunc (`@|42|`) still reaches the
+	// IdentityFunc handler through PartialCallExpr's generic
+	// callee path; that lowers to `((__v) => __v)(42)`, which
+	// evaluates to 42 — correct without a separate shortcut here.
+	IdentityCallExpr: (n, r) => r(n.arg),
+
+	// AtExpr { base } — `foo@`, `foo.bar@`, `Maybe@` as a
+	// function value (no application). The `@` sigil is sugar;
+	// the value is just the base. Lower by emitting the base.
+	AtExpr: (n, r) => r(n.base),
+
+	// AtCallExpr { callee, arg? } — user-callee `@`-form applied
+	// (or `None@` with no arg). Covers `Foo@ x`, `foo.bar@ x`,
+	// `foo @ x`, and `None@`. Callee is always an AtExpr; r(callee)
+	// emits the base via the AtExpr handler. Arg-absent `None@`
+	// lowers to `None()` (no-arg call — matches the unit-
+	// constructor convention).
+	AtCallExpr: (n, r) =>
+		r(n.callee) + (n.arg == null ? "()" : "(" + r(n.arg) + ")"),
+
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
 	// production; ChainExpr's fold produces this uniform shape.
 	// Generic emission: recur callee + paren-wrapped arg list.
@@ -1559,11 +1597,14 @@ var handlers = {
 	//   - GatherParameter → `(...args) =>`
 	//   - empty ParameterList → `() =>`
 	//
-	// :as and :over dropped as transpilation no-ops.
+	// :as, :over, and the `@` method sigil (`node.at` boolean
+	// flag from `defn Foo@(x) ^...`) dropped as transpilation
+	// no-ops. The `@` on a defn is sugar that opts the function
+	// into the no-paren call form (`Foo@ x`); call-site lowering
+	// is symmetric with non-`@` calls, so the def-side flag
+	// carries no JS-side meaning.
 	//
 	// Fall-back conditions:
-	//   - at (widening intentionally deferred per backlog item #6 —
-	//     multi-paramSet scope is narrow)
 	//   - any tier renderTierParams rejects (non-Identifier/
 	//     DestructureTarget target, or unrenderable destructure)
 	//   - innermost tier ParameterList that isn't single-positional
@@ -1576,10 +1617,6 @@ var handlers = {
 	//     (multi-param, gather, etc. at the innermost tier with
 	//     pipeline body)
 	DefFuncExpr(node, recur) {
-		if (node.at) {
-			return fallback(node);
-		}
-
 		var sets = node.paramSets;
 		var innermostIdx = sets.length - 1;
 

@@ -1130,14 +1130,22 @@ export const defaultShapers = {
 		return withDelims({ type: "AtExpr", base: foldAccess(base,access) }, delims);
 	},
 
-	// MonadConstructor — bare `@`. The At sigil is structural →
-	// delims. Type tag is otherwise total information.
-	MonadConstructor(frame,parts) {
+	// IdentityFunc — bare `@`, the value identity function. The
+	// At sigil is structural → delims. Type tag is otherwise
+	// total information.
+	//
+	// Renamed from MonadConstructor: bare `@` is semantically the
+	// identity function (`@2 ?= 2`), not a monad constructor.
+	// That it serves as a unit-constructor prefix for `Id@`,
+	// `Just@`, etc. is downstream of what the construct itself
+	// is. `\@<digits>` is the actually-monadic number-lit form
+	// and gets its own AST type when that lowering lands.
+	IdentityFunc(frame,parts) {
 		var delims = [];
 		for (let p of parts) {
 			if (!isNode(p)) delims.push(p); // At
 		}
-		return withDelims({ type: "MonadConstructor" }, delims);
+		return withDelims({ type: "IdentityFunc" }, delims);
 	},
 
 	// ClosedRangeExpr := RangeOperand _ DoublePeriod _ RangeOperand;
@@ -1476,11 +1484,27 @@ export const defaultShapers = {
 		return withDelims({ type: "PartialCallSuffix", args }, delims);
 	},
 
-	// AtCallExpr — at-form applied to (optionally) an argument.
-	// At sigil is structural → delims. See production header
-	// comment in prior versions for the four arm/sub-form table.
+	// AtCallExpr / IdentityCallExpr — at-form applied to
+	// (optionally) an argument. The IdentityFunc arm (bare-`@`
+	// applied) splits out to a distinct IdentityCallExpr node —
+	// no callee field, since `@2` is one indivisible language
+	// construct rather than a call of `@` on `2`. The phantom
+	// inner IdentityFunc node is discarded; its sole `@` token
+	// lifts onto the outer node's delims. The other three arms
+	// (`None@`, `foo@ x`, `foo @ x`) retain the AtCallExpr type
+	// tag with a user-rooted AtExpr callee.
+	//
+	// At sigil placement after the split:
+	//   - IdentityCallExpr: outer.delims = [At] (lifted from inner).
+	//   - AtCallExpr Arm 1 (None@): outer.delims = [At] (the
+	//     synthesized AtExpr callee carries no own delims since
+	//     its BuiltIn base does not).
+	//   - AtCallExpr Arm 2A (foo@ x): callee.delims = [At] (the
+	//     pre-shaped AtExpr owns its `@`); outer.delims = [].
+	//   - AtCallExpr Arm 2B (foo @ x): outer.delims = [At] (the
+	//     `@` token is at the outer level since AtExpr's no-trivia
+	//     rule doesn't apply when WS separates base from `@`).
 	AtCallExpr(frame,parts) {
-		var node = { type: "AtCallExpr" };
 		var first = parts[0];
 		var delims = [];
 
@@ -1493,7 +1517,7 @@ export const defaultShapers = {
 					delims.push(p);
 				}
 			}
-			node.callee = {
+			let callee = {
 				type: "AtExpr",
 				base: {
 					type: "BuiltIn",
@@ -1504,12 +1528,30 @@ export const defaultShapers = {
 				start: first.start,
 				end: atTok.end,
 			};
+			return withDelims({ type: "AtCallExpr", callee }, delims);
 		}
-		else if (
-			first.type === "AtExpr" ||
-			first.type === "MonadConstructor"
-		) {
-			// Arm 2 sub-forms A and C: callee is pre-shaped.
+
+		if (first.type === "IdentityFunc") {
+			// Arm 2 sub-form C (bare-`@` applied → IdentityCallExpr).
+			// The IdentityFunc node's single At delim lifts onto
+			// the outer node; the inner node is discarded — no
+			// callee field. Any soft delims between `@` and the
+			// arg auto-merge onto IdentityCallExpr.delims by the
+			// machinery after return (preserveInnerDelim not set
+			// on AtCallExpr).
+			delims.push(first.delims[0]);
+			let arg;
+			for (let p of parts.slice(1)) {
+				if (isNode(p)) arg = p;
+			}
+			return withDelims({ type: "IdentityCallExpr", arg }, delims);
+		}
+
+		var node = { type: "AtCallExpr" };
+
+		if (first.type === "AtExpr") {
+			// Arm 2 sub-form A: callee is pre-shaped (foo@ x,
+			// foo.bar@ x — no trivia between IdentBase/access and @).
 			node.callee = first;
 			for (let p of parts.slice(1)) {
 				if (isNode(p)) node.arg = p;

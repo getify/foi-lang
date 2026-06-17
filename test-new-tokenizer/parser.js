@@ -568,10 +568,12 @@ export const MultiAccessExpr = production("MultiAccessExpr",
 	and(MultiAccessSeg, any(and(delim(), MultiAccessSeg)))
 );
 
-// MonadConstructor := At;
+// IdentityFunc := At;
 //
+// Bare `@` is the value identity function. The construct's
+// distinguishing structural feature is the single At token.
 // No `:as` tail — annotation comes via AsExpr (§5).
-export const MonadConstructor = production("MonadConstructor", At);
+export const IdentityFunc = production("IdentityFunc", At);
 
 // AtExpr := IdentBase SingleAccessExpr? At;
 //
@@ -591,17 +593,17 @@ export const AtExpr = production("AtExpr",
 // shaper still subsumes BareIdentifier to its inner IdentBase node.
 export const BareIdentifier = production("BareIdentifier", IdentBase);
 
-// <IdentifierExpr> := MonadConstructor | AtExpr | BareIdentifier;
+// <IdentifierExpr> := IdentityFunc | AtExpr | BareIdentifier;
 //
 // All identifier-led access is handled by ChainExpr (§7) now —
-// IdentifierExpr is just the bare/at/monad forms.
+// IdentifierExpr is just the bare/at/identity forms.
 //
 // PEG order:
-//   - MonadConstructor (bare @) starts with At — disjoint from IdentBase-led arms.
+//   - IdentityFunc (bare @) starts with At — disjoint from IdentBase-led arms.
 //   - AtExpr requires a trailing @ — fails fast on identifier-led input without @.
 //   - BareIdentifier catches the remainder.
 var IdentifierExpr = or(
-	MonadConstructor,
+	IdentityFunc,
 	AtExpr,
 	BareIdentifier
 );
@@ -734,9 +736,9 @@ var CallArgs = or(
 );
 
 // AtCallExpr := "None" At
-//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock;
+//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | IdentityFunc) _ ExprNoBlock;
 //
-// Arm 1: bare `None@` (None monad constructor, no argument).
+// Arm 1: bare `None@` (None unit constructor, no argument).
 // Arm 2: at-form applied to an ExprNoBlock argument.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
@@ -744,7 +746,12 @@ var CallArgs = or(
 // PEG within arm 2:
 //   - AtExpr first — matches IdentBase+access+adjacent At (no trivia between IdentBase and At).
 //   - `(IdentBase SingleAccessExpr? _ At)` — allows trivia between IdentBase (with optional access) and At (AtExpr does not).
-//   - MonadConstructor — bare `@` fallback.
+//   - IdentityFunc — bare `@` fallback.
+//
+// The shaper splits the IdentityFunc arm out into a distinct
+// IdentityCallExpr node (no callee field); the other three arms
+// shape as AtCallExpr with a user-rooted callee. See default-
+// shapers.js AtCallExpr for the split rationale.
 export const AtCallExpr = production("AtCallExpr",
 	or(
 		and(BuiltinNone, At),
@@ -752,7 +759,7 @@ export const AtCallExpr = production("AtCallExpr",
 			or(
 				AtExpr,
 				and(IdentBase, optional(SingleAccessExpr), delim(), At),
-				MonadConstructor
+				IdentityFunc
 			),
 			delim(),
 			ExprNoBlock

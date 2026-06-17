@@ -388,9 +388,9 @@ PEG ordering notes:
    forms only. None of these arms carry `:as` directly — annotation
    comes from enclosing AsExpr (§5). *)
 
-<IdentifierExpr>     := MonadConstructor | AtExpr | BareIdentifier;
+<IdentifierExpr>     := IdentityFunc | AtExpr | BareIdentifier;
 
-MonadConstructor     := At;
+IdentityFunc         := At;
 AtExpr               := IdentBase SingleAccessExpr? At;
 BareIdentifier       := IdentBase;
 
@@ -479,8 +479,13 @@ ChainExpr      := ChainBase
 PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 PartialCallSuffix := Pipe CallArgs Pipe;
 
+(* The shaper splits the IdentityFunc arm out into a separate
+   IdentityCallExpr node (no callee field — bare `@` applied to
+   an argument is one indivisible language construct, not a call
+   of `@` on the argument). The other three arms shape as
+   AtCallExpr with a user-rooted callee. *)
 AtCallExpr           := "None" At
-                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | MonadConstructor) _ ExprNoBlock;
+                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | IdentityFunc) _ ExprNoBlock;
 
 <CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 <CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
