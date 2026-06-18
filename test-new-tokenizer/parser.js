@@ -441,15 +441,33 @@ export const AsExpr = production("AsExpr",
 //
 // The three operand-position restrictive variants — GroupedOpExpr,
 // GroupedBareOpExpr, GroupedBareOpExprNoEmpty — also admit
-// AssignmentExpr as an inner alternative. AssignmentExpr is
-// value-producing in Foi (matching JS `x = 5`), so it can legally
-// appear as a binary operand once parenthesized: `10 + (x := 5)`.
-// The bare form `10 + x := 5` remains a parse error — BinaryAtom
-// itself doesn't admit AssignmentExpr, and there's no AsExpr-like
-// fall-through that would silently re-bind `:=` against the LHS.
-// GroupedDoExpr is excluded — its inner is do-compr-only, and any
-// `(x := 5)` at binary-operand position is caught by the earlier
-// arms in BinaryAtom's dispatch ordering.
+// DefFuncExpr, MatchExpr, and AssignmentExpr as inner alternatives.
+// All three are value-producing constructs that the narrow-by-
+// default inner allow-list (AsExpr / OperandExpr / BareOperandExpr
+// ...) doesn't reach, but each composes naturally as a binary
+// operand once parenthesized:
+//
+//   10 + (x := 5)                       AssignmentExpr — JS `x = 5`-like
+//   (defn(x)^x*2) +> (defn(x)^x+1)      DefFuncExpr as compose operand
+//   (?{ [c]: f; ?: g })(7)              MatchExpr as chain base
+//
+// The bare forms (`10 + x := 5`, `defn(x)^x*2 +> defn(x)^x+1`,
+// `?{...} + 1`) remain parse errors — BinaryAtom itself admits
+// none of `:=`, `defn`, or `?{`/`?(`, and there's no AsExpr-like
+// fall-through that would silently re-bind their distinctive
+// openers.
+//
+// GroupedDoExpr is excluded from all three widenings — its inner
+// is do-compr-only by design, and any of these forms at binary-
+// operand position is caught by the earlier arms in BinaryAtom's
+// dispatch ordering.
+//
+// PEG order within each widened inner: DefFuncExpr first (distinct
+// `defn` keyword), MatchExpr next (`?{` / `?(`, disjoint from
+// GuardedExpr's `?[` reached through AsExpr), AssignmentExpr
+// (Identifier-led with `:=` tail), AsExpr (`:as`-tailed), then
+// the production-specific operand fall-through. All five inner
+// arms are disjoint at their first one or two tokens.
 
 // GroupedExpr := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 //
@@ -465,50 +483,125 @@ export const GroupedExprNoBlock = production("GroupedExprNoBlock",
 	and(OpenParen, delim(), ExprNoBlock, delim(), CloseParen, OptAsAnnotation)
 );
 
-// GroupedOpExpr := OpenParen _ (AssignmentExpr | AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedOpExpr := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
 //
-// AsExpr added as inner alt — `(?x :as bool)` and similar
-// `:as`-bearing operand-level expressions parse inside the parens.
-// AssignmentExpr added so that an assignment can appear as a
-// binary operand once parenthesized: `10 + (x := 5)`.
+// Canonical operand-position widening — this block carries the
+// full rationale that GroupedBareOpExpr and GroupedBareOpExprNoEmpty
+// defer to.
 //
-// PEG: AssignmentExpr first — mirrors <ExprNoBlock> ordering, where
-// both AssignmentExpr and AsExpr can open with Identifier and the
-// discriminating tail (`:=` vs `:as`) decides. Both fail fast on
-// the wrong tail and fall through cleanly. OperandExpr last for the
-// general operand case.
+// AsExpr admitted so `:as`-bearing operand-level expressions like
+// `(?x :as bool)` parse inside the parens.
+//
+// AssignmentExpr admitted so a parenthesized assignment can appear
+// as a binary operand: `10 + (x := 5)`. The bare form `10 + x := 5`
+// remains a parse error — BinaryAtom itself doesn't admit `:=`, and
+// there's no AsExpr-like fall-through that would silently re-bind
+// the assignment against the LHS.
+//
+// DefFuncExpr and MatchExpr admitted as inner alts so paren-wrapped
+// function and match values compose naturally at binary-operand
+// position — `(defn(x)^x+1) +> inc`, `(?{...})(7)`, etc. Both are
+// value-producing constructs that the narrow-by-default inner
+// allow-list (AsExpr / OperandExpr) doesn't reach, but each is
+// reachable through ExprNoBlock at top-level — the omission at
+// operand position was a hole, not a deliberate restriction. Same
+// bare-form-rejection logic as AssignmentExpr: BinaryAtom admits
+// neither `defn` nor `?{`/`?(`, so `defn(x)^x+1 +> inc` and
+// `?{...} + 1` remain parse errors.
+//
+// PEG ordering inside the inner-alts `or(...)`:
+//   1. DefFuncExpr      — distinct `defn` keyword, disjoint from all
+//                         others.
+//   2. MatchExpr        — `?{` or `?(`. Disjoint from GuardedExpr's
+//                         `?[` (reached via AsExpr's AsableExpr arm)
+//                         at the second token; disjoint from
+//                         compare/and/or `?`-tokens (which are
+//                         multi-char like `?=`, `?and`, never
+//                         followed by `{`/`(` at the start of an
+//                         operand).
+//   3. AssignmentExpr   — Identifier-led with `:=` tail; mirrors
+//                         <ExprNoBlock> ordering, where both
+//                         AssignmentExpr and AsExpr can open with
+//                         Identifier and the discriminating tail
+//                         (`:=` vs `:as`) decides. Both fail fast
+//                         on the wrong tail and fall through
+//                         cleanly.
+//   4. AsExpr           — `:as`-tailed; longer match wins over a
+//                         bare OperandExpr that would otherwise
+//                         leave `:as T` dangling.
+//   5. OperandExpr      — general operand case, last.
+//
+// All five inner arms are disjoint at their first one or two tokens;
+// PEG order is mechanical aside from the AssignmentExpr-before-AsExpr
+// discriminator already noted.
 export const GroupedOpExpr = production("GroupedOpExpr",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AssignmentExpr), AsExpr, OperandExpr),
+		or(
+			lazy(() => DefFuncExpr),
+			lazy(() => MatchExpr),
+			lazy(() => AssignmentExpr),
+			AsExpr,
+			OperandExpr
+		),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
 );
 
-// GroupedBareOpExpr := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedBareOpExpr := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
 //
-// AssignmentExpr admitted for parenthesized-assignment-as-binary-operand
-// (see GroupedOpExpr above for the full rationale). PEG order mirrors
-// <ExprNoBlock>.
+// DefFuncExpr, MatchExpr, and AssignmentExpr admitted for
+// parenthesized-value-as-binary-operand at the bare-operand reach.
+// See GroupedOpExpr above for the full rationale and bare-form
+// rejection logic. PEG ordering identical to GroupedOpExpr's
+// inner-alts: DefFuncExpr (distinct `defn`), MatchExpr (`?{`/`?(`,
+// disjoint from GuardedExpr's `?[` via AsableExpr), AssignmentExpr
+// (Identifier-led, `:=` tail), AsExpr (`:as`-tailed), BareOperandExpr
+// last for the production-specific operand fall-through.
 export const GroupedBareOpExpr = production("GroupedBareOpExpr",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AssignmentExpr), AsExpr, BareOperandExpr),
+		or(
+			lazy(() => DefFuncExpr),
+			lazy(() => MatchExpr),
+			lazy(() => AssignmentExpr),
+			AsExpr,
+			BareOperandExpr
+		),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)
 );
 
-// GroupedBareOpExprNoEmpty := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
+// GroupedBareOpExprNoEmpty := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
 //
-// AssignmentExpr admitted for parenthesized-assignment-as-binary-operand
-// (see GroupedOpExpr above for the full rationale). PEG order mirrors
-// <ExprNoBlock>.
+// DefFuncExpr, MatchExpr, and AssignmentExpr admitted for
+// parenthesized-value-as-binary-operand at the bare-operand-no-empty
+// reach. See GroupedOpExpr above for the full rationale and bare-
+// form rejection logic. PEG ordering identical to GroupedOpExpr's
+// inner-alts: DefFuncExpr (distinct `defn`), MatchExpr (`?{`/`?(`,
+// disjoint from GuardedExpr's `?[` via AsableExpr), AssignmentExpr
+// (Identifier-led, `:=` tail), AsExpr (`:as`-tailed),
+// BareOperandExprNoEmpty last for the production-specific operand
+// fall-through.
+//
+// This is the inner-recursive paren form whose path excludes the
+// EmptyLit-bearing variants (BareOperandExpr's first alt and
+// GroupedBareOpExpr's BareOperandExpr inner). The structural fact
+// is verified by the round-trip oracle; the original design
+// rationale for that exclusion is not documented in the parser
+// or grammar source.
 export const GroupedBareOpExprNoEmpty = production("GroupedBareOpExprNoEmpty",
 	and(
 		OpenParen, delim(),
-		or(lazy(() => AssignmentExpr), AsExpr, BareOperandExprNoEmpty),
+		or(
+			lazy(() => DefFuncExpr),
+			lazy(() => MatchExpr),
+			lazy(() => AssignmentExpr),
+			AsExpr,
+			BareOperandExprNoEmpty
+		),
 		delim(), CloseParen,
 		OptAsAnnotation
 	)

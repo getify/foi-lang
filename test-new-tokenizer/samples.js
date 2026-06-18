@@ -462,10 +462,33 @@ export const samples = [
 	// AssignmentExpr in the three operand-position restrictive
 	// variants. The bare form `10 + x := 5` is rejected (negative
 	// sample below).
-	{ label: "GroupedBareOpExprNoEmpty: 10 + (x := 5)",        src: "10 + (x := 5);" },
+{ label: "GroupedBareOpExprNoEmpty: 10 + (x := 5)",        src: "10 + (x := 5);" },
 	{ label: "GroupedBareOpExprNoEmpty: (x := 5) + 1",         src: "(x := 5) + 1;" },
 	{ label: "GroupedBareOpExprNoEmpty: (foo.bar := 42) + 1",  src: "(foo.bar := 42) + 1;" },
 	{ label: "GroupedBareOpExprNoEmpty: (x := 5) :as int",     src: "(x := 5) :as int;" },
+
+	// GroupedOpExpr inner widening — DefFuncExpr and MatchExpr at
+	// binary-operand position. Parallels the (x := 5) admission
+	// pattern; both produce values, both compose naturally as
+	// flow-tier operands when parenthesized.
+	{ label: "GroupedOpExpr (defn): (defn(x)^x+1) +> inc",
+	  src: "(defn(x)^x+1) +> inc;" },
+	{ label: "GroupedOpExpr (defn): inc +> (defn(x)^x+1)",
+	  src: "inc +> (defn(x)^x+1);" },
+	{ label: "GroupedOpExpr (defn): (defn) #> (defn) chain",
+	  src: "(defn(x)^x*2) #> (defn(x)^x+1);" },
+	{ label: "GroupedOpExpr (IndepMatch): (?{...}) +> inc",
+	  src: "(?{ ?[c]: 1; ?: 0 }) +> inc;" },
+	{ label: "GroupedOpExpr (DepMatch): (?(x){...}) +> log",
+	  src: '(?(name){ ?["Kyle"]: "hi"; ?: "?" }) +> log;' },
+	{ label: "GroupedOpExpr (IndepMatch): 10 + (?{...}) binary operand",
+	  src: "10 + (?{ ?[c]: 1; ?: 0 });" },
+	{ label: "GroupedBareOpExprNoEmpty (defn): (defn(x)^x+1)(7) chain base",
+	  src: "(defn(x)^x+1)(7);" },
+	{ label: "GroupedBareOpExprNoEmpty (IndepMatch): (?{...})(7) chain base",
+	  src: "(?{ ?[c]: f; ?: g })(7);" },
+	{ label: "GroupedOpExpr canonical: (defn ...) #> (...') — addAll",
+	  src: "def addAll: (defn addAll_(args)^(+)(...args)) #> (...');" },
 
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS

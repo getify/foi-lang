@@ -345,12 +345,32 @@ AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
 
    The three operand-position restrictive variants (GroupedOpExpr,
    GroupedBareOpExpr, GroupedBareOpExprNoEmpty) additionally admit
-   AssignmentExpr as an inner alternative. Assignment is value-
-   producing in Foi (matching JS `x = 5`), so a parenthesized
-   assignment can legally appear as a binary operand: `10 + (x := 5)`.
-   GroupedDoExpr is excluded — its inner is do-compr-only, and any
-   `(x := 5)` at binary-operand position is caught by the earlier
-   arms in BinaryAtom's dispatch ordering.
+   DefFuncExpr, MatchExpr, and AssignmentExpr as inner alternatives.
+   All three are value-producing forms that the narrow-by-default
+   inner allow-list (AsExpr / OperandExpr / BareOperandExpr...)
+   doesn't reach, but each composes naturally as a binary operand
+   once parenthesized:
+
+     10 + (x := 5)                        (* AssignmentExpr — JS-like *)
+     (defn(x)^x*2) +> (defn(x)^x+1)       (* DefFuncExpr as compose operand *)
+     (?{ [c]: f; ?: g })(7)               (* MatchExpr as chain base *)
+
+   The bare forms remain parse errors — BinaryAtom itself admits
+   none of `:=`, `defn`, or `?{`/`?(`, and there is no AsExpr-like
+   fall-through that would silently re-bind their distinctive
+   openers.
+
+   GroupedDoExpr is excluded from all three widenings — its inner
+   is do-compr-only by design, and any of these forms at binary-
+   operand position is caught by the earlier arms in BinaryAtom's
+   dispatch ordering.
+
+   PEG order within each widened inner: DefFuncExpr first (distinct
+   `defn` keyword), MatchExpr next (`?{` / `?(`, disjoint from
+   GuardedExpr's `?[` reached through AsExpr), AssignmentExpr
+   (Identifier-led with `:=` tail), AsExpr (`:as`-tailed), then
+   the production-specific operand fall-through. All five inner
+   arms are disjoint at their first one or two tokens.
 
    All six keep their own (_ AsAnnotationExpr)? trailing tail —
    parens are atomic groups that can carry their own `:as` regardless
@@ -361,9 +381,9 @@ AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
 
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
-GroupedOpExpr            := OpenParen _ (AssignmentExpr | AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExpr        := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExprNoEmpty := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedOpExpr            := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExpr        := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExprNoEmpty := OpenParen _ (DefFuncExpr | MatchExpr | AssignmentExpr | AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
 
 AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```

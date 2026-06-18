@@ -392,7 +392,7 @@ addNumsList(numbers);
 
 Since `...` is an operator, when passed an operator/function like `+`, instead of a Tuple, it produces a new function (above, `addNumsList()`) that will expect a single (Tuple) argument that's then *spread out* to the underlying operator/function when invoked.
 
-**NOTE:** The inverse lift of spread (via `(...)`) -- gathering all positionally passed arguments into a Tuple -- will be discussed shortly.
+**NOTE:** The inverse lift of spread (via `(...')`) -- gathering all positionally passed arguments into a Tuple -- will be discussed shortly.
 
 ### Reversing Argument Order
 
