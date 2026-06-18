@@ -1840,13 +1840,24 @@ var handlers = {
 	//                                 (paren from outer ternary,
 	//                                 not from this handler)
 	//
-	// No paren-wrap from this handler. The grammar separately
-	// excludes AssignmentExpr from binary-tier operand slots
-	// (BinaryAtom's paren arms admit OperandExpr / BareOperandExpr
-	// only, neither reaching AssignmentExpr), so `a + (x := 5)`
-	// is a source-level parse error — but that is a grammar-side
-	// restriction on where assignment can appear, not a claim
-	// about whether assignment produces a value.
+	//   - stmt position             → `x = 5;`
+	//   - DefVarStmt RHS            → `var y = x = 5;` (chained)
+	//   - match consequent          → `c ? (x = 5) : null`
+	//                                 (paren from outer ternary,
+	//                                 not from this handler)
+	//   - binary operand (paren)    → `10 + (x = 5)`
+	//                                 (paren from outer GroupedExpr,
+	//                                 not from this handler)
+	//
+	// No paren-wrap from this handler. Source-level parens around
+	// an assignment used as a binary operand (`10 + (x := 5)`)
+	// shape into a GroupedExpr that wraps this node; that wrapper's
+	// handler emits the parens. The three operand-position paren-
+	// grouping productions (GroupedOpExpr, GroupedBareOpExpr,
+	// GroupedBareOpExprNoEmpty) are the only path that reaches
+	// AssignmentExpr inside a binary-operand slot — BinaryAtom
+	// itself doesn't admit AssignmentExpr, so the bare form
+	// `10 + x := 5` remains a source-level parse error.
 	AssignmentExpr(node, recur) {
 		return recur(node.target) + " = " + recur(node.source);
 	},
@@ -2056,11 +2067,14 @@ var handlers = {
 	// Expr — recur produces a JS expression that composes inside
 	// the ternary.
 	//
-	// Consequent BlockExpr currently emits an IIFE with no
-	// implicit return (block return-injection is deferred), so
-	// `?[c]: { x; y }` evaluates to undefined when c is truthy.
-	// Pure-side-effect consequents work; value-returning ones
-	// don't until injection lands.
+	// BareBlockExpr consequent (`?[c]: { x; y }`) composes
+	// correctly: recur invokes the BareBlockExpr handler, which
+	// emits an IIFE with return-injection (via emitBlockBody's
+	// withReturn:true mode), so `?[c]: { x; y }` lowers to
+	// `c ? (() => { x; return y; })() : null` and evaluates to
+	// `y` when c is truthy. BlockExpr (the defs-init form) isn't
+	// reachable as a GuardedExpr consequent — it's only admitted
+	// at FlowRHSImplIn / FuncBodyPipeline positions per §11.
 	GuardedExpr(node, recur) {
 		var cond = emitCondClause(node.clause, recur);
 		return cond + " ? " + recur(node.consequent) + " : null";

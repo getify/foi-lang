@@ -400,6 +400,14 @@ export const samples = [
 	{ label: "AssignmentExpr (multi-seg): a.b.c := 1",    src: "a.b.c := 1;" },
 	{ label: "AssignmentExpr (bracket): foo[0] := y + 1", src: "foo[0] := y + 1;" },
 
+	// Assignment as binary operand — §5 paren-grouping admits
+	// AssignmentExpr in the three operand-position restrictive
+	// variants. The bare form `10 + x := 5` is rejected (negative
+	// sample below).
+	{ label: "GroupedBareOpExprNoEmpty: 10 + (x := 5)",        src: "10 + (x := 5);" },
+	{ label: "GroupedBareOpExprNoEmpty: (x := 5) + 1",         src: "(x := 5) + 1;" },
+	{ label: "GroupedBareOpExprNoEmpty: (foo.bar := 42) + 1",  src: "(foo.bar := 42) + 1;" },
+	{ label: "GroupedBareOpExprNoEmpty: (x := 5) :as int",     src: "(x := 5) :as int;" },
 
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS

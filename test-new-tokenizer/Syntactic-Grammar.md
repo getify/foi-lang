@@ -136,6 +136,13 @@ Concrete consequences:
   inside the paren-group via `AsExpr`; outer paren has no own `:as`
 - `(x + y) :as int ~map f` → parses; `GroupedOpExpr` carries its
   own `:as`, then `~map f` is the binary tail
+- `10 + (x := 5)` → parses; `AssignmentExpr` is admitted as an inner
+  alternative of the three operand-position restrictive paren-grouping
+  productions
+- `(x := 5) :as int` → parses; the paren-grouping's own `:as` tail
+  attaches to the `GroupedExpr` wrapping the `AssignmentExpr`
+- **`10 + x := 5` → PARSE ERROR** (bare assignment isn't admitted at
+  binary-operand position; must parenthesize)
 - **`(x) :as bool :as char` → PARSE ERROR** (paren-grouping is not
   in `<AsableExpr>` — the paren's own tail consumes `:as bool`, then
   the outer `:as char` has no AsExpr to land on)
@@ -334,19 +341,29 @@ AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
    include AsExpr via dispatch (GroupedExpr's Expr, GroupedExprNoBlock's
    ExprNoBlock) need no widening. The four restrictive variants
    (OperandExpr, BareOperandExpr, BareOperandExprNoEmpty, do-compr)
-   add AsExpr as an explicit first alternative.
+   add AsExpr as an explicit alternative.
+
+   The three operand-position restrictive variants (GroupedOpExpr,
+   GroupedBareOpExpr, GroupedBareOpExprNoEmpty) additionally admit
+   AssignmentExpr as an inner alternative. Assignment is value-
+   producing in Foi (matching JS `x = 5`), so a parenthesized
+   assignment can legally appear as a binary operand: `10 + (x := 5)`.
+   GroupedDoExpr is excluded — its inner is do-compr-only, and any
+   `(x := 5)` at binary-operand position is caught by the earlier
+   arms in BinaryAtom's dispatch ordering.
 
    All six keep their own (_ AsAnnotationExpr)? trailing tail —
    parens are atomic groups that can carry their own `:as` regardless
    of position (including as a binary operand). PEG order for the
-   widened forms: AsExpr first (longer with `:as` tail), falls
-   through cleanly on no `:as`. *)
+   widened forms: AssignmentExpr first (where present, mirroring
+   <ExprNoBlock>), then AsExpr (longer with `:as` tail), falls
+   through cleanly on no match. *)
 
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
-GroupedOpExpr            := OpenParen _ (AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExpr        := OpenParen _ (AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
-GroupedBareOpExprNoEmpty := OpenParen _ (AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedOpExpr            := OpenParen _ (AssignmentExpr | AsExpr | OperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExpr        := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExpr) _ CloseParen (_ AsAnnotationExpr)?;
+GroupedBareOpExprNoEmpty := OpenParen _ (AssignmentExpr | AsExpr | BareOperandExprNoEmpty) _ CloseParen (_ AsAnnotationExpr)?;
 
 AsAnnotationExpr         := ":as" _ NamedType;        (* NamedType — forward ref to §18 *)
 ```
@@ -789,7 +806,9 @@ VarDefInitOptImplIn     := (Identifier        (_ Colon _ ExprNoBlock)?)
 ```ebnf
 (* LHS restricted to identifier with optional single-access. Excludes
    multi-pick assignment and pipeline-topic assignment. No :as tail —
-   parenthesize. *)
+   parenthesize. Value-producing (matching JS `x = 5` semantics), so
+   reachable as a binary operand via the three operand-position
+   paren-grouping productions in §5 — `10 + (x := 5)` parses. *)
 
 AssignmentExpr        := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equal _ Expr;
 ```

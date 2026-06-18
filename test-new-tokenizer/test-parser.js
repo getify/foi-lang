@@ -128,6 +128,7 @@ var failSamples = [
 	"(x: 1) { x; } :as int;",  // same — BlockExpr not in <AsableExpr> anyway
 	"(x, y) { x; };",          // same
 	"(x: 1, y) { x; };",       // same
+	"10 + x := 5;",
 ];
 
 var passed = 0;
