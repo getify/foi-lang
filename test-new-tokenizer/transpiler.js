@@ -176,14 +176,26 @@ var OR_OPS = {
 //                      unary fn that runs args L→R via .reduce
 //   kind: "composeRev" — n-ary reverse composition; produces a
 //                      unary fn that runs args R→L via .reduceRight
+//   kind: "pipeline"  — n-ary pipeline-apply: first arg seeds the
+//                      running value; each subsequent arg is called
+//                      as a function with the accumulated value.
+//                      `(#>)(11, f, g, h)` ≡ `h(g(f(11)))` ≡
+//                      `11 #> f #> g #> h`. Primed reverses xs
+//                      first via .reverse() — `(#>')(h, g, f, 11)`
+//                      is the same value-wise as the canonical
+//                      form. Saved into a temp at emit-site so
+//                      the .reverse() only fires once.
+//   kind: "spread"    — 1-ary apply lift: takes a function/op,
+//                      returns a unary fn that spreads its single
+//                      Tuple/array argument into the wrapped
+//                      function. `(...)(+)(nums)` ≡ `(+)(...nums)`.
+//                      Primed flips the lift direction — gather
+//                      rather than spread: `(...')(f)(a, b, c)` ≡
+//                      `f(<a, b, c>)`. The inverse of `(...)`, and
+//                      the only place primed-1-ary carries meaning
+//                      (the lifted-access arms have no meaningful
+//                      inverse direction and stay primed-no-op).
 //   kind: "range2"    — strict 2-ary inclusive range producer;
-//                      emits a 2-ary function returning the
-//                      sequence from __from to __to (numbers or
-//                      single-char strings), direction inferred
-//                      from endpoints. Mismatched-type endpoints
-//                      throw TypeError at runtime. Primed swaps
-//                      param positions (semantically meaningful —
-//                      direction is endpoint-derived).
 //
 // Primed (`node.primed`) reverses arg order for n-ary kinds and
 // swaps arg positions for fixed-arity kinds (range3, in2, has2,
@@ -233,6 +245,8 @@ var OP_FUNC_TABLE = {
 	"!has": { kind: "has2", negate: true },
 	"+>":   { kind: "composeFwd" },
 	"<+":   { kind: "composeRev" },
+	"#>":   { kind: "pipeline" },
+	"...":  { kind: "spread" },
 	"..":   { kind: "range2" },
 };
 
@@ -1621,6 +1635,18 @@ var handlers = {
 	//                      via .reduceRight R→L
 	//   (+>')(f,g,h)     → primed reverses xs first, then reduce —
 	//                      semantically equivalent to (<+)(f,g,h)
+	//   (#>)(11,f,g,h)   → pipeline-apply: h(g(f(11)))
+	//                      first arg seeds the running value; each
+	//                      subsequent arg is called with it
+	//   (#>')(h,g,f,11)  → primed reverses xs first — semantically
+	//                      equivalent to (#>)(11,f,g,h)
+	//   (...)(+)         → apply lift: produces a unary fn that
+	//                      spreads its Tuple arg into the wrapped
+	//                      op — `(...)(+)(nums)` ≡ `(+)(...nums)`
+	//   (...')(f)        → gather lift: produces a variadic fn that
+	//                      packs its positional args into a single
+	//                      Tuple and passes to f — `(...')(f)(a,b,c)`
+	//                      ≡ `f(<a,b,c>)`. Inverse of `(...)`.
 	//   (..)(1, 5)       → [1,2,3,4,5]  inclusive ascending range
 	//   (..)(5, 1)       → [5,4,3,2,1]  descending (inferred from endpoints)
 	//   (..)("a", "e")   → ["a","b","c","d","e"]  char range
@@ -1801,6 +1827,27 @@ var handlers = {
 		if (meta.kind === "composeRev") {
 			return "((...__xs) => (__v) => " + xs +
 				".reduceRight((__acc, __f) => __f(__acc), __v))";
+		}
+		// (#>)(topic, f1, f2, ...) — pipeline-apply. First arg
+		// seeds the running value; each subsequent arg is called
+		// with it. Saved into __a because the primed form sets
+		// xs === "__xs.reverse()" — referencing xs more than once
+		// would mutate __xs repeatedly, flipping it back to
+		// original on the second call. Single .reverse() at the
+		// __a assignment is the only mutation needed.
+		if (meta.kind === "pipeline") {
+			return "((...__xs) => { var __a = " + xs +
+				"; return __a.slice(1).reduce((__acc, __f) => __f(__acc), __a[0]); })";
+		}
+		// (...)(fn) — apply lift. 1-ary; takes a function, returns
+		// a unary fn that spreads its Tuple/array arg into the
+		// wrapped function. Primed flips the lift direction: "gather"
+		// rather than spread: `(...')(f)(a, b, c)` ≡ `f(<a, b, c>)`.
+		if (meta.kind === "spread") {
+			if (node.primed) {
+				return "((__fn) => (...__args) => __fn(__args))";
+			}
+			return "((__fn) => (__list) => __fn(...__list))";
 		}
 		if (meta.kind === "range2") {
 			return emitRangeBody(node.primed, null, null);

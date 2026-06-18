@@ -143,6 +143,9 @@ export const samples = [
 	{ label: "OpFuncExpr (..): descending call",             src: "(..)(5, 1);" },
 	{ label: "OpFuncExpr (..) primed: (..')(1, 5)",          src: "(..')(1, 5);" },
 	{ label: "OpFuncExpr (..) spread: (..)(...args)",        src: "(..)(...args);" },
+	{ label: "OpFuncExpr (pipeline bare): (#>)",     src: "(#>);" },
+	{ label: "OpFuncExpr (apply bare): (...)",       src: "(...);" },
+	{ label: "OpFuncExpr (...') spread primed (aka gather)",       src: "(...');" },
 
 	// IdentityFunc — bare @ (the value identity function)
 	{ label: "IdentityFunc: @",                      src: "@;" },
@@ -419,6 +422,12 @@ export const samples = [
 	  src: "(+>)(...fns);" },
 	{ label: "FlowBinExpr: <+ spread args",
 	  src: "(<+)(...fns);" },
+	{ label: "FlowBinExpr: #> via OpFuncExpr (guide)",
+	  src: "(#>)(11, inc, triple, half);" },
+	{ label: "FlowBinExpr: #>' primed via OpFuncExpr (guide)",
+	  src: "(#>')(half, triple, inc, 11);" },
+	{ label: "OpFuncExpr (...) apply lift (guide addNumsList)",
+	  src: "def addNumsList: (...)(+);" },
 
 	// DefBlockStmt — strict-optional inner (Identifier-init optional;
 	// DestructureTarget-init REQUIRED — no implicit source at top-level `def (...)`)

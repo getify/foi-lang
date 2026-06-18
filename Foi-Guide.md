@@ -16,8 +16,9 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
 * [Imports And Exports](#imports-and-exports)
 * [Function Calls](#function-calls)
     - [Invoking Operators As Functions](#invoking-operators-as-functions)
-    - [Apply (aka Spread)](#apply-aka-spread)
+    - [Apply (aka Spread) Arguments](#apply-aka-spread-arguments)
     - [Reversing Argument Order](#reversing-argument-order)
+    - [Gathering Arguments](#gathering-arguments)
     - [Partial Application](#partial-application)
     - [Named Arguments](#named-arguments)
 * [Defining Variables](#defining-variables)
@@ -37,7 +38,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Sets](#sets)
 * [Defining Functions](#defining-functions)
     - [Default Parameter Values](#default-parameter-values)
-    - [Gathering Arguments](#gathering-arguments)
+    - [Gather Parameter](#gather-parameter)
     - [Negating a Predicate](#negating-a-predicate)
     - [Function Pre-conditions](#function-pre-conditions)
     - [Function Recursion](#function-recursion)
@@ -371,7 +372,7 @@ add(2,5);           // 7
 subtract(8,5);      // 3
 ```
 
-### Apply (aka Spread)
+### Apply (aka Spread) Arguments
 
 Say we have a list of values (a Tuple, as we'll see later) called `numbers`, and we want to "spread them out" as arguments to an operator/function. We can use the `...` operator:
 
@@ -390,6 +391,8 @@ addNumsList(numbers);
 ```
 
 Since `...` is an operator, when passed an operator/function like `+`, instead of a Tuple, it produces a new function (above, `addNumsList()`) that will expect a single (Tuple) argument that's then *spread out* to the underlying operator/function when invoked.
+
+**NOTE:** The inverse lift of spread (via `(...)`) -- gathering all positionally passed arguments into a Tuple -- will be discussed shortly.
 
 ### Reversing Argument Order
 
@@ -428,6 +431,49 @@ This short-hand form `(-')` should be preferred over the more verbose `(')(-)` f
 (-)'(1,6);                      // 5
 (-')(1,6);                      // 5
 ```
+
+### Gathering Arguments
+
+The `'` prime operator was just illustrated as "reversing argument order". But semantically, it's actually inversing the *operation* along its *natural/semantic* axis. For many functions and operators, that indeed means reversing argument order.
+
+An illustration of *inverse* that is NOT about *argument order* can be seen with the `(...')` operator combination, otherwise known as the "gather operator".
+
+Consider an `allFlags(..)` function, that expects a Tuple list (`perms`) of boolean permission flags:
+
+```java
+defn allFlags(perms) ^(?and)(...perms);
+
+allFlags(< true, true, false >);    // false
+allFlags(< true, true, true >);     // true
+```
+
+Next, we'll define a more specific function like `canPublish(..)` manually:
+
+```java
+defn canPublish(isVerified,ownsDocument,hasQuota)
+    ^allFlags(< isVerified, ownsDocument, hasQuota >);
+
+// or (with "gather parameter" syntax, as illustrated later
+// in the guide):
+//
+// defn canPublish(*flags) ^allFlags(flags);
+
+canPublish(true,true,false);    // false
+canPublish(true,true,true);     // true
+```
+
+See how we're passing the boolean values positionally, and they're being manually "gathered" into the single Tuple list to pass to `allFlags(..)`?
+
+We have another (point-free style) option for defining `canPublish(..)`, with `(...')`:
+
+```java
+def canPublish: (...')(allFlags);
+
+canPublish(true,true,false);    // false
+canPublish(true,true,true);     // true
+```
+
+The `...'` operator-combo here is lifting a Tuple-shaped function (`allFlags(..)`) to be a positional-argument-shaped function. That's the *inverse* of `...` spread, which lifts a positional-argument-shaped function to be a Tuple-shaped function.
 
 ### Partial Application
 
@@ -1454,7 +1500,7 @@ defn add(x: 0, y: 0) ^x + y;
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
 
-### Gathering Arguments
+### Gather Parameter
 
 To specify a function that collects all individual/positional arguments into a single parameter (as a list/Tuple):
 
@@ -1462,7 +1508,9 @@ To specify a function that collects all individual/positional arguments into a s
 defn add(*nums) ^(+)(...nums);
 ```
 
-The `*` sigil (not an operator) must immediately precede a single identifier (with no default value), and must be the only listed parameter in the function definition. So in the above snippet, all arguments passed will be gathered in a single value assigned to the `nums` parameter.
+**NOTE:** The `*` sigil (not an operator), otherwise known as the *gather parameter*, can only appear in a function definition parameter list, with only one parameter listed, and must immediately prefix a single identifier (with no default value).
+
+In the above snippet, all passed arguments will be gathered into a single list/Tuple value assigned to the `nums` parameter.
 
 ### Negating A Predicate
 
