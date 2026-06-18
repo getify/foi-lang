@@ -103,6 +103,49 @@ var emitInterp = (node, recur) => {
 
 
 // =============================================================
+// NEGATE EMITTER
+//
+// Shared lowering for `!`-as-applied-to-anything. Foi `!` is
+// operand-type-overloaded per guide §"Negating A Predicate":
+//   - operand is a function → return its boolean complement
+//     (a function that calls the original and negates its result)
+//   - operand is anything else → boolean flip (JS `!`)
+//
+// `?` does NOT carry this overload — boolean coercion of any
+// value is well-defined and the guide doesn't promise a "truthy-
+// only" function. `?` stays raw `!!`.
+//
+// Two forms because the consumers want different framings:
+//
+//   negateBody(ref) — bare ternary body, used by OP_FUNC_TABLE's
+//                     "!" render. The OpFuncExpr `kind: "unary"`
+//                     arm already wraps `((__x) => <body>)`
+//                     around render's output, so we contribute
+//                     just the body and let it do the bind.
+//
+//   emitNegate(operand) — IIFE-wrapped form, used by
+//                     SYM_UNARY_OPS["!"]. SymbolicUnaryExpr's
+//                     operand may be an arbitrary expression
+//                     (a call, member access, etc.), so we bind
+//                     once into __x to avoid re-evaluating side
+//                     effects across the typeof check and the
+//                     two ternary arms.
+//
+// Both share `negateBody` as the dispatch core. __args is local
+// to the inner complement arrow; nesting is safe under JS
+// lexical scoping (same convention as emitRangeBody internals).
+// =============================================================
+
+var negateBody = ref =>
+	"typeof " + ref + " === \"function\" " +
+	"? (...__args) => !" + ref + "(...__args) " +
+	": !" + ref;
+
+var emitNegate = operand =>
+	"((__x) => " + negateBody("__x") + ")(" + operand + ")";
+
+
+// =============================================================
 // OP TABLES
 //
 // Foi op (as concatenated by shapeUnaryTier / shapeBinTier) →
@@ -121,7 +164,7 @@ var emitInterp = (node, recur) => {
 
 var SYM_UNARY_OPS = {
 	"?": x => "!!" + x,
-	"!": x => "!"  + x,
+	"!": emitNegate,
 };
 
 var NAMED_UNARY_OPS = {
@@ -213,7 +256,7 @@ var OR_OPS = {
 // =============================================================
 var OP_FUNC_TABLE = {
 	"?":      { kind: "unary", render: x => "!!" + x },
-	"!":      { kind: "unary", render: x => "!" + x },
+	"!":      { kind: "unary", render: negateBody },
 	"?empty": { kind: "unary", render: x => "(" + x + " == null)" },
 	"!empty": { kind: "unary", render: x => "(" + x + " != null)" },
 	"+":   { kind: "fold",  op: "+" },
