@@ -211,13 +211,31 @@ PipelineTopic       := Hash;
 (* No leaf in §2 carries its own (_ AsAnnotationExpr)?. The `:as`
    tail on a leaf is supplied by an enclosing AsExpr (§5). *)
 
-(* NumberLit: either a bare decimal Number token, an Escape+Number
-   pair (via lex's hidden EscapedNumber dispatch, which splices its
-   six (Escape variant, Number variant) pairs as direct children), or
-   a bare integer literal of either sign (PositiveIntegerLit or
+(* NumberLit: an escape-prefixed form, a bare decimal Number token,
+   or a bare integer literal of either sign (PositiveIntegerLit or
    NegativeIntegerLit, unified via the hidden IntegerLit from
-   Lexical-Grammar.md). *)
-NumberLit          := EscapedNumber | Number | IntegerLit;
+   Lexical-Grammar.md).
+
+   <EscapedNumberLit> names the two-token shape the syn consumes when
+   the lex's hidden <EscapedNumber> dispatcher matches. The lex
+   dispatcher emits two distinct token pairings depending on which
+   arm matched: five of its six arms produce Escape + Number
+   (Hex/Unicode/Octal/Binary/Monadic, plus EscapePlain's BareNumber
+   inner — all aliases for the Number token type per
+   Lexical-Grammar.md Notes 5/7); the sixth (EscapePlain paired with
+   PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
+   (alias pattern per Note 6; this routing keeps the same token type
+   feeding <PositiveIntLit> at PropertyExpr-key positions). The syn
+   admits both pairings so unsigned separator-bearing integers like
+   `\5_000` parse at value position, not only at PropertyExpr-key
+   position.
+
+   Integer-only contexts maintain their own narrower reach —
+   DotIdentifier admits bare IntegerLit only (no escape forms);
+   <PositiveIntLit> in PropertyExpr admits bare PositiveIntegerLit
+   plus the escape-paired form, but no signs. *)
+NumberLit          := EscapedNumberLit | Number | IntegerLit;
+<EscapedNumberLit> := Escape (Number | PositiveIntegerLit);
 
 BooleanLit         := "true" | "false";
 EmptyLit           := "empty";

@@ -1079,11 +1079,77 @@ var handlers = {
 	// §2 LITERALS
 	// =============================================================
 
-	// NumberLit.text is the raw source lexeme — concat of Number +
-	// Escape tokens. For first slice, pass through; Foi's `_`
-	// separators and `\`-escape prefix are JS-incompatible and
-	// will need a lowering pass once samples force it.
-	NumberLit:  (n, r) => n.text,
+	// NumberLit.text is the raw source lexeme — concat of Escape +
+	// Number tokens (escape forms) or a bare Number / IntegerLit
+	// value (non-escape forms). Non-escape forms are JS-compatible;
+	// pass `n.text` through unchanged.
+	//
+	// Six escape forms dispatch on text[1]:
+	//
+	//   \hDIGS  → hex          → 0xDIGS                        (sign carried)
+	//   \oDIGS  → octal        → 0oDIGS                        (sign carried)
+	//   \bDIGS  → binary       → 0bDIGS                        (sign carried)
+	//   \uDIGS  → unicode char → String.fromCodePoint(0xDIGS)  (string, not number)
+	//   \DIGS   → sep'd decimal/integer — strip the leading `\`;
+	//             JS accepts numeric separators natively.
+	//   \@DIGS  → monadic / arbitrary-precision — out of bootstrap
+	//             scope (locked); falls back to placeholder.
+	//
+	// Sign for \h/\o/\b: per Lexical-Grammar.md Note 5, the `-` is
+	// consumed inside the Number content (HexNumber/OctalNumber/
+	// BinaryNumber's `"-"? Digit+`), so `\h-FF` arrives as text
+	// "\h-FF" — split the sign before prepending the radix prefix,
+	// then re-attach. \u has no sign (UnicodeNumber is unsigned per
+	// Note 6). EscapePlain's signed BareNumber comes through as
+	// `\-1_000` with text "\-1_000"; just dropping the `\` yields
+	// valid JS, since JS already accepts the leading `-` and the
+	// numeric separators natively.
+	//
+	// \u uses String.fromCodePoint rather than the JS `"\uXXXX"`
+	// literal form: the literal form caps at four hex digits (BMP
+	// only), but UnicodeNumber admits HexDigit+ of any length.
+	// fromCodePoint handles the full Unicode range without
+	// branching on digit count.
+	//
+	// Asymmetry note: `\5_000` (PositiveIntegerLitWithSep, unsigned
+	// separator-bearing integer) emits an Escape + PositiveIntegerLit
+	// pair that the syn NumberLit production doesn't admit at value
+	// position — only the hidden <PositiveIntLit> in <PropertyExpr>
+	// admits this shape. So `\5_000` reaches this handler exclusively
+	// via shapePropertyExpr's synthesized NumberLit (record/tuple
+	// key positions). The dispatch arms below handle that path
+	// identically — the marker-digit branch covers it.
+	NumberLit(n, r) {
+		var text = n.text;
+		if (text[0] !== "\\") return text;
+
+		var marker = text[1];
+
+		if (marker === "h" || marker === "o" || marker === "b") {
+			let radix = marker === "h" ? "0x" : marker === "o" ? "0o" : "0b";
+			let body = text.slice(2);
+			let sign = "";
+			if (body[0] === "-") {
+				sign = "-";
+				body = body.slice(1);
+			}
+			return sign + radix + body;
+		}
+
+		if (marker === "u") {
+			return "String.fromCodePoint(0x" + text.slice(2) + ")";
+		}
+
+		// EscapePlain — separator-bearing decimal or integer. Sign
+		// and digits are already JS-compatible; just drop the `\`.
+		if (marker === "-" || (marker >= "0" && marker <= "9")) {
+			return text.slice(1);
+		}
+
+		// \@ — monadic / arbitrary-precision, out of bootstrap scope.
+		return fallback(n);
+	},
+
 	BooleanLit: (n, r) => n.text,
 
 	// `empty` → `null`. Bootstrap commitment; revisits if the

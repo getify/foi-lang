@@ -17,6 +17,43 @@ export const samples = [
 	{ label: "NumberLit: -5",                        src: "-5;" },
 	{ label: "NumberLit: -5 :as int",                src: "-5 :as int;" },
 
+	// NumberLit escape forms — the five EscapedNumber dispatch arms
+	// reachable from syn NumberLit (Escape + Number pairing). The
+	// sixth arm (EscapePlain + PositiveIntegerLitWithSep, unsigned
+	// `\5_000` form) emits Escape + PositiveIntegerLit, which the
+	// syn NumberLit production doesn't admit at value position —
+	// only via the hidden <PositiveIntLit> in <PropertyExpr>.
+	// Covered by the §17 ExplicitPropDef key sample below.
+	//
+	// Signed-integer-with-sep (`\-1_000`) goes through BareNumber's
+	// "-"? + DigitsWithSep + NotIdentCont arm, which emits Number,
+	// so it parses cleanly at value position.
+	{ label: "NumberLit: \\hFF (hex)",                            src: "\\hFF;" },
+	{ label: "NumberLit: \\h-603A (hex negative)",                src: "\\h-603A;" },
+	{ label: "NumberLit: \\o755 (octal)",                         src: "\\o755;" },
+	{ label: "NumberLit: \\o-755 (octal negative)",               src: "\\o-755;" },
+	{ label: "NumberLit: \\b1100 (binary)",                       src: "\\b1100;" },
+	{ label: "NumberLit: \\b-1100 (binary negative)",             src: "\\b-1100;" },
+	{ label: "NumberLit: \\u263A (unicode → string)",             src: "\\u263A;" },
+	{ label: "NumberLit: \\-1_000 (sep'd signed integer)",        src: "\\-1_000;" },
+	{ label: "NumberLit: \\100_000_003.25 (sep'd decimal)",       src: "\\100_000_003.25;" },
+	{ label: "NumberLit: \\@FFFF (monadic, fallback)",            src: "\\@FFFF;" },
+
+	// NumberLit `\5_000` form — unsigned separator-bearing integer,
+	// routes through PositiveIntegerLitWithSep (emits PositiveIntegerLit).
+	// Now admitted at value position via the widened NumberLit first-alt.
+	// Compositional samples verify it threads through OperandExpr and
+	// call-argument paths (the original parse error fired at NumberLit
+	// itself, so any position reachable from NumberLit was blocked).
+	{ label: "NumberLit: \\5_000 (sep'd unsigned int, value position)",
+	  src: "\\5_000;" },
+	{ label: "NumberLit: \\5_000 + 1 (binary operand)",
+	  src: "\\5_000 + 1;" },
+	{ label: "NumberLit: foo(\\5_000) (call arg)",
+	  src: "foo(\\5_000);" },
+	{ label: "NumberLit: def x: \\5_000",
+	  src: "def x: \\5_000;" },
+
 	// BooleanLit
 	{ label: "BooleanLit: true",                     src: "true;" },
 	{ label: "BooleanLit: false :as bool",           src: "false :as bool;" },

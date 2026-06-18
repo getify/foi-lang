@@ -78,22 +78,42 @@ var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
 var NegativeIntegerLitTok = tokType("NegativeIntegerLit");
 var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 
-// NumberLit := EscapedNumber | Number | IntegerLit;
+// NumberLit         := EscapedNumberLit | Number | IntegerLit;
+// <EscapedNumberLit> := Escape (Number | PositiveIntegerLit);
 //
 // No `:as` tail — annotation comes via AsExpr (§5) where applicable.
 //
-// The lex layer's EscapedNumber is a hidden dispatcher that splices an
-// (Escape variant, Number variant) pair as siblings. From the syn layer
-// we consume it as two adjacent tokens: an Escape followed by a Number.
-// PEG order: try the two-token escaped form first, then bare Number,
-// then bare IntegerLit (longest first, per Note 2 in the lex grammar).
-// IntegerLit covers both signs via the hidden union from Lexical-Grammar.md.
+// <EscapedNumberLit> names the two-token shape the syn consumes
+// when the lex's hidden <EscapedNumber> dispatcher matched. The lex
+// dispatcher emits two distinct token pairings: five of its six arms
+// produce Escape + Number (Hex/Unicode/Octal/Binary/Monadic, plus
+// EscapePlain's BareNumber inner — all aliases for Number per
+// Lexical-Grammar.md Notes 5/7); the sixth (EscapePlain paired with
+// PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
+// (alias pattern per Note 6; routes through PositiveIntegerLit so
+// the same token type feeds <PositiveIntLit> at PropertyExpr-key
+// positions). NumberLit admits both pairings so unsigned separator-
+// bearing integers like `\5_000` parse at value position, not only
+// at PropertyExpr-key position.
+//
+// PEG order inside NumberLit: EscapedNumberLit first (two-token
+// match, longest per Note 2 in the lex grammar), then bare Number,
+// then bare IntegerLit. Inner or(Number, PositiveIntegerLit) is
+// mechanical — the two token types are disjoint and the lex layer
+// produces exactly one of them for any given escape match.
+//
+// Integer-only contexts maintain their own narrower reach —
+// DotIdentifier (§6) admits bare IntegerLit only (whole numbers,
+// no fractional/escape forms — that's the contract); PropertyExpr's
+// <PositiveIntLit> (§6) admits bare PositiveIntegerLit plus the
+// escape-paired form, but no signs.
+var EscapedNumberLit = and(
+	tokType("Escape"),
+	or(tokType("Number"), PositiveIntegerLitTok)
+);
+
 export const NumberLit = production("NumberLit",
-	or(
-		and(tokType("Escape"), tokType("Number")),
-		tokType("Number"),
-		IntegerLit
-	)
+	or(EscapedNumberLit, tokType("Number"), IntegerLit)
 );
 
 // BooleanLit := "true" | "false";
