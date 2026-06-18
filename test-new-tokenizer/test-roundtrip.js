@@ -226,12 +226,26 @@ var handlers = {
 	// §6 RANGES
 	// =============================================================
 	// DoublePeriod (`..`) is anchored in type tag — dropped at
-	// parse, re-synthesized between the operands. No delims on
-	// these synthetic nodes from the shaper itself.
+	// parse, re-synthesized via gapFill at the first source-
+	// position gap among pieces.
+	//
+	// gapFill is required (not bare concat) because delims CAN
+	// land on these nodes from two sources:
+	//   (a) StmtSemi α-claim — when a range is the outermost
+	//       expression of a top-level Stmt (`5..1;`), shapeStmtSemi
+	//       appends the terminating Semicolon to the range's
+	//       delims and bumps its end. Bare concat drops the semi.
+	//   (b) Auto-merged soft delims under preserveSoftDelims:true
+	//       for any Whitespace / Comment inside the range span
+	//       (`5 .. 1`). Bare concat drops them.
+	// Wrapping nodes (DefVarStmt, AsAnnotationExpr, RangeAccessExpr,
+	// CallExpr) absorb the α-claim when present, so the bare-
+	// concat form happened to work for every previously-tested
+	// shape; bare-top-level range samples surfaced the gap.
 
-	ClosedRangeExpr:   (n, r) => r(n.from) + ".." + r(n.to),
-	LeadingRangeExpr:  (n, r) => r(n.from) + "..",
-	TrailingRangeExpr: (n, r) => ".." + r(n.to),
+	ClosedRangeExpr:   (n, r) => gapFill("..", n, r),
+	LeadingRangeExpr:  (n, r) => gapFill("..", n, r),
+	TrailingRangeExpr: (n, r) => gapFill("..", n, r),
 
 	// =============================================================
 	// §7 CHAIN-FOLD SYNTHETIC NODES

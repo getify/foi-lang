@@ -127,6 +127,23 @@ export const samples = [
 	{ label: "TrailingRangeExpr (in DotBracket): arr.[..5]", src: "arr.[..5];" },
 	{ label: "ClosedRangeExpr :as int (parenthesized)",      src: "(1..5) :as int;" },
 
+	// ClosedRangeExpr value-form coverage — exercises the top-level
+	// expression-position handler (vs. the lifted DotBracket forms
+	// above which go through RangeAccessExpr). Covers descending,
+	// single-element, and variable-bound forms; ascending and char
+	// ranges already present in compound kitchen sink (`2..13`,
+	// `\"a\"..\"z\"`).
+	{ label: "ClosedRangeExpr value: descending",            src: "5..1;" },
+	{ label: "ClosedRangeExpr value: single-element",        src: "3..3;" },
+	{ label: "ClosedRangeExpr value: variable bounds",       src: "i..n;" },
+	{ label: "ClosedRangeExpr value: char descending",       src: "\"e\"..\"a\";" },
+
+	// (..) op-func form — bare and primed, plus spread call.
+	// `(..)(\"a\", \"z\")` already present in compound kitchen sink.
+	{ label: "OpFuncExpr (..): descending call",             src: "(..)(5, 1);" },
+	{ label: "OpFuncExpr (..) primed: (..')(1, 5)",          src: "(..')(1, 5);" },
+	{ label: "OpFuncExpr (..) spread: (..)(...args)",        src: "(..)(...args);" },
+
 	// IdentityFunc — bare @ (the value identity function)
 	{ label: "IdentityFunc: @",                      src: "@;" },
 	{ label: "IdentityFunc :as Maybe",               src: "@ :as Maybe;" },

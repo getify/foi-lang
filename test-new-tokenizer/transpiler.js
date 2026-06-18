@@ -176,9 +176,19 @@ var OR_OPS = {
 //                      unary fn that runs args L→R via .reduce
 //   kind: "composeRev" — n-ary reverse composition; produces a
 //                      unary fn that runs args R→L via .reduceRight
+//   kind: "range2"    — strict 2-ary inclusive range producer;
+//                      emits a 2-ary function returning the
+//                      sequence from __from to __to (numbers or
+//                      single-char strings), direction inferred
+//                      from endpoints. Mismatched-type endpoints
+//                      throw TypeError at runtime. Primed swaps
+//                      param positions (semantically meaningful —
+//                      direction is endpoint-derived).
 //
 // Primed (`node.primed`) reverses arg order for n-ary kinds and
-// swaps arg positions for fixed-arity kinds (range3, in2, has2).
+// swaps arg positions for fixed-arity kinds (range3, in2, has2,
+// range2).
+//
 // `.reverse()` is a no-op for symmetric ops; emit shape stays
 // uniform regardless.
 //
@@ -223,6 +233,7 @@ var OP_FUNC_TABLE = {
 	"!has": { kind: "has2", negate: true },
 	"+>":   { kind: "composeFwd" },
 	"<+":   { kind: "composeRev" },
+	"..":   { kind: "range2" },
 };
 
 
@@ -818,6 +829,55 @@ var emitComposeChain = (node, recur) => {
 		inner = "(" + leaf + ")(" + inner + ")";
 	}
 	return "((__v) => " + inner + ")";
+};
+
+
+// =============================================================
+// RANGE BODY EMITTER
+//
+// Shared lowering for `(..)` OpFuncExpr value form and top-level
+// ClosedRangeExpr value form. Both produce an inclusive sequence
+// of numbers or single-char strings; direction is inferred from
+// endpoint comparison (ascending when __to >= __from, descending
+// otherwise). Mismatched-type endpoints throw TypeError at run-
+// time — honest failure beats JS-faithful coercion weirdness.
+//
+// Endpoints bind into __from / __to via the arrow's own parameter
+// list. No separate IIFE wrapper is needed: at the OpFuncExpr
+// site the consumer (CallExpr) supplies the args; at the
+// ClosedRangeExpr site the appended `(fromStr, toStr)` does. In
+// both cases the endpoint expressions are evaluated once, then
+// only __from / __to are referenced inside.
+//
+// Primed swaps __from / __to in the parameter list. Semantically
+// meaningful because direction is endpoint-derived: (..)(1,5)
+// ascends; (..')(1,5) descends (__from receives 5, __to receives
+// 1, step becomes -1). ClosedRangeExpr never carries primed —
+// callers pass `false`.
+//
+//   emitRangeBody(primed, null, null)
+//     → bare arrow value, used by the OpFuncExpr `range2` arm.
+//       CallExpr applies args at the use site.
+//
+//   emitRangeBody(false, fromStr, toStr)
+//     → arrow + trailing application, used by ClosedRangeExpr.
+// =============================================================
+
+var emitRangeBody = (primed, fromStr, toStr) => {
+	var params = primed ? "(__to, __from)" : "(__from, __to)";
+	var arrow =
+		"(" + params + " => { " +
+		"if (typeof __from !== typeof __to) throw new TypeError(\"range endpoints must be same type\"); " +
+		"let __isStr = typeof __from === \"string\"; " +
+		"let __s = __isStr ? __from.charCodeAt(0) : __from; " +
+		"let __e = __isStr ? __to.charCodeAt(0) : __to; " +
+		"let __step = __e >= __s ? 1 : -1; " +
+		"let __len = Math.abs(__e - __s) + 1; " +
+		"return Array.from({ length: __len }, __isStr " +
+		"? (_, __i) => String.fromCharCode(__s + __i * __step) " +
+		": (_, __i) => __s + __i * __step); })";
+	if (fromStr == null) return "(" + arrow + ")";
+	return "(" + arrow + "(" + fromStr + ", " + toStr + "))";
 };
 
 
@@ -1437,6 +1497,28 @@ var handlers = {
 		return fallback(node);
 	},
 
+	// ClosedRangeExpr { from, to } — top-level range value form
+	// (`1..5`, `"a".."e"`, `i..n`). Distinct from `arr.[1..5]`
+	// access, where ClosedRangeExpr appears as the `range` field
+	// on RangeAccessExpr and lowers via .slice() (see above). At
+	// expression position the range produces a concrete inclusive
+	// sequence via the shared arrow body (see emitRangeBody) —
+	// direction inferred from endpoint comparison, mismatched
+	// types throw TypeError at runtime.
+	//
+	//   1..5     → [1, 2, 3, 4, 5]
+	//   5..1     → [5, 4, 3, 2, 1]
+	//   "a".."e" → ["a", "b", "c", "d", "e"]
+	//   3..3     → [3]
+	//
+	// LeadingRangeExpr / TrailingRangeExpr at expression position
+	// carry no documented value semantic — they remain fallback-
+	// only outside of RangeAccessExpr / DotBracketExpr lifted
+	// contexts.
+	ClosedRangeExpr(node, recur) {
+		return emitRangeBody(false, recur(node.from), recur(node.to));
+	},
+
 	// PropertyPickExpr { object, properties } — `.<a, b, 5>`
 	// angle-pick. Picks the listed fields off the source and
 	// returns a fresh record. Source bound into __o once (uniform
@@ -1506,6 +1588,10 @@ var handlers = {
 	//                      via .reduceRight R→L
 	//   (+>')(f,g,h)     → primed reverses xs first, then reduce —
 	//                      semantically equivalent to (<+)(f,g,h)
+	//   (..)(1, 5)       → [1,2,3,4,5]  inclusive ascending range
+	//   (..)(5, 1)       → [5,4,3,2,1]  descending (inferred from endpoints)
+	//   (..)("a", "e")   → ["a","b","c","d","e"]  char range
+	//   (..')(1, 5)      → [5,4,3,2,1]  primed swaps __from/__to
 	//
 	// Binary ops lift to n-ary; unary ops stay 1-ary. Negated forms
 	// use De Morgan — short-circuits naturally via .some/.every.
@@ -1553,7 +1639,7 @@ var handlers = {
 	// call time, then the inner arrow runs `__xs.reduce(...)`. No
 	// branch on SpreadArg presence needed at this site.
 	//
-	// `..` (bare range op) and `?as` / `!as` still fall back.
+	// `?as` / `!as` still fall back.
 	OpFuncExpr(node, recur) {
 		// Empty-bracket lifted: ([])(obj, i) → obj[i]. Strict
 		// 2-ary; primed swaps to ((__i, __o) => __o[__i]).
@@ -1664,6 +1750,9 @@ var handlers = {
 		if (meta.kind === "composeRev") {
 			return "((...__xs) => (__v) => " + xs +
 				".reduceRight((__acc, __f) => __f(__acc), __v))";
+		}
+		if (meta.kind === "range2") {
+			return emitRangeBody(node.primed, null, null);
 		}
 		return fallback(node);
 	},
