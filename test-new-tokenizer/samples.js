@@ -683,7 +683,14 @@ export const samples = [
 	{ label: "PickValue: BuiltIn base",                          src: "<&Maybe>;" },
 	{ label: "PickValue: single dot-access",                     src: "<&foo.bar>;" },
 	{ label: "PickValue: multi-segment access fold",             src: "<&foo.bar.baz>;" },
+	{ label: "PickValue: integer member access",                 src: "<&foo.5>;" },
+	{ label: "PickValue: negative integer member access",        src: "<&foo.-1>;" },
 	{ label: "PickValue: index access",                          src: "<&foo[0]>;" },
+	{ label: "PickValue: angle-pick subset (positional)",        src: "<&foo.<1,3>>;" },
+	{ label: "PickValue: angle-pick subset (named)",             src: "<&foo.<a,b>>;" },
+	{ label: "PickValue: range-pick slice (closed)",             src: "<&foo.[1..3]>;" },
+	{ label: "PickValue: range-pick slice (leading)",            src: "<&foo.[2..]>;" },
+	{ label: "PickValue: range-pick slice (trailing)",           src: "<&foo.[..3]>;" },
 
 	// === ConcisePropDef (PropertyExpr arms) ===
 	{ label: "ConcisePropDef: Identifier",                       src: "<:foo>;" },

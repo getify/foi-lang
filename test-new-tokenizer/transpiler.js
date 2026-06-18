@@ -383,25 +383,155 @@ var emitCondClause = (clause, recur) => {
 
 
 // =============================================================
+// PICKVALUE CLASSIFICATION + RENDERERS
+//
+// PickValue (`&foo`, `&foo.bar`, `&foo.5`, `&foo[i]`,
+// `&foo.<a,b>`, `&foo.[1..5]`) is grammar-uniform — one node
+// type, one source field — but semantically dispatches on the
+// SOURCE's outermost chain segment after foldAccess. Two
+// orthogonal axes drive the lowering:
+//
+//   1. Mode discriminator: does this pick contribute a NAMED
+//      field to the enclosing RecordTupleLit, forcing object
+//      mode? Positional / index / bulk-spread picks do not;
+//      named-member picks and named-subset picks do.
+//
+//   2. Value shape: does it carry a SINGLE value (single-pick)
+//      or a STREAM of values (spread)? Integer-member and
+//      index-access shapes are single; everything else spreads.
+//
+// Source classification table:
+//
+//   Identifier / BuiltIn               bulk-spread,    neutral
+//   MemberAccessExpr w/ accessor       named-pick,     OBJECT-FLIP
+//   MemberAccessExpr w/ index          single-pick,    neutral
+//   IndexAccessExpr                    single-pick,    neutral
+//   PropertyPickExpr all-PickIndex     subset-spread,  neutral
+//   PropertyPickExpr any-PickAccessor  subset-spread,  OBJECT-FLIP
+//   RangeAccessExpr                    slice-spread,   neutral
+//
+// Chained access (`&foo.bar.baz`, `&foo.<a,b>.x`) inherits
+// classification from the OUTERMOST segment.
+//
+// Three renderers cover the emission shapes:
+//
+//   renderPickValueSingle — bare value for single-pick shapes;
+//     `foo[5]`, `foo.at(-1)`, `foo[expr]`. Returns null for
+//     non-single shapes.
+//
+//   renderPickValueSpread — record-context spread emission;
+//     `...foo`, `...({ a: foo.a })`, `...[foo[1], foo[3]]`,
+//     `...foo.slice(...)`. Returns null for single-pick shapes
+//     and for unrenderable sub-parts. Used by renderRecordEntry
+//     (object mode) and by RecordTupleLit's array-mode loop.
+//
+//   renderPickValueSetEntry — set-context emission. Sets are
+//     flat value streams: named-member picks contribute one
+//     value (not key:value), subset picks spread VALUES only.
+//     Bulk / slice / index shapes match renderPickValueSpread.
+//
+// Cross-mode footguns left to runtime: array-spread of an
+// object throws; object-spread of an array spreads numeric
+// keys. Transpiler emits the natural lowering — honest failure.
+// =============================================================
+
+var pickForcesObjectMode = src => {
+	if (src.type === "MemberAccessExpr") return src.accessor != null;
+	if (src.type === "PropertyPickExpr") {
+		return src.properties.some(p => p.type === "PickAccessor");
+	}
+	return false;
+};
+
+var renderPickValueSingle = (src, recur) => {
+	if (src.type === "MemberAccessExpr" && src.index != null) return recur(src);
+	if (src.type === "IndexAccessExpr") return recur(src);
+	return null;
+};
+
+var renderPickValueSpread = (src, recur) => {
+	if (src.type === "Identifier" || src.type === "BuiltIn") {
+		return "..." + recur(src);
+	}
+	if (src.type === "RangeAccessExpr") {
+		return "..." + recur(src);
+	}
+	if (src.type === "PropertyPickExpr") {
+		let base = recur(src.object);
+		let entries = src.properties.map(p => {
+			if (p.type === "PickAccessor") {
+				let name = recur(p.accessor);
+				return name + ": " + base + "." + name;
+			}
+			if (p.type === "PickIndex") {
+				return base + "[" + p.index + "]";
+			}
+			return null;
+		});
+		if (entries.some(e => e == null)) return null;
+		let anyAccessor = src.properties.some(p => p.type === "PickAccessor");
+		return anyAccessor
+			? "...({ " + entries.join(", ") + " })"
+			: "...[" + entries.join(", ") + "]";
+	}
+	return null;
+};
+
+var renderPickValueSetEntry = (src, recur) => {
+	if (src.type === "Identifier" || src.type === "BuiltIn") {
+		return "..." + recur(src);
+	}
+	if (src.type === "MemberAccessExpr" && src.accessor) {
+		return recur(src);
+	}
+	if (src.type === "RangeAccessExpr") {
+		return "..." + recur(src);
+	}
+	if (src.type === "PropertyPickExpr") {
+		let base = recur(src.object);
+		let entries = src.properties.map(p => {
+			if (p.type === "PickAccessor") {
+				return base + "." + recur(p.accessor);
+			}
+			if (p.type === "PickIndex") {
+				return base + "[" + p.index + "]";
+			}
+			return null;
+		});
+		if (entries.some(e => e == null)) return null;
+		return "...[" + entries.join(", ") + "]";
+	}
+	return renderPickValueSingle(src, recur);
+};
+
+
+// =============================================================
 // RECORD-ENTRY EMITTER
 //
-// Renders a single keyed RecordTupleLit entry (PickValue,
-// ConcisePropDef, or ExplicitPropDef) to a JS object-property
-// string. Returns null when the entry shape can't be lowered
-// — RecordTupleLit's handler then falls back at the literal
-// level (granular fallback policy).
+// Renders a single object-mode RecordTupleLit entry to a JS
+// object-property string. Position is passed for single-pick
+// PickValue shapes that take their target list position as the
+// key — matches the guide's shorthand-equivalent semantic:
+//   `< 1, 3, &nums.1, 7, 9 >` ≡ `< 1, 3, 2: nums.1, 7, 9 >`.
+//
+// Returns null only when the entry shape is genuinely
+// unrenderable as an object property — RecordTupleLit's handler
+// then falls back at the literal level (granular fallback).
 //
 //   ConcisePropDef:
 //     <:foo>          → foo                  (JS shorthand)
 //     <:5>            → null  (no clean JS semantic for numeric)
 //
-//   PickValue:
-//     <&foo>          → foo                  (JS shorthand)
-//     <&Maybe>        → Maybe                (BuiltIn → shorthand)
-//     <&foo.bar>      → bar: foo.bar         (terminal accessor as key)
+//   PickValue (source-dispatched — see PICKVALUE CLASSIFICATION):
+//     <&foo>          → ...foo               (bulk spread)
+//     <&Maybe>        → ...Maybe
+//     <&foo.bar>      → bar: foo.bar         (named pick — rename-preserving)
 //     <&foo.bar.baz>  → baz: foo.bar.baz
-//     <&foo[0]>       → null  (no natural key for index)
-//     <&foo.5>        → null  (no natural key for integer member)
+//     <&foo.<a,b>>    → ...({ a: foo.a, b: foo.b })  (named subset spread)
+//     <&foo.<1,3>>    → ...[foo[1], foo[3]]          (positional subset spread)
+//     <&foo.[1..5]>   → ...foo.slice(1, 5 + 1)       (slice spread)
+//     <&foo.5> @ pos 2  → 2: foo[5]          (single-pick, target-pos key)
+//     <&foo[i]> @ pos 0 → 0: foo[i]
 //
 //   ExplicitPropDef:
 //     <x: 1>          → x: 1
@@ -409,7 +539,7 @@ var emitCondClause = (clause, recur) => {
 //     <%foo: 1>       → [foo]: 1             (computed key)
 // =============================================================
 
-var renderRecordEntry = (entry, recur) => {
+var renderRecordEntry = (entry, recur, position) => {
 	if (entry.type === "ConcisePropDef") {
 		let src = entry.source;
 		if (src.type === "Identifier") return src.name;
@@ -417,12 +547,17 @@ var renderRecordEntry = (entry, recur) => {
 	}
 	if (entry.type === "PickValue") {
 		let src = entry.source;
-		if (src.type === "Identifier" || src.type === "BuiltIn") {
-			return src.name;
-		}
+		// Named pick — rename-preserving: `bar: <chain>`.
 		if (src.type === "MemberAccessExpr" && src.accessor) {
 			return src.accessor.name + ": " + recur(src);
 		}
+		// Spread shapes (bulk / subset / slice).
+		let spread = renderPickValueSpread(src, recur);
+		if (spread != null) return spread;
+		// Single-pick shapes (integer-member, index-access):
+		// emit at target position per the guide's expansion.
+		let single = renderPickValueSingle(src, recur);
+		if (single != null) return position + ": " + single;
 		return null;
 	}
 	if (entry.type === "ExplicitPropDef") {
@@ -2550,39 +2685,81 @@ var handlers = {
 
 	// RecordTupleLit { entries } — Tuple/Record discriminator.
 	//
-	// Pure-positional (every entry is a bare value node) → JS
-	// array (idiomatic):
-	//   <1, 2, 3>       → [1, 2, 3]
-	//   <<1,2>,<3,4>>   → [[1, 2], [3, 4]]
+	// Mode is driven by named-key entries:
+	//   ConcisePropDef / ExplicitPropDef                 → flip
+	//   PickValue w/ MemberAccessExpr-accessor source    → flip
+	//   PickValue w/ PropertyPickExpr any-PickAccessor   → flip
+	// PickValue with any other source (bare Identifier/BuiltIn,
+	// integer/index single-pick, all-PickIndex subset,
+	// RangeAccessExpr) does NOT flip — it spreads into or
+	// contributes a positional value to an array-mode container.
 	//
-	// Any keyed entry present (PickValue / ConcisePropDef /
-	// ExplicitPropDef) → JS object. Bare entries become numeric
-	// properties keyed by their entry-list position; keyed entries
-	// render via renderRecordEntry. Paren-wrapped to disambiguate
-	// from a block in expr-statement position:
-	//   <x: 1, :y>            → ({ x: 1, y })
-	//   <&foo, 42>            → ({ foo, 1: 42 })
-	//   <&foo, x: 1, :bar, 42>→ ({ foo, x: 1, bar, 3: 42 })
+	// Array mode — no flipping entries present:
+	//   <1, 2, 3>             → [1, 2, 3]
+	//   <&nums, 7>            → [...nums, 7]
+	//   <0, &nums, 5>         → [0, ...nums, 5]
+	//   <1, 3, &nums.1, 7, 9> → [1, 3, nums[1], 7, 9]
+	//   <2, &nums.<1,3>, 8>   → [2, ...[nums[1], nums[3]], 8]
+	//   <0, 1, &nums.[..2]>   → [0, 1, ...nums.slice(0, 2 + 1)]
+	//   <&nums.[3..]>         → [...nums.slice(3)]
+	//
+	// Object mode — any flipping entry present. Bare entries
+	// become numeric properties keyed by their entry-list
+	// position; keyed entries render via renderRecordEntry,
+	// which also handles target-position keying for single-pick
+	// PickValues (matches the guide's shorthand-equivalent
+	// semantic: `<1, 3, &nums.1, 7, 9>` ≡ `<1, 3, 2: nums.1, 7, 9>`).
+	// Paren-wrapped to disambiguate from a block in expr-
+	// statement position:
+	//   <x: 1, :y>             → ({ x: 1, y })
+	//   <&person, first: "J">  → ({ ...person, first: "J" })
+	//   <first: "J", &p.last>  → ({ first: "J", last: p.last })
+	//   <&p.<a,b>>             → ({ ...({ a: p.a, b: p.b }) })
+	//   <&p, 7>                → ({ ...p, 1: 7 })
+	//   <x: 1, &nums.0>        → ({ x: 1, 1: nums[0] })
+	//
+	// Cross-mode shapes (e.g. `<x: 1, &nums>` — bulk-spread of
+	// an array into object mode) emit `({ x: 1, ...nums })` and
+	// surface at runtime if `nums` isn't object-spreadable.
 	//
 	// PickValue / ConcisePropDef / ExplicitPropDef have no
 	// top-level handlers — they're directives, only meaningful
-	// inside record/set literals. renderRecordEntry handles them.
+	// inside record/set literals.
 	RecordTupleLit(node, recur) {
 		var entries = node.entries;
-		var isKeyed = e =>
-			e.type === "PickValue" ||
+		var forcesObject = e =>
 			e.type === "ConcisePropDef" ||
-			e.type === "ExplicitPropDef";
-		var anyKeyed = entries.some(isKeyed);
-		if (!anyKeyed) {
-			return "[" + entries.map(e => recur(e)).join(", ") + "]";
+			e.type === "ExplicitPropDef" ||
+			(e.type === "PickValue" && pickForcesObjectMode(e.source));
+		var objectMode = entries.some(forcesObject);
+
+		if (!objectMode) {
+			let parts = [];
+			for (let e of entries) {
+				let rendered;
+				if (e.type === "PickValue") {
+					rendered = renderPickValueSpread(e.source, recur)
+						?? renderPickValueSingle(e.source, recur);
+				}
+				else {
+					rendered = recur(e);
+				}
+				if (rendered == null) return fallback(node);
+				parts.push(rendered);
+			}
+			return "[" + parts.join(", ") + "]";
 		}
+
 		var parts = [];
 		for (let i = 0; i < entries.length; i++) {
 			let e = entries[i];
 			let rendered;
-			if (isKeyed(e)) {
-				rendered = renderRecordEntry(e, recur);
+			if (
+				e.type === "PickValue" ||
+				e.type === "ConcisePropDef" ||
+				e.type === "ExplicitPropDef"
+			) {
+				rendered = renderRecordEntry(e, recur, i);
 			}
 			else {
 				rendered = i + ": " + recur(e);
@@ -2593,15 +2770,32 @@ var handlers = {
 		return "({ " + parts.join(", ") + " })";
 	},
 
-	// SetLit { entries } → `new Set([...])`. PickValue in Set
-	// context is a pure value lookup (no key); per grammar
-	// SetEntry is PickValue | RecordTupleValue, so PropDefs
-	// can't appear here.
+	// SetLit { entries } → `new Set([...])`. Sets are flat
+	// value streams — PickValue dispatches via
+	// renderPickValueSetEntry, where named-member picks
+	// contribute single VALUES (not key:value pairs) and
+	// subset picks spread VALUES only. Per grammar SetEntry =
+	// PickValue | RecordTupleValue, so PropDefs can't appear
+	// here.
+	//
+	//   <[1, 2, 3]>           → new Set([1, 2, 3])
+	//   <[&foo, &bar]>        → new Set([...foo, ...bar])
+	//   <[&foo.bar, x]>       → new Set([foo.bar, x])
+	//   <[&foo.5]>            → new Set([foo[5]])
+	//   <[&foo.<1,3>]>        → new Set([...[foo[1], foo[3]]])
+	//   <[&foo.<a,b>]>        → new Set([...[foo.a, foo.b]])
+	//   <[&foo.[1..3]]>       → new Set([...foo.slice(1, 3 + 1)])
 	SetLit(node, recur) {
 		var parts = [];
 		for (let e of node.entries) {
-			if (e.type === "PickValue") parts.push(recur(e.source));
-			else parts.push(recur(e));
+			if (e.type === "PickValue") {
+				let rendered = renderPickValueSetEntry(e.source, recur);
+				if (rendered == null) return fallback(node);
+				parts.push(rendered);
+			}
+			else {
+				parts.push(recur(e));
+			}
 		}
 		return "new Set([" + parts.join(", ") + "])";
 	},
