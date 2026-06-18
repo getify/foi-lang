@@ -61,27 +61,45 @@ var fallback = node => {
 // =============================================================
 // TEMPLATE-CHUNK ESCAPER
 //
-// Translates a literal-text chunk from an InterpStr (or
-// SpacingInterpStr) into a JS-template-literal-safe form:
+// Translates a pre-processed (shaper-resolved) text chunk from
+// an InterpStr / SpacingInterpStr into a JS-template-literal-
+// safe form. Foi escapes (`""` → `"`, `` `` `` → `` ` ``) are
+// resolved at shape time, so only JS-side escaping happens
+// here:
 //
-//   1. Foi `""`  → JS `"`        — Foi's doubled-quote escape resolves
-//   2. Foi ` `` ` → JS ` ` `      — Foi's doubled-backtick escape resolves
-//   3. JS `\`   → `\\`            — escape literal backslashes
-//   4. JS ` ` ` → `\` `           — escape literal backticks
-//   5. JS `${`  → `\${`           — prevent unintended interpolation
+//   1. `\`   → `\\`     — escape literal backslashes
+//   2. `` ` `` → `\` `  — escape literal backticks
+//   3. `${`  → `\${`    — prevent unintended interpolation
 //
-// Foi-escape resolution precedes JS-escape so the produced
-// characters get the JS treatment. Backslash escape precedes
-// backtick escape so the `\` chars we introduce in step 4 don't
-// get themselves doubled.
+// Backslash escape precedes backtick escape so the `\` chars
+// we introduce in step 2 don't get themselves doubled.
 // =============================================================
 
-var escapeTemplateChunk = s => s
-	.replace(/""/g, '"')
-	.replace(/``/g, "`")
-	.replace(/\\/g, "\\\\")
-	.replace(/`/g, "\\`")
-	.replace(/\$\{/g, "\\${");
+var escapeTemplateChunk = s =>
+	s.replace(/\\/g, "\\\\")
+	 .replace(/`/g, "\\`")
+	 .replace(/\$\{/g, "\\${");
+
+
+// =============================================================
+// INTERP-STRING EMITTER
+//
+// Shared lowering for InterpStr and SpacingInterpStr. Both
+// chunks arrays alternate pre-processed string text (shaper
+// resolved Foi escapes; spacing form additionally collapsed
+// WS) and InterpExpr nodes. String chunks pass through
+// escapeTemplateChunk; InterpExpr chunks wrap as `${...}`.
+// =============================================================
+
+var emitInterp = (node, recur) => {
+	var out = "`";
+	for (let c of node.chunks) {
+		if (typeof c === "string") out += escapeTemplateChunk(c);
+		else                       out += "${" + recur(c) + "}";
+	}
+	out += "`";
+	return out;
+};
 
 
 // =============================================================
@@ -931,32 +949,23 @@ var handlers = {
 	// interpreter draws a Maybe/None vs null distinction.
 	EmptyLit: (n, r) => "null",
 
-	// PlainStr.text is interior content with Foi `""` escape for
-	// embedded quote. Translate to actual string value, then
-	// JSON.stringify for a JS string literal — handles
-	// quote-escaping, newlines, and non-printables uniformly.
-	PlainStr(node, recur) {
-		var raw = node.text.replace(/""/g, '"');
-		return JSON.stringify(raw);
-	},
+	// PlainStr / SpacingEscapedStr — `text` is already pre-
+	// processed by the shaper (Foi `""` escape resolved; in
+	// the spacing form, Whitespace tokens already collapsed
+	// to single spaces per the lexer's authoritative isWS
+	// predicate). JSON.stringify handles quote-escaping,
+	// newlines, and non-printables uniformly for the JS
+	// string literal.
+	PlainStr:          (n, r) => JSON.stringify(n.text),
+	SpacingEscapedStr: (n, r) => JSON.stringify(n.text),
 
-	// InterpStr → JS template literal. chunks alternates string
-	// text (raw Foi content, including `""` / ` `` ` escapes) and
-	// InterpExpr nodes. String chunks pass through the template
-	// escaper; InterpExpr chunks wrap as `${...}`.
-	//
-	// SpacingInterpStr has identical chunks shape — same handler
-	// would work, but it's not in the first slice's sample so
-	// it's left to fall back until a sample forces it.
-	InterpStr(node, recur) {
-		var out = "`";
-		for (let c of node.chunks) {
-			if (typeof c === "string") out += escapeTemplateChunk(c);
-			else                       out += "${" + recur(c) + "}";
-		}
-		out += "`";
-		return out;
-	},
+	// InterpStr / SpacingInterpStr → JS template literal.
+	// Both chunks arrays are pre-processed by their shapers
+	// (Foi escapes resolved; spacing form additionally
+	// collapsed WS to single spaces). Lowering delegated to
+	// emitInterp.
+	InterpStr:        emitInterp,
+	SpacingInterpStr: emitInterp,
 
 	// InterpExpr is only ever a chunk inside an interp-string —
 	// the `${...}` wrapper is the parent's responsibility, so
@@ -1444,9 +1453,14 @@ var handlers = {
 	// Mirrors the standalone PropertyPickExpr / RangeAccessExpr
 	// lowerings minus the bind-site application.
 	//
-	// Empty-bracket arm:
+	// Access-as-function arms — strict 2-ary; primed swaps.
+	// `(.)` and `([])` lower identically: both are 2-ary forms
+	// of property access where the 2nd argument is evaluated as
+	// the key expression (per Foi-Guide, `.` as op-func
+	// evaluates its second argument the same way `[ ]` does).
 	//
-	//   ([])(obj, i)     → obj[i] — strict 2-ary; primed swaps
+	//   ([])(obj, i)     → obj[i]
+	//   (.)(obj, k)      → obj[k]
 	//
 	// Fixed-arity range/membership/has — driven by OP_FUNC_TABLE
 	// kinds range3 / in2 / has2:
@@ -1464,7 +1478,7 @@ var handlers = {
 		// 2-ary; primed swaps to ((__i, __o) => __o[__i]).
 		// Partial application is the standard PartialCallExpr
 		// path — nothing special at this site.
-		if (node.op === "[]") {
+		if (node.op === "[]" || node.op === ".") {
 			let params = node.primed ? "(__i, __o)" : "(__o, __i)";
 			return "(" + params + " => __o[__i])";
 		}
@@ -1803,6 +1817,41 @@ var handlers = {
 	},
 
 
+	// AssignmentExpr { target, source } — `x := 5`,
+	// `foo.bar := 42`, `arr[0] := y + 1`. The shaper folds the
+	// LHS access chain via foldAccess, so `target` is already an
+	// Identifier, MemberAccessExpr, or IndexAccessExpr — each
+	// with a working handler.
+	//
+	//   x := 5             → x = 5
+	//   foo.bar := 42      → foo.bar = 42
+	//   arr[0] := y + 1    → arr[0] = y + 1
+	//   a.b.c := 1         → a.b.c = 1
+	//
+	// Assignment is value-producing in Foi (the assigned value
+	// is the result of the expression), matching JS's own
+	// assignment-expression semantic — `x = 5` evaluates to 5.
+	// So bare emission is correct at every position the grammar
+	// admits AssignmentExpr:
+	//
+	//   - stmt position             → `x = 5;`
+	//   - DefVarStmt RHS            → `var y = x = 5;` (chained)
+	//   - match consequent          → `c ? (x = 5) : null`
+	//                                 (paren from outer ternary,
+	//                                 not from this handler)
+	//
+	// No paren-wrap from this handler. The grammar separately
+	// excludes AssignmentExpr from binary-tier operand slots
+	// (BinaryAtom's paren arms admit OperandExpr / BareOperandExpr
+	// only, neither reaching AssignmentExpr), so `a + (x := 5)`
+	// is a source-level parse error — but that is a grammar-side
+	// restriction on where assignment can appear, not a claim
+	// about whether assignment produces a value.
+	AssignmentExpr(node, recur) {
+		return recur(node.target) + " = " + recur(node.source);
+	},
+
+
 	// =============================================================
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
@@ -1988,6 +2037,7 @@ var handlers = {
 	ReturnExpr(node, recur) {
 		return "return " + recur(node.expr);
 	},
+
 
 	// =============================================================
 	// §14 CONDITIONALS / GUARDS

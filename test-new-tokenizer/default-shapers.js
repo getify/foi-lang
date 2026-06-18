@@ -732,44 +732,57 @@ export const defaultShapers = {
 
 	// PlainStr := DoubleQuote PlainStrContent* DoubleQuote;
 	//
-	// Concatenates interior String and StringEscapedChar token
-	// values into `text`. Surrounding DoubleQuotes are structural —
-	// push to delims. Escape sequences are preserved raw in `text`.
+	// Resolves `""` escape to `"` at shape time, building `text`
+	// as pre-processed content ready for downstream consumers
+	// (transpile / interpret). EVERY raw token — DoubleQuote
+	// wrappers and content (String / StringEscapedChar) — goes
+	// to delims with source positions intact, so round-trip
+	// (emitGeneric) walks pieces in source order and
+	// reconstructs source verbatim. No custom round-trip handler
+	// needed. Discriminator at the consumer: `text` for the
+	// processed value, delims for source recovery. Same shape
+	// applies uniformly across all four string forms.
 	PlainStr(frame,parts) {
 		var text = "";
 		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) continue;
-			if (p.type === "String" || p.type === "StringEscapedChar") {
+			if (p.type === "String") {
 				text += p.value;
 			}
-			else delims.push(p); // DoubleQuote
+			else if (p.type === "StringEscapedChar") {
+				text += p.value[0]; // "" → "
+			}
+			delims.push(p); // every non-node token preserved for round-trip
 		}
 		return withDelims({ type: "PlainStr", text }, delims);
 	},
 
 	// SpacingEscapedStr := EscapePlain DoubleQuote SpacingEscapedStrContent* DoubleQuote;
 	//
-	// Same shape as PlainStr; folds interior Whitespace into
-	// `text`. The leading EscapePlain anchors the type tag —
-	// drops as operator-class. Surrounding DoubleQuotes are
-	// structural → delims.
+	// Same shape as PlainStr (text + every-token delims) plus
+	// the spacing-form whitespace-collapse rule: each Whitespace
+	// token contributes one space to `text`. The lexer's own
+	// isWS(c) predicate identifies Whitespace tokens as maximal
+	// WS runs, so "one Whitespace token = one space" is the
+	// authoritative collapse rule — Unicode-safe by lexer
+	// construction, no regex needed downstream. The leading
+	// EscapePlain `\` joins delims like every other token.
 	SpacingEscapedStr(frame,parts) {
 		var text = "";
 		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) continue;
-			if (
-				p.type === "String" ||
-				p.type === "StringEscapedChar" ||
-				p.type === "Whitespace"
-			) {
+			if (p.type === "String") {
 				text += p.value;
 			}
-			else if (p.type === "Escape") {
-				// anchors the form via type tag — drop
+			else if (p.type === "StringEscapedChar") {
+				text += p.value[0]; // "" → "
 			}
-			else delims.push(p); // DoubleQuote
+			else if (p.type === "Whitespace") {
+				text += " "; // collapse run → single space
+			}
+			delims.push(p); // every non-node token preserved for round-trip
 		}
 		return withDelims({ type: "SpacingEscapedStr", text }, delims);
 	},
@@ -791,11 +804,18 @@ export const defaultShapers = {
 
 	// InterpStr := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote;
 	//
-	// Surfaces as a `chunks` array alternating string text and
-	// InterpExpr nodes. Invariant: chunks.length is always odd,
-	// chunks[0] and chunks[last] are always strings (possibly "").
-	// Leading EscapeBacktick anchors the form — drops. Surrounding
-	// DoubleQuotes → delims.
+	// Surfaces as a `chunks` array alternating pre-processed
+	// string text and InterpExpr nodes — interp boundaries
+	// split the chunks. Invariant: chunks.length is always odd,
+	// chunks[0] and chunks[last] are always strings (possibly
+	// "").
+	//
+	// String chunks have `""` / ` `` ` escapes resolved at
+	// shape time. All raw tokens (EscapeBacktick, DoubleQuote,
+	// content tokens) push to delims with source positions;
+	// round-trip uses emitGeneric, picking up InterpExpr nodes
+	// from the enumerable `chunks` array (bare strings in
+	// chunks are filtered by isNode automatically).
 	InterpStr(frame,parts) {
 		var chunks = [];
 		var buf = "";
@@ -807,14 +827,15 @@ export const defaultShapers = {
 					chunks.push(p);
 					buf = "";
 				}
+				continue;
 			}
-			else if (p.type === "String" || p.type === "StringEscapedChar") {
+			if (p.type === "String") {
 				buf += p.value;
 			}
-			else if (p.type === "Escape") {
-				// anchors the form via type tag — drop
+			else if (p.type === "StringEscapedChar") {
+				buf += p.value[0]; // "" → " or `` → `
 			}
-			else delims.push(p); // DoubleQuote
+			delims.push(p); // every non-node token preserved for round-trip
 		}
 		chunks.push(buf);
 		return withDelims({ type: "InterpStr", chunks }, delims);
@@ -822,8 +843,14 @@ export const defaultShapers = {
 
 	// SpacingInterpStr := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote;
 	//
-	// Same chunks-array shape as InterpStr; Whitespace tokens
-	// fold into the adjacent text chunk verbatim.
+	// Same shape as InterpStr (chunks + every-token delims)
+	// plus the spacing-form whitespace-collapse rule: each
+	// Whitespace token contributes one space to the current
+	// chunk. Per-chunk collapse — interp boundaries are
+	// independent collapse regions. Lexer's isWS(c) identifies
+	// maximal WS runs as Whitespace tokens, so "one Whitespace
+	// token = one space" is the authoritative Unicode-safe
+	// rule.
 	SpacingInterpStr(frame,parts) {
 		var chunks = [];
 		var buf = "";
@@ -835,18 +862,18 @@ export const defaultShapers = {
 					chunks.push(p);
 					buf = "";
 				}
+				continue;
 			}
-			else if (
-				p.type === "String" ||
-				p.type === "StringEscapedChar" ||
-				p.type === "Whitespace"
-			) {
+			if (p.type === "String") {
 				buf += p.value;
 			}
-			else if (p.type === "Escape") {
-				// anchors the form via type tag — drop
+			else if (p.type === "StringEscapedChar") {
+				buf += p.value[0]; // "" → " or `` → `
 			}
-			else delims.push(p); // DoubleQuote
+			else if (p.type === "Whitespace") {
+				buf += " "; // collapse run → single space
+			}
+			delims.push(p); // every non-node token preserved for round-trip
 		}
 		chunks.push(buf);
 		return withDelims({ type: "SpacingInterpStr", chunks }, delims);

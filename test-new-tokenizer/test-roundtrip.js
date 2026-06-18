@@ -111,46 +111,6 @@ var gapFill = (anchor, node, recur, skip) => {
 	return out;
 };
 
-// Handler form for the four string-literal productions. Emits
-// `opener + body + '"'`, then interleaves post-literal pieces
-// (.as from AsExpr unwrap, post-end delims from StmtSemi α-claim).
-// The two structural DoubleQuote tokens are consumed by opener/
-// closer and filtered from the trailing piece list.
-//
-// `body` is either node.text (the two non-interp forms) or a
-// pre-rendered chunks string (the two interp forms via emitChunks).
-// Doesn't handle paren-lifted strings (would need gap-fill style);
-// no current samples hit that case.
-var emitStringLit = (opener, body, node, recur) => {
-	var out = opener + body + '"';
-	var rest = [];
-	if (node.as) rest.push(node.as);
-	if (node.delims) {
-		let dqSeen = 0;
-		for (let d of node.delims) {
-			if (d.type === "DoubleQuote" && dqSeen < 2) {
-				dqSeen++;
-				continue;
-			}
-			rest.push(d);
-		}
-	}
-	rest.sort((a, b) => a.start - b.start);
-	for (let p of rest) out += isNode(p) ? recur(p) : p.value;
-	return out;
-};
-
-// Render a chunks array (alternating string-text and InterpExpr
-// nodes — InterpStr / SpacingInterpStr shape) into the embedded
-// source form. The surrounding `"` quotes are added by
-// emitStringLit, not here.
-var emitChunks = (chunks, recur) => {
-	var out = "";
-	for (let c of chunks) {
-		out += typeof c === "string" ? c : recur(c);
-	}
-	return out;
-};
 
 // Binary-tier emitter. shapeBinTier folds `lhs (op rhs)+` left-assoc
 // into nested same-type nodes; the machinery only brand-stamps the
@@ -244,13 +204,13 @@ var handlers = {
 	EmptyLit: (n, r) => gapFill("empty", n, r),
 
 	// ---- §2 string literals ----
-	// text/chunks sit INSIDE the two DoubleQuote structural delims;
-	// the leading Escape* token (three of four forms) is anchored
-	// in type tag and re-synthesized as part of the opener.
-	PlainStr:          (n, r) => emitStringLit('"',    n.text,                  n, r),
-	SpacingEscapedStr: (n, r) => emitStringLit('\\"',  n.text,                  n, r),
-	InterpStr:         (n, r) => emitStringLit('`"',   emitChunks(n.chunks, r), n, r),
-	SpacingInterpStr:  (n, r) => emitStringLit('\\`"', emitChunks(n.chunks, r), n, r),
+	// PlainStr, SpacingEscapedStr, InterpStr, SpacingInterpStr
+	// have no custom handlers. Each shaper now pushes every raw
+	// token (DoubleQuote, String, StringEscapedChar, Whitespace,
+	// Escape) to delims with source positions, and the interp
+	// forms expose InterpExpr children via the enumerable chunks
+	// array. emitGeneric walks pieces in source-position order
+	// and reconstructs source verbatim.
 
 	// ---- §3 imports / exports ----
 	ImportExpr: (n, r) => gapFill("import", n, r),
