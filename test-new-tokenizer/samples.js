@@ -169,6 +169,9 @@ export const samples = [
 	{ label: "MemberAccessExpr (builtin): foo.List", src: "foo.List;" },
 	{ label: "MemberAccessExpr (pos index): arr.5",  src: "arr.5;" },
 	{ label: "MemberAccessExpr (neg index): arr.-1", src: "arr.-1;" },
+	{ label: "MemberAccessExpr from-end wrap: def last: arr.-1",  src: "def last: arr.-1;" },
+	{ label: "MemberAccessExpr from-end -2 wrap: def second: arr.-2", src: "def second: arr.-2;" },
+	{ label: "MemberAccessExpr zero-index wrap (regression): def first: arr.0", src: "def first: arr.0;" },
 	{ label: "MemberAccessExpr nested: foo.bar.baz", src: "foo.bar.baz;" },
 	{ label: "IndexAccessExpr: arr[0]",              src: "arr[0];" },
 	{ label: "RangeAccessExpr: arr.[1..5]",          src: "arr.[1..5];" },
@@ -231,6 +234,10 @@ export const samples = [
 	{ label: "OpFuncExpr :as int",                   src: "(+) :as int;" },
 	{ label: "OpFuncExpr as callee: (+)(1,2)",       src: "(+)(1,2);" },
 	{ label: "OpFuncExpr with prime + call: (+')(1,2)", src: "(+')(1,2);" },
+	{ label: "OpFuncExpr (.) from-end: (.)(arr, -1)", src: "(.)(arr, -1);" },
+	{ label: "OpFuncExpr (.) non-neg: (.)(arr, 0)",   src: "(.)(arr, 0);" },
+	{ label: "OpFuncExpr (.') primed: (.')(-1, arr)", src: "(.')(-1, arr);" },
+	{ label: "OpFuncExpr ([]) JS-faithful (regression): ([])(arr, -1)", src: "([])(arr, -1);" },
 
 	// === Synthetic-vs-explicit OpFuncExpr alignment ===
 	// These pairs should produce identical args[0] shape (modulo span).
@@ -440,6 +447,7 @@ export const samples = [
 	{ label: "AssignmentExpr (access): foo.bar := 42",    src: "foo.bar := 42;" },
 	{ label: "AssignmentExpr (multi-seg): a.b.c := 1",    src: "a.b.c := 1;" },
 	{ label: "AssignmentExpr (bracket): foo[0] := y + 1", src: "foo[0] := y + 1;" },
+	{ label: "AssignmentExpr (neg index LHS regression): arr.-1 := y", src: "arr.-1 := y;" },
 
 	// Assignment as binary operand — §5 paren-grouping admits
 	// AssignmentExpr in the three operand-position restrictive

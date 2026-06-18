@@ -1452,11 +1452,44 @@ var handlers = {
 	// MemberAccessExpr { object, accessor? | index? }. Mutually
 	// exclusive: accessor is a node (Identifier or BuiltIn);
 	// index is a bare integer string from the `arr.5` / `arr.-1`
-	// positional-index form. JS dot-access vs bracket-access
-	// reflects the same distinction.
+	// positional-index form.
+	//
+	//   foo.bar    → foo.bar       (named accessor — JS dot)
+	//   foo.List   → foo.List      (BuiltIn accessor — JS dot)
+	//   arr.5      → arr[5]        (non-negative index — JS bracket)
+	//   arr.0      → arr[0]        (zero — JS bracket)
+	//   arr.-1     → arr.at(-1)    (negative index — from-end)
+	//   arr.-2     → arr.at(-2)
+	//
+	// Negative-index FROM-END peephole — Foi's `.N` form is
+	// ordered-structure-aware. Negative indices count from the
+	// end uniformly across arrays (Tuples), strings, and
+	// TypedArrays via the standard JS `.at()` API. Records have
+	// no defined from-end semantic — `.at()` throws on plain
+	// objects, which is the desired honest-failure mode.
+	//
+	// `.` and `[]` DIVERGE here for the first time anywhere in
+	// the language: `arr.-1` is from-end; `arr[-1]`
+	// (IndexAccessExpr) is JS-faithful and returns undefined.
+	// The OpFuncExpr `(.)` and `([])` arms split accordingly —
+	// see OpFuncExpr handler.
+	//
+	// READ-SIDE ONLY. `arr.-1 := y` must still lower to
+	// `arr[-1] = y` because `.at()` returns a value, not an
+	// assignable reference. AssignmentExpr's handler bypasses
+	// this peephole for the integer-index LHS — see
+	// AssignmentExpr handler.
+	//
+	// Detection uses `node.index.startsWith("-")` rather than
+	// `Number(node.index) < 0` — `node.index` is a bare integer
+	// string from the lexer (e.g. "5", "-1", "0"), so a leading
+	// "-" is the exact discriminator. No `+0` / `-0` ambiguity.
 	MemberAccessExpr(node, recur) {
 		if (node.accessor) {
 			return recur(node.object) + "." + recur(node.accessor);
+		}
+		if (node.index.startsWith("-")) {
+			return recur(node.object) + ".at(" + node.index + ")";
 		}
 		return recur(node.object) + "[" + node.index + "]";
 	},
@@ -1612,14 +1645,21 @@ var handlers = {
 	// Mirrors the standalone PropertyPickExpr / RangeAccessExpr
 	// lowerings minus the bind-site application.
 	//
-	// Access-as-function arms — strict 2-ary; primed swaps.
-	// `(.)` and `([])` lower identically: both are 2-ary forms
-	// of property access where the 2nd argument is evaluated as
-	// the key expression (per Foi-Guide, `.` as op-func
-	// evaluates its second argument the same way `[ ]` does).
+	// Access-as-function arms — strict 2-ary; primed swaps args.
+	// `(.)` and `([])` DIVERGE: `(.)` is ordered-structure-aware
+	// and dispatches at runtime on sign of the key (negative →
+	// from-end via .at()); `([])` is JS-faithful structural with
+	// no from-end semantic. This is the first place `.` and `[]`
+	// split anywhere in the language — see MemberAccessExpr
+	// docblock for the matching `arr.N` vs `arr[N]` split at the
+	// same semantic boundary.
 	//
-	//   ([])(obj, i)     → obj[i]
-	//   (.)(obj, k)      → obj[k]
+	//   ([])(obj, i)     → obj[i]              (JS-faithful)
+	//   ([])(arr, -1)    → arr[-1]             (undefined; no from-end)
+	//   (.)(obj, k)      → __i < 0 ? __o.at(__i) : __o[__i]
+	//   (.)(arr, -1)     → arr.at(-1)          (from-end at runtime)
+	//   (.)(arr, 0)      → arr[0]              (non-negative — bracket)
+	//   (.')(-1, arr)    → primed; same dispatch, __i/__o swapped
 	//
 	// Fixed-arity range/membership/has — driven by OP_FUNC_TABLE
 	// kinds range3 / in2 / has2:
@@ -1641,13 +1681,24 @@ var handlers = {
 	//
 	// `?as` / `!as` still fall back.
 	OpFuncExpr(node, recur) {
-		// Empty-bracket lifted: ([])(obj, i) → obj[i]. Strict
-		// 2-ary; primed swaps to ((__i, __o) => __o[__i]).
+		// ([])(obj, i) → obj[i]. Strict 2-ary; primed swaps args.
+		// JS-faithful structural access — no from-end semantic
+		// (negative index returns undefined, matching JS bracket).
 		// Partial application is the standard PartialCallExpr
 		// path — nothing special at this site.
-		if (node.op === "[]" || node.op === ".") {
+		if (node.op === "[]") {
 			let params = node.primed ? "(__i, __o)" : "(__o, __i)";
 			return "(" + params + " => __o[__i])";
+		}
+		// (.)(obj, k) — ordered-structure access. Runtime sign-
+		// dispatch on the index: negative → .at() (from-end);
+		// non-negative → bracket. Mirrors MemberAccessExpr's
+		// `.N` peephole at the value-level. Strict 2-ary; primed
+		// swaps args. See MemberAccessExpr docblock for the
+		// `.N` vs `[N]` semantic split.
+		if (node.op === ".") {
+			let params = node.primed ? "(__i, __o)" : "(__o, __i)";
+			return "(" + params + " => __i < 0 ? __o.at(__i) : __o[__i])";
 		}
 
 		// Angle-pick lifted: (.<a, b>) → ((__o) => ({ a: __o.a, b: __o.b }))
@@ -2008,7 +2059,6 @@ var handlers = {
 		return "{ " + defs + (body ? " " + body : "") + " }";
 	},
 
-
 	// AssignmentExpr { target, source } — `x := 5`,
 	// `foo.bar := 42`, `arr[0] := y + 1`. The shaper folds the
 	// LHS access chain via foldAccess, so `target` is already an
@@ -2019,18 +2069,26 @@ var handlers = {
 	//   foo.bar := 42      → foo.bar = 42
 	//   arr[0] := y + 1    → arr[0] = y + 1
 	//   a.b.c := 1         → a.b.c = 1
+	//   arr.-1 := y        → arr[-1] = y       (LHS asymmetry — see below)
+	//
+	// LHS asymmetry for integer-index MemberAccessExpr —
+	// `arr.-1` READS from-end (peephole to `.at()`, see
+	// MemberAccessExpr handler), but WRITES use JS bracket
+	// because `.at()` returns a value, not an assignable
+	// reference. So this handler emits the integer-index
+	// MemberAccessExpr LHS directly as `<obj>[<index>]`,
+	// bypassing the read-side from-end peephole in the standard
+	// MemberAccessExpr handler. Named-accessor LHS
+	// (`foo.bar := …`) and IndexAccessExpr LHS (`arr[i] := …`)
+	// have no read/write divergence and route through recur as
+	// before. This is the first place `.` and `[]` diverge
+	// anywhere in Foi.
 	//
 	// Assignment is value-producing in Foi (the assigned value
 	// is the result of the expression), matching JS's own
 	// assignment-expression semantic — `x = 5` evaluates to 5.
 	// So bare emission is correct at every position the grammar
 	// admits AssignmentExpr:
-	//
-	//   - stmt position             → `x = 5;`
-	//   - DefVarStmt RHS            → `var y = x = 5;` (chained)
-	//   - match consequent          → `c ? (x = 5) : null`
-	//                                 (paren from outer ternary,
-	//                                 not from this handler)
 	//
 	//   - stmt position             → `x = 5;`
 	//   - DefVarStmt RHS            → `var y = x = 5;` (chained)
@@ -2051,7 +2109,11 @@ var handlers = {
 	// itself doesn't admit AssignmentExpr, so the bare form
 	// `10 + x := 5` remains a source-level parse error.
 	AssignmentExpr(node, recur) {
-		return recur(node.target) + " = " + recur(node.source);
+		var target = node.target;
+		if (target.type === "MemberAccessExpr" && target.index != null) {
+			return recur(target.object) + "[" + target.index + "] = " + recur(node.source);
+		}
+		return recur(target) + " = " + recur(node.source);
 	},
 
 
