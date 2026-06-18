@@ -172,6 +172,10 @@ var OR_OPS = {
 //                      on container: array/string → .includes,
 //                      object → numeric-key value scan
 //   kind: "has2"     — strict 2-ary key-presence check
+//   kind: "composeFwd" — n-ary forward composition; produces a
+//                      unary fn that runs args L→R via .reduce
+//   kind: "composeRev" — n-ary reverse composition; produces a
+//                      unary fn that runs args R→L via .reduceRight
 //
 // Primed (`node.primed`) reverses arg order for n-ary kinds and
 // swaps arg positions for fixed-arity kinds (range3, in2, has2).
@@ -217,6 +221,8 @@ var OP_FUNC_TABLE = {
 	"!in":  { kind: "in2", negate: true },
 	"?has": { kind: "has2" },
 	"!has": { kind: "has2", negate: true },
+	"+>":   { kind: "composeFwd" },
+	"<+":   { kind: "composeRev" },
 };
 
 
@@ -751,6 +757,67 @@ var emitPipelineStage = (rhs, lhsStr, recur) => {
 	var rhsStr = dispatch(rhs);
 	var callExpr = topicRefBox.used ? rhsStr : "(" + rhsStr + ")(__t)";
 	return "((__t) => " + callExpr + ")(" + lhsStr + ")";
+};
+
+
+// =============================================================
+// COMPOSE CHAIN EMITTER (FlowBinExpr +> / <+)
+//
+// FlowBinExpr left-folds, so `f +> g +> h` parses as
+// FlowBinExpr(FlowBinExpr(f,+>,g),+>,h). The handler gathers
+// same-op leaves by walking the left subtree while `node.op`
+// matches, accumulating leaves in source order; a non-matching
+// subtree (different op, or any other node) is rendered as a
+// single leaf via recur and contributes its arrow exactly once.
+//
+// Direction of emission:
+//   - Forward `+>`: leftmost leaf runs first / innermost call.
+//     Leaves [f, g, h] → ((__v) => (h)((g)((f)(__v)))).
+//   - Reverse `<+`: leftmost leaf runs last / outermost call.
+//     Leaves [f, g, h] → ((__v) => (f)((g)((h)(__v)))).
+//
+// Each leaf paren-wrapped — same convention as #> callable-RHS,
+// defensive against leaves whose root precedence is looser than
+// a call suffix (OrBinExpr / GroupedExpr / etc.).
+//
+// `__v` reused per nesting level — when a leaf is itself a
+// compose-arrow (nested via mixed-direction parens etc.), the
+// inner arrow's `__v` shadows the outer's. JS lexical scoping
+// makes this safe; noisy but bootstrap-acceptable.
+//
+// Mixed-op chains (`f +> g <+ h`) parse as nested FlowBinExpr
+// nodes with differing `op` fields. The gather walks only into
+// same-op left subtrees; the differing-op subtree emits its own
+// arrow via natural recursion through the FlowBinExpr handler
+// and lands as one leaf in the outer gather. No explicit
+// mixed-op branch needed.
+// =============================================================
+
+var gatherComposeLeaves = (node, op, recur) => {
+	var leaves = [];
+	var walk = n => {
+		if (n.type === "FlowBinExpr" && n.op === op) {
+			walk(n.left);
+			leaves.push(recur(n.right));
+		}
+		else {
+			leaves.push(recur(n));
+		}
+	};
+	walk(node);
+	return leaves;
+};
+
+var emitComposeChain = (node, recur) => {
+	var leaves = gatherComposeLeaves(node, node.op, recur);
+	// Forward `+>`: leaves applied L→R (leftmost is innermost call).
+	// Reverse `<+`: leaves applied R→L (leftmost is outermost call).
+	var ordered = node.op === "+>" ? leaves : leaves.slice().reverse();
+	var inner = "__v";
+	for (let leaf of ordered) {
+		inner = "(" + leaf + ")(" + inner + ")";
+	}
+	return "((__v) => " + inner + ")";
 };
 
 
@@ -1433,6 +1500,12 @@ var handlers = {
 	//   (!and)(a,b,c)    → De Morgan, any-falsy: a.some(x => !x)
 	//   (!or)(a,b,c)     → De Morgan, all-falsy: a.every(x => !x)
 	//   (!<)(a,b,c)      → De Morgan, some-pair-not-<: pairs.some with negated inner
+	//   (+>)(f,g,h)      → forward compose: produces (__v) => h(g(f(__v)))
+	//                      via .reduce L→R
+	//   (<+)(f,g,h)      → reverse compose: produces (__v) => f(g(h(__v)))
+	//                      via .reduceRight R→L
+	//   (+>')(f,g,h)     → primed reverses xs first, then reduce —
+	//                      semantically equivalent to (<+)(f,g,h)
 	//
 	// Binary ops lift to n-ary; unary ops stay 1-ary. Negated forms
 	// use De Morgan — short-circuits naturally via .some/.every.
@@ -1471,6 +1544,14 @@ var handlers = {
 	//   (!in)(x, c)        → !(?in)
 	//   (?has)(c, k)       → k in c
 	//   (!has)(c, k)       → !(?has)
+	//
+	// Composition — composeFwd / composeRev kinds. Higher-order:
+	// emits a function that takes the composition's arg list and
+	// returns a unary function applying them in chain order. The
+	// reduce-based shape is uniform across no-spread and spread
+	// callsites — `(+>)(...fns)` evaluates the spread into __xs at
+	// call time, then the inner arrow runs `__xs.reduce(...)`. No
+	// branch on SpreadArg presence needed at this site.
 	//
 	// `..` (bare range op) and `?as` / `!as` still fall back.
 	OpFuncExpr(node, recur) {
@@ -1576,6 +1657,14 @@ var handlers = {
 			let body = meta.negate ? "!(" + inner + ")" : inner;
 			return "(" + params + " => " + body + ")";
 		}
+		if (meta.kind === "composeFwd") {
+			return "((...__xs) => (__v) => " + xs +
+				".reduce((__acc, __f) => __f(__acc), __v))";
+		}
+		if (meta.kind === "composeRev") {
+			return "((...__xs) => (__v) => " + xs +
+				".reduceRight((__acc, __f) => __f(__acc), __v))";
+		}
 		return fallback(node);
 	},
 
@@ -1632,10 +1721,10 @@ var handlers = {
 	// FlowBinExpr(FlowBinExpr(a, b), c), so recurring `left`
 	// handles chains naturally.
 	//
-	// First-slice covers PipelineOp (`#>`) only. ComprOps
-	// (`~map`, `~filter`, etc.) need a separate lowering shape
-	// (comprehension-call rather than topic-injection) and
-	// fall back until that handler lands.
+	// Current coverage: PipelineOp (`#>`) and both ComposeOps
+	// (`+>`, `<+`). ComprOps (`~map`, `~filter`, etc.) need a
+	// separate lowering shape (comprehension-call rather than
+	// topic-injection) and fall back until that handler lands.
 	//
 	// PipelineOp RHS arms — symmetric with FuncBodyPipeline's
 	// renderPipelineBody, minus the function-body wrapper:
@@ -1672,11 +1761,25 @@ var handlers = {
 	// Foi-side guarantee: callable-arm RHS must evaluate to a
 	// function. Non-function RHS throws at runtime — JS-faithful
 	// to the source.
+	//
+	// ComposeOp (`+>`, `<+`) arms — delegated to emitComposeChain.
+	// Flat-inline arrow with same-op leaf-gathering across the
+	// left subtree; no helper, no runtime library. Each leaf
+	// paren-wrapped per the same defensive convention as `#>`
+	// callable RHS. See emitComposeChain's docblock for direction
+	// rules and mixed-op interaction. ComposeOp RHS is grammar-
+	// restricted to OrDispatch (function value) — no block arms,
+	// so no FlowRHSImplIn dispatch needed at this site.
 	FlowBinExpr(node, recur) {
-		if (node.op !== "#>") return fallback(node);
-		var lhsStr = recur(node.left);
-		var out = emitPipelineStage(node.right, lhsStr, recur);
-		return out == null ? fallback(node) : out;
+		if (node.op === "#>") {
+			let lhsStr = recur(node.left);
+			let out = emitPipelineStage(node.right, lhsStr, recur);
+			return out == null ? fallback(node) : out;
+		}
+		if (node.op === "+>" || node.op === "<+") {
+			return emitComposeChain(node, recur);
+		}
+		return fallback(node);
 	},
 
 

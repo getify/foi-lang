@@ -372,6 +372,30 @@ export const samples = [
 	{ label: "FuncBodyPipeline: callable-chain canonical",
 	  src: "defn compute(x) #> add(1) #> triple #> half;" },
 
+	// ComposeOp `+>` / `<+` — FlowBinExpr with strict-OrDispatch RHS.
+	// `+>` is forward (left runs first / innermost); `<+` is reverse
+	// (left runs last / outermost). Same-op leaves are gathered into
+	// a single flat-inline arrow; mixed-op chains naturally split per
+	// op via recursion through FlowBinExpr.
+	{ label: "FlowBinExpr: +> single stage",
+	  src: "inc +> triple;" },
+	{ label: "FlowBinExpr: +> chain (guide compute1)",
+	  src: "def compute1: inc +> triple +> half;" },
+	{ label: "FlowBinExpr: <+ chain",
+	  src: "def compute1: half <+ triple <+ inc;" },
+	{ label: "FlowBinExpr: +> chain at call-site",
+	  src: "(inc +> triple +> half)(11);" },
+	{ label: "FlowBinExpr: +> via OpFuncExpr (guide compute2)",
+	  src: "def compute2: (+>)(inc, triple, half);" },
+	{ label: "FlowBinExpr: <+ via OpFuncExpr",
+	  src: "def compute1: (<+)(half, triple, inc);" },
+	{ label: "FlowBinExpr: +> primed via OpFuncExpr",
+	  src: "def compute2: (+>')(half, triple, inc);" },
+	{ label: "FlowBinExpr: +> spread args",
+	  src: "(+>)(...fns);" },
+	{ label: "FlowBinExpr: <+ spread args",
+	  src: "(<+)(...fns);" },
+
 	// DefBlockStmt — strict-optional inner (Identifier-init optional;
 	// DestructureTarget-init REQUIRED — no implicit source at top-level `def (...)`)
 	{ label: "DefBlockStmt: def (x: 1) { x; }",            src: "def (x: 1) { x; };" },
