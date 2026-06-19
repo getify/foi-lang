@@ -609,6 +609,32 @@ export const samples = [
 	{ label: "DepMatch: paren-wrapped fragment unwraps",  src: '?(x){ ?[(?and y)]: "ok"; ?: "no" };' },
 	{ label: "DepMatch: implicit-? clause",               src: '?(x){ ["Kyle"]: "hi"; ?: "bye" };' },
 
+	// DepMatchExpr — polarity variants
+	{ label: "DepMatch: negated clause ![..]",            src: '?(name){ !["Kyle"]: "stranger"; ?: "friend" };' },
+	{ label: "DepMatch: negated multi-atom ![.., ..]",    src: '?(x){ ![1, 2, 3]: "out"; ?: "in" };' },
+
+	// DepMatchExpr — else variants
+	{ label: "DepMatch: abbreviated : else",              src: '?(name){ ?["Kyle"]: "hi"; : "bye" };' },
+	{ label: "DepMatch: BareBlockExpr else consequent",   src: '?(x){ ?[?= 1]: "one"; ? { log("none"); "?" } };' },
+
+	// DepMatchExpr — # topic reference
+	{ label: "DepMatch: # in colon-expr consequent",      src: '?(name){ ?["Kyle"]: log(#); ?: "no" };' },
+	{ label: "DepMatch: # in BareBlockExpr consequent",   src: '?(x){ ?[?>= 0] { log(#); "pos" }; ?: "neg" };' },
+
+	// DepMatchExpr — nesting
+	{ label: "DepMatch: nested DepMatch in consequent",   src: '?(name){ ?["Kyle"]: ?(age){ ?[?>= 18]: "adult"; ?: "minor" }; ?: "?" };' },
+
+	// DepMatchExpr — multi-clause cascade
+	{ label: "DepMatch: multi-clause cascade",            src: '?(x){ ?[1]: "a"; ?[2]: "b"; ?[3]: "c"; ?: "d" };' },
+
+	// DepMatchExpr — operator variations
+	{ label: "DepMatch: operator-led !<",                 src: '?(x){ ?[!< 18]: "adult"; ?: "minor" };' },
+	{ label: "DepMatch: operator-led ?or",                src: '?(x){ ?[?or y]: "ok"; ?: "no" };' },
+	{ label: "DepMatch: operator-led ?in",                src: '?(x){ ?[?in coll]: "found"; ?: "no" };' },
+
+	// DepMatchExpr — topic shape
+	{ label: "DepMatch: CallExpr topic",                  src: '?(getName()){ ?["Kyle"]: "hi"; ?: "?" };' },
+
 
 	// =============================================================
 	// §16 DO-COMPREHENSIONS

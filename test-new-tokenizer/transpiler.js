@@ -1234,6 +1234,109 @@ var renderPipelineBody = (node, outerSet, innerTierPrelude, precondPrelude, recu
 
 
 // =============================================================
+// DEPMATCH ATOM TABLES & RENDERER
+//
+// Atom op classification for DepMatchExpr clauses. Each atom in
+// a DepCondClause is rendered against `__topic` (the IIFE-bound
+// single-eval topic) as a boolean JS subexpression; the per-
+// clause list is OR-joined and optionally negated by polarity.
+//
+// Three lowering paths:
+//
+//   DEP_INFIX_OPS — positive ops whose Foi semantic maps to a
+//     direct JS infix operator. Emit `__topic <op> <rhs>`. Same
+//     ops + JS mappings as CMP_OPS / AND_OPS / OR_OPS at their
+//     binary positions; consistency keeps `?(x){ ?[?= 1] }` and
+//     `?{ ?[x ?= 1] }` lowering to the same shape.
+//
+//   DEP_NEGATED_TO_POSITIVE — negated forms (!<, !<=, !>, !>=,
+//     !and, !or). Emit `!(__topic <positive-op> <rhs>)`. The
+//     != / !<> pair maps directly via DEP_INFIX_OPS instead
+//     since JS has the natural !== / === counterparts; only the
+//     order-relational and boolean-logic ops need De Morgan
+//     wrapping. Single-eval __topic on both sides is from the
+//     IIFE param, so no double-eval concern.
+//
+//   DEP_OPFUNC_OPS — ops whose 2-ary lowering involves runtime
+//     dispatch (?in / !in / ?has / !has). Emit by recurring on
+//     a synthesized OpFuncExpr node and calling the resulting
+//     higher-order function with (__topic, <rhs>). Single source
+//     of truth for the dispatch — the OP_FUNC_TABLE in2 / has2
+//     templates own the logic, and atom emission mirrors what
+//     the user-side `(?in)(topic, coll)` would produce.
+//
+// Ops outside these three sets — ?as / !as (static-checker
+// layer), ?$= / !$= (set equality, out of scope), or anything
+// else unrecognized — return null from renderDepAtom, triggering
+// whole-node fallback in the DepMatchExpr handler. Partial
+// lowering of an OR-joined atom list silently changes semantics;
+// granular fallback at the atom level isn't safe here.
+//
+// `#` inside atoms: the topic is implicit on each op's LHS, so
+// the language treats `#` inside an atom as semantically invalid.
+// The atom renderer uses the OUTER `recur` (not the consequent's
+// topic-rewriting dispatch); a `#` written inside an atom either
+// resolves to an enclosing `#>` topic (if any) or falls back to
+// `null /* # */`. Honest failure for what the language doesn't
+// support.
+// =============================================================
+
+var DEP_INFIX_OPS = {
+	"?=":   "===",
+	"!=":   "!==",
+	"?<>":  "!==",
+	"!<>":  "===",
+	"?<":   "<",
+	"?<=":  "<=",
+	"?>":   ">",
+	"?>=":  ">=",
+	"?and": "&&",
+	"?or":  "||",
+};
+
+var DEP_NEGATED_TO_POSITIVE = {
+	"!<":   "?<",
+	"!<=":  "?<=",
+	"!>":   "?>",
+	"!>=":  "?>=",
+	"!and": "?and",
+	"!or":  "?or",
+};
+
+var DEP_OPFUNC_OPS = new Set([ "?in", "!in", "?has", "!has" ]);
+
+var renderDepAtom = (atom, atomDispatch) => {
+	// Bare ExprNoBlock — equality test against topic.
+	if (atom.type !== "DepCondBoolExpr") {
+		return "__topic === " + atomDispatch(atom);
+	}
+
+	var op = atom.op;
+
+	if (op in DEP_INFIX_OPS) {
+		return "__topic " + DEP_INFIX_OPS[op] + " " + atomDispatch(atom.right);
+	}
+
+	if (op in DEP_NEGATED_TO_POSITIVE) {
+		let posJs = DEP_INFIX_OPS[DEP_NEGATED_TO_POSITIVE[op]];
+		return "!(__topic " + posJs + " " + atomDispatch(atom.right) + ")";
+	}
+
+	if (DEP_OPFUNC_OPS.has(op)) {
+		// Synthesize an OpFuncExpr node and recur — the existing
+		// OP_FUNC_TABLE in2 / has2 templates produce the 2-ary
+		// dispatch function. Calling shape mirrors the user-side
+		// equivalent: `(?in)(topic, coll)`.
+		let synth = { type: "OpFuncExpr", op, primed: false };
+		return "(" + atomDispatch(synth) + ")(__topic, " + atomDispatch(atom.right) + ")";
+	}
+
+	// ?as / !as, ?$= / !$=, anything else — whole-node fallback.
+	return null;
+};
+
+
+// =============================================================
 // HANDLERS
 // =============================================================
 
@@ -2651,9 +2754,8 @@ var handlers = {
 	// semantics. Each ternary is paren-wrapped for safety
 	// regardless of right-assoc context.
 	//
-	// DepMatchExpr (`?(topic){...}`) deliberately omitted —
-	// needs IIFE topic-binding plus operator-led test atoms
-	// (DepCondBoolExpr). Falls back until that handler lands.
+	// DepMatchExpr — see handler immediately below; same right-
+	// fold shape wrapped in a topic-binding IIFE.
 	IndepMatchExpr(node, recur) {
 		var stmts = node.stmts;
 		if (stmts.length === 0) return "null";
@@ -2676,6 +2778,124 @@ var handlers = {
 			result = "(" + cond + " ? " + recur(s.consequent) + " : " + result + ")";
 		}
 		return result;
+	},
+
+	// DepMatchExpr { topic, stmts } — `?(topic){ ?[atoms]: consq;
+	// ... ?: else }`. Single-eval topic into __topic via IIFE
+	// param; right-fold clauses into a JS ternary cascade for
+	// first-match-wins semantics. Same shape as IndepMatchExpr
+	// wrapped in `((__topic) => <cascade>)(<topic>)`.
+	//
+	//   ?(x){
+	//       ?["Kyle"]: "hi";
+	//       ?[?>= 18]: "adult";
+	//       ?: "other"
+	//   }
+	//   →
+	//   ((__topic) => (
+	//       __topic === "Kyle" ? "hi" :
+	//       __topic >= 18 ? "adult" :
+	//       "other"
+	//   ))(x)
+	//
+	// Atom kinds (per renderDepAtom):
+	//   - Bare ExprNoBlock e  → `__topic === <e>`
+	//   - DepCondBoolExpr     → infix / De Morgan / OpFunc-routed
+	//                           per DEP_*_OPS tables
+	//
+	// Clause polarity (effective: `polarity ?? defaultPolarity`):
+	//   - "?"  →  `(t1 || t2 || ...)`        — any atom matches
+	//   - "!"  →  `!(t1 || t2 || ...)`       — none match
+	//
+	// Single-atom clauses skip the OR-paren; the negated single-
+	// atom case wraps as `!(<atom>)` since `?=` / `?<` etc.
+	// produce loose-precedence infix expressions that need parens
+	// for safe negation.
+	//
+	// Topic resolution:
+	//   - Consequent body — PipelineTopic resolves to `__topic`
+	//     via consequentDispatch closure (same shape as #>
+	//     BlockExpr arm's topicRefBox.ref pattern).
+	//   - Atom expressions — `#` is NOT a topic ref per Foi
+	//     semantic (op's LHS is implicitly the topic). Atoms use
+	//     the OUTER `recur`; a `#` written inside an atom either
+	//     resolves to an enclosing #> topic (if any) or falls
+	//     back. See renderDepAtom docblock.
+	//
+	// Nesting via JS lexical scoping: an inner DepMatchExpr
+	// establishes its own IIFE __topic param + its own
+	// consequentDispatch, shadowing outer __topic cleanly. The
+	// outer handler never sees the inner subtree directly — it
+	// just calls consequentDispatch(consq), which routes through
+	// the dispatch map to the inner DepMatchExpr handler, which
+	// builds its own scope from scratch.
+	//
+	// Empty-stmts edge case (only an ElseStmt, no pattern
+	// clauses) emits the IIFE with the else consequent as the
+	// cascade tail; topIdx becomes -1, the loop doesn't run.
+	// Pure-empty stmts list (no patterns, no else) emits
+	// `((__topic) => null)(<topic>)` — matches Foi's "no match"
+	// → empty → null semantic.
+	//
+	// Fallback granularity: whole node, on any atom returning
+	// null from renderDepAtom (?as / !as, ?$= / !$=, unrecognized
+	// op). Skipping an OR-list atom silently changes semantics
+	// so partial lowering isn't safe.
+	DepMatchExpr(node, recur) {
+		var topicStr = recur(node.topic);
+
+		var consequentDispatch = n => {
+			if (n == null) return "";
+			if (n.type === "PipelineTopic") return "__topic";
+			var h = handlers[n.type];
+			return h ? h(n, consequentDispatch) : fallback(n);
+		};
+
+		var stmts = node.stmts;
+		if (stmts.length === 0) {
+			return "((__topic) => null)(" + topicStr + ")";
+		}
+
+		var last = stmts[stmts.length - 1];
+		var hasElse = last.type === "ElseStmt";
+		var result;
+		var topIdx;
+		if (hasElse) {
+			result = consequentDispatch(last.consequent);
+			topIdx = stmts.length - 2;
+		}
+		else {
+			result = "null";
+			topIdx = stmts.length - 1;
+		}
+
+		for (let i = topIdx; i >= 0; i--) {
+			let s = stmts[i];
+			let clause = s.clause;
+			let effPolarity = clause.polarity ?? clause.defaultPolarity ?? "?";
+
+			let parts = [];
+			for (let atom of clause.tests) {
+				// Atoms use OUTER recur per "# not available in
+				// atoms" semantic (see renderDepAtom docblock).
+				let rendered = renderDepAtom(atom, recur);
+				if (rendered == null) return fallback(node);
+				parts.push(rendered);
+			}
+
+			let cond;
+			if (parts.length === 1) {
+				cond = effPolarity === "!" ? "!(" + parts[0] + ")" : parts[0];
+			}
+			else {
+				let joined = parts.join(" || ");
+				cond = effPolarity === "!" ? "!(" + joined + ")" : "(" + joined + ")";
+			}
+
+			result = "(" + cond + " ? " + consequentDispatch(s.consequent) + " : " + result + ")";
+		}
+
+		return "((__topic) => " + result + ")(" + topicStr + ")";
 	},
 
 
