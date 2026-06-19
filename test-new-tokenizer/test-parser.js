@@ -117,6 +117,10 @@ var failSamples = [
 	"x + y :as int;",       // binary cannot carry :as directly
 	"1..5 :as List;",       // range cannot carry :as directly
 	"x..y :as int;",        // same range family
+	"1..;",                 // open-ended ranges have no value semantic outside .[ ]
+	"..5;",                 // same — TrailingRangeExpr at expression position
+	"(1..) :as List;",      // paren-and-annotate also rejected — inner LeadingRangeExpr can't reach BinaryAtom
+	"(..5) :as List;",      // same — inner TrailingRangeExpr
 	"x :as int + y;",       // outer AsExpr matches `x :as int`; `+ y` dangling
 	"x :as int :as bool;",  // no chained :as without parens; AsableExpr excludes AsExpr
 	"(x) :as bool :as char;",         // chained :as on paren — paren-grouping not in AsableExpr, outer :as has nowhere to land

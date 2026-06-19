@@ -1084,10 +1084,10 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 // All op refs forward to §10 via lazy() (forward-ref, §10 appears
 // later in this file).
 
-// <BinaryAtom> := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
-//               | UnaryExpr | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+// <BinaryAtom> := ClosedRangeExpr | UnaryExpr | BareOperandExpr
+//               | GroupedOpExpr | GroupedDoExpr;
 //
-// PEG order: Range first (Closed is two-sided, longest); Unary
+// PEG order: ClosedRangeExpr first (two-sided, longest); Unary
 // next (prefix forms consume Qmark/Exmark/?empty/!empty before
 // backtracking); BareOperandExpr and GroupedOpExpr cover bare atoms
 // and parenthesized op-expressions respectively. GroupedOpExpr
@@ -1095,10 +1095,13 @@ var UnaryExpr = or(NamedUnaryExpr, SymbolicUnaryExpr);
 // op-expr inner is the common case; do-compr inner is niche and
 // falls through cleanly when GroupedOpExpr's inner OperandExpr
 // rejects the do-compr opener.
+//
+// LeadingRangeExpr / TrailingRangeExpr deliberately omitted —
+// open-ended ranges have no value semantic at expression position.
+// Both productions still exist and are reachable via <RangeExpr>
+// inside DotBracketExpr (`arr.[5..]`, `arr.[..5]`).
 var BinaryAtom = or(
 	ClosedRangeExpr,
-	LeadingRangeExpr,
-	TrailingRangeExpr,
 	UnaryExpr,
 	BareOperandExpr,
 	GroupedOpExpr,

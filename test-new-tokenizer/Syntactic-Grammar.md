@@ -479,8 +479,14 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;
 
 (* Range operands are bare — no `:as` tail allowed directly on a
-   range operand. To annotate a range expression as a whole,
-   parenthesize it: `(1..5) :as List`. *)
+   range operand. To annotate a closed range expression as a
+   whole, parenthesize it: `(1..5) :as List`.
+
+   <RangeExpr> is referenced only by DotBracketExpr above — that
+   is the sole context where open-ended ranges (LeadingRangeExpr,
+   TrailingRangeExpr) are admitted. At expression position,
+   <BinaryAtom> (§9) admits only ClosedRangeExpr because the
+   open-ended forms have no value semantic standalone. *)
 <RangeExpr>          := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr;
 ClosedRangeExpr      := RangeOperand _ DoublePeriod _ RangeOperand;
 LeadingRangeExpr     := RangeOperand _ DoublePeriod;
@@ -687,9 +693,13 @@ MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
    fails through cleanly.
 
    <BinaryAtom> deliberately does NOT include AsExpr — see the
-   `:as` Precedence section. *)
-<BinaryAtom>     := ClosedRangeExpr | LeadingRangeExpr | TrailingRangeExpr
-                  | UnaryExpr | BareOperandExpr | GroupedOpExpr | GroupedDoExpr;
+   `:as` Precedence section.
+
+   LeadingRangeExpr / TrailingRangeExpr deliberately omitted — open-
+   ended ranges have no value semantic at expression position; they
+   are reachable only via <RangeExpr> inside DotBracketExpr (§6). *)
+<BinaryAtom>     := ClosedRangeExpr | UnaryExpr | BareOperandExpr
+                  | GroupedOpExpr | GroupedDoExpr;
 
 (* GroupedDoExpr: parenthesized DoComprExpr/DoLoopComprExpr usable as a
    binary operand. Needed so flow-tier chains like

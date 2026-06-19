@@ -1905,10 +1905,10 @@ var handlers = {
 	//   "a".."e" → ["a", "b", "c", "d", "e"]
 	//   3..3     → [3]
 	//
-	// LeadingRangeExpr / TrailingRangeExpr at expression position
-	// carry no documented value semantic — they remain fallback-
-	// only outside of RangeAccessExpr / DotBracketExpr lifted
-	// contexts.
+	// LeadingRangeExpr / TrailingRangeExpr no longer reach
+	// expression position — narrowed at the grammar layer (§9
+	// BinaryAtom drops both arms). They appear only as the
+	// inner shape of RangeAccessExpr / DotBracketExpr.
 	ClosedRangeExpr(node, recur) {
 		return emitRangeBody(false, recur(node.from), recur(node.to));
 	},
@@ -2723,6 +2723,25 @@ var handlers = {
 	// `y` when c is truthy. BlockExpr (the defs-init form) isn't
 	// reachable as a GuardedExpr consequent — it's only admitted
 	// at FlowRHSImplIn / FuncBodyPipeline positions per §11.
+	//
+	// AssignmentExpr consequent (`?[c]: x := 5`) composes as a
+	// value-producing expression: assignment fires only when the
+	// guard is truthy, and the GuardedExpr's value IS the assigned
+	// value. By-contract — emerges from the AssignmentExpr handler
+	// emitting bare `x = 5` (no paren-wrap, no IIFE) and JS's
+	// assignment-expression returning the assigned value:
+	//
+	//   ?[c]: x := 5         →  c ? x = 5 : null
+	//                           guard false → null, no mutation
+	//                           guard true  → 5, x is assigned
+	//   ?[c]: foo.bar := 42  →  c ? foo.bar = 42 : null
+	//                           same conditional-fire + value-
+	//                           producing semantic, independent
+	//                           of LHS target shape
+	//
+	// Do NOT "fix" the composition by wrapping AssignmentExpr in
+	// parens or IIFE at this site — both the conditional-mutation
+	// and value-producing properties depend on the bare JS form.
 	GuardedExpr(node, recur) {
 		var cond = emitCondClause(node.clause, recur);
 		return cond + " ? " + recur(node.consequent) + " : null";
