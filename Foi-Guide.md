@@ -1341,6 +1341,31 @@ def entry: < &person, nickname: empty >;
 
 As shown, `empty` means the *absence of a value*, and thus cannot actually be held in a Record/Tuple.
 
+#### Dynamic Pick
+
+The `.<  ..  >` pick syntax -- either `something.< .. >` or `(.< .. >)` form -- supports dynamicism (runtime determination of property names to pick) via `&` and `%`, similar to how those sigils work in Records:
+
+```js
+def person: <
+    first: "Kyle", last: "Simpson", nickname: "getify",
+    title: "Developer", languages: < "Foi", "JS" >
+>;
+def primaryFields: < "first", "last" >;
+def otherFields: < "nickname", "title" >;
+
+def entry: person.< &primaryFields, %otherFields.1 >;
+// < first: "Kyle", last: "Simpson", title: "Developer" >
+```
+
+Supported forms of dynamic pick include:
+
+* `&something` (must resolve to a Tuple of `String`s)
+* `&something.another` (must resolve to a Tuple of `String`s)
+* `%whatever` (must resolve to a `String`)
+* `%whatever.other` (must resolve to a `String`)
+* `%whatever.1` (must resolve to a `String`)
+* `%someFunc(..)` (must resolve to a `String`)
+
 ### Progressive Definition
 
 Since Records and Tuples are immutable, if you need to define them bit by bit -- via conditionals, loops, etc -- lack of mutability can make things inconvenient. These are probably the two most obvious approaches:

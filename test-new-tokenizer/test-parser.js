@@ -133,6 +133,18 @@ var failSamples = [
 	"(x, y) { x; };",          // same
 	"(x: 1, y) { x; };",       // same
 	"10 + x := 5;",
+	// Dynamic-pick boundaries — confirm grammar narrowness.
+	//
+	// `&`-in-pick admits PickValue's source alphabet exactly:
+	// IdentBase + optional MultiAccessExpr. Call suffixes not
+	// admitted (Q4=B); inline calls require pre-binding.
+	"foo.<&Object.keys(rec)>;",
+
+	// `%`-in-pick admits ComputedPropName's inner alphabet:
+	// PipelineTopic | CallExpr | IdentifierExpr | StringLit.
+	// Bare NumberLit is not routed — `%5` has no use case (a
+	// literal integer as a computed key would just be `5`).
+	"rec.<%5>;",
 ];
 
 var passed = 0;

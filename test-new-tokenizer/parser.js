@@ -637,6 +637,7 @@ var Period                = tokType("Period");
 var OpenBracket           = tokType("OpenBracket");
 var CloseBracket          = tokType("CloseBracket");
 var DoublePeriod          = tokType("DoublePeriod");
+var Ampersand             = tokType("Ampersand");
 
 // <IdentBase> := PipelineTopic | Identifier | BuiltIn;
 var IdentBase = or(PipelineTopic, Identifier, BuiltIn);
@@ -653,10 +654,43 @@ var PositiveIntLit = or(
 // <PropertyExpr> := Identifier | PositiveIntLit;
 var PropertyExpr = or(Identifier, PositiveIntLit);
 
-// <AnglePropertyList> := PropertyExpr (_ Comma _ PropertyExpr)* (_ Comma)?;
+// <SpreadPropName> := Ampersand IdentBase MultiAccessExpr?;
+//
+// Spread-pick sigil inside DotAngleExpr — `&` followed by a
+// source whose runtime value is a tuple of strings (or string-
+// coercible names). Source alphabet mirrors PickValue exactly:
+// IdentBase + optional MultiAccessExpr, no call suffixes.
+// Inline calls require pre-binding: `def ks: Object.keys(rec); foo.<&ks>`.
+//
+// `&` keeps a single sigil meaning across contexts — "spread N
+// slots from this source"; the slot shape varies by context. In
+// a record literal `<&bar>`: bar contributes entries (k/v pairs).
+// In a pick `.<&ks>`: ks contributes key NAMES. The source
+// contract differs; the sigil's "spread" intent does not.
+//
+// No trivia between Ampersand and IdentBase (per grammar).
+var SpreadPropName = and(Ampersand, IdentBase, optional(lazy(() => MultiAccessExpr)));
+
+// <AnglePickEntry> := ComputedPropName | SpreadPropName | PropertyExpr;
+//
+// Three disjoint-opener arms: ComputedPropName on Percent,
+// SpreadPropName on Ampersand, PropertyExpr on Identifier /
+// PositiveIntegerLit / EscapePlain. Order is mechanical.
+//
+// ComputedPropName is defined in §17 (alongside ExplicitPropDef
+// where it's also used) — forward-ref via lazy. Full alphabet
+// parity with the existing ExplicitPropDef computed-key arm:
+// `%foo`, `%foo.bar`, `%Maybe@42`, `%None@`, `%"k"`, `%#`.
+var AnglePickEntry = or(
+	lazy(() => ComputedPropName),
+	SpreadPropName,
+	PropertyExpr
+);
+
+// <AnglePropertyList> := AnglePickEntry (_ Comma _ AnglePickEntry)* (_ Comma)?;
 var AnglePropertyList = and(
-	PropertyExpr,
-	any(and(delim(), Comma, delim(), PropertyExpr)),
+	AnglePickEntry,
+	any(and(delim(), Comma, delim(), AnglePickEntry)),
 	optional(and(delim(), Comma))
 );
 
@@ -2021,7 +2055,6 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 // §17 DATA STRUCTURE LITERALS
 // =============================================================
 
-var Ampersand = tokType("Ampersand");
 var Percent   = tokType("Percent");
 
 // PickValue := Ampersand IdentBase MultiAccessExpr?;

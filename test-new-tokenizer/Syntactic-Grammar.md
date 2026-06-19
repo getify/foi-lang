@@ -473,7 +473,24 @@ BracketExpr          := OpenBracket _ ExprNoBlock _ CloseBracket;
 DotBracketExpr       := Period OpenBracket _ RangeExpr _ CloseBracket;
 DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 
-<AnglePropertyList>  := PropertyExpr (_ Comma _ PropertyExpr)* (_ Comma)?;
+(* Dynamic-pick arms inside DotAngleExpr — `.<%expr>` (computed
+   name, one slot) and `.<&src>` (key-stream spread, N slots).
+   ComputedPropName is shared with ExplicitPropDef (§17, full
+   inner alphabet parity). SpreadPropName mirrors PickValue's
+   source shape: IdentBase + optional MultiAccessExpr, no call
+   suffixes — inline calls require pre-binding. Runtime contract
+   on `&`: source value must be a tuple of strings / string-
+   coercible names; transpiler emits the natural lowering and
+   fails honestly at runtime on shape mismatch.
+
+   Computed-key stringification footgun (audit #10): a `%expr`
+   whose value is a Record/Tuple stringifies via JS `.toString()`
+   to a stable-but-meaningless key. Inherited from ExplicitPropDef
+   — fix is at the runtime layer (structural-equality Map dispatch),
+   not at the grammar layer. *)
+<AnglePropertyList>  := AnglePickEntry (_ Comma _ AnglePickEntry)* (_ Comma)?;
+<AnglePickEntry>     := ComputedPropName | SpreadPropName | PropertyExpr;
+<SpreadPropName>     := Ampersand IdentBase MultiAccessExpr?;
 <PropertyExpr>       := Identifier | PositiveIntLit;
 
 <PositiveIntLit>     := (EscapePlain PositiveIntegerLit) | PositiveIntegerLit;

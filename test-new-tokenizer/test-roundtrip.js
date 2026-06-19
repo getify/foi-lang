@@ -161,23 +161,21 @@ var emitBinTier = (typeName, node, recur) => {
 	return out;
 };
 
-// Render DotAngleExpr / OpFuncExpr properties when the parent
-// has no recoverable delim positions for the property wrappers.
-// `properties` is an array of `{accessor: node}` or `{index: string}`
-// wrappers; the wrappers themselves carry no source positions.
+// Render OpFuncExpr's angle-pick properties as a comma-joined
+// string. The lifted form has no recoverable comma/sigil
+// positions at the OpFuncExpr level — surrounding `.<` `>` and
+// inter-entry commas are re-synthesized here. PropertyPickExpr
+// no longer uses this — it walks the propagated DotAngleExpr
+// delims directly to recover internal spacing.
 //
-// Still used by OpFuncExpr's angle-pick form. PropertyPickExpr
-// no longer uses this — it now walks the propagated DotAngleExpr
-// delims directly to recover internal spacing (commas + trailing
-// whitespace).
-var emitProperties = (properties, recur) => {
-	var parts = [];
-	for (let p of properties) {
-		if (p.accessor) parts.push(recur(p.accessor));
-		else parts.push(p.index);
-	}
-	return parts.join(",");
-};
+// Per-entry rendering dispatches via recur — falls through to
+// each Pick*'s handler (PickAccessor / PickIndex) or to
+// emitGeneric for handler-less Pick* types (PickComputed,
+// PickSpread). emitGeneric walks the Pick*'s own delims (sigil
+// token) + child node field (expr/source) in source-position
+// order, yielding `%<expr>` and `&<source>` respectively.
+var emitProperties = (properties, recur) =>
+	properties.map(p => recur(p)).join(",");
 
 
 // =============================================================

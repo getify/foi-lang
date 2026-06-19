@@ -406,9 +406,10 @@ var emitCondClause = (clause, recur) => {
 //   MemberAccessExpr w/ accessor       named-pick,     OBJECT-FLIP
 //   MemberAccessExpr w/ index          single-pick,    neutral
 //   IndexAccessExpr                    single-pick,    neutral
-//   PropertyPickExpr all-PickIndex     subset-spread,  neutral
-//   PropertyPickExpr any-PickAccessor  subset-spread,  OBJECT-FLIP
-//   RangeAccessExpr                    slice-spread,   neutral
+//   PropertyPickExpr all-PickIndex             subset-spread,  neutral
+//   PropertyPickExpr any-PickAccessor          subset-spread,  OBJECT-FLIP
+//   PropertyPickExpr any-PickComputed/Spread   subset-spread,  OBJECT-FLIP
+//   RangeAccessExpr                            slice-spread,   neutral
 //
 // Chained access (`&foo.bar.baz`, `&foo.<a,b>.x`) inherits
 // classification from the OUTERMOST segment.
@@ -438,7 +439,14 @@ var emitCondClause = (clause, recur) => {
 var pickForcesObjectMode = src => {
 	if (src.type === "MemberAccessExpr") return src.accessor != null;
 	if (src.type === "PropertyPickExpr") {
-		return src.properties.some(p => p.type === "PickAccessor");
+		// PickAccessor / PickComputed / PickSpread all force object
+		// mode — each contributes named (static or dynamic) fields.
+		// Only all-PickIndex stays in positional/array mode.
+		return src.properties.some(p =>
+			p.type === "PickAccessor" ||
+			p.type === "PickComputed" ||
+			p.type === "PickSpread"
+		);
 	}
 	return false;
 };
@@ -458,19 +466,42 @@ var renderPickValueSpread = (src, recur) => {
 	}
 	if (src.type === "PropertyPickExpr") {
 		let base = recur(src.object);
+		let forcesObject = src.properties.some(p =>
+			p.type === "PickAccessor" ||
+			p.type === "PickComputed" ||
+			p.type === "PickSpread"
+		);
 		let entries = src.properties.map(p => {
 			if (p.type === "PickAccessor") {
 				let name = recur(p.accessor);
 				return name + ": " + base + "." + name;
 			}
 			if (p.type === "PickIndex") {
-				return base + "[" + p.index + "]";
+				// Object mode: index serves as both key and lookup.
+				// Array mode: bare value only.
+				return forcesObject
+					? p.index + ": " + base + "[" + p.index + "]"
+					: base + "[" + p.index + "]";
+			}
+			if (p.type === "PickComputed") {
+				// Inline shape — computed expression evaluated twice
+				// (property name + lookup index). Matches this site's
+				// existing non-single-eval pattern for `base`; the
+				// standalone PropertyPickExpr handler single-evals,
+				// this PickValue-inline site does not.
+				let key = recur(p.expr);
+				return "[" + key + "]: " + base + "[" + key + "]";
+			}
+			if (p.type === "PickSpread") {
+				// Source evaluated once (passed into .map()).
+				let s = recur(p.source);
+				return "...Object.fromEntries(" + s +
+					".map(__n => [__n, " + base + "[__n]]))";
 			}
 			return null;
 		});
 		if (entries.some(e => e == null)) return null;
-		let anyAccessor = src.properties.some(p => p.type === "PickAccessor");
-		return anyAccessor
+		return forcesObject
 			? "...({ " + entries.join(", ") + " })"
 			: "...[" + entries.join(", ") + "]";
 	}
@@ -495,6 +526,16 @@ var renderPickValueSetEntry = (src, recur) => {
 			}
 			if (p.type === "PickIndex") {
 				return base + "[" + p.index + "]";
+			}
+			if (p.type === "PickComputed") {
+				// Sets are flat value streams — only the LOOKUP
+				// matters, not the key. Single use; no double-eval
+				// concern beyond the source base.
+				return base + "[" + recur(p.expr) + "]";
+			}
+			if (p.type === "PickSpread") {
+				let s = recur(p.source);
+				return "..." + s + ".map(__n => " + base + "[__n])";
 			}
 			return null;
 		});
@@ -1913,33 +1954,90 @@ var handlers = {
 		return emitRangeBody(false, recur(node.from), recur(node.to));
 	},
 
-	// PropertyPickExpr { object, properties } — `.<a, b, 5>`
+	// PropertyPickExpr { object, properties } — `.<a, b, 5, %k, &s>`
 	// angle-pick. Picks the listed fields off the source and
-	// returns a fresh record. Source bound into __o once (uniform
-	// shape — avoids double-eval on side-effecting bases; no
-	// peephole for simple identifiers).
+	// returns a fresh record. Static, computed, and spread entries
+	// compose via a single IIFE that single-evals the source AND
+	// every dynamic-eval entry (computed key expression, spread
+	// source expression) — uniform "avoid double-eval" discipline.
+	// Dynamic-eval params are assigned in source order so any side
+	// effects fire in user-written order.
 	//
-	//   rec.<a, b>   → ((__o) => ({ a: __o.a, b: __o.b }))(rec)
-	//   rec.<a, 5>   → ((__o) => ({ a: __o.a, 5: __o[5] }))(rec)
+	// Static entries:
+	//   PickAccessor (Identifier / BuiltIn) → `name: __o.name`.
+	//   PickIndex (bare integer string)     → `<i>: __o[<i>]`.
+	//     JS coerces numeric keys to strings at object storage,
+	//     matching pick-by-position semantics for Tuples and
+	//     harmless for Records.
 	//
-	// PickAccessor entries (Identifier or BuiltIn) emit
-	// `name: __o.name`. PickIndex entries (bare integer string)
-	// emit `<i>: __o[<i>]` — JS coerces numeric keys to strings
-	// at object storage, matching pick-by-position semantics for
-	// Tuples and harmless for Records.
+	// Dynamic entries:
+	//   PickComputed → `[__k<N>]: __o[__k<N>]`. Key expression
+	//     single-eval'd into __k<N> at IIFE invocation; reused
+	//     twice inside (property name + lookup index).
+	//   PickSpread   → `...Object.fromEntries(__s<N>.map(__n =>
+	//     [__n, __o[__n]]))`. Source single-eval'd into __s<N>;
+	//     runtime contract: source must yield a tuple of strings
+	//     / string-coercible names. Honest runtime failure on
+	//     shape mismatch.
+	//
+	// Examples:
+	//   rec.<a, b>       → ((__o) => ({ a: __o.a, b: __o.b }))(rec)
+	//   rec.<a, 5>       → ((__o) => ({ a: __o.a, 5: __o[5] }))(rec)
+	//   rec.<%k>         → ((__o, __k0) =>
+	//                        ({ [__k0]: __o[__k0] }))(rec, k)
+	//   rec.<&keys>      → ((__o, __s0) => ({
+	//                        ...Object.fromEntries(__s0.map(__n =>
+	//                          [__n, __o[__n]]))
+	//                      }))(rec, keys)
+	//   rec.<a, %k, &s>  → ((__o, __k0, __s0) => ({
+	//                        a: __o.a,
+	//                        [__k0]: __o[__k0],
+	//                        ...Object.fromEntries(__s0.map(__n =>
+	//                          [__n, __o[__n]]))
+	//                      }))(rec, k, s)
+	//
+	// Computed-key stringification footgun (audit #10) applies:
+	// `%expr` whose value is a Record/Tuple stringifies via JS
+	// `.toString()`, producing a stable-but-meaningless key.
+	// Inherited from ExplicitPropDef's ComputedPropName lowering.
+	//
+	// Object.fromEntries is ES2019, same vintage as `.at()` already
+	// emitted elsewhere — no prelude or polyfill needed.
 	PropertyPickExpr(node, recur) {
-		var entries = node.properties.map(p => {
+		var bodyParts = [];
+		var dynParams = [];
+		var dynArgs = [];
+		var keyIdx = 0;
+		var spreadIdx = 0;
+		for (let p of node.properties) {
 			if (p.type === "PickAccessor") {
 				let name = recur(p.accessor);
-				return name + ": __o." + name;
+				bodyParts.push(name + ": __o." + name);
 			}
-			if (p.type === "PickIndex") {
-				return p.index + ": __o[" + p.index + "]";
+			else if (p.type === "PickIndex") {
+				bodyParts.push(p.index + ": __o[" + p.index + "]");
 			}
-			return null;
-		});
-		if (entries.some(e => e == null)) return fallback(node);
-		return "((__o) => ({ " + entries.join(", ") + " }))(" + recur(node.object) + ")";
+			else if (p.type === "PickComputed") {
+				let name = "__k" + (keyIdx++);
+				bodyParts.push("[" + name + "]: __o[" + name + "]");
+				dynParams.push(name);
+				dynArgs.push(recur(p.expr));
+			}
+			else if (p.type === "PickSpread") {
+				let name = "__s" + (spreadIdx++);
+				bodyParts.push("...Object.fromEntries(" + name +
+					".map(__n => [__n, __o[__n]]))");
+				dynParams.push(name);
+				dynArgs.push(recur(p.source));
+			}
+			else {
+				return fallback(node);
+			}
+		}
+		var allParams = ["__o", ...dynParams].join(", ");
+		var allArgs = [recur(node.object), ...dynArgs].join(", ");
+		return "((" + allParams + ") => ({ " + bodyParts.join(", ") +
+			" }))(" + allArgs + ")";
 	},
 
 	// PrimedExpr { inner } — postfix `'` (argument-reversal
@@ -2075,19 +2173,60 @@ var handlers = {
 		}
 
 		// Angle-pick lifted: (.<a, b>) → ((__o) => ({ a: __o.a, b: __o.b }))
+		//
+		// Dynamic-pick lifted forms `(.<%k>)` / `(.<&keys>)` close over
+		// the computed/spread eval values AT LIFT TIME (not per-apply) —
+		// dynamic-eval params live in an outer IIFE that wraps the inner
+		// `(__o) => ...` arrow. Consistent with the standalone
+		// PropertyPickExpr lowering's single-eval discipline.
+		//
+		//   (.<%k>)        → ((__k0) => (__o) => ({ [__k0]: __o[__k0] }))(k)
+		//   (.<&keys>)     → ((__s0) => (__o) => ({ ...Object.fromEntries(
+		//                      __s0.map(__n => [__n, __o[__n]])) }))(keys)
+		//   (.<a, %k, &s>) → ((__k0, __s0) => (__o) => ({
+		//                      a: __o.a,
+		//                      [__k0]: __o[__k0],
+		//                      ...Object.fromEntries(__s0.map(__n =>
+		//                        [__n, __o[__n]]))
+		//                    }))(k, s)
+		//
+		// All-static entries preserve the bare-arrow shape (no outer
+		// wrapper) — backward-compatible with prior lifted-pick lowering.
 		if (node.properties) {
-			let entries = node.properties.map(p => {
+			let bodyParts = [];
+			let dynParams = [];
+			let dynArgs = [];
+			let keyIdx = 0;
+			let spreadIdx = 0;
+			for (let p of node.properties) {
 				if (p.type === "PickAccessor") {
 					let name = recur(p.accessor);
-					return name + ": __o." + name;
+					bodyParts.push(name + ": __o." + name);
 				}
-				if (p.type === "PickIndex") {
-					return p.index + ": __o[" + p.index + "]";
+				else if (p.type === "PickIndex") {
+					bodyParts.push(p.index + ": __o[" + p.index + "]");
 				}
-				return null;
-			});
-			if (entries.some(e => e == null)) return fallback(node);
-			return "((__o) => ({ " + entries.join(", ") + " }))";
+				else if (p.type === "PickComputed") {
+					let name = "__k" + (keyIdx++);
+					bodyParts.push("[" + name + "]: __o[" + name + "]");
+					dynParams.push(name);
+					dynArgs.push(recur(p.expr));
+				}
+				else if (p.type === "PickSpread") {
+					let name = "__s" + (spreadIdx++);
+					bodyParts.push("...Object.fromEntries(" + name +
+						".map(__n => [__n, __o[__n]]))");
+					dynParams.push(name);
+					dynArgs.push(recur(p.source));
+				}
+				else {
+					return fallback(node);
+				}
+			}
+			let inner = "(__o) => ({ " + bodyParts.join(", ") + " })";
+			if (dynParams.length === 0) return "(" + inner + ")";
+			return "((" + dynParams.join(", ") + ") => " + inner + ")(" +
+				dynArgs.join(", ") + ")";
 		}
 
 		// Range-access lifted: (.[1..5]) → ((__o) => __o.slice(1, 5 + 1))

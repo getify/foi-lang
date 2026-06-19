@@ -1095,18 +1095,41 @@ export const defaultShapers = {
 		return withDelims({ type: "DotBracketExpr", range }, delims);
 	},
 
-	// DotAngleExpr := Period OpenAngle _ <PropertyExpr> (_ Comma _ <PropertyExpr>)* _ CloseAngle;
+	// DotAngleExpr := Period OpenAngle _ <AnglePickEntry> (_ Comma _ <AnglePickEntry>)* _ CloseAngle;
 	//
 	// Period → delims. Angles, commas, and EscapePlain (when
 	// prefixing integer accessors) → delims. Property entries are
-	// synthesized as PickAccessor / PickIndex nodes so they carry
-	// source positions — required for the renderer's gap-walk to
-	// place them correctly relative to surrounding delims when WS
-	// straddles commas or angle brackets.
+	// synthesized as Pick* nodes carrying source positions —
+	// required for the renderer's gap-walk to place them correctly
+	// relative to surrounding delims when WS straddles commas or
+	// angle brackets. Four arm shapes:
+	//
+	//   PropertyExpr Identifier arm → standalone Identifier node →
+	//     PickAccessor { accessor }.
+	//   PropertyExpr PositiveIntLit arm → standalone PositiveIntegerLit
+	//     token (optionally preceded by EscapePlain delim) →
+	//     PickIndex { index }.
+	//   ComputedPropName arm → Percent token + inner node
+	//     (PipelineTopic | CallExpr | IdentifierExpr | StringLit) →
+	//     PickComputed { expr }. Percent consumed into span — matches
+	//     ExplicitPropDef's ComputedPropName synthesis precedent.
+	//   SpreadPropName arm → Ampersand token + IdentBase node +
+	//     optional MultiAccessExpr → PickSpread { source }. Ampersand
+	//     consumed into span; access folds via foldAccess (same
+	//     eight-site helper used by PickValue, AssignmentExpr LHS,
+	//     etc.). PickSpread.source is the post-fold chain — Identifier
+	//     / MemberAccessExpr / IndexAccessExpr / etc. — same shape
+	//     PickValue.source carries.
+	//
+	// Walk is index-driven (not for-of) so multi-token entries
+	// (Percent + inner; Ampersand + base + optional access) can
+	// consume forward parts atomically.
 	DotAngleExpr(frame,parts) {
 		var properties = [];
 		var delims = [];
-		for (let p of parts) {
+		var i = 0;
+		while (i < parts.length) {
+			let p = parts[i];
 			if (isNode(p)) {
 				properties.push({
 					type: "PickAccessor",
@@ -1114,6 +1137,7 @@ export const defaultShapers = {
 					start: p.start,
 					end: p.end,
 				});
+				i++;
 			}
 			else if (p.type === "PositiveIntegerLit") {
 				properties.push({
@@ -1122,9 +1146,63 @@ export const defaultShapers = {
 					start: p.start,
 					end: p.end,
 				});
+				i++;
+			}
+			else if (p.type === "Percent") {
+				// ComputedPropName arm: Percent + inner node. Percent rides
+				// on PickComputed's OWN delims (not parent's) — mirrors
+				// SpreadArg's TriplePeriod-on-delims pattern. emitGeneric
+				// recurs into PickComputed and the inner piece-walk recovers
+				// the sigil at its source position alongside the expr node.
+				//
+				// No trivia between Percent and inner per grammar; defensive
+				// pass-through of any incidental tokens to parent delims.
+				let percent = p;
+				i++;
+				while (i < parts.length && !isNode(parts[i])) {
+					delims.push(parts[i]);
+					i++;
+				}
+				let inner = parts[i];
+				i++;
+				properties.push({
+					type: "PickComputed",
+					expr: inner,
+					start: percent.start,
+					end: inner.end,
+					delims: [percent],
+				});
+			}
+			else if (p.type === "Ampersand") {
+				// SpreadPropName arm: Ampersand + IdentBase + optional
+				// MultiAccessExpr. Ampersand rides on PickSpread's OWN
+				// delims (same SpreadArg-style pattern as PickComputed).
+				// Access folds via foldAccess.
+				let amp = p;
+				i++;
+				let base = parts[i];
+				i++;
+				let access;
+				if (
+					i < parts.length &&
+					isNode(parts[i]) &&
+					parts[i].type === "MultiAccessExpr"
+				) {
+					access = parts[i];
+					i++;
+				}
+				let source = foldAccess(base, access);
+				properties.push({
+					type: "PickSpread",
+					source,
+					start: amp.start,
+					end: source.end,
+					delims: [amp],
+				});
 			}
 			else {
-				delims.push(p); // Period, OpenAngle, CloseAngle, Comma, Escape
+				delims.push(p); // Period, OpenAngle, CloseAngle, Comma, EscapePlain
+				i++;
 			}
 		}
 		return withDelims({ type: "DotAngleExpr", properties }, delims);

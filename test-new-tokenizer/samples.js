@@ -219,6 +219,22 @@ export const samples = [
 	{ label: "RangeAccessExpr (trailing): arr.[..5]", src: "arr.[..5];" },
 	{ label: "PropertyPickExpr: rec.<a,5>",          src: "rec.<a,5>;" },
 
+	// === Dynamic pick — computed name (%) and spread (&) ===
+	// `%` is one computed key (full ComputedPropName parity with
+	// ExplicitPropDef). `&` is N keys from a runtime tuple-of-
+	// strings source; alphabet mirrors PickValue exactly (no inline
+	// call suffixes — pre-bind required for calls).
+	{ label: "PropertyPickExpr (computed ident): rec.<%k>",          src: "rec.<%k>;" },
+	{ label: "PropertyPickExpr (computed builtin): rec.<%Maybe>",    src: "rec.<%Maybe>;" },
+	{ label: "PropertyPickExpr (computed string): rec.<%\"k\">",     src: "rec.<%\"k\">;" },
+	{ label: "PropertyPickExpr (computed pipeline): rec.<%#>",       src: "rec.<%#>;" },
+	{ label: "PropertyPickExpr (computed chain): rec.<%foo.bar>",    src: "rec.<%foo.bar>;" },
+	{ label: "PropertyPickExpr (computed at-call): rec.<%Maybe@42>", src: "rec.<%Maybe@42>;" },
+	{ label: "PropertyPickExpr (spread bare): rec.<&keys>",          src: "rec.<&keys>;" },
+	{ label: "PropertyPickExpr (spread chain): rec.<&keys.subset>",  src: "rec.<&keys.subset>;" },
+	{ label: "PropertyPickExpr (spread index): rec.<&keys[0]>",      src: "rec.<&keys[0]>;" },
+	{ label: "PropertyPickExpr (mixed all): rec.<a, 5, %k, &keys>",  src: "rec.<a, 5, %k, &keys>;" },
+
 	// === Call cluster — ChainExpr fold ===
 	{ label: "CallExpr: foo(1,2)",                   src: "foo(1,2);" },
 	{ label: "CallExpr (empty): foo()",              src: "foo();" },
@@ -269,6 +285,9 @@ export const samples = [
 	{ label: "OpFuncExpr (multi-tok): ($+)",         src: "($+);" },
 	{ label: "OpFuncExpr (empty-bracket): ([])",     src: "([]);" },
 	{ label: "OpFuncExpr (angle-pick): (.<a,5>)",    src: "(.<a,5>);" },
+	{ label: "OpFuncExpr (angle-pick computed): (.<%k>)",         src: "(.<%k>);" },
+	{ label: "OpFuncExpr (angle-pick spread): (.<&keys>)",        src: "(.<&keys>);" },
+	{ label: "OpFuncExpr (angle-pick mixed dynamic): (.<a,%k,&ks>)", src: "(.<a,%k,&ks>);" },
 	{ label: "OpFuncExpr (range-access): (.[1..5])", src: "(.[1..5]);" },
 	{ label: "OpFuncExpr (primed): (+')",            src: "(+');" },
 	{ label: "OpFuncExpr :as int",                   src: "(+) :as int;" },
@@ -717,6 +736,15 @@ export const samples = [
 	{ label: "PickValue: range-pick slice (closed)",             src: "<&foo.[1..3]>;" },
 	{ label: "PickValue: range-pick slice (leading)",            src: "<&foo.[2..]>;" },
 	{ label: "PickValue: range-pick slice (trailing)",           src: "<&foo.[..3]>;" },
+
+	// Dynamic-pick subsets nested inside PickValue context.
+	{ label: "PickValue: angle-pick (computed)",                 src: "<&foo.<%k>>;" },
+	{ label: "PickValue: angle-pick (spread)",                   src: "<&foo.<&keys>>;" },
+	{ label: "PickValue: angle-pick (mixed dynamic)",            src: "<&foo.<a, %k, &keys>>;" },
+
+	// Set-context dynamic-pick.
+	{ label: "SetLit: angle-pick (computed)",                    src: "<[&foo.<%k>]>;" },
+	{ label: "SetLit: angle-pick (spread)",                      src: "<[&foo.<&keys>]>;" },
 
 	// === ConcisePropDef (PropertyExpr arms) ===
 	{ label: "ConcisePropDef: Identifier",                       src: "<:foo>;" },
