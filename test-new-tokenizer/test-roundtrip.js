@@ -310,6 +310,38 @@ var handlers = {
 		return out;
 	},
 
+	// CurriedExpr { inner } — postfix `/\` curry. PrimedExpr-shaped:
+	// modifier glyph isn't in node.delims (shaper drops it during
+	// wrapper synthesis), so handler reconstructs the two-char `/\`
+	// after recurring into inner, then walks any post-pieces (.as
+	// from AsExpr unwrap, post-end delims from StmtSemi α-claim like
+	// a trailing Semicolon) in source-position order.
+	CurriedExpr(node, recur) {
+		var out = recur(node.inner) + "/\\";
+		var rest = [];
+		if (node.as) rest.push(node.as);
+		if (node.delims) {
+			for (let d of node.delims) rest.push(d);
+		}
+		rest.sort((a, b) => a.start - b.start);
+		for (let p of rest) out += isNode(p) ? recur(p) : p.value;
+		return out;
+	},
+
+	// UncurriedExpr { inner } — postfix `\/` uncurry. Same shape
+	// rationale as CurriedExpr; reconstructs the two-char `\/`.
+	UncurriedExpr(node, recur) {
+		var out = recur(node.inner) + "\\/";
+		var rest = [];
+		if (node.as) rest.push(node.as);
+		if (node.delims) {
+			for (let d of node.delims) rest.push(d);
+		}
+		rest.sort((a, b) => a.start - b.start);
+		for (let p of rest) out += isNode(p) ? recur(p) : p.value;
+		return out;
+	},
+
 	OpFuncExpr(node, recur) {
 		// Inner content depends on which arm:
 		//   - properties present → ".<a,b>" form

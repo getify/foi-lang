@@ -20,6 +20,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Reversing Argument Order](#reversing-argument-order)
     - [Gathering Arguments](#gathering-arguments)
     - [Partial Application](#partial-application)
+    - [Currying Arguments](#currying-arguments)
     - [Named Arguments](#named-arguments)
 * [Defining Variables](#defining-variables)
     - [Block-Definitions Clause](#block-definitions-clause)
@@ -527,6 +528,74 @@ def fn: xyz'|...nums|;
 
 fn();                           // x: 7, y: 8, z: 9
 ```
+
+### Currying Arguments
+
+A close *cousin* of partial-application -- also used primarily for function specialization -- is referred to as *currying*. This shape of function is appropriate when multiple inputs must be passed to invoke it, but when each input will be provided in a different call:
+
+```java
+defn buildURL(origin,path,query) ^`"`origin``path`?`query`";
+
+def buildURLParts: buildURL/\;
+```
+
+Here, the `buildURLParts` value is now a function that expects each individual input (`origin`, `path`, and `query`) as a separate call. Each call returns an intermediate unary function expecting the next input. Once all expected inputs are provided, the original underlying function is invoked:
+
+```java
+buildURLParts("https://my.site")("/api/find")("name=getify");
+// https://my.site/api/find?name=getify
+
+def mySiteURL: buildURLParts("https://my.site");
+def myFindAPI: mySiteURL("/api/find");
+myFindAPI("name=getify");
+// https://my.site/api/find?name=getify
+```
+
+As you can see, each individual argument naturally *specializes* the preceding generalized function, which reflect in this sample with more specialized names.
+
+Currying can be done at the call-site or as operator-as-function:
+
+```java
+def buildURLParts: buildURL/\;
+
+// or:
+def buildURLParts: (/\)(buildURL);
+```
+
+#### Uncurrying
+
+The inverse of currying is uncurrying (via that `\/` operator), which lowers a curried function back to a single function expecting all inputs as positional arguments in a single call:
+
+```java
+// original:
+buildURL("https://my.site","/api/find","name=getify");
+// https://my.site/api/find?name=getify
+
+def alsoBuildURL: buildURLParts\/;
+alsoBuildURL("https://my.site","/api/find","name=getify");
+// https://my.site/api/find?name=getify
+```
+
+`buildURLParts(..)` has previously been curried, so `\/` uncurries it, making it a more normal looking single function call.
+
+Notice the intentional visual semantic of these (admittedly, unusually shaped) operators:
+
+* `/\` is known as *the mountain*, and hints at the operation (currying) which modifies the function so that its parameters are lifted off the ground and stacked up in a pile like a mountain (curried, one per call), to match the shape of arguments you'd pass in (e.g., `(x)(y)(z)`).
+
+* `\/` is known as *the valley*, and hints at the inverse operation (uncurrying) -- and it also looks a bit like a "u"'ish shape -- because it modifies a function's shape by lowering its parameters from a curried stack, flattening down to match a single list of arguments all at once at the call-site (e.g., `(x,y,z)`).
+
+#### Primed Inverses
+
+Each operator is the *inverse* of the other, and as such, you can *technically* express one as the `'` primed version of the other:
+
+```java
+def uncurry: (/\');
+def curry: (\/');
+```
+
+See how the operators are reversed here, but the `'` is what's inverting them?
+
+**TIP:** While you can always do this (for language coherency/consistency), it's strongly recommended you use the proper `/\` or `\/` operator form.
 
 ### Named Arguments
 
@@ -1678,7 +1747,7 @@ factorial(5);                   // 120
 
 ### Function Currying
 
-Function definitions can optionally be curried:
+In addition to the `/\` operator discussed in [Currying Arguments](#currying-arguments) for currying existing function values, function definitions themselves can optionally be curried:
 
 ```java
 defn add(x)(y) ^x + y;
@@ -1691,6 +1760,8 @@ add(6)(12);                         // 18
 // loose currying:
 add(6,12);                          // 18
 ```
+
+The `(x)(y)` multiple-parameter-sets define the levels of currying. By strong convention, you'll almost certainly want define just one input per level, but **Foi** does not restrict the count of inputs in this definition form.
 
 ### Function Overs
 

@@ -804,6 +804,8 @@ expressionEnding(General)
 TriplePeriod                         (* before DoublePeriod before single Period *)
 DoublePeriod
 DoubleColon                          (* before single Colon *)
+Mountain                             (* before single-char ForwardSlash *)
+Valley                               (* before EscapePlain and before single-char ForwardSlash *)
 EscapePlain                          (* standalone "\" — after all multi-char Escape forms *)
 ...(symb spread with STANDALONE_EXCLUDED_OPS filter, EXPRESSION_ENDING_OP_NAMES wrap)
 ```
@@ -851,6 +853,23 @@ Why each non-obvious ordering matters:
   (via the symb spread): longest match first.
 - `DoubleColon` before single `Colon` (via the symb spread):
   same.
+- `Mountain` before the symb spread (where `ForwardSlash` lives):
+  `/\` is a two-char op; without Mountain trying first, `/\`
+  would tokenize as `ForwardSlash` followed by standalone
+  `EscapePlain`. `Comment` (earlier in BaseTokenOr) still wins
+  on `//` via its second-`/` consume — disjoint from Mountain's
+  second-`\`.
+- `Valley` before `EscapePlain` (and before the symb spread):
+  same maximal-munch principle for the inverse glyph. The
+  earlier `EscapedNumber` arm doesn't shadow Valley on `\/`:
+  its `EscapePlain` sub-arm commits the `\` and then its inner
+  `or(PositiveIntegerLitWithSep, BareNumber, General)` all
+  fail on `/` (none is `/`-shaped), rolling the whole arm back
+  so the unconsumed input reaches Valley. The other Escape
+  arms in EscapedNumber dispatch (`\h`, `\u`, `\o`, `\b`, `\@`)
+  require disjoint second chars. SpacingInterpStr (`\` +
+  backtick) and SpacingEscapedStr (`\` + `"`) are likewise
+  second-char-disjoint from Valley.
 
 
 ## 15. Parse Configuration

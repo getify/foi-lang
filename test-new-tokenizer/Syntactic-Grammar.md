@@ -528,21 +528,48 @@ TrailingRangeExpr    := DoublePeriod _ RangeOperand;
    None of ChainExpr / AtCallExpr / OpFuncExpr carry `:as` directly.
    Annotation comes from an enclosing AsExpr (§5).
 
-   Postfix `'` is adjacent to the preceding expression (no trivia
-   between), terminates the access chain (no dot/bracket access
-   may follow), and may itself be followed only by zero or more
+   Three postfix modifiers reach the chain tail, mutually exclusive
+   (no stacking):
+
+   - `'` (SingleQuote) — argument-reversal / universal-prime
+     inversion on the function value. Existing precedent.
+   - `/\` (Mountain) — curry. Reshapes the function's parameter
+     signature into a tiered pyramid (one param per call site,
+     by fn.length, outer-tier-only).
+   - `\/` (Valley) — uncurry. Reshapes a tiered (curried)
+     function into a flat n-ary application, walking each tier's
+     fn.length to consume args.
+
+   Each modifier is adjacent to the preceding expression (no
+   trivia between), terminates the access chain (no dot/bracket
+   access may follow), and may be followed only by zero or more
    call suffixes — matching its semantics as a function-value
-   modifier. Examples that parse: `foo'`, `foo'(1,2,3)`,
-   `foo.bar'`, `foo.bar'(1,2,3)`, `(+)'(1,2,3)`. Examples that
-   do not: `foo'.bar`, `foo'[0]`, `foo' .bar` (trivia before `'`). *)
+   modifier.
+
+   Adjacency to subsequent CallSuffix differs by modifier. `'`
+   admits trivia between `'` and CallSuffix and between
+   consecutive CallSuffixes. `/\` and `\/` admit no trivia
+   between modifier and first CallSuffix, nor between consecutive
+   CallSuffixes — reinforcing "this is one operator-shaped call
+   form."
+
+   Examples that parse: `foo'`, `foo'(1,2,3)`, `foo' (1,2,3)`,
+   `foo.bar'`, `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`,
+   `foo/\(1)(2)(3)`, `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`.
+   Examples that do not: `foo'.bar`, `foo'[0]`, `foo' .bar`
+   (trivia before `'`); `foo /\`, `foo/\ (1)`, `foo/\'`,
+   `foo/\\/` (stacking or trivia-violation on the new ops). *)
 
 <CallExpr>     := AtCallExpr | ChainExpr;
 
 ChainExpr      := ChainBase
                   (
-                      (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
-                    | SingleQuote (_ CallSuffix)*
+                      (_ ChainSeg)+ PostfixCallTail?
+                    | PostfixCallTail
                   );
+
+<PostfixCallTail> := SingleQuote (_ CallSuffix)*
+                   | (Mountain | Valley) CallSuffix*;
 
 <ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
                 | OpFuncExpr | GroupedExprNoBlock
@@ -784,7 +811,7 @@ Each is a distinct visible AST node.
 <MulOp>          := Star | ForwardSlash;
 
 <NamedUnaryOp>   := "?empty" | "!empty";
-<UnaryOpSym>     := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
+<UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley;
 ```
 
 PEG ordering note inside `<SymbolicCompareOp>`: longest sequence first

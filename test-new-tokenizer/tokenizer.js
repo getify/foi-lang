@@ -176,6 +176,31 @@ export const TriplePeriod = production("TriplePeriod", and(ch(C.Period), ch(C.Pe
 export const DoublePeriod = production("DoublePeriod", and(ch(C.Period), ch(C.Period)));
 export const DoubleColon  = production("DoubleColon",  and(ch(C.Colon), ch(C.Colon)));
 
+// Mountain (`/\`) and Valley (`\/`) — postfix curry / uncurry
+// operators. Two-char tokens via maximal-munch.
+//
+// Mountain placed BEFORE the symb spread in BaseTokenOr so `/\`
+// lexes atomically rather than as `ForwardSlash` + standalone
+// `EscapePlain`. The earlier `Comment` arm in BaseTokenOr still
+// wins for `//` (its lookahead picks the second `/`); `/X` for
+// any other X falls through past Comment and past Mountain to
+// the symb spread's bare `ForwardSlash`.
+//
+// Valley placed BEFORE `EscapePlain` so `\/` lexes atomically
+// rather than as standalone `EscapePlain` + `ForwardSlash`. The
+// earlier `EscapedNumber` dispatch fails cleanly on `\/`: its
+// EscapePlain arm commits the `\`, then or(PositiveIntegerLit-
+// WithSep, BareNumber, General) all fail on `/`, rolling the
+// whole arm back. Other Escape arms (`\h`, `\u`, `\o`, `\b`,
+// `\@`) require a different second char, so they pass through
+// without consuming. Same for SpacingInterpStr (`\` + backtick)
+// and SpacingEscapedStr (`\` + `"`) — second-char-disjoint from
+// Valley.
+//
+// See §7 ChainExpr (parser.js) for postfix attachment, §10
+// UnaryOpSym for OpFuncExpr admission + universal-prime.
+export const Mountain = production("Mountain", and(ch(C.ForwardSlash), ch(C.Escape)));
+export const Valley   = production("Valley",   and(ch(C.Escape), ch(C.ForwardSlash)));
 
 // IdentBody: greedy identifier-chars with sawNonDigit gate, plus a
 // tilde-leading variant (so `~foo` parses as one identifier the way
@@ -600,6 +625,8 @@ var BaseTokenOr = or(
 	TriplePeriod,
 	DoublePeriod,
 	DoubleColon,
+	Mountain,
+	Valley,
 	EscapePlain,
 	...Object.entries(symb)
 		.filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))

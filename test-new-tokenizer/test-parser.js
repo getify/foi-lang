@@ -145,6 +145,23 @@ var failSamples = [
 	// Bare NumberLit is not routed — `%5` has no use case (a
 	// literal integer as a computed key would just be `5`).
 	"rec.<%5>;",
+	// Mountain (`/\`) / Valley (`\/`) postfix boundaries.
+	//
+	// Locked rules from the curry/uncurry batch:
+	//   - postfix terminates access chain (no dot/bracket after)
+	//   - no trivia between function and the postfix modifier
+	//   - no trivia between modifier and first CallSuffix
+	//   - mutually exclusive with `'` and with each other (no stacking)
+	"foo/\\.bar;",     // postfix terminates access chain (curry)
+	"foo\\/.bar;",     // postfix terminates access chain (uncurry)
+	"foo /\\;",        // adjacency violated — trivia before /\
+	"foo \\/;",        // adjacency violated — trivia before \/
+	"foo/\\ (1);",     // adjacency violated — trivia between /\ and (
+	"foo\\/ (1);",     // adjacency violated — trivia between \/ and (
+	"foo/\\';",        // postfix stacking — /\ then ' (locked C)
+	"foo\\/';",        // postfix stacking — \/ then ' (locked C)
+	"foo/\\\\/;",      // postfix stacking — /\ then \/
+	"foo\\//\\;",      // postfix stacking — \/ then /\
 ];
 
 var passed = 0;

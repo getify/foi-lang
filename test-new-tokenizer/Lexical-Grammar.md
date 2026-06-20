@@ -230,6 +230,22 @@ TriplePeriod            := "...";
 DoublePeriod            := "..";
 DoubleColon             := "::";
 
+(* Mountain ("/\") and Valley ("\/") — postfix curry / uncurry
+   operators (see Syntactic-Grammar.md §7 ChainExpr and §10
+   UnaryOpSym).
+
+   In <Token>, Mountain appears before the <SingleCharOp> spread
+   (so "/\" wins over bare ForwardSlash), and Valley appears
+   before EscapePlain (so "\/" wins over a standalone backslash
+   followed by ForwardSlash). Both follow the existing multi-char
+   ops in the alternation. The earlier <EscapedNumber> dispatch
+   fails cleanly on "\/" — its EscapePlain arm commits the "\",
+   then its inner alternatives (PositiveIntegerLitWithSep |
+   BareNumber | General) all fail on "/", rolling the whole arm
+   back. *)
+Mountain                := "/" "\\";
+Valley                  := "\\" "/";
+
 
 (*************** Single-Char Operators ***************)
 

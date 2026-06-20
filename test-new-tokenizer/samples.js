@@ -290,6 +290,39 @@ export const samples = [
 	{ label: "OpFuncExpr (angle-pick mixed dynamic): (.<a,%k,&ks>)", src: "(.<a,%k,&ks>);" },
 	{ label: "OpFuncExpr (range-access): (.[1..5])", src: "(.[1..5]);" },
 	{ label: "OpFuncExpr (primed): (+')",            src: "(+');" },
+
+	// === Mountain (`/\`) and Valley (`\/`) — postfix curry/uncurry ===
+	// Operator shape IS the function's resulting parameter signature
+	// shape. `/\` (mountain) → curry: tiered pyramid (one param per
+	// call site, by fn.length, outer-tier-only). `\/` (valley) →
+	// uncurry: flat n-ary (walks tier chain at apply time).
+	//
+	// Three postfix mods share the chain-tail slot; mutually exclusive
+	// (no stacking). Adjacency to preceding expr and to first CallSuffix
+	// is required for /\ and \/.
+	{ label: "CurriedExpr: foo/\\",                       src: "foo/\\;" },
+	{ label: "UncurriedExpr: foo\\/",                     src: "foo\\/;" },
+	{ label: "CurriedExpr + calls: foo/\\(1)(2)(3)",      src: "foo/\\(1)(2)(3);" },
+	{ label: "UncurriedExpr + call: foo\\/(1,2,3)",       src: "foo\\/(1, 2, 3);" },
+	{ label: "CurriedExpr after access: foo.bar/\\(1)(2)", src: "foo.bar/\\(1)(2);" },
+	{ label: "UncurriedExpr after access: foo.bar\\/(1,2)", src: "foo.bar\\/(1, 2);" },
+
+	// OpFuncExpr arms — bare and primed.
+	// `(/\')` and `(\/')` are universal-prime forms — admitted by
+	// grammar (UnaryOpSym + OpFuncExpr's optional SingleQuote tail),
+	// transpiler maps primed-mountain to uncurry body and primed-
+	// valley to curry body per inverse-of-inverse semantics.
+	{ label: "OpFuncExpr (curry): (/\\)",                 src: "(/\\);" },
+	{ label: "OpFuncExpr (uncurry): (\\/)",               src: "(\\/);" },
+	{ label: "OpFuncExpr (curry primed → uncurry): (/\\')", src: "(/\\');" },
+	{ label: "OpFuncExpr (uncurry primed → curry): (\\/')", src: "(\\/');" },
+
+	// OpFuncExpr applied — semantically equivalent to postfix form.
+	{ label: "OpFuncExpr-applied curry: (/\\)(foo)",      src: "(/\\)(foo);" },
+	{ label: "OpFuncExpr-applied uncurry: (\\/)(foo)",    src: "(\\/)(foo);" },
+	{ label: "OpFuncExpr-applied curry + calls: (/\\)(foo)(1)(2)", src: "(/\\)(foo)(1)(2);" },
+	{ label: "OpFuncExpr-applied uncurry + call: (\\/)(foo)(1,2)", src: "(\\/)(foo)(1, 2);" },
+
 	{ label: "OpFuncExpr :as int",                   src: "(+) :as int;" },
 	{ label: "OpFuncExpr as callee: (+)(1,2)",       src: "(+)(1,2);" },
 	{ label: "OpFuncExpr with prime + call: (+')(1,2)", src: "(+')(1,2);" },

@@ -2040,24 +2040,125 @@ var handlers = {
 			" }))(" + allArgs + ")";
 	},
 
-	// PrimedExpr { inner } — postfix `'` (argument-reversal
-	// modifier) wrapping a chain-fold expression. Standalone form:
-	// lower to a function value that reverses its args before
-	// applying to the inner expression.
+	// PrimedExpr — standalone form. Lower to a function value that
+	// reverses its args before applying to the inner expression AND
+	// preserves inner.length so downstream arity-introspecting
+	// operators (curry/uncurry, partial application, etc.) see the
+	// original arity through the prime wrapper.
 	//
-	//   foo'      → ((...__a) => foo(...__a.reverse()))
-	//   foo.bar'  → ((...__a) => foo.bar(...__a.reverse()))
+	// `Object.defineProperty` is required — rest-args arrows have
+	// `.length === 0`, which would otherwise erase arity. JS spec
+	// guarantees Function.length is `configurable: true`, so the
+	// override is safe on every callable inner.
+	//
+	// Composition example this enables:
+	//   (/\)(add')("a")("b")("c")  with `defn add(x,y,z) ^x + y + z`
+	//   → add'.length is now 3 → curry tier-flushes at 3 args →
+	//   → calls add'("a","b","c") = add("c","b","a") = "cba"
+	//
+	// Without length preservation, curry/uncurry would flush on the
+	// first call (length 0 → trivially saturated) and produce
+	// partial-application garbage.
+	//
+	//   foo'      → ((__f) => Object.defineProperty(
+	//                  (...__a) => __f(...__a.reverse()),
+	//                  "length", { value: __f.length }))(foo)
+	//   foo.bar'  → same shape, with foo.bar as __f
 	//
 	// CallExpr / PartialCallExpr with a PrimedExpr callee bypass
-	// this via their own primed-callee shortcuts (cleaner direct
-	// shape — `foo'(1,2,3)` → `foo(3, 2, 1)` rather than going
-	// through the wrapper). This handler covers every other
-	// position: DefVarStmt RHS, function call arg, binary operand,
-	// etc.
+	// this via their primed-callee shortcuts (cleaner direct shape
+	// — `foo'(1,2,3)` → `foo(3, 2, 1)` rather than going through
+	// the wrapper). This handler covers every other position:
+	// DefVarStmt RHS, function call arg, binary operand, OpFuncExpr
+	// composition target, etc.
 	//
 	// `:as` annotation dropped as transpilation no-op.
 	PrimedExpr(node, recur) {
-		return "((...__a) => " + recur(node.inner) + "(...__a.reverse()))";
+		return "((__f) => Object.defineProperty(" +
+			"(...__a) => __f(...__a.reverse()), " +
+			"\"length\", { value: __f.length }))(" +
+			recur(node.inner) + ")";
+	},
+
+	// CurriedExpr { inner } — postfix curry operator `/\`. Wraps a
+	// function value in an inline IIFE producing a curried form via
+	// named function expression for self-reference. The returned
+	// function accumulates args across call sites; once it has at
+	// least `__f.length` args, it flushes them through to the
+	// underlying function in one go (loose-curry compatible —
+	// supplying all args at once short-circuits).
+	//
+	// Outer-tier-only per spec: multi-paramSet curry descent is
+	// stdlib territory. `length === 1` (incl. multi-paramSet curried
+	// `defn`s) is idempotent — the wrapper just passes args through
+	// to the underlying function unchanged. To re-curry a multi-tier
+	// function, uncurry it first (separate use sites; no stacking).
+	//
+	// Lowering shape:
+	//
+	//   foo/\           → ((__f) => (function __c(...__a) {
+	//                       return __a.length >= __f.length
+	//                         ? __f(...__a)
+	//                         : (...__b) => __c(...__a, ...__b);
+	//                     }))(foo)
+	//
+	// `foo/\(1)(2)(3)` extends naturally — the CallExpr chain wraps
+	// `(1)(2)(3)` around the IIFE result.
+	//
+	// See Foi-Guide.md "Function Currying" for the operator-shape-
+	// as-signature-shape mnemonic.
+	CurriedExpr(node, recur) {
+		return "((__f) => (function __c(...__a) { " +
+			"return __a.length >= __f.length ? " +
+			"__f(...__a) : " +
+			"(...__b) => __c(...__a, ...__b); " +
+			"}))(" + recur(node.inner) + ")";
+	},
+
+	// UncurriedExpr { inner } — postfix uncurry operator `\/`. Wraps
+	// a function value in an inline IIFE producing a flat n-ary form
+	// that walks the curried tier chain at apply time.
+	//
+	// At each loop iteration, consumes `__g.length || 1` args from
+	// the remaining tail and advances. The `|| 1` guard prevents
+	// infinite loop on 0-arity intermediates (degenerate — well-
+	// formed curried functions don't produce 0-arity tiers, but the
+	// guard costs nothing).
+	//
+	// Tier-respecting: a multi-paramSet function like
+	// `defn foo(x)(y,z)(w) ^...` uncurried receives all its args
+	// flat, and each tier consumes its declared arity from the stream:
+	//
+	//   foo\/(1, 2, 3, 4)
+	//     iter 1: __g=foo,        __n=1, consume [1],    __g=foo(1)
+	//     iter 2: __g=(y,z)=>...,  __n=2, consume [2,3], __g=g(2,3)
+	//     iter 3: __g=(w)=>...,    __n=1, consume [4],   __g=g(4) → result
+	//
+	// Lowering shape:
+	//
+	//   foo\/           → ((__f) => (...__a) => {
+	//                       var __g = __f; var __i = 0;
+	//                       while (__i < __a.length &&
+	//                              typeof __g === "function") {
+	//                         var __n = __g.length || 1;
+	//                         __g = __g(...__a.slice(__i, __i + __n));
+	//                         __i += __n;
+	//                       }
+	//                       return __g;
+	//                     })(foo)
+	//
+	// `foo\/(1, 2, 3)` extends via CallExpr — flat arg list passes
+	// into the uncurried wrapper at apply time.
+	UncurriedExpr(node, recur) {
+		return "((__f) => (...__a) => { " +
+			"var __g = __f; var __i = 0; " +
+			"while (__i < __a.length && typeof __g === \"function\") { " +
+			"var __n = __g.length || 1; " +
+			"__g = __g(...__a.slice(__i, __i + __n)); " +
+			"__i += __n; " +
+			"} " +
+			"return __g; " +
+			"})(" + recur(node.inner) + ")";
 	},
 
 	// OpFuncExpr — operator as function reference.
@@ -2170,6 +2271,45 @@ var handlers = {
 		if (node.op === ".") {
 			let params = node.primed ? "(__i, __o)" : "(__o, __i)";
 			return "(" + params + " => __i < 0 ? __o.at(__i) : __o[__i])";
+		}
+
+		// (/\)(fn) → curry; (\/)(fn) → uncurry.
+		//
+		// Postfix-equivalent forms exist via universal-prime:
+		//   (/\')  ≡  (\/)     — primed Mountain → uncurry body
+		//   (\/')  ≡  (/\)     — primed Valley   → curry body
+		//
+		// The (op, primed) pair collapses to a single curry-or-uncurry
+		// selector: Mountain-unprimed and Valley-primed both produce
+		// curry; Valley-unprimed and Mountain-primed both produce
+		// uncurry. XOR over (op === "/\\") and node.primed.
+		//
+		// Body shape is identical to CurriedExpr / UncurriedExpr minus
+		// the trailing `(<inner>)` bind site — the bare function value
+		// is the output. Applied as a CallExpr callee with a function
+		// arg (e.g. `(/\)(foo)`), the natural CallExpr lowering wraps
+		// `(foo)` around the IIFE — semantically equivalent to `foo/\`.
+		//
+		// See CurriedExpr / UncurriedExpr docblocks for the body
+		// rationale.
+		if (node.op === "/\\" || node.op === "\\/") {
+			var isCurry = (node.op === "/\\") !== !!node.primed;
+			if (isCurry) {
+				return "((__f) => (function __c(...__a) { " +
+					"return __a.length >= __f.length ? " +
+					"__f(...__a) : " +
+					"(...__b) => __c(...__a, ...__b); " +
+					"}))";
+			}
+			return "((__f) => (...__a) => { " +
+				"var __g = __f; var __i = 0; " +
+				"while (__i < __a.length && typeof __g === \"function\") { " +
+				"var __n = __g.length || 1; " +
+				"__g = __g(...__a.slice(__i, __i + __n)); " +
+				"__i += __n; " +
+				"} " +
+				"return __g; " +
+				"})";
 		}
 
 		// Angle-pick lifted: (.<a, b>) → ((__o) => ({ a: __o.a, b: __o.b }))

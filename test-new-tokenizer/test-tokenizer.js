@@ -83,6 +83,30 @@ const KNOWN_DIVERGENT = new Map([
 		"Builtin set drift: new tokenizer's BUILTINS includes 'Function' (null-application unit fn, parallel to 'Value'); legacy tokenizer's list does not. New emits Builtin('Function'); legacy emits General('Function'). Resolve by adding 'Function' to legacy BUILTINS." ],
 	[ "Function@42;",
 		"Same Builtin set drift as bare 'Function' — new emits Builtin('Function'); legacy emits General('Function'). All other tokens in the sample match." ],
+[ "/\\",
+		"Mountain (`/\\`) is a new two-char op added in the curry/uncurry batch. Legacy tokenizer doesn't know it and emits ForwardSlash + Escape." ],
+	[ "\\/",
+		"Valley (`\\/`) is a new two-char op added in the curry/uncurry batch. Legacy tokenizer doesn't know it and emits Escape + ForwardSlash." ],
+	[ "foo/\\",
+		"Postfix Mountain on identifier; legacy splits as General + ForwardSlash + Escape." ],
+	[ "foo\\/",
+		"Postfix Valley on identifier; legacy splits as General + Escape + ForwardSlash." ],
+	[ "foo/\\(1)(2)(3)",
+		"Postfix Mountain + chained calls; legacy emits ForwardSlash + Escape in place of Mountain." ],
+	[ "foo\\/(1,2,3)",
+		"Postfix Valley + flat call; legacy emits Escape + ForwardSlash in place of Valley." ],
+	[ "foo.bar/\\(1)",
+		"Postfix Mountain after access chain; legacy emits ForwardSlash + Escape in place of Mountain." ],
+	[ "(/\\)",
+		"OpFuncExpr bare Mountain `(/\\)`; legacy splits the inner two chars as ForwardSlash + Escape." ],
+	[ "(\\/)",
+		"OpFuncExpr bare Valley `(\\/)`; legacy splits the inner two chars as Escape + ForwardSlash." ],
+	[ "(/\\')",
+		"OpFuncExpr primed Mountain `(/\\')`; legacy splits the leading two chars as ForwardSlash + Escape." ],
+	[ "(\\/')",
+		"OpFuncExpr primed Valley `(\\/')`; legacy splits the leading two chars as Escape + ForwardSlash." ],
+	[ "foo/\\bar",
+		"Postfix Mountain followed by identifier — lexer-level: Mountain + General; legacy: ForwardSlash + Escape + General. Parser will reject the input, but lex layer is well-formed." ],
 ]);
 
 
@@ -839,6 +863,47 @@ async function runTests() {
 		"foo@ bar",                                    // at-call form
 		"Function@42;",                                // null-app unit fn (guide form)
 		"~each !{ x > 0 }",                            // ~each with NamedUnaryExpr-shaped body
+
+		// =============================================================
+		// Mountain (`/\`) and Valley (`\/`) — postfix curry / uncurry.
+		//
+		// All entries are KNOWN_DIVERGENT — orig-tokenizer.js predates
+		// these ops and emits ForwardSlash / Escape pairs (or vice
+		// versa) where new emits a single Mountain / Valley token.
+		//
+		// Boundary probes:
+		//   - `//` and `///` (Comment) precede Mountain in BaseTokenOr;
+		//     adjacency samples confirm Comment still wins on `//`.
+		//   - `\h2A`, `\5_000` (EscapedNumber) precede Valley in
+		//     BaseTokenOr via the earlier dispatch; existing samples
+		//     above cover the EscapedNumber paths unchanged.
+		// =============================================================
+
+		// Bare ops at top-level (lexer well-formed; parser would reject).
+		"/\\",
+		"\\/",
+
+		// Postfix on identifier.
+		"foo/\\",
+		"foo\\/",
+
+		// Postfix with chained / flat call suffixes.
+		"foo/\\(1)(2)(3)",
+		"foo\\/(1,2,3)",
+
+		// Postfix after access chain.
+		"foo.bar/\\(1)",
+
+		// OpFuncExpr bare and primed forms.
+		"(/\\)",
+		"(\\/)",
+		"(/\\')",
+		"(\\/')",
+
+		// Adjacency boundary — Mountain followed by identifier.
+		// Lexer-level: General + Mountain + General. Parser will
+		// reject, but the lex layer is well-formed.
+		"foo/\\bar",
 
 		// Sample Foi source: audio player module (~90 lines).
 		// First real-world .foi file through the lex harness — probes the

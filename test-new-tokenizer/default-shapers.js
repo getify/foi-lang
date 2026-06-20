@@ -1725,9 +1725,24 @@ export const defaultShapers = {
 					}
 				}
 			}
-			else if (p.type === "SingleQuote") {
+			else if (
+				p.type === "SingleQuote" ||
+				p.type === "Mountain" ||
+				p.type === "Valley"
+			) {
+				// Three postfix modifiers, all PrimedExpr-shaped (single
+				// `inner` field, span extended to the modifier token's
+				// end). Wrapper type discriminates curry / uncurry /
+				// prime semantics downstream. emitGeneric reconstructs
+				// the modifier glyph via gapFill (modifier tokens are
+				// NOT in delims — same pattern as PrimedExpr).
+				var wrapperType = (
+					p.type === "SingleQuote" ? "PrimedExpr"   :
+					p.type === "Mountain"    ? "CurriedExpr"  :
+					                           "UncurriedExpr"
+				);
 				node = {
-					type: "PrimedExpr",
+					type: wrapperType,
 					inner: node,
 					start: node.start,
 					end: p.end,

@@ -815,6 +815,8 @@ var RangeExpr = or(ClosedRangeExpr, LeadingRangeExpr, TrailingRangeExpr);
 var Pipe         = tokType("Pipe");
 var TriplePeriod = tokType("TriplePeriod");
 var SingleQuote  = tokType("SingleQuote");
+var Mountain     = tokType("Mountain");
+var Valley       = tokType("Valley");
 var BuiltinNone  = tokVal("Builtin", "None");
 
 // PrefixCallSuffix  := OpenParen CallArgs CloseParen;
@@ -969,47 +971,81 @@ var ChainBase = or(
 	IdentifierExpr
 );
 
+// <PostfixCallTail> := SingleQuote (_ CallSuffix)*
+//                    | (Mountain | Valley) CallSuffix*;
+//
 // ChainExpr := ChainBase
 //              (
-//                  (_ ChainSeg)+ (SingleQuote (_ CallSuffix)*)?
-//                | SingleQuote (_ CallSuffix)*
+//                  (_ ChainSeg)+ PostfixCallTail?
+//                | PostfixCallTail
 //              );
 //
 // Requires extension beyond ChainBase — either ≥1 ChainSeg, or a
-// postfix `'` (prime, argument-reversal modifier). A bare ChainBase
-// alone falls through to the later alternatives in
-// BareOperandExprNoEmpty.
+// postfix modifier (`'`, `/\`, `\/`). A bare ChainBase alone falls
+// through to the later alternatives in BareOperandExprNoEmpty.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 //
-// Postfix `'` is adjacent to the preceding expression (no trivia
-// between), terminates the access chain (no dot/bracket access may
-// follow), and may itself be followed only by zero or more call
-// suffixes — matching its semantics as a function-value modifier.
-// Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
-// `foo.bar'(1,2,3)`, `(+)'(1,2,3)`. Examples that do not: `foo'.bar`,
-// `foo'[0]`, `foo' .bar` (trivia before `'`).
+// Three postfix modifiers, mutually exclusive (no stacking):
 //
-// PEG arm order: ChainSeg+-first before SingleQuote-only. The
-// ChainSeg+-first arm requires ≥1 ChainSeg via many(); on input
-// where SingleQuote immediately follows ChainBase with no ChainSeg
-// (e.g. `foo'`), the first arm fails at many() and the
-// SingleQuote-only arm fires.
+//   `'`     — argument-reversal / universal-prime inversion on the
+//             function value. Existing precedent.
+//   `/\`    — curry. Reshapes the function's parameter signature
+//             into a tiered pyramid (one param per call site, by
+//             arity from fn.length, outer-tier-only).
+//   `\/`    — uncurry. Reshapes a tiered (curried) function into a
+//             flat n-ary application, walking each tier's
+//             fn.length to consume args from the call's arg list.
+//
+// Mountain/Valley operator shapes ARE the resulting function's
+// parameter-signature shape — see Foi-Guide.md.
+//
+// All three modifiers share the chain-tail slot: adjacent to the
+// preceding expression (no trivia between), terminate the access
+// chain (no dot/bracket access may follow), and may be followed
+// only by zero or more call suffixes.
+//
+// Adjacency to subsequent CallSuffix differs by modifier:
+//
+//   `'`     — trivia allowed between `'` and CallSuffix, and
+//             between consecutive CallSuffixes. Existing rule.
+//             `foo'(1,2,3)` and `foo' (1,2,3)` both parse.
+//   `/\`/`\/` — NO trivia between modifier and first CallSuffix,
+//             nor between consecutive CallSuffixes. Reinforces
+//             "this is one operator-shaped call form, not a free
+//             chain of calls." `foo/\(1)(2)(3)` parses;
+//             `foo/\ (1)`, `foo/\(1) (2)` do not.
+//
+// Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
+// `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`, `foo/\(1)(2)(3)`,
+// `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`.
+// Examples that do not: `foo'.bar`, `foo'[0]`, `foo' .bar` (trivia
+// before `'`); `foo /\`, `foo/\ (1)`, `foo/\'`, `foo/\\/` (stacking
+// or trivia-violation).
+//
+// PEG arm order inside PostfixCallTail: SingleQuote first
+// (single-char), then Mountain/Valley (two-char). Disjoint first
+// chars — order is mechanical, not load-bearing.
+//
+// PEG arm order in ChainExpr outer: ChainSeg+-first before
+// PostfixCallTail-only. The ChainSeg+-first arm requires ≥1
+// ChainSeg via many(); on input where a modifier immediately
+// follows ChainBase with no ChainSeg (e.g. `foo'`, `foo/\`), the
+// first arm fails at many() and the PostfixCallTail-only arm fires.
+var PostfixCallTail = or(
+	and(SingleQuote, any(and(delim(), CallSuffix))),
+	and(or(Mountain, Valley), any(CallSuffix))
+);
+
 export const ChainExpr = production("ChainExpr",
 	and(
 		ChainBase,
 		or(
 			and(
 				many(and(delim(), ChainSeg)),
-				optional(and(
-					SingleQuote,
-					any(and(delim(), CallSuffix))
-				))
+				optional(PostfixCallTail)
 			),
-			and(
-				SingleQuote,
-				any(and(delim(), CallSuffix))
-			)
+			PostfixCallTail
 		)
 	),
 	{ preserveInnerDelim: true }
@@ -1348,8 +1384,14 @@ var MulOp = or(Star, ForwardSlash);
 // <NamedUnaryOp> := "?empty" | "!empty";
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
 
-// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period;
-var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period);
+// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley;
+//
+// Mountain (`/\`) and Valley (`\/`) admitted so OpFuncExpr picks
+// up the bare op-as-function forms `(/\)` / `(\/)` alongside the
+// universal-prime forms `(/\')` / `(\/')` via OpFuncExpr's existing
+// `optional(SingleQuote)` tail. Postfix-attachment to a function
+// value is handled by ChainExpr's PostfixCallTail (§7), not here.
+var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
