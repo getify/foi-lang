@@ -184,6 +184,51 @@ export const samples = [
 	{ label: "OpFuncExpr (apply bare): (...)",       src: "(...);" },
 	{ label: "OpFuncExpr (...') spread primed (aka gather)",       src: "(...');" },
 
+	// =============================================================
+	// ~each — side-effect-only loop. Result is range unchanged
+	// (Tuple/Record), empty Tuple for conditional range. Body's
+	// per-iter return is discarded except for `Done@` sentinel
+	// (early break, innermost loop only).
+	// =============================================================
+
+	{ label: "FlowBinExpr ~each: Tuple range, callable RHS",
+	  src: "< 1, 2, 3 > ~each log;" },
+	{ label: "FlowBinExpr ~each: identifier range, callable RHS",
+	  src: "xs ~each log;" },
+	{ label: "FlowBinExpr ~each: BareBlockExpr body",
+	  src: "xs ~each { log(\"hi\"); };" },
+	{ label: "FlowBinExpr ~each: BlockExpr body w/ ident defs",
+	  src: "xs ~each (v) { log(v); };" },
+	{ label: "FlowBinExpr ~each: BlockExpr body w/ destructure",
+	  src: "pairs ~each (<:k, :v>) { log(k, v); };" },
+	{ label: "FlowBinExpr ~each: Record range",
+	  src: "< a: 1, b: 2 > ~each (v) { log(v); };" },
+
+	// Conditional range (FlowLHS = CondClause). `?[c] ~each` runs
+	// while c is truthy; `![c] ~each` runs while c is falsy.
+	{ label: "FlowBinExpr ~each: ?[cond] range, BareBlockExpr body",
+	  src: "?[!done] ~each { done := true; };" },
+	{ label: "FlowBinExpr ~each: ![cond] range, BareBlockExpr body",
+	  src: "![done] ~each { done := true; };" },
+
+	// Done@ early termination.
+	{ label: "FlowBinExpr ~each: Done@ sentinel in body",
+	  src: "xs ~each (v) { ?[v ?> 10]: Done@ empty; log(v); };" },
+
+	// OpFuncExpr surface — bare and primed (primed swaps args).
+	{ label: "OpFuncExpr (~each): bare",
+	  src: "(~each);" },
+	{ label: "OpFuncExpr (~each) applied",
+	  src: "(~each)(xs, log);" },
+	{ label: "OpFuncExpr (~each) primed: (~each')",
+	  src: "(~each');" },
+	{ label: "OpFuncExpr (~each) primed applied: (~each')(log, xs)",
+	  src: "(~each')(log, xs);" },
+
+	// Partial application — skip range for later supply.
+	{ label: "PartialCallExpr on (~each): (~each)|, log|",
+	  src: "(~each)|, log|;" },
+
 	// IdentityFunc — bare @ (the value identity function)
 	{ label: "IdentityFunc: @",                      src: "@;" },
 	{ label: "IdentityFunc :as Maybe",               src: "@ :as Maybe;" },
@@ -551,7 +596,7 @@ export const samples = [
 	// AssignmentExpr in the three operand-position restrictive
 	// variants. The bare form `10 + x := 5` is rejected (negative
 	// sample below).
-{ label: "GroupedBareOpExprNoEmpty: 10 + (x := 5)",        src: "10 + (x := 5);" },
+	{ label: "GroupedBareOpExprNoEmpty: 10 + (x := 5)",        src: "10 + (x := 5);" },
 	{ label: "GroupedBareOpExprNoEmpty: (x := 5) + 1",         src: "(x := 5) + 1;" },
 	{ label: "GroupedBareOpExprNoEmpty: (foo.bar := 42) + 1",  src: "(foo.bar := 42) + 1;" },
 	{ label: "GroupedBareOpExprNoEmpty: (x := 5) :as int",     src: "(x := 5) :as int;" },
@@ -1179,4 +1224,25 @@ export const samples = [
 	  src: "foo\n\t.bar\n\t.baz;",                                opts: { preserveSoftDelims: true } },
 	{ label: "Multi-line: mixed with trailing line comment",
 	  src: "def x:\n\t42; // note\n",                             opts: { preserveSoftDelims: true } },
+
+	// =============================================================
+	// Leading-skip-comma + trivia + first item — exercises the
+	// `(_ Comma)* (_ X ...)?` fix across all six list productions.
+	// Without the leading `_` inside the optional, PEG can't admit
+	// trivia between the last leading-skip-comma and the first
+	// item (`foo(, x)` would fail at the space).
+	// =============================================================
+
+	{ label: "CallArgList: leading-skip + WS + arg in PrefixCallSuffix",
+	  src: "foo(, a);" },
+	{ label: "VarDefInitOptList: leading-skip + WS + entry in DefBlockStmt",
+	  src: "def (, x: 5) { x; };" },
+	{ label: "VarDefInitOptImplInList: leading-skip + WS + entry in BlockExpr",
+	  src: "data #> (, x: 5) { x + #; };" },
+	{ label: "DoVarDefInitOptList: leading-skip + WS + entry in DoBlockExpr",
+	  src: "Id ~<< (, x:: foo) { x; };" },
+	{ label: "RecordTupleEntryList: leading-skip + WS + entry",
+	  src: "<, 1, 2>;" },
+	{ label: "SetEntryList: leading-skip + WS + entry",
+	  src: "<[, 1, 2]>;" },
 ];

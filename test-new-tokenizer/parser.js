@@ -879,13 +879,19 @@ var CallArgExpr = and(
 	or(NamedArgExpr, Expr)
 );
 
-// <CallArgList> := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
+// <CallArgList> := (_ Comma)* (_ CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
 //
 // Permissive comma handling — leading commas, trailing commas, and
-// gaps between commas are all allowed (per grammar).
+// gaps between commas are all allowed (per grammar). Leading `_`
+// inside the optional admits trivia between any trailing leading-
+// skip-comma and the first arg (e.g., `foo(, a)`, `bar|, log|`).
+// Without it, the `(_ Comma)*` iter rolls back its last failed `_`
+// consumption and the optional opens at a position with no leading
+// `_` available.
 var CallArgList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		CallArgExpr,
 		any(and(delim(), Comma, optional(and(delim(), CallArgExpr))))
 	))
@@ -1483,11 +1489,16 @@ export const VarDefInitOptImplIn = production("VarDefInitOptImplIn",
 	)
 );
 
-// <VarDefInitOptList>       := (_ Comma)* (VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
-// <VarDefInitOptImplInList> := (_ Comma)* (VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
+// <VarDefInitOptList>       := (_ Comma)* (_ VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
+// <VarDefInitOptImplInList> := (_ Comma)* (_ VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
+//
+// Leading `_` inside the optional admits trivia between any trailing
+// leading-skip-comma and the first entry. See CallArgList for the
+// PEG-mechanics rationale.
 var VarDefInitOptList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		VarDefInitOpt,
 		any(and(delim(), Comma, optional(and(delim(), VarDefInitOpt))))
 	))
@@ -1495,6 +1506,7 @@ var VarDefInitOptList = and(
 var VarDefInitOptImplInList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		VarDefInitOptImplIn,
 		any(and(delim(), Comma, optional(and(delim(), VarDefInitOptImplIn))))
 	))
@@ -2014,10 +2026,15 @@ export const DoVarDefInitOpt = production("DoVarDefInitOpt",
 	)
 );
 
-// <DoVarDefInitOptList> := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
+// <DoVarDefInitOptList> := (_ Comma)* (_ DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
+//
+// Leading `_` inside the optional admits trivia between any trailing
+// leading-skip-comma and the first entry. See CallArgList for the
+// PEG-mechanics rationale.
 var DoVarDefInitOptList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		DoVarDefInitOpt,
 		any(and(delim(), Comma, optional(and(delim(), DoVarDefInitOpt))))
 	))
@@ -2193,12 +2210,15 @@ var RecordTupleValue = production("RecordTupleValue", or(
 //   - RecordTupleValue last.
 var RecordTupleEntry = or(PickValue, RecordProperty, RecordTupleValue);
 
-// <RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
+// <RecordTupleEntryList> := (_ Comma)* (_ RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 //
-// Permissive comma handling — same shape as CallArgList.
+// Permissive comma handling — same shape as CallArgList. Leading `_`
+// inside the optional admits trivia between any trailing leading-
+// skip-comma and the first entry.
 var RecordTupleEntryList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		RecordTupleEntry,
 		any(and(delim(), Comma, optional(and(delim(), RecordTupleEntry))))
 	))
@@ -2216,14 +2236,17 @@ export const RecordTupleLit = production("RecordTupleLit",
 );
 
 // <SetEntry>     := PickValue | RecordTupleValue;
-// <SetEntryList> := (_ Comma)* (SetEntry (_ Comma (_ SetEntry)?)*)?;
+// <SetEntryList> := (_ Comma)* (_ SetEntry (_ Comma (_ SetEntry)?)*)?;
 //
 // Sets don't carry RecordProperty entries — sets are unordered
-// collections of values, no keys.
+// collections of values, no keys. Leading `_` inside the optional
+// admits trivia between any trailing leading-skip-comma and the
+// first entry (same fix as CallArgList et al).
 var SetEntry = or(PickValue, RecordTupleValue);
 var SetEntryList = and(
 	any(and(delim(), Comma)),
 	optional(and(
+		delim(),
 		SetEntry,
 		any(and(delim(), Comma, optional(and(delim(), SetEntry))))
 	))

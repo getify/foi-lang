@@ -593,7 +593,7 @@ AtCallExpr           := "None" At
                       | (AtExpr | (IdentBase SingleAccessExpr? _ At) | IdentityFunc) _ ExprNoBlock;
 
 <CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
-<CallArgList>        := (_ Comma)* (CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
+<CallArgList>        := (_ Comma)* (_ CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
 <CallArgExpr>        := (TriplePeriod _)? (NamedArgExpr | Expr);
 
 <NamedArgExpr>       := ConciseNamedArg | ExplicitNamedArg | (OpenParen _ NamedArgExpr _ CloseParen);
@@ -884,8 +884,8 @@ BareBlockExpr           := OpenBrace _ BlockStmts _ CloseBrace;
 BlockDefsInitOpt        := OpenParen _ VarDefInitOptList _ CloseParen;
 BlockDefsInitOptImplIn  := OpenParen _ VarDefInitOptImplInList _ CloseParen;
 
-<VarDefInitOptList>        := (_ Comma)* (VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
-<VarDefInitOptImplInList>  := (_ Comma)* (VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
+<VarDefInitOptList>        := (_ Comma)* (_ VarDefInitOpt       (_ Comma (_ VarDefInitOpt)?)*)?;
+<VarDefInitOptImplInList>  := (_ Comma)* (_ VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
 
 VarDefInitOpt           := (Identifier        (_ Colon _ ExprNoBlock)?)
                          | (DestructureTarget  _ Colon _ ExprNoBlock);   (* strict: init required *)
@@ -1047,7 +1047,7 @@ DoBlockExpr             := DoBlockDefsInitOpt? _ DoBareBlockExpr;
 <DoBlockStmts>          := (DoStmtSemi _)* (DoFinalUnwrapExpr | DoStmtSemiOpt)?;
 DoBlockDefsInitOpt      := OpenParen _ DoVarDefInitOptList _ CloseParen;
 
-<DoVarDefInitOptList>   := (_ Comma)* (DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
+<DoVarDefInitOptList>   := (_ Comma)* (_ DoVarDefInitOpt (_ Comma (_ DoVarDefInitOpt)?)*)?;
 DoVarDefInitOpt         := (Identifier        (_ (DoubleColon | Colon) _ ExprNoBlock)?)
                          | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 
@@ -1082,7 +1082,7 @@ to annotate. Consistent with the "use parens" rule.
 <DataStructLit>        := SetLit | RecordTupleLit;     (* SetLit first — opens with OpenAngle OpenBracket (2 tokens); RecordTupleLit opens with just OpenAngle (1 token) *)
 
 RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
-<RecordTupleEntryList> := (_ Comma)* (RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
+<RecordTupleEntryList> := (_ Comma)* (_ RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
 RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
@@ -1095,7 +1095,7 @@ ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupl
 <ComputedPropName>     := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
 
 SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle;
-<SetEntryList>         := (_ Comma)* (SetEntry (_ Comma (_ SetEntry)?)*)?;
+<SetEntryList>         := (_ Comma)* (_ SetEntry (_ Comma (_ SetEntry)?)*)?;
 <SetEntry>             := PickValue | RecordTupleValue;
 ```
 

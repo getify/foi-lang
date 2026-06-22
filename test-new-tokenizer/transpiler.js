@@ -239,10 +239,19 @@ var OR_OPS = {
 //                      (the lifted-access arms have no meaningful
 //                      inverse direction and stay primed-no-op).
 //   kind: "range2"    — strict 2-ary inclusive range producer;
+//   kind: "each"      — 2-ary side-effect loop: takes (range, body)
+//                      and iterates body over range, returning
+//                      the range unchanged. Body's per-iter return
+//                      checked for `Done@` sentinel (early break).
+//                      Mirrors emitEachOp's Tuple/Record arm only —
+//                      conditional-range (CondClause) is syntactic
+//                      and unreachable as a runtime value through
+//                      the OpFuncExpr surface. Primed swaps to
+//                      (body, range) order.
 //
 // Primed (`node.primed`) reverses arg order for n-ary kinds and
 // swaps arg positions for fixed-arity kinds (range3, in2, has2,
-// range2).
+// range2, each).
 //
 // `.reverse()` is a no-op for symmetric ops; emit shape stays
 // uniform regardless.
@@ -291,6 +300,7 @@ var OP_FUNC_TABLE = {
 	"#>":   { kind: "pipeline" },
 	"...":  { kind: "spread" },
 	"..":   { kind: "range2" },
+	"~each": { kind: "each" },
 };
 
 
@@ -1066,6 +1076,137 @@ var emitComposeChain = (node, recur) => {
 
 
 // =============================================================
+// EACH-OP EMITTERS (FlowBinExpr ~each)
+//
+// Side-effect-only loop. Result is range-unchanged for Tuple /
+// Record range; empty Tuple `[]` for conditional range (no
+// inherent value to thread out). Per-iteration body return is
+// inspected for the bespoke `Done@` sentinel — `{__tag: "Done"}`
+// triggers early break, all other returns ignored. Done@ only
+// breaks the innermost ~each (no labeled propagation).
+//
+// Two lowering shapes by LHS:
+//
+//   Tuple/Record range:
+//     ((__r) => {
+//         var __src = Array.isArray(__r) ? __r : Object.values(__r);
+//         for (let __v of __src) { <bodyStmt> }
+//         return __r;
+//     })(<rangeExpr>)
+//
+//   Conditional range (CondClause LHS):
+//     (() => {
+//         while (<cond>) { <bodyStmt> }
+//         return [];
+//     })()
+//
+// Body per-iter shape (three RHS arms, parallel to FlowRHSImplIn):
+//
+//   BareBlockExpr  — IIFE-wrap body stmts, no __v param.
+//   BlockExpr      — defs-init with __v as implicit source for
+//                    position-0 Identifier-no-init / DestructureTarget-
+//                    no-init. Reject on conditional range (no source
+//                    to bind from — falls back whole node).
+//   Callable RHS   — `(<rhsStr>)(__v)`. For conditional range, call
+//                    with no arg.
+//
+// Each per-iter stmt-sequence ends with the Done@ sentinel check:
+//   var __result = <body-expr>;
+//   if (__result?.__tag === "Done") break;
+//
+// `#` (PipelineTopic) is NOT a topic ref inside compr bodies per
+// Foi semantic — no topicRefBox wiring here, no implicit substitution.
+// A `#` written inside a ~each body falls back via the generic
+// PipelineTopic-handler path (no dedicated handler → fallback,
+// emits `null /* # */`).
+//
+// Object.values for Record iteration allocates a fresh array per
+// ~each call (once, not per-iter). Acceptable cost for unifying
+// the loop body across both source shapes.
+// =============================================================
+
+var emitEachBlockBody = (rhs, recur) => {
+	var defParts = [];
+	for (let i = 0; i < rhs.defs.entries.length; i++) {
+		let entry = rhs.defs.entries[i];
+		if (entry.target.type === "Identifier") {
+			// Position-0 Identifier-no-init binds from __v; other
+			// positions follow standard def behavior (declared,
+			// optionally initialized).
+			if (i === 0 && !entry.init) {
+				defParts.push("var " + entry.target.name + " = __v;");
+			}
+			else {
+				defParts.push("var " + recur(entry) + ";");
+			}
+			continue;
+		}
+		if (entry.target.type === "DestructureTarget") {
+			// Lenient form: no entry-level init → bind from __v.
+			// Explicit init present → bind from it.
+			let tempName = "__t" + i;
+			let source = entry.init ? recur(entry.init) : "__v";
+			let destructured = renderDestructure(entry.target, recur, tempName);
+			if (destructured == null || destructured === "") {
+				return null;
+			}
+			defParts.push(
+				"var " + tempName + " = " + source +
+				"; var " + destructured + ";"
+			);
+			continue;
+		}
+		return null;
+	}
+	var defs = defParts.join(" ");
+	var bodyStr = emitBlockBody(rhs.body.stmts, recur, true);
+	return defs + " " + bodyStr;
+};
+
+var emitEachBodyStmt = (rhs, recur, hasValue) => {
+	if (rhs.type === "BareBlockExpr") {
+		return "var __result = (() => { " +
+			emitBlockBody(rhs.stmts, recur, true) +
+			" })(); if (__result?.__tag === \"Done\") break;";
+	}
+	if (rhs.type === "BlockExpr") {
+		// BlockExpr's defs-init requires an implicit source; reject
+		// for conditional-range (no source) by returning null →
+		// caller falls back whole node.
+		if (!hasValue) return null;
+		let inner = emitEachBlockBody(rhs, recur);
+		if (inner == null) return null;
+		return "var __result = (() => { " + inner + " })(); " +
+			"if (__result?.__tag === \"Done\") break;";
+	}
+	// Callable RHS — Identifier, CallExpr, MemberAccessExpr,
+	// OpFuncExpr, GroupedExpr, etc.
+	var rhsStr = recur(rhs);
+	var callArg = hasValue ? "__v" : "";
+	return "var __result = (" + rhsStr + ")(" + callArg + "); " +
+		"if (__result?.__tag === \"Done\") break;";
+};
+
+var emitEachOp = (node, recur) => {
+	var hasValue = node.left.type !== "CondClause";
+	var bodyStmt = emitEachBodyStmt(node.right, recur, hasValue);
+	if (bodyStmt == null) return fallback(node);
+
+	if (!hasValue) {
+		let cond = emitCondClause(node.left, recur);
+		return "(() => { while (" + cond + ") { " + bodyStmt + " } return []; })()";
+	}
+
+	var rangeStr = recur(node.left);
+	return "((__r) => { " +
+		"var __src = Array.isArray(__r) ? __r : Object.values(__r); " +
+		"for (let __v of __src) { " + bodyStmt + " } " +
+		"return __r; " +
+	"})(" + rangeStr + ")";
+};
+
+
+// =============================================================
 // RANGE BODY EMITTER
 //
 // Shared lowering for `(..)` OpFuncExpr value form and top-level
@@ -1592,8 +1733,26 @@ var handlers = {
 	// emits the base via the AtExpr handler. Arg-absent `None@`
 	// lowers to `None()` (no-arg call — matches the unit-
 	// constructor convention).
-	AtCallExpr: (n, r) =>
-		r(n.callee) + (n.arg == null ? "()" : "(" + r(n.arg) + ")"),
+	//
+	// Bespoke `Done@` intercept (low-fidelity): `Done@ <expr>`
+	// lowers to the sentinel object `{__tag: "Done"}`, with the
+	// payload discarded. Used by ~each (and eventually other
+	// comprehensions) as the early-termination signal. Grammar
+	// requires a payload via AtCallExpr arm-2 (the no-payload
+	// form is reserved for `BuiltinNone @`); idiomatic spelling
+	// is `Done@ 1` or `Done@ empty`. The check inside ~each is
+	// `__result?.__tag === "Done"` — optional-chaining handles
+	// non-object results cleanly. Globally intercepted here
+	// rather than scoped to ~each context; outside ~each `Done@ x`
+	// just evaluates to the tagged object as a value.
+	AtCallExpr(n, r) {
+		if (n.callee?.type === "AtExpr" &&
+			n.callee.base?.type === "Identifier" &&
+			n.callee.base.name === "Done") {
+			return "({__tag: \"Done\"})";
+		}
+		return r(n.callee) + (n.arg == null ? "()" : "(" + r(n.arg) + ")");
+	},
 
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
 	// production; ChainExpr's fold produces this uniform shape.
@@ -2478,6 +2637,23 @@ var handlers = {
 		if (meta.kind === "range2") {
 			return emitRangeBody(node.primed, null, null);
 		}
+		// (~each)(range, body) — 2-ary side-effect loop. Primed
+		// swaps arg order to (body, range). Callable-body only
+		// (block forms are syntactic, not values); conditional
+		// range unreachable here for the same reason. Explicit
+		// 2-ary params → `.length === 2` naturally.
+		if (meta.kind === "each") {
+			var p1 = node.primed ? "__body" : "__r";
+			var p2 = node.primed ? "__r" : "__body";
+			return "((" + p1 + ", " + p2 + ") => { " +
+				"var __src = Array.isArray(__r) ? __r : Object.values(__r); " +
+				"for (let __v of __src) { " +
+					"var __result = __body(__v); " +
+					"if (__result?.__tag === \"Done\") break; " +
+				"} " +
+				"return __r; " +
+			"})";
+		}
 		return fallback(node);
 	},
 
@@ -2534,10 +2710,12 @@ var handlers = {
 	// FlowBinExpr(FlowBinExpr(a, b), c), so recurring `left`
 	// handles chains naturally.
 	//
-	// Current coverage: PipelineOp (`#>`) and both ComposeOps
-	// (`+>`, `<+`). ComprOps (`~map`, `~filter`, etc.) need a
-	// separate lowering shape (comprehension-call rather than
-	// topic-injection) and fall back until that handler lands.
+	// Current coverage: PipelineOp (`#>`), both ComposeOps
+	// (`+>`, `<+`), and ComprOp `~each` (delegated to emitEachOp;
+	// see its docblock for shape). Remaining ComprOps (`~map`,
+	// `~filter`, `~fold`, etc.) need their own lowering shapes
+	// — comprehension-call rather than topic-injection — and
+	// fall back until those handlers land.
 	//
 	// PipelineOp RHS arms — symmetric with FuncBodyPipeline's
 	// renderPipelineBody, minus the function-body wrapper:
@@ -2591,6 +2769,9 @@ var handlers = {
 		}
 		if (node.op === "+>" || node.op === "<+") {
 			return emitComposeChain(node, recur);
+		}
+		if (node.op === "~each") {
+			return emitEachOp(node, recur);
 		}
 		return fallback(node);
 	},

@@ -51,6 +51,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Value Identity Function](#value-identity-function)
     - [Null-Application Function](#null-application-function)
 * [Loops](#loops)
+    - [Early Exit](#early-exit)
 * [List Comprehensions](#list-comprehensions)
     - [Filter Comprehension (List)](#filter-comprehension-list)
     - [Map Comprehension (List)](#map-comprehension-list)
@@ -705,11 +706,11 @@ In addition to the definitions-block form just shown, several other expressions 
     };
     ```
 
-* A [loop iteration block](#loops-and-comprehensions) with block-definitions clause:
+* A [loop iteration block](#loops) with block-definitions clause:
 
     ```java
-    0..3 ~each (v,idx) {
-        log(`"`v`: `idx`");
+    0..3 ~each (v) {
+        log(`"v: `v`");
     };
     ```
 
@@ -2065,7 +2066,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
 
         This loop will keep running as long as `done` is false. The *range* could also have been written as `?[!done]`, but the former should generally be preferred as easier to read.
 
-    - To skip the `range` expression (and provide it later), use partial application::
+    - To skip the `range` expression (and provide it later), use partial application:
 
         ```java
         def printAll: (~each)| , log |;
@@ -2093,16 +2094,16 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
     - an inline block with a `(    )` block-definitions clause (list of comma-separated definitions). For example:
 
         ```java
-        2..5 ~each (v, idx) {
-            log(`"`idx`: `v`");
+        2..5 ~each (v) {
+            log(`"v: `v`");
         };
-        // 0: 2
-        // 1: 3
-        // 2: 4
-        // 3: 5
+        // v: 2
+        // v: 3
+        // v: 4
+        // v: 5
         ```
 
-        **Warning:** Beware that any initializations of these definitions (e.g., `(v: 3, idx: 7)`) may very well be overwritten immediately, as they are assigned per-iteration according to the loop `range` and the iteration-type.
+        **Warning:** Beware that initializations of the definition (e.g., `(v: 3)`) *will be* overwritten immediately, as it's assigned per-iteration according to the loop `range` and the iteration-type.
 
         If the loop iteration doesn't need any block-scoped definitions, omit the `(    )` block-definitions clause:
 
@@ -2116,9 +2117,27 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // Hello!
         ```
 
-In general, the result of the `~each` operation is another *range* (e.g., Record/Tuple), such that multiple `~each` expressions can be chained together. For example, `a ~each b ~each c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the resultant *range* from the first `~each` operation. The same would be true of `(~each)(a, b, c)`.
+In general, the result of the `~each` operation is the *range* (e.g., Record/Tuple), such that multiple `~each` expressions can be chained together. For example, `a ~each b ~each c`, which would loop performing `b` over the `a` *range*, then loop performing `c` over the same range.
 
-**Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be the final boolean `false` that terminated the *range*.
+**Note:** For `~each` looping over a Record/Tuple *range*, `~each` will result in the same Record/Tuple. But in the case where the *range* was a conditional, the result of `~each` will be an empty Tuple.
+
+### Early Exit
+
+To "break" out of a comprehension early, produce a `Done@..` value -- either by function return from a callback, or final expression value of the block:
+
+```java
+0..10 ~each (v) {
+    log(`"v: `v`");
+    ?[v ?> 3]: Done@1;
+};
+// v: 0
+// v: 1
+// v: 2
+// v: 3
+// v: 4
+```
+
+The loop above exited early once `v` was `4`, tripping the guard condition, which sets the block's final expression to be `Done@1`. The `Done@`-wrapped value itself (e.g., `1`) doesn't matter for `~each` as it's thrown away, but *does* matter for other comprehension types.
 
 ## List Comprehensions
 
@@ -3600,7 +3619,7 @@ Consider:
 defn peekAt(ch,idx) ^(
     ch.peek()
     ~map (v) {
-        log(`"(`idx`) Peeking at value: `v`");
+        log(`"Peeking at value: `v`");
         v;
     }
 );
@@ -3613,13 +3632,13 @@ def ch: Channel@;
 
 putVal(ch,42);
 // Promise{..pending..}
-// (1) Peeking at value: 42
-// (2) Peeking at value: 42
-// (3) Peeking at value: 42
+// Peeking at value: 42
+// Peeking at value: 42
+// Peeking at value: 42
 
 peekAt(ch,4);
 // Promise{42}
-// (4) Peeking at value: 42
+// Peeking at value: 42
 
 takeVal(ch);
 // Promise{}
