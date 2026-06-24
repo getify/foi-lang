@@ -218,11 +218,17 @@ PipelineTopic       := Hash;
 
    <EscapedNumberLit> names the two-token shape the syn consumes when
    the lex's hidden <EscapedNumber> dispatcher matches. The lex
-   dispatcher emits two distinct token pairings depending on which
-   arm matched: five of its six arms produce Escape + Number
-   (Hex/Unicode/Octal/Binary/Monadic, plus EscapePlain's BareNumber
-   inner — all aliases for the Number token type per
-   Lexical-Grammar.md Notes 5/7); the sixth (EscapePlain paired with
+   dispatcher has six arms, but only FIVE are reachable at value
+   position via NumberLit — the EscapeUnicode arm is excluded here
+   and admitted exclusively from inside InterpExpr (§2, see UnicodeCharLit
+   below). The \u<hex> form is a character escape, not a numeric
+   literal; it produces a single-codepoint string and is meaningful
+   only as the sole contents of an interpolation slot.
+
+   Of the five admitted arms: four produce Escape + Number
+   (Hex/Octal/Binary/Monadic, plus EscapePlain's BareNumber inner —
+   all aliases for the Number token type per Lexical-Grammar.md
+   Notes 5/7); the fifth (EscapePlain paired with
    PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
    (alias pattern per Note 6; this routing keeps the same token type
    feeding <PositiveIntLit> at PropertyExpr-key positions). The syn
@@ -233,9 +239,10 @@ PipelineTopic       := Hash;
    Integer-only contexts maintain their own narrower reach —
    DotIdentifier admits bare IntegerLit only (no escape forms);
    <PositiveIntLit> in PropertyExpr admits bare PositiveIntegerLit
-   plus the escape-paired form, but no signs. *)
+   plus the EscapePlain-paired form, but no signs and no \u. *)
 NumberLit          := EscapedNumberLit | Number | IntegerLit;
-<EscapedNumberLit> := Escape (Number | PositiveIntegerLit);
+<EscapedNumberLit> := EscapeNonUnicode (Number | PositiveIntegerLit);
+<EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapeMonadic | EscapePlain;
 
 BooleanLit         := "true" | "false";
 EmptyLit           := "empty";
@@ -254,7 +261,33 @@ InterpStr          := EscapeBacktick DoubleQuote InterpStrContent* DoubleQuote;
 SpacingInterpStr   := EscapeSpacingBacktick DoubleQuote SpacingInterpStrContent* DoubleQuote;
 <SpacingInterpStrContent> := SpacingInterpStrChars | StringEscapedChar | Whitespace | InterpExpr;
 
-InterpExpr         := Backtick _ Expr _ Backtick;
+(* InterpExpr admits one of two mutually exclusive shapes between the
+   delimiting backticks: a UnicodeCharLit (the \u<hex> form, consuming
+   the slot alone), or any Foi Expr.
+
+   UnicodeCharLit is reachable ONLY here. It does not appear at
+   value-position via NumberLit (see EscapedNumberLit above). The
+   PEG ordered-choice tries UnicodeCharLit first; if it matches
+   the Escape + Number pair but the trailing tokens are not the
+   closing Backtick (i.e., any attempt to combine \u<hex> with
+   further expression content in the same slot), the overall
+   InterpExpr fails — by design. The slot-shape rule is "exactly
+   one of {Expr, UnicodeCharLit}, alone."
+
+   The lexer recognizes \u<hex> uniformly anywhere in source under
+   the <EscapedNumber> dispatcher (Lexical-Grammar.md §EscapedNumber);
+   the syn enforces position-narrowness here.
+
+   UnicodeCharLit emits a UnicodeCharLit-typed node (its own AST
+   type, distinct from NumberLit). The dedicated type avoids a
+   production-name collision in the packrat memo table (keyed by
+   "ProductionName@pos" — see parser-combinators.js); aliasing both
+   productions to "NumberLit" was tried and rejected. Downstream
+   consumers (shaper and transpiler) dispatch on `type ===
+   "UnicodeCharLit"`, with the transpiler lowering to
+   `String.fromCodePoint(0x<hex>)`. *)
+InterpExpr     := Backtick _ (UnicodeCharLit | Expr) _ Backtick;
+UnicodeCharLit := EscapeUnicode Number;
 ```
 
 The four `*StrContent` rules each reference the lex char-emitter
@@ -390,12 +423,26 @@ AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
    the production-specific operand fall-through. All five inner
    arms are disjoint at their first one or two tokens.
 
-   All six keep their own (_ AsAnnotationExpr)? trailing tail —
-   parens are atomic groups that can carry their own `:as` regardless
-   of position (including as a binary operand). PEG order for the
-   widened forms: AssignmentExpr first (where present, mirroring
-   <ExprNoBlock>), then AsExpr (longer with `:as` tail), falls
-   through cleanly on no match. *)
+   GroupedBareOpExprNoEmpty vs GroupedBareOpExpr — the structural
+   reason for the split. <BareOperandExpr> admits EmptyLit at its
+   top level (`empty + 1` parses at BinaryAtom); <BareOperandExprNoEmpty>
+   doesn't. The paren-recursive arm preserves whichever invariant
+   the outer reach already committed to: a paren reached via
+   <BareOperandExpr>'s third arm becomes a GroupedBareOpExpr and
+   recurses on the full BareOperandExpr (so `(empty)` is admitted
+   inside); a paren reached via <BareOperandExprNoEmpty>'s eighth
+   arm becomes a GroupedBareOpExprNoEmpty and recurses on the
+   no-empty inner. PEG dispatch at BinaryAtom tries
+   <BareOperandExprNoEmpty> before <BareOperandExpr>'s third arm,
+   so `(empty)` fails fast in the NoEmpty path (its inner can't
+   admit `empty`) and falls through to GroupedBareOpExpr — the
+   resulting AST node tag faithfully encodes which dispatch path
+   accepted the paren-wrap. User-visible parse acceptance is
+   equivalent for paren-wrapped non-empty content; only `(empty)`
+   is exclusive to the GroupedBareOpExpr path. The round-trip
+   oracle is the load-bearing check that the split is structurally
+   necessary; the design-time motivation is no-empty-invariant
+   compositionality through paren-recursion. *)
 
 GroupedExpr              := OpenParen _ Expr _ CloseParen (_ AsAnnotationExpr)?;
 GroupedExprNoBlock       := OpenParen _ ExprNoBlock _ CloseParen (_ AsAnnotationExpr)?;
@@ -483,9 +530,9 @@ DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
    coercible names; transpiler emits the natural lowering and
    fails honestly at runtime on shape mismatch.
 
-   Computed-key stringification footgun (audit #10): a `%expr`
-   whose value is a Record/Tuple stringifies via JS `.toString()`
-   to a stable-but-meaningless key. Inherited from ExplicitPropDef
+   Computed-key stringification footgun: a `%expr` whose value
+   is a Record/Tuple stringifies via JS `.toString()` to a
+   stable-but-meaningless key. Inherited from ExplicitPropDef
    — fix is at the runtime layer (structural-equality Map dispatch),
    not at the grammar layer. *)
 <AnglePropertyList>  := AnglePickEntry (_ Comma _ AnglePickEntry)* (_ Comma)?;
@@ -613,7 +660,7 @@ OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket 
 
 PEG ordering notes for `<ChainBase>`:
 - `MatchExpr` / `GuardedExpr` precede `AssignmentExpr` — they have distinctive `?`/`!` openers; AssignmentExpr's identifier-led opener could conflict only with `IdentifierExpr` (handled by ordering AssignmentExpr before IdentifierExpr).
-- `OpFuncExpr` precedes `GroupedExpr` — both open with `(`; OpFuncExpr's stricter inner shape (must be an Op) fails-through cleanly to GroupedExpr.
+- `OpFuncExpr` precedes `GroupedExprNoBlock` — both open with `(`; OpFuncExpr's restricted inner shape (`DotAngleExpr`, `DotBracketExpr`, the bare `[]` op, or `Op`) fails-through cleanly to `GroupedExprNoBlock` on any other paren-wrapped content. `GroupedExprNoBlock` rather than `GroupedExpr` because paren-wrapped `BareBlockExpr` / `DoComprExpr` / `DoLoopComprExpr` cannot serve as chain bases — bind those to a name first.
 - `IdentifierExpr` last among identifier-led arms — AssignmentExpr's longer match wins when `:=` follows.
 
 PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the four access variants (DotIdentifier before DotBracketExpr/DotAngleExpr); call suffixes are disjoint from access suffixes by opening token.
@@ -756,8 +803,10 @@ MulBinExpr       := BinaryAtom (_ MulOp _ BinaryAtom)+;
    Parens are mandatory: do-comprehensions don't appear bare as binary
    operands. Disjoint from GroupedOpExpr by inner content — PEG
    ordering in <BinaryAtom> tries GroupedOpExpr first; on inner
-   content that isn't an OperandExpr (e.g. starts a DoComprExpr or
-   DoLoopComprExpr), it fails through to GroupedDoExpr cleanly.
+   content that isn't one of GroupedOpExpr's inner alts (DefFuncExpr,
+   MatchExpr, AssignmentExpr, AsExpr, OperandExpr) — e.g. starts a
+   DoComprExpr or DoLoopComprExpr — it fails through to GroupedDoExpr
+   cleanly.
 
    AsExpr added to the inner so `(?x :as bool) ~<< { ... }`-style
    constructs are reachable inside the paren. Trailing `:as` allowed
@@ -943,24 +992,35 @@ FuncBodyStmtSemiOpt   := FuncBodyStmt (_ Semicolon)*;
 ReturnExpr            := Caret _ Expr;
 ```
 
-PEG ordering notes for `FuncBodyPipeline`:
+PEG ordering notes for `FuncBodyPipeline`'s body (the three arms
+of `<FlowRHSImplIn>`):
 
 - `BlockExpr` first so `#> (x){y;}` parses as a BlockExpr
-  (bare-identifier def `x`, body `{y;}`) rather than ExprNoBlock's
-  GroupedExprNoBlock `(x)` with dangling `{y;}`. BlockExpr at this
-  position uses BlockDefsInitOptImplIn (the lenient inner form) —
-  the function's positional argument is the implicit input that
-  destructure-no-init binds from, so `defn f(x) #> (<:a, :b>) { ... };`
-  parses with `<:a, :b>` destructuring from `x`.
+  (bare-identifier def `x`, body `{y;}`) rather than the `OrDispatch`
+  fall-through eating `(x)` as a `GroupedExprNoBlock` and leaving
+  `{y;}` dangling. BlockExpr at this position uses
+  `BlockDefsInitOptImplIn` (the lenient inner form) — the function's
+  positional argument is the implicit input that destructure-no-init
+  binds from, so `defn f(x) #> (<:a, :b>) { ... };` parses with
+  `<:a, :b>` destructuring from `x`.
 - `BareBlockExpr` next handles the no-defs case `#> { y; }`.
-  Disjoint from BlockExpr (which requires a `(...)` prefix) and
-  from ExprNoBlock / GroupedExpr (neither opens with `{`).
-- `ExprNoBlock` and `GroupedExpr` handle non-block pipeline bodies.
-  GroupedExpr isn't narrowed (unlike ChainBase or DoLoopComprExpr's
-  iter range) — `#> (Foo ~<< {...})` is a sensible pipeline-body
-  form.
+  Disjoint from `BlockExpr` (which requires a `(...)` prefix) and
+  from `OrDispatch` (whose tier ladder bottoms out at `BinaryAtom`,
+  none of whose arms open with `{`).
+- `OrDispatch` last carries every non-block body form via the
+  precedence ladder (Or → And → Compare → Add → Mul → Unary →
+  BinaryAtom). This is intentionally narrower than `<ExprNoBlock>`:
+  bare `DefFuncExpr`, `MatchExpr`, `AssignmentExpr`, and `AsExpr`
+  are NOT reachable through the tier ladder, so pipeline bodies
+  like `#> defn(x)^x+1` or `#> ?{ ... }` are parse errors. To use
+  any of those at pipeline body position, paren-wrap to reach the
+  operand-position widenings in `GroupedOpExpr` / `GroupedBareOpExpr`
+  / `GroupedBareOpExprNoEmpty`: `#> (defn(x)^x+1)`,
+  `#> (?{ [c]: f; ?: g })`, `#> (x := 5)`. Do-comprehensions reach
+  this position via `BinaryAtom`'s `GroupedDoExpr` arm —
+  `#> (Foo ~<< {...})` parses through that path.
 
-Same two-block-arm shape as `<FlowRHSImplIn>` in §9.
+Same three-arm shape as `<FlowRHSImplIn>` in §9.
 
 DefFuncExpr shaper-shape notes:
 - `over` is always the full FuncOverClause node (carries `.names`

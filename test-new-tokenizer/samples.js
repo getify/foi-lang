@@ -18,12 +18,17 @@ export const samples = [
 	{ label: "NumberLit: -5 :as int",                src: "-5 :as int;" },
 
 	// NumberLit escape forms — the five EscapedNumber dispatch arms
-	// reachable from syn NumberLit (Escape + Number pairing). The
-	// sixth arm (EscapePlain + PositiveIntegerLitWithSep, unsigned
-	// `\5_000` form) emits Escape + PositiveIntegerLit, which the
-	// syn NumberLit production doesn't admit at value position —
-	// only via the hidden <PositiveIntLit> in <PropertyExpr>.
-	// Covered by the §17 ExplicitPropDef key sample below.
+	// reachable from syn NumberLit at value position. Four emit
+	// Escape + Number (Hex, Octal, Binary, Monadic, plus EscapePlain's
+	// BareNumber inner covering signed `\-1_000` and decimal
+	// `\100_000.25`); the fifth (EscapePlain + PositiveIntegerLitWithSep,
+	// unsigned `\5_000`) emits Escape + PositiveIntegerLit and reaches
+	// value position via NumberLit's widened first-alt. The dedicated
+	// `\5_000` cluster below verifies that path through OperandExpr
+	// and call-arg contexts; §17 ExplicitPropDef key samples cover
+	// the PropertyExpr-position reach. The sixth lex arm (EscapeUnicode,
+	// `\u<hex>`) is excluded — admitted only inside InterpExpr via
+	// UnicodeCharLit.
 	//
 	// Signed-integer-with-sep (`\-1_000`) goes through BareNumber's
 	// "-"? + DigitsWithSep + NotIdentCont arm, which emits Number,
@@ -34,10 +39,75 @@ export const samples = [
 	{ label: "NumberLit: \\o-755 (octal negative)",               src: "\\o-755;" },
 	{ label: "NumberLit: \\b1100 (binary)",                       src: "\\b1100;" },
 	{ label: "NumberLit: \\b-1100 (binary negative)",             src: "\\b-1100;" },
-	{ label: "NumberLit: \\u263A (unicode → string)",             src: "\\u263A;" },
 	{ label: "NumberLit: \\-1_000 (sep'd signed integer)",        src: "\\-1_000;" },
 	{ label: "NumberLit: \\100_000_003.25 (sep'd decimal)",       src: "\\100_000_003.25;" },
 	{ label: "NumberLit: \\@FFFF (monadic, fallback)",            src: "\\@FFFF;" },
+
+	// NumberLit `\u263A` form — NARROWED. No longer reachable at value
+	// position; admitted only as the sole contents of an interpolation
+	// slot (see InterpExpr in parser.js). Value-position use case is
+	// covered in failSamples (test-parser.js).
+	{ label: "InterpStr: \\u263A in interp slot (sole)",          src: "`\"`\\u263A`\";" },
+	{ label: "InterpStr: \\u263A flanked by text",                src: "`\"hello `\\u263A` world\";" },
+	{ label: "SpacingInterpStr: \\u263A in interp slot",          src: "\\`\"`\\u263A`\";" },
+
+	// === InterpExpr slot — Expr arm coverage ===
+	// PEG ordered-choice with UnicodeCharLit in front: confirm the
+	// Expr arm is fully reachable across all admissible expression
+	// shapes. Regression seed: PositiveIntegerLit("42") was rejected
+	// when UnicodeCharLit's name-aliased production collided with
+	// NumberLit's memo key.
+
+	// NumberLit forms inside slot — every escape arm + bare numbers
+	{ label: "InterpStr: slot bare positive int",         src: '`"hi `42` there";' },
+	{ label: "InterpStr: slot bare negative int",         src: '`"hi `-5` there";' },
+	{ label: "InterpStr: slot bare decimal",              src: '`"hi `3.14` there";' },
+	{ label: "InterpStr: slot bare negative decimal",     src: '`"hi `-3.14` there";' },
+	{ label: "InterpStr: slot hex escape",                src: '`"hi `\\hFF` there";' },
+	{ label: "InterpStr: slot hex negative",              src: '`"hi `\\h-FF` there";' },
+	{ label: "InterpStr: slot octal escape",              src: '`"hi `\\o755` there";' },
+	{ label: "InterpStr: slot binary escape",             src: '`"hi `\\b1100` there";' },
+	{ label: "InterpStr: slot sep'd signed int",          src: '`"hi `\\-1_000` there";' },
+	{ label: "InterpStr: slot sep'd decimal",             src: '`"hi `\\100_000.25` there";' },
+	{ label: "InterpStr: slot monadic fallback",          src: '`"hi `\\@FFFF` there";' },
+
+	// Other leaf forms inside slot
+	{ label: "InterpStr: slot bare Identifier",           src: '`"hi `name` there";' },
+	{ label: "InterpStr: slot BooleanLit",                src: '`"hi `true` there";' },
+	{ label: "InterpStr: slot EmptyLit",                  src: '`"hi `empty` there";' },
+	{ label: "InterpStr: slot BuiltIn ident",             src: '`"hi `Maybe` there";' },
+
+	// CallExpr / chain forms inside slot
+	{ label: "InterpStr: slot chain access",              src: '`"hi `foo.bar` there";' },
+	{ label: "InterpStr: slot index access",              src: '`"hi `foo[0]` there";' },
+	{ label: "InterpStr: slot mixed chain",               src: '`"hi `foo.bar[0].baz` there";' },
+	{ label: "InterpStr: slot AtExpr",                    src: '`"hi `Maybe@42` there";' },
+	{ label: "InterpStr: slot bare None@",                src: '`"hi `None@` there";' },
+	{ label: "InterpStr: slot prefix call",               src: '`"hi `f(1, 2)` there";' },
+
+	// Operator-bearing expressions inside slot
+	{ label: "InterpStr: slot binary expr",               src: '`"hi `x + y` there";' },
+	{ label: "InterpStr: slot unary bool",                src: '`"hi `?x` there";' },
+	{ label: "InterpStr: slot negation",                  src: '`"hi `!x` there";' },
+	{ label: "InterpStr: slot pipeline",                  src: '`"hi `x #> f` there";' },
+	{ label: "InterpStr: slot AsExpr",                    src: '`"hi `x :as int` there";' },
+
+	// DataStruct forms inside slot
+	{ label: "InterpStr: slot RecordTupleLit",            src: '`"hi `<1, 2, 3>` there";' },
+	{ label: "InterpStr: slot RecordTupleLit named",      src: '`"hi `<x: 1>` there";' },
+
+	// Nested string forms — spacing-form for the inner per the
+	// grammar's plain-in-plain prohibition
+	{ label: "InterpStr: slot nested spacing interp",     src: '`"hi `\\`"`name`"` there";' },
+
+	// SpacingInterpStr counterparts — verify the slot grammar works
+	// under the spacing form too
+	{ label: "SpacingInterpStr: slot bare positive int",  src: '\\`"hi `42` world";' },
+	{ label: "SpacingInterpStr: slot bare Identifier",    src: '\\`"hi `name` world";' },
+	{ label: "SpacingInterpStr: slot binary expr",        src: '\\`"hi `x + y` world";' },
+	{ label: "SpacingInterpStr: slot AsExpr",             src: '\\`"hi `x :as int` world";' },
+	{ label: "SpacingInterpStr: slot \\u263A sole",       src: '\\`"hi `\\u263A` world";' },
+
 
 	// NumberLit `\5_000` form — unsigned separator-bearing integer,
 	// routes through PositiveIntegerLitWithSep (emits PositiveIntegerLit).

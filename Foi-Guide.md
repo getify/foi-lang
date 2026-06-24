@@ -149,7 +149,7 @@ You can also specify an arbitrarily large (or small) precision value by prefixin
 
 Such values are held in a `Number` [monadic instance](#monads-and-friends). To perform mathematical operations with such values, an arbitrary-precision library must be used.
 
-**Note:** One special numeric prefix is `\u`, which actually produces a character/string from the numeric hexadecimal representation of its code-point. So the numeric literal `\u263A` actually produces the single-character string `"☺"`.
+**Note:** One special numeric prefix is `\u`, which produces a string (of one or more characters) from the numeric hexadecimal representation of its Unicode code-point. So the numeric literal `\u263A` produces the single-character string `"☺"`. **HOWEVER**, this escape form is *only* available inside [interpolated string literal](#strings) expressions.
 
 ### Booleans
 
@@ -212,7 +212,7 @@ The interpolated expression (inside the `` ` .. ` ``) can be any valid **Foi** e
 
 **Warning:** There's one minor caveat to the above statement. An interpolated expression *cannot* itself contain a bare (`` `".." ``) interpolated string, because the `` `" `` sequence would be a grammar ambiguity (opening another interpolated string, or closing the current interpolated expression and outer string). To nest an interpolated string inside an interpolated expression, you must use a slightly unfortunate work-around. For the inner/nested interpolated string literal, escape it with combined whitespace-collapsing as well (via `` \` ``), as illustrated shortly; fortunately, the `` \`" `` sequence is *not* grammatically ambiguous.
 
-Interpolation is also the best way to include a unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
+Interpolation is also the *best* way to include a Unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
 
 ```java
 `"I was happy `\u263A` to see you!";

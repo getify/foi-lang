@@ -713,6 +713,18 @@ export const defaultShapers = {
 		return { type: "NumberLit", text };
 	},
 
+	// UnicodeCharLit := EscapeUnicode Number;
+	//
+	// Reachable only as the sole contents of an InterpExpr slot
+	// (see parser.js InterpExpr). Same shape as NumberLit — concat
+	// part values into `text` — distinct `type` tag so the
+	// transpiler routes to its own handler.
+	UnicodeCharLit(frame,parts) {
+		var text = "";
+		for (let p of parts) text += p.value;
+		return { type: "UnicodeCharLit", text };
+	},
+
 	// BooleanLit := "true" | "false";
 	//
 	// Single Native token. Text is the raw lexeme.

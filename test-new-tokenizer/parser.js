@@ -79,36 +79,57 @@ var NegativeIntegerLitTok = tokType("NegativeIntegerLit");
 var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 
 // NumberLit         := EscapedNumberLit | Number | IntegerLit;
-// <EscapedNumberLit> := Escape (Number | PositiveIntegerLit);
+// <EscapedNumberLit> := EscapeNonUnicode (Number | PositiveIntegerLit);
+// <EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapeMonadic | EscapePlain;
 //
 // No `:as` tail — annotation comes via AsExpr (§5) where applicable.
 //
-// <EscapedNumberLit> names the two-token shape the syn consumes
-// when the lex's hidden <EscapedNumber> dispatcher matched. The lex
-// dispatcher emits two distinct token pairings: five of its six arms
-// produce Escape + Number (Hex/Unicode/Octal/Binary/Monadic, plus
-// EscapePlain's BareNumber inner — all aliases for Number per
-// Lexical-Grammar.md Notes 5/7); the sixth (EscapePlain paired with
-// PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
-// (alias pattern per Note 6; routes through PositiveIntegerLit so
-// the same token type feeds <PositiveIntLit> at PropertyExpr-key
-// positions). NumberLit admits both pairings so unsigned separator-
-// bearing integers like `\5_000` parse at value position, not only
-// at PropertyExpr-key position.
+// <EscapedNumberLit> names the two-token shape the syn consumes when
+// the lex's hidden <EscapedNumber> dispatcher matched. The lex dispatcher
+// has six arms; FIVE are reachable here at value position. The sixth
+// (EscapeUnicode) is excluded — \u<hex> is a character escape, not a
+// numeric literal, and is admitted exclusively from inside InterpExpr
+// (see UnicodeCharLit, defined alongside InterpExpr below). The narrow
+// `or(...)` over the five non-\u Escape values is what enforces this
+// at the parser layer; the lexer still emits Escape("\\u") + Number
+// anywhere in source.
 //
-// PEG order inside NumberLit: EscapedNumberLit first (two-token
-// match, longest per Note 2 in the lex grammar), then bare Number,
-// then bare IntegerLit. Inner or(Number, PositiveIntegerLit) is
-// mechanical — the two token types are disjoint and the lex layer
-// produces exactly one of them for any given escape match.
+// Of the five: four produce Escape + Number (Hex/Octal/Binary/Monadic,
+// plus EscapePlain's BareNumber inner — all aliases for Number per
+// Lexical-Grammar.md Notes 5/7); the fifth (EscapePlain paired with
+// PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
+// (alias pattern per Note 6; routes through PositiveIntegerLit so the
+// same token type feeds <PositiveIntLit> at PropertyExpr-key positions).
+// NumberLit admits both pairings so unsigned separator-bearing integers
+// like `\5_000` parse at value position, not only at PropertyExpr-key
+// position.
+//
+// PEG order inside NumberLit: EscapedNumberLit first (two-token match,
+// longest per Note 2 in the lex grammar), then bare Number, then bare
+// IntegerLit. Inner or(Number, PositiveIntegerLit) is mechanical — the
+// two token types are disjoint and the lex layer produces exactly one
+// of them for any given escape match.
 //
 // Integer-only contexts maintain their own narrower reach —
-// DotIdentifier (§6) admits bare IntegerLit only (whole numbers,
-// no fractional/escape forms — that's the contract); PropertyExpr's
+// DotIdentifier (§6) admits bare IntegerLit only (whole numbers, no
+// fractional/escape forms — that's the contract); PropertyExpr's
 // <PositiveIntLit> (§6) admits bare PositiveIntegerLit plus the
-// escape-paired form, but no signs.
+// EscapePlain-paired form, but no signs and no \u.
+var EscapeHexTok       = tokVal("Escape", "\\h");
+var EscapeOctalTok     = tokVal("Escape", "\\o");
+var EscapeBinaryTok    = tokVal("Escape", "\\b");
+var EscapeMonadicTok   = tokVal("Escape", "\\@");
+var EscapePlainTok     = tokVal("Escape", "\\");
+var EscapeNonUnicode   = or(
+	EscapeHexTok,
+	EscapeOctalTok,
+	EscapeBinaryTok,
+	EscapeMonadicTok,
+	EscapePlainTok
+);
+
 var EscapedNumberLit = and(
-	tokType("Escape"),
+	EscapeNonUnicode,
 	or(tokType("Number"), PositiveIntegerLitTok)
 );
 
@@ -132,7 +153,6 @@ var Backtick               = tokType("Backtick");
 var StringEscapedChar      = tokType("StringEscapedChar");
 var StringChars            = tokType("String");      // PlainStrChars/InterpStrChars/etc. all emit "String"
 var WhitespaceTok          = tokType("Whitespace");
-var EscapePlainTok         = tokVal("Escape", "\\");
 var EscapeBacktickTok      = tokVal("Escape", "`");
 var EscapeSpacingBacktickTok = tokVal("Escape", "\\`");
 
@@ -166,9 +186,43 @@ export const SpacingInterpStr = production("SpacingInterpStr",
 	{ preserveInnerDelim: true }
 );
 
-// InterpExpr := Backtick _ Expr _ Backtick;
+// InterpExpr := Backtick _ (UnicodeCharLit | Expr) _ Backtick;
+// UnicodeCharLit := EscapeUnicode Number;
+//
+// UnicodeCharLit is reachable ONLY from here — the \u<hex> form is
+// excluded from NumberLit at value position (see EscapedNumberLit
+// above) and admitted exclusively as the sole contents of an
+// interpolation slot.
+//
+// UnicodeCharLit gets its own production name (NOT a NumberLit
+// alias). Two productions sharing a name would collide in the
+// packrat memo table (keyed by "ProductionName@pos" — see
+// parser-combinators.js). The collision symptom: UnicodeCharLit
+// fails at a position, caches failure under "NumberLit@N", and
+// the subsequent Expr → NumberLit attempt at the same position
+// returns the cached failure without trying.
+//
+// PEG ordered-choice: UnicodeCharLit tried before Expr. If
+// UnicodeCharLit matches Escape("\\u") + Number and trailing tokens
+// are not the closing Backtick (e.g., `\u263A + 1` or `\u263A.foo`
+// inside an interp slot), the outer `and(Backtick, ..., Backtick)`
+// fails — PEG commits to the matched UnicodeCharLit and does not
+// retry the Expr arm. This is intentional: the slot-shape rule is
+// "Expr alone, OR \u<hex> alone, never mixed."
+var EscapeUnicodeTok = tokVal("Escape", "\\u");
+
+export const UnicodeCharLit = production("UnicodeCharLit",
+	and(EscapeUnicodeTok, tokType("Number"))
+);
+
 var InterpExpr = production("InterpExpr",
-	and(Backtick, delim(), lazy(() => Expr), delim(), Backtick)
+	and(
+		Backtick,
+		delim(),
+		or(UnicodeCharLit, lazy(() => Expr)),
+		delim(),
+		Backtick
+	)
 );
 
 // <StringLit> := PlainStr | SpacingEscapedStr | InterpStr | SpacingInterpStr;
@@ -2313,11 +2367,20 @@ export const NestedTypeExpr = production("NestedTypeExpr",
 
 // <NoUnionTypeExpr> := NestedTypeExpr | NamedType
 //                    | EmptyLit | PlainStr | NumberLit | BooleanLit
-//                    | DataStructTypeExpr | GroupedTypeExpr;
+//                    | DataStructTypeExpr;
 //
 // PEG: NestedTypeExpr before NamedType (longer; same NamedType opener).
 // Other arms disjoint by opener (literals by token type/value;
-// DataStruct opens with OpenAngle; Grouped opens with OpenBrace).
+// DataStruct opens with OpenAngle).
+//
+// GroupedTypeExpr is NOT an arm here. The brace-grouped form is
+// reached as an explicit `(NoUnionTypeExpr | GroupedTypeExpr)`
+// alternative at the three sites that admit it: FuncTypeArg,
+// FuncTypeFinalArg's Star-prefixed arm, and FuncTypeExpr's return
+// slot. Admitting it here would make those explicit arms redundant
+// and would silently admit decorative bracing in
+// DataStructValueType / DataStructFinalValType / NestedTypeExpr-arg
+// where the strict-B brace rule wants it rejected.
 var NoUnionTypeExpr = or(
 	NestedTypeExpr,
 	NamedType,

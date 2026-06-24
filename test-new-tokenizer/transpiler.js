@@ -1547,41 +1547,39 @@ var handlers = {
 	// value (non-escape forms). Non-escape forms are JS-compatible;
 	// pass `n.text` through unchanged.
 	//
-	// Six escape forms dispatch on text[1]:
+	// Five escape forms dispatch on text[1]:
 	//
 	//   \hDIGS  → hex          → 0xDIGS                        (sign carried)
 	//   \oDIGS  → octal        → 0oDIGS                        (sign carried)
 	//   \bDIGS  → binary       → 0bDIGS                        (sign carried)
-	//   \uDIGS  → unicode char → String.fromCodePoint(0xDIGS)  (string, not number)
 	//   \DIGS   → sep'd decimal/integer — strip the leading `\`;
 	//             JS accepts numeric separators natively.
 	//   \@DIGS  → monadic / arbitrary-precision — out of bootstrap
 	//             scope (locked); falls back to placeholder.
 	//
+	// The lex `<EscapedNumber>` dispatcher has a sixth arm
+	// (EscapeUnicode + UnicodeNumber, the `\u<hex>` form), but it is
+	// NOT reachable here — the syn narrowing excludes `\u` from
+	// EscapedNumberLit at value position; it's admitted exclusively
+	// as the sole contents of an InterpExpr slot via a separate
+	// UnicodeCharLit production (own type, own handler below).
+	//
 	// Sign for \h/\o/\b: per Lexical-Grammar.md Note 5, the `-` is
 	// consumed inside the Number content (HexNumber/OctalNumber/
 	// BinaryNumber's `"-"? Digit+`), so `\h-FF` arrives as text
 	// "\h-FF" — split the sign before prepending the radix prefix,
-	// then re-attach. \u has no sign (UnicodeNumber is unsigned per
-	// Note 6). EscapePlain's signed BareNumber comes through as
-	// `\-1_000` with text "\-1_000"; just dropping the `\` yields
+	// then re-attach. EscapePlain's signed BareNumber comes through
+	// as `\-1_000` with text "\-1_000"; just dropping the `\` yields
 	// valid JS, since JS already accepts the leading `-` and the
 	// numeric separators natively.
 	//
-	// \u uses String.fromCodePoint rather than the JS `"\uXXXX"`
-	// literal form: the literal form caps at four hex digits (BMP
-	// only), but UnicodeNumber admits HexDigit+ of any length.
-	// fromCodePoint handles the full Unicode range without
-	// branching on digit count.
-	//
 	// Asymmetry note: `\5_000` (PositiveIntegerLitWithSep, unsigned
 	// separator-bearing integer) emits an Escape + PositiveIntegerLit
-	// pair that the syn NumberLit production doesn't admit at value
-	// position — only the hidden <PositiveIntLit> in <PropertyExpr>
-	// admits this shape. So `\5_000` reaches this handler exclusively
-	// via shapePropertyExpr's synthesized NumberLit (record/tuple
-	// key positions). The dispatch arms below handle that path
-	// identically — the marker-digit branch covers it.
+	// pair that the syn NumberLit production DOES admit at value
+	// position (via the widened first-alt). It also reaches this
+	// handler via shapePropertyExpr's synthesized NumberLit (record/
+	// tuple key positions). The dispatch arms below handle both
+	// paths identically — the marker-digit branch covers it.
 	NumberLit(n, r) {
 		var text = n.text;
 		if (text[0] !== "\\") return text;
@@ -1599,10 +1597,6 @@ var handlers = {
 			return sign + radix + body;
 		}
 
-		if (marker === "u") {
-			return "String.fromCodePoint(0x" + text.slice(2) + ")";
-		}
-
 		// EscapePlain — separator-bearing decimal or integer. Sign
 		// and digits are already JS-compatible; just drop the `\`.
 		if (marker === "-" || (marker >= "0" && marker <= "9")) {
@@ -1612,6 +1606,19 @@ var handlers = {
 		// \@ — monadic / arbitrary-precision, out of bootstrap scope.
 		return fallback(n);
 	},
+
+	// UnicodeCharLit.text is the verbatim "\u<hex>" lexeme. Reachable
+	// only as the sole contents of an InterpExpr slot (see parser.js
+	// InterpExpr) — the `\u<hex>` form is a character escape, not a
+	// numeric literal, and has its own type tag distinct from
+	// NumberLit. `\u` has no sign (UnicodeNumber is unsigned per
+	// Lexical-Grammar.md Note 6).
+	//
+	// String.fromCodePoint handles the full Unicode range without
+	// branching on digit count: the JS `"\uXXXX"` literal form caps
+	// at four hex digits (BMP only), but UnicodeNumber admits
+	// HexDigit+ of any length, so explicit fromCodePoint is needed.
+	UnicodeCharLit: (n, r) => "String.fromCodePoint(0x" + n.text.slice(2) + ")",
 
 	BooleanLit: (n, r) => n.text,
 

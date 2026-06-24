@@ -109,6 +109,7 @@ var passSamples = [
 	};`,
 ];
 
+
 // Expected-fail samples — nail down the `:as` precedence rule.
 // Each MUST throw a SyntaxError whose message begins with "Foi parse
 // failed:". See the ":as Precedence — First-Class Rule" section of
@@ -162,6 +163,21 @@ var failSamples = [
 	"foo\\/';",        // postfix stacking — \/ then ' (locked C)
 	"foo/\\\\/;",      // postfix stacking — /\ then \/
 	"foo\\//\\;",      // postfix stacking — \/ then /\
+	// Narrowed \u<hex> — character escape admitted only as the sole
+	// contents of an InterpExpr slot. See parser.js InterpExpr /
+	// UnicodeCharLit and Syntactic-Grammar.md §2.
+	"\\u263A;",                       // \u at value position — rejected
+	"def x: \\u263A;",                // same — RHS of def
+	"f(\\u263A);",                    // same — call argument
+	"\\u263A + 1;",                   // same — binary operand
+	'`"`\\u263A + 1`";',              // escape + binary op
+	'`"`\\u263A.foo`";',              // escape + chain access
+	'`"`1 + \\u263A`";',              // expression then escape
+	'`"`\\u263A \\u263A`";',          // two escapes in one slot
+	'\\`"`\\u263A + 1`";',              // escape + binary op
+	'\\`"`\\u263A.foo`";',              // escape + chain access
+	'\\`"`1 + \\u263A`";',              // expression then escape
+	'\\`"`\\u263A \\u263A`";',          // two escapes in one slot
 ];
 
 var passed = 0;
