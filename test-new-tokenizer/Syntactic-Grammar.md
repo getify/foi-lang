@@ -1152,7 +1152,114 @@ PickValue              := Ampersand IdentBase MultiAccessExpr?;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
 ConcisePropDef         := Colon PropertyExpr;
 ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;
-<ComputedPropName>     := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
+
+(* ComputedPropName — narrowed alphabet, two arms.
+
+   The bare arm admits only leaf-shaped values and a flat
+   identifier-access chain: anything that reads unambiguously
+   as a computed key expression without paren disambiguation.
+   The paren-wrap arm admits the full binary expression ladder
+   via OperandExpr — arithmetic, comparison, logical, flow,
+   chain/at/postfix forms, etc.
+
+   What's NOT admitted at the bare arm (must paren-wrap):
+   - Call/at/partial-call suffixes (`%foo(x)`, `%foo@x`, `%foo|x|`)
+   - Postfix modifiers (`%foo'`, `%foo/\`, `%foo\/`)
+   - Pick chain segs (`%foo.<a,b>`)
+   - Range chain segs (`%foo.[1..3]`)
+   - Bare `@` (IdentityFunc), bare `None@`, etc.
+
+   What's NEVER admitted (rejected even paren-wrapped):
+   - `:as` annotations (no OptAsAnnotation tail on
+     ComputedPropParenExpr; AsExpr not in inner OperandExpr).
+     `%(x) :as int` and `%(x :as int)` are both parse errors.
+   - `:=` assignment (AssignmentExpr not in OperandExpr inner)
+   - `defn` / match expressions (not in OperandExpr inner)
+   - `defs`-block bodies (BareBlockExpr not in OperandExpr inner)
+   - DataStructLit at the bare top level (`%<x: 1>` — the `:`
+     visually collides with the outer ExplicitPropDef separator;
+     paren-wrap admits via the OperandExpr → BareOperandExpr →
+     BareOperandExprNoEmpty → DataStructLit path)
+   - Monadic escapes (`%\@FF` — meaningless stringification)
+   - EmptyLit (`%empty` — no storage slot for missing value)
+
+   The numeric bare arm <ComputedPropNumberLit> admits NumberLit
+   (§2) minus monadic (`\@FF`) and unicode (`\u<hex>`) — both
+   categorically not numeric. Both signs and both shapes
+   (integer/decimal) admitted; PropertyExpr's positive-only
+   narrowness doesn't apply here since computed keys aren't
+   dual-purposed as positional index lookups. See the
+   <ComputedPropNumberLit> production block below for the full
+   per-arm breakdown.
+
+   AnglePickEntry (§6) shares this ComputedPropName, so the
+   same alphabet applies in pick context: `.<%(a + b)>` and
+   `.<%foo.bar.baz>` are legal; `.<%foo@x>` requires `.<%(foo@x)>`.
+
+   Synthesized as a ComputedPropName AST node by ExplicitPropDef
+   and DotAngleExpr (PickComputed in pick context). The bare-arm
+   numeric-literal forms synthesize an inner NumberLit from raw
+   tokens (same shapePropertyExpr pattern as PropertyExpr's
+   integer arm); other bare arms and the paren-wrap arm yield
+   their inner node directly. *)
+
+<ComputedPropName>       := Percent (<ComputedPropBare> | ComputedPropParenExpr);
+
+<ComputedPropBare>       := BooleanLit | StringLit | <ComputedPropNumberLit> | ComputedPropAccessChain;
+
+(* <ComputedPropNumberLit>: numeric-literal alphabet at the computed-
+   key bare arm. Admits every NumberLit shape except monadic (`\@FF`)
+   and unicode (`\u<hex>`) — both categorically not numeric (monadic
+   = arbitrary-precision / out of bootstrap scope; unicode = char
+   escape, narrowed at value position to InterpExpr-slot only).
+
+   Both signs and both shapes (integer/decimal) admitted:
+     - Bare integers via PositiveIntLit / NegativeIntegerLit (their
+       token types win in lex PEG order over bare Number's integer
+       sub-arm).
+     - Bare decimals (`3.14`, `-3.14`) via the bare Number arm —
+       BareNumber's decimal sub-arm emits Number.
+     - The EscapePlain + Number arm covers signed separator-bearing
+       integers (`\-1_000`) and separator-bearing decimals
+       (`\100_000.25`) — both BareNumber sub-arms. The unsigned
+       integer form `\1_000` is covered separately by PositiveIntLit's
+       EscapePlain-paired arm.
+     - Typed-radix (`\hFF` / `\h-FF`, `\o73` / `\o-755`, `\b1010` /
+       `\b-1100`) — signs handled inside HexNumber/OctalNumber/
+       BinaryNumber per the lex layer. These three have no decimal
+       sub-arms per Lexical-Grammar.md, so their Number tokens are
+       integer-shaped by lex contract.
+
+   PropertyExpr's positive-integer-only narrowness doesn't apply
+   here — computed keys aren't dual-purposed as positional index
+   lookups, so admitting both signs and both shapes is uniform. *)
+<ComputedPropNumberLit> := PositiveIntLit
+                         | NegativeIntegerLit
+                         | Number
+                         | (EscapeHex Number)
+                         | (EscapeOctal Number)
+                         | (EscapeBinary Number)
+                         | (EscapePlain Number);
+
+(* ComputedPropAccessChain: flat IdentBase + dot/bracket access
+   chain. Excludes DotBracketExpr (range), DotAngleExpr (pick),
+   call suffixes, at-tails, and postfix modifiers. Bare IdentBase
+   (zero segs) folds to just the IdentBase node; segs fold
+   left-to-right via the same applyChainSeg helper ChainExpr uses,
+   producing the same MemberAccessExpr / IndexAccessExpr nesting. *)
+ComputedPropAccessChain  := IdentBase (DotIdentifier | BracketExpr)*;
+
+(* ComputedPropParenExpr: paren-wrap arm. Inner is OperandExpr —
+   the binary expression ladder (FlowDispatch). NO trailing
+   (_ AsAnnotationExpr)? — `:as` on a computed key collides
+   visually with the outer ExplicitPropDef Colon and has no
+   semantic use case. Differs from §5's six paren-grouping
+   productions in this respect.
+
+   Unwrap-shaper — returns the inner OperandExpr node directly,
+   lifting OpenParen/CloseParen onto its delims in source-position
+   order (same pattern as RecordTupleValue and GroupedTypeExpr). *)
+ComputedPropParenExpr    := OpenParen _ OperandExpr _ CloseParen;
 
 SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket CloseAngle;
 <SetEntryList>         := (_ Comma)* (_ SetEntry (_ Comma (_ SetEntry)?)*)?;

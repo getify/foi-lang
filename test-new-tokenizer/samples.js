@@ -334,21 +334,26 @@ export const samples = [
 	{ label: "RangeAccessExpr (trailing): arr.[..5]", src: "arr.[..5];" },
 	{ label: "PropertyPickExpr: rec.<a,5>",          src: "rec.<a,5>;" },
 
-	// === Dynamic pick — computed name (%) and spread (&) ===
-	// `%` is one computed key (full ComputedPropName parity with
-	// ExplicitPropDef). `&` is N keys from a runtime tuple-of-
-	// strings source; alphabet mirrors PickValue exactly (no inline
-	// call suffixes — pre-bind required for calls).
+	// AnglePickEntry shares ComputedPropName with ExplicitPropDef
+	// (§17 grammar) — same narrowed alphabet applies. Call/at/
+	// postfix forms move to failSamples; paren-wrap rewrites
+	// covered below.
 	{ label: "PropertyPickExpr (computed ident): rec.<%k>",          src: "rec.<%k>;" },
 	{ label: "PropertyPickExpr (computed builtin): rec.<%Maybe>",    src: "rec.<%Maybe>;" },
 	{ label: "PropertyPickExpr (computed string): rec.<%\"k\">",     src: "rec.<%\"k\">;" },
 	{ label: "PropertyPickExpr (computed pipeline): rec.<%#>",       src: "rec.<%#>;" },
 	{ label: "PropertyPickExpr (computed chain): rec.<%foo.bar>",    src: "rec.<%foo.bar>;" },
-	{ label: "PropertyPickExpr (computed at-call): rec.<%Maybe@42>", src: "rec.<%Maybe@42>;" },
+	{ label: "PropertyPickExpr (computed multi-seg): rec.<%foo.bar.baz>", src: "rec.<%foo.bar.baz>;" },
+	{ label: "PropertyPickExpr (computed bracket): rec.<%foo[0]>",   src: "rec.<%foo[0]>;" },
+	{ label: "PropertyPickExpr (computed integer): rec.<%5>",        src: "rec.<%5>;" },
+	{ label: "PropertyPickExpr (computed bool): rec.<%true>",        src: "rec.<%true>;" },
+	{ label: "PropertyPickExpr (computed paren-arith): rec.<%(a + b)>", src: "rec.<%(a + b)>;" },
+	{ label: "PropertyPickExpr (computed paren-at): rec.<%(Maybe@42)>", src: "rec.<%(Maybe@42)>;" },
 	{ label: "PropertyPickExpr (spread bare): rec.<&keys>",          src: "rec.<&keys>;" },
 	{ label: "PropertyPickExpr (spread chain): rec.<&keys.subset>",  src: "rec.<&keys.subset>;" },
 	{ label: "PropertyPickExpr (spread index): rec.<&keys[0]>",      src: "rec.<&keys[0]>;" },
 	{ label: "PropertyPickExpr (mixed all): rec.<a, 5, %k, &keys>",  src: "rec.<a, 5, %k, &keys>;" },
+	{ label: "PropertyPickExpr (bare decimal in pick): %3.14", src: "rec.<%3.14>;" },
 
 	// === Call cluster — ChainExpr fold ===
 	{ label: "CallExpr: foo(1,2)",                   src: "foo(1,2);" },
@@ -905,14 +910,71 @@ export const samples = [
 	{ label: "ExplicitPropDef: escaped numeric key",             src: "<\\5_000: x>;" },
 
 	// === ExplicitPropDef — computed keys (ComputedPropName synthesis) ===
+	//
+	// Narrowed alphabet per the §17 ComputedPropName rewrite. Bare arm
+	// admits BooleanLit / StringLit / numeric-literal forms /
+	// ComputedPropAccessChain (IdentBase + flat dot/bracket access);
+	// paren-wrap arm admits the full binary expression ladder via
+	// OperandExpr. Call/at/postfix/pick-seg/range-seg forms moved to
+	// failSamples; paren-wrap rewrites available for each rejected
+	// shape and covered as new positives below.
+
+	// Bare-arm: simple IdentBase / BuiltIn / PipelineTopic
 	{ label: "ExplicitPropDef: computed Identifier",             src: "<%foo: 1>;" },
 	{ label: "ExplicitPropDef: computed BuiltIn",                src: "<%Maybe: 1>;" },
 	{ label: "ExplicitPropDef: computed StringLit",              src: "<%\"k\": 1>;" },
 	{ label: "ExplicitPropDef: computed PipelineTopic",          src: "<%#: 1>;" },
-	{ label: "ComputedPropName: %foo.bar (chain access)",   src: "<%foo.bar: 5>;" },
-	{ label: "ComputedPropName: %foo[0] (index access)",    src: "<%foo[0]: 5>;" },
-	{ label: "ComputedPropName: %Maybe@42 (at-call)",       src: "<%Maybe@42: 5>;" },
-	{ label: "ComputedPropName: %None@ (bare None@)",       src: "<%None@: 5>;" },
+
+	// Bare-arm: access chains (ComputedPropAccessChain — IdentBase
+	// + flat dot/bracket segs to arbitrary depth; no pick/range)
+	{ label: "ComputedPropName: %foo.bar (single seg dot)",      src: "<%foo.bar: 5>;" },
+	{ label: "ComputedPropName: %foo.bar.baz (multi-seg dot)",   src: "<%foo.bar.baz: 5>;" },
+	{ label: "ComputedPropName: %foo[0] (bracket index)",        src: "<%foo[0]: 5>;" },
+	{ label: "ComputedPropName: %foo.4 (dot integer index)",     src: "<%foo.4: 5>;" },
+	{ label: "ComputedPropName: %foo.-3 (dot negative index)",   src: "<%foo.-3: 5>;" },
+	{ label: "ComputedPropName: %foo[0].bar (mixed segs)",       src: "<%foo[0].bar: 5>;" },
+	{ label: "ComputedPropName: %foo[a + b] (bracket expr)",     src: "<%foo[a + b]: 5>;" },
+
+	// Bare-arm: BooleanLit
+	{ label: "ComputedPropName: %true",                          src: "<%true: 1>;" },
+	{ label: "ComputedPropName: %false",                         src: "<%false: 1>;" },
+
+	// Bare-arm: numeric-literal alphabet (ComputedPropNumberLit —
+	// integers and decimals, signed and unsigned, all escape forms
+	// except monadic and unicode escapes — see failSamples.
+	{ label: "ComputedPropName: %42 (bare positive integer)",    src: "<%42: 1>;" },
+	{ label: "ComputedPropName: %-5 (bare negative integer)",    src: "<%-5: 1>;" },
+	{ label: "ComputedPropName: %\\5_000 (escape sep'd integer)", src: "<%\\5_000: 1>;" },
+	{ label: "ComputedPropName: %\\-1_000 (signed sep'd int)",   src: "<%\\-1_000: 1>;" },
+	{ label: "ComputedPropName: %\\hFF (escape hex)",            src: "<%\\hFF: 1>;" },
+	{ label: "ComputedPropName: %\\h-FF (signed hex)",           src: "<%\\h-FF: 1>;" },
+	{ label: "ComputedPropName: %\\o73 (escape octal)",          src: "<%\\o73: 1>;" },
+	{ label: "ComputedPropName: %\\o-755 (signed octal)",        src: "<%\\o-755: 1>;" },
+	{ label: "ComputedPropName: %\\b1010 (escape binary)",       src: "<%\\b1010: 1>;" },
+	{ label: "ComputedPropName: %\\b-1100 (signed binary)",      src: "<%\\b-1100: 1>;" },
+
+	// Bare-arm: decimal/float forms (ComputedPropNumberLit's bare
+	// Number arm + EscapePlain + Number's BareNumber decimal sub-arm)
+	{ label: "ComputedPropName: %3.14 (bare decimal)",           src: "<%3.14: 1>;" },
+	{ label: "ComputedPropName: %-3.14 (bare negative decimal)", src: "<%-3.14: 1>;" },
+	{ label: "ComputedPropName: %\\100.25 (escape decimal)",     src: "<%\\100.25: 1>;" },
+	{ label: "ComputedPropName: %\\100_000.25 (escape sep'd decimal)", src: "<%\\100_000.25: 1>;" },
+	{ label: "ComputedPropName: %\\-100.25 (escape negative decimal)", src: "<%\\-100.25: 1>;" },
+
+	// Paren-wrap arm (ComputedPropParenExpr — OperandExpr inner)
+	{ label: "ComputedPropName: %(x) (paren-wrap ident)",        src: "<%(x): 1>;" },
+	{ label: "ComputedPropName: %(foo.bar) (paren-wrap access)", src: "<%(foo.bar): 1>;" },
+	{ label: "ComputedPropName: %(\"u_\" + id) (string concat)", src: "<%(\"u_\" + id): 1>;" },
+	{ label: "ComputedPropName: %(a + b) (paren-wrap arith)",    src: "<%(a + b): 1>;" },
+	{ label: "ComputedPropName: %(Maybe@42) (paren-wrap at-call)", src: "<%(Maybe@42): 1>;" },
+	{ label: "ComputedPropName: %(None@) (paren-wrap None@)",    src: "<%(None@): 1>;" },
+	{ label: "ComputedPropName: %(foo(x)) (paren-wrap call)",    src: "<%(foo(x)): 1>;" },
+	{ label: "ComputedPropName: %(foo') (paren-wrap primed)",    src: "<%(foo'): 1>;" },
+	{ label: "ComputedPropName: %(foo.<a,b>) (paren-wrap pick)", src: "<%(foo.<a,b>): 1>;" },
+	{ label: "ComputedPropName: %(foo.[1..3]) (paren-wrap range)", src: "<%(foo.[1..3]): 1>;" },
+	{ label: "ComputedPropName: %(<x: 1>) (paren-wrap record)",  src: "<%(<x: 1>): 1>;" },
+	{ label: "ComputedPropName: %(3.14) (paren-wrap decimal)",   src: "<%(3.14): 1>;" },
+	{ label: "ComputedPropName: %(-3.14) (paren-wrap negative decimal)", src: "<%(-3.14): 1>;" },
 
 	// =============================================================
 	// §18 TYPE DEFINITIONS

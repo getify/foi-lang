@@ -537,6 +537,56 @@ function shapePropertyExpr(keyParts) {
 	};
 }
 
+// Synthesizes a ComputedPropName AST node from the parts span
+// covering Percent + bare-arm inner / paren-wrap inner.
+//
+// Input shape: [Percent, ...trailingParts] where trailingParts
+// is one of:
+//   - [<one node>]         — BooleanLit / StringLit /
+//                            ComputedPropAccessChain fold output /
+//                            ComputedPropParenExpr unwrap output.
+//                            Inner is the node as-is.
+//   - [<raw numeric tokens>] — PositiveIntegerLit alone, bare
+//                              Number alone (decimal `3.14` /
+//                              `-3.14`), NegativeIntegerLit alone,
+//                              or Escape + PositiveIntegerLit/Number
+//                              for the typed-radix, sep'd-int, and
+//                              sep'd-decimal numeric-literal alphabet.
+//                              Inner is a synthesized NumberLit
+//                              (same pattern as shapePropertyExpr).
+//
+// Used by ExplicitPropDef (record/tuple computed key) and
+// DotAngleExpr (angle-pick computed key) — both share the same
+// narrowed alphabet per the §17 grammar.
+//
+// Returned node:
+//   { type: "ComputedPropName", expr, start, end }
+// where start is Percent.start and end is inner.end. No delims —
+// the round-trip handler `gapFill("%", n, r)` reconstructs the
+// Percent sigil at the gap before expr.
+function shapeComputedPropName(parts) {
+	var percent = parts[0]; // first token is always Percent per grammar
+	var rest = parts.slice(1);
+	var inner = rest.find(isNode);
+	if (!inner) {
+		// Numeric-literal bare arm — raw tokens only past Percent.
+		var text = "";
+		for (let p of rest) text += p.value;
+		inner = {
+			type: "NumberLit",
+			text,
+			start: rest[0].start,
+			end:   rest[rest.length - 1].end,
+		};
+	}
+	return {
+		type: "ComputedPropName",
+		expr: inner,
+		start: percent.start,
+		end:   inner.end,
+	};
+}
+
 // α-claim shaper for StmtSemi-family productions (StmtSemi,
 // StmtSemiOpt, ExportStmtSemi, ExportStmtSemiOpt,
 // FuncBodyStmtSemi, FuncBodyStmtSemiOpt, DoStmtSemi,
@@ -1161,27 +1211,52 @@ export const defaultShapers = {
 				i++;
 			}
 			else if (p.type === "Percent") {
-				// ComputedPropName arm: Percent + inner node. Percent rides
-				// on PickComputed's OWN delims (not parent's) — mirrors
-				// SpreadArg's TriplePeriod-on-delims pattern. emitGeneric
-				// recurs into PickComputed and the inner piece-walk recovers
-				// the sigil at its source position alongside the expr node.
+				// ComputedPropName arm — narrowed alphabet (§17 grammar).
+				// Bare arm: BooleanLit / StringLit / ComputedPropAccessChain
+				// fold output (all nodes) plus the numeric-literal alphabet
+				// (raw tokens — PositiveIntegerLit alone, bare Number alone,
+				// NegativeIntegerLit alone, or Escape + PositiveIntegerLit/
+				// Number). Paren-wrap arm: unwrapped OperandExpr node.
 				//
-				// No trivia between Percent and inner per grammar; defensive
-				// pass-through of any incidental tokens to parent delims.
+				// Walk forward collecting the Percent and all trailing
+				// non-node tokens up to the next node (or until the next
+				// Percent/Ampersand/Identifier arm opener). Hand the slice
+				// to shapeComputedPropName which produces a ComputedPropName
+				// node; unwrap its .expr into PickComputed.
+				//
+				// Percent rides on PickComputed's OWN delims (not parent's)
+				// — mirrors SpreadArg's TriplePeriod-on-delims pattern.
+				// emitGeneric recurs into PickComputed and the inner
+				// piece-walk recovers the sigil at its source position
+				// alongside the expr node.
 				let percent = p;
+				let computedParts = [percent];
 				i++;
-				while (i < parts.length && !isNode(parts[i])) {
-					delims.push(parts[i]);
+				// Collect up to and including the first node (BooleanLit,
+				// StringLit, AccessChain fold, or paren-wrap unwrap), OR
+				// the full raw-integer-token sequence if no node arrives.
+				let sawNode = false;
+				while (i < parts.length) {
+					let q = parts[i];
+					if (isNode(q)) {
+						computedParts.push(q);
+						sawNode = true;
+						i++;
+						break;
+					}
+					// Raw token after Percent — numeric-literal alphabet
+					// (PositiveIntegerLit / NegativeIntegerLit / Number
+					// alone, or Escape + PositiveIntegerLit/Number).
+					// Collect.
+					computedParts.push(q);
 					i++;
 				}
-				let inner = parts[i];
-				i++;
+				let computed = shapeComputedPropName(computedParts);
 				properties.push({
 					type: "PickComputed",
-					expr: inner,
-					start: percent.start,
-					end: inner.end,
+					expr: computed.expr,
+					start: computed.start,
+					end: computed.end,
 					delims: [percent],
 				});
 			}
@@ -2686,6 +2761,45 @@ export const defaultShapers = {
 		}, delims);
 	},
 
+// ComputedPropAccessChain := IdentBase (DotIdentifier | BracketExpr)*;
+	//
+	// Bare identifier-access chain for the computed-key bare alphabet.
+	// Folds segs via applyChainSeg (same helper ChainExpr uses) into
+	// the standard MemberAccessExpr / IndexAccessExpr nesting. Bare
+	// IdentBase (zero segs) returns just the IdentBase node — the
+	// outer ComputedPropName synthesis sees a single Identifier /
+	// BuiltIn / PipelineTopic node in that case.
+	//
+	// No own AST type — same fold-and-return pattern as ChainExpr's
+	// shaper. Visibility at the parse-frame level is what's needed;
+	// the AST surface is the folded chain.
+	ComputedPropAccessChain(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var node = nodes[0]; // IdentBase
+		for (let i = 1; i < nodes.length; i++) {
+			node = applyChainSeg(node, nodes[i]);
+		}
+		return node;
+	},
+
+	// ComputedPropParenExpr := OpenParen _ OperandExpr _ CloseParen;
+	//
+	// Unwrap-shaper — returns the inner OperandExpr node directly,
+	// lifting OpenParen/CloseParen onto its delims in source-position
+	// order (same liftWrapperDelims pattern as RecordTupleValue and
+	// GroupedTypeExpr). No ComputedPropParenExpr type at the AST
+	// surface — the inner node is whatever OperandExpr produces
+	// (Identifier, AddBinExpr, CompareBinExpr, FlowBinExpr, etc.).
+	ComputedPropParenExpr(frame,parts) {
+		var inner;
+		var wrapperDelims = [];
+		for (let p of parts) {
+			if (isNode(p)) inner = p;
+			else wrapperDelims.push(p); // OpenParen, CloseParen
+		}
+		return liftWrapperDelims(inner, wrapperDelims);
+	},
+
 	// ConcisePropDef := Colon <PropertyExpr>;
 	//
 	// Colon is structural → delims. PropertyExpr arrives either
@@ -2718,6 +2832,20 @@ export const defaultShapers = {
 	// Percent sigil for the computed-key arm is consumed into
 	// the synthesized ComputedPropName node's span — it doesn't
 	// separately surface on ExplicitPropDef.
+	//
+	// ComputedPropName synthesis (post-narrowing, see §17 grammar):
+	// the bare arm admits four shapes — BooleanLit / StringLit
+	// (always node), ComputedPropAccessChain fold output (always
+	// node), and the numeric-literal alphabet (raw tokens —
+	// PositiveIntegerLit alone, bare Number alone, or Escape +
+	// PositiveIntegerLit/Number). The paren-wrap arm yields the
+	// unwrapped inner (always node).
+	//
+	// So `keyParts.find(isNode)` succeeds for every shape except
+	// the numeric-literal one, which arrives as raw tokens past
+	// the Percent. The shapeComputedPropName helper synthesizes
+	// a NumberLit for that case (same shapePropertyExpr pattern
+	// used by PropertyExpr's integer arm).
 	ExplicitPropDef(frame,parts) {
 		var colonIdx = parts.findIndex(p => !isNode(p) && p.type === "Colon");
 		var keyParts = parts.slice(0, colonIdx);
@@ -2726,14 +2854,7 @@ export const defaultShapers = {
 
 		var key;
 		if (keyParts.length > 0 && !isNode(keyParts[0]) && keyParts[0].type === "Percent") {
-			var percent = keyParts[0];
-			var inner = keyParts.find(isNode);
-			key = {
-				type: "ComputedPropName",
-				expr: inner,
-				start: percent.start,
-				end: inner.end,
-			};
+			key = shapeComputedPropName(keyParts);
 		}
 		else {
 			key = shapePropertyExpr(keyParts);

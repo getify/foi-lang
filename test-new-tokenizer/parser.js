@@ -2168,7 +2168,7 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 // §17 DATA STRUCTURE LITERALS
 // =============================================================
 
-var Percent   = tokType("Percent");
+var Percent      = tokType("Percent");
 
 // PickValue := Ampersand IdentBase MultiAccessExpr?;
 //
@@ -2177,21 +2177,173 @@ export const PickValue = production("PickValue",
 	and(Ampersand, IdentBase, optional(MultiAccessExpr))
 );
 
-// <ComputedPropName> := Percent (PipelineTopic | CallExpr | IdentifierExpr | StringLit);
+// ComputedPropAccessChain := IdentBase ((DotIdentifier | BracketExpr))*;
 //
-// No trivia between Percent and inner.
+// Bare identifier-access chain for the computed-key bare alphabet.
+// IdentBase (PipelineTopic | Identifier | BuiltIn) optionally
+// followed by 0+ dot/bracket access segs to arbitrary depth.
 //
-// PEG ordering:
-// - PipelineTopic first — bare `#`. IdentifierExpr's BareIdentifier
-//   would also match a bare PipelineTopic via IdentBase, so this order
-//   distinguishes the shape (bare PipelineTopic vs. BareIdentifier-wrap).
-// - CallExpr next — admits `foo.bar`, `foo[0]`, `Maybe@42`, `None@`, etc.
-//   ChainExpr requires ≥1 chain seg, so bare identifiers fall through.
-// - IdentifierExpr — bare identifier / at-form / monad constructor.
-// - StringLit — disjoint opener `"`.
+// Excludes DotBracketExpr (range), DotAngleExpr (pick), call
+// suffixes, at-tails, and PostfixCallTail — `%foo.<a,b>`,
+// `%foo.[1..3]`, `%foo(x)`, `%foo@x`, `%foo'`, etc. are all
+// rejected at the bare arm; paren-wrap rewrite is available
+// (`%(foo.<a,b>)` etc.).
+//
+// Bare IdentBase (zero segs) folds to just the IdentBase node;
+// segs fold left-to-right via applyChainSeg into the same
+// MemberAccessExpr / IndexAccessExpr nesting ChainExpr produces.
+export const ComputedPropAccessChain = production("ComputedPropAccessChain",
+	and(
+		IdentBase,
+		any(or(DotIdentifier, lazy(() => BracketExpr)))
+	)
+);
+
+// ComputedPropParenExpr := OpenParen _ OperandExpr _ CloseParen;
+//
+// Paren-wrap arm of ComputedPropName. Inner is OperandExpr — the
+// full binary expression ladder (Flow → Or → And → Compare → Add
+// → Mul → Unary → BinaryAtom). Reaches arithmetic, comparison,
+// logical, flow, comprehension, plus chain/at/postfix-modified
+// forms via BareOperandExpr's CallExpr arm.
+//
+// Excludes AsExpr / AssignmentExpr / DefFuncExpr / MatchExpr /
+// BareBlockExpr / DoComprExpr / DoLoopComprExpr — none reachable
+// from OperandExpr. This bounds the visual cost: no `:as`-tailed
+// or `:`-bearing top-level forms inside `%(...)` would collide
+// with the outer ExplicitPropDef Colon.
+//
+// NO trailing (_ AsAnnotationExpr)? — `:as` on a computed key
+// has no semantic use case and would collide visually with the
+// ExplicitPropDef Colon. Differs from §5's six paren-grouping
+// productions in this respect.
+//
+// Unwrap-shaper — returns the inner OperandExpr node directly,
+// lifting OpenParen/CloseParen onto its delims (same pattern as
+// RecordTupleValue / GroupedTypeExpr).
+export const ComputedPropParenExpr = production("ComputedPropParenExpr",
+	and(
+		OpenParen, delim(),
+		OperandExpr,
+		delim(), CloseParen
+	)
+);
+
+// <ComputedPropNumberLit> := PositiveIntLit
+//                          | NegativeIntegerLit
+//                          | Number
+//                          | (EscapeHex Number)
+//                          | (EscapeOctal Number)
+//                          | (EscapeBinary Number)
+//                          | (EscapePlain Number);
+//
+// Numeric-literal alphabet for the computed-key bare arm. Admits
+// every NumberLit shape EXCEPT monadic (`\@FF`) and unicode
+// (`\u<hex>`) — both categorically not numeric (monadic =
+// arbitrary-precision / out of bootstrap scope; unicode = char
+// escape, narrowed to InterpExpr-slot at value position).
+//
+// Reach:
+//   - Bare integers: `42`, `-5` — via PositiveIntLit and
+//     NegativeIntegerLit (their token types win in lex PEG order
+//     over bare Number's integer sub-arm)
+//   - Bare decimals: `3.14`, `-3.14` — via the bare Number arm
+//     (BareNumber's decimal sub-arm emits Number)
+//   - Escape-paired sep'd: `\5_000` (via PositiveIntLit's
+//     EscapePlain arm), `\-1_000` and `\100_000.25`
+//     (EscapePlain + Number — BareNumber's integer / decimal
+//     sub-arms)
+//   - Escape-paired typed-radix, signed or unsigned: `\hFF` /
+//     `\h-FF`, `\o73` / `\o-755`, `\b1010` / `\b-1100` — signs
+//     handled inside HexNumber/OctalNumber/BinaryNumber per the
+//     lex layer; these three have no decimal sub-arms per
+//     Lexical-Grammar.md, so the Number tokens they emit are
+//     integer-shaped by lex contract
+//
+// Deliberately excluded (no Escape variant present in the or):
+//   - Monadic (`\@FF`, `\@FF.AA` — EscapeMonadicTok not in arms)
+//   - Unicode (`\u263A` — EscapeUnicodeTok not in arms)
+//   - EmptyLit (`%empty` — not numeric; not handled here either)
+//
+// PEG order:
+//   1. PositiveIntLit — covers bare positive int (PositiveIntegerLit
+//      token) and EscapePlain-paired positive sep'd int.
+//   2. NegativeIntegerLit — bare negative int (NegativeIntegerLit
+//      token, disjoint type from Number).
+//   3. Bare Number — catches bare decimal `3.14` / `-3.14`. Bare
+//      integers don't reach here (PositiveIntegerLit / NegativeIntegerLit
+//      win in lex PEG order before Number's integer sub-arm).
+//   4. Four Escape-paired arms — first chars (\h, \o, \b, \)
+//      disjoint from preceding arms.
+var ComputedPropNumberLit = or(
+	PositiveIntLit,
+	NegativeIntegerLitTok,
+	tokType("Number"),
+	and(EscapeHexTok,    tokType("Number")),
+	and(EscapeOctalTok,  tokType("Number")),
+	and(EscapeBinaryTok, tokType("Number")),
+	and(EscapePlainTok,  tokType("Number"))
+);
+
+// <ComputedPropBare> := BooleanLit | StringLit | ComputedPropNumberLit | ComputedPropAccessChain;
+//
+// Bare alphabet for `%key` outside parens. Visual-clarity test:
+// every admitted form reads unambiguously as a leaf-shaped key
+// expression (literal, identifier, or simple access path).
+//
+// PEG ordering: BooleanLit (Native opener `true`/`false`),
+// StringLit (DoubleQuote / Escape openers), ComputedPropNumberLit
+// (digit / Escape openers), ComputedPropAccessChain (IdentBase
+// opener: PipelineTopic / Identifier / BuiltIn). All four arms
+// open with disjoint first tokens — order is mechanical.
+var ComputedPropBare = or(
+	BooleanLit,
+	StringLit,
+	ComputedPropNumberLit,
+	ComputedPropAccessChain
+);
+
+// <ComputedPropName> := Percent (<ComputedPropBare> | ComputedPropParenExpr);
+//
+// No trivia between Percent and inner. Synthesized as a
+// ComputedPropName AST node by ExplicitPropDef and DotAngleExpr
+// shapers (no own production — stays hidden, matching the prior
+// design pre-narrowing).
+//
+// Reach now narrowed from the previous CallExpr/IdentifierExpr/
+// PipelineTopic/StringLit alphabet:
+//   - Bare arm admits leaf-shaped values + identifier-access chains.
+//     Multi-seg dot/bracket access is fine; pick/range/call/at/
+//     postfix-modifier forms are not.
+//   - Paren-wrap arm admits the full binary expression ladder.
+//
+// What was previously admitted but now requires paren-wrap:
+//   - `%foo(x)` (call suffix)        → `%(foo(x))`
+//   - `%foo|x|` (partial-call)       → `%(foo|x|)`
+//   - `%foo@x`, `%Maybe@42`, `%foo@` → `%(foo@x)` etc.
+//   - `%foo'` (primed)               → `%(foo')`
+//   - `%foo.<a,b>` (pick)            → `%(foo.<a,b>)`
+//   - `%foo.[1..3]` (range)          → `%(foo.[1..3])`
+//   - `%@` (bare IdentityFunc)       → `%(@)`
+//
+// What was previously rejected and remains rejected:
+//   - `%defn(x)^x` — DefFuncExpr base (not in OperandExpr)
+//   - `%?{...}` — MatchExpr base (not in OperandExpr)
+//   - `%(x) :as int` — outer `:as` tail dropped from
+//     ComputedPropParenExpr
+//   - `%(x := 5)` — AssignmentExpr (not in OperandExpr)
+//   - `%(<x: 1>)` parses; bare `%<x: 1>` does NOT (no DataStructLit
+//     in ComputedPropBare).
+//
+// AnglePickEntry shares this alphabet via the same ComputedPropName
+// reference — full parity in both contexts.
+//
+// PEG inside the inner or(...): ComputedPropBare opens with
+// Native/Quote/Escape/Digit/IdentBase tokens; ComputedPropParenExpr
+// opens with OpenParen. Disjoint, order mechanical.
 var ComputedPropName = and(
 	Percent,
-	or(PipelineTopic, lazy(() => CallExpr), IdentifierExpr, StringLit)
+	or(ComputedPropBare, ComputedPropParenExpr)
 );
 
 // ConcisePropDef := Colon PropertyExpr;

@@ -141,11 +141,58 @@ var failSamples = [
 	// admitted (Q4=B); inline calls require pre-binding.
 	"foo.<&Object.keys(rec)>;",
 
-	// `%`-in-pick admits ComputedPropName's inner alphabet:
-	// PipelineTopic | CallExpr | IdentifierExpr | StringLit.
-	// Bare NumberLit is not routed — `%5` has no use case (a
-	// literal integer as a computed key would just be `5`).
-	"rec.<%5>;",
+	// `%`-in-pick (and `%`-in-ExplicitPropDef) — narrowed
+	// ComputedPropName alphabet per the §17 grammar rewrite.
+	// Bare arm: BooleanLit | StringLit | <ComputedPropNumberLit> |
+	// ComputedPropAccessChain. Paren-wrap arm: OperandExpr inner,
+	// no `:as` tail, no AssignmentExpr / DefFuncExpr / MatchExpr /
+	// BareBlockExpr inner.
+	//
+	// `%5` is now valid (bare positive integer) — moved to
+	// positive samples. The shapes below cover the rejected
+	// edges.
+
+	// Bare-arm: call/at/postfix/pick/range chain segs all rejected
+	// — paren-wrap rewrite required.
+	"<%Maybe@42: 5>;",      // at-call (moved from positives — paren-wrap: %(Maybe@42))
+	"<%None@: 5>;",         // bare None@ (moved from positives — paren-wrap: %(None@))
+	"rec.<%Maybe@42>;",     // at-call in pick (moved from positives — paren-wrap: %(Maybe@42))
+	"<%foo(x): 1>;",        // call suffix — paren-wrap: %(foo(x))
+	"<%foo|x|: 1>;",        // partial-call — paren-wrap: %(foo|x|)
+	"<%foo@x: 1>;",         // at-call with arg — paren-wrap: %(foo@x)
+	"<%foo@: 1>;",          // bare AtExpr — paren-wrap: %(foo@)
+	"<%@: 1>;",             // bare IdentityFunc — paren-wrap: %(@)
+	"<%foo': 1>;",          // postfix primed — paren-wrap: %(foo')
+	"<%foo.<a, b>: 1>;",    // DotAngle (pick) chain seg — paren-wrap: %(foo.<a, b>)
+	"<%foo.[1..3]: 1>;",    // DotBracket (range) chain seg — paren-wrap: %(foo.[1..3])
+
+	// Bare-arm: DataStructLit rejected even at bare top level —
+	// the `:` inside `<x: 1>` collides visually with the outer
+	// ExplicitPropDef separator. Paren-wrap admits.
+	"<%<x: 1>: 1>;",        // bare DataStructLit — paren-wrap: %(<x: 1>)
+
+	// Bare-arm: numeric-literal alphabet narrowed — admits every
+	// NumberLit shape except monadic and unicode escapes.
+	"<%\\@FF: 1>;",         // monadic escape — out of scope
+	"<%\\u263A: 1>;",       // unicode escape — char-shaped, not numeric
+
+	// Bare-arm: EmptyLit rejected (no storage slot for missing value)
+	"<%empty: 1>;",
+
+	// Paren-wrap arm: no outer `:as` tail (collides with outer Colon)
+	"<%(x) :as int: 1>;",
+
+	// Paren-wrap arm: no AsExpr inside (not in OperandExpr)
+	"<%(x :as int): 1>;",
+
+	// Paren-wrap arm: no AssignmentExpr (not in OperandExpr)
+	"<%(x := 5): 1>;",
+
+	// Paren-wrap arm: no DefFuncExpr / MatchExpr / BareBlockExpr
+	// (none reachable from OperandExpr)
+	"<%(defn(x)^x): 1>;",
+	"<%(?{?[c]: 1; ?: 0}): 1>;",
+	"<%({y; }): 1>;",
 	// Mountain (`/\`) / Valley (`\/`) postfix boundaries.
 	//
 	// Locked rules from the curry/uncurry batch:

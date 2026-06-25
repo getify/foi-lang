@@ -178,6 +178,44 @@ var emitProperties = (properties, recur) =>
 	properties.map(p => recur(p)).join(",");
 
 
+// Shared emitter for postfix-modifier wrapper nodes — PrimedExpr (`'`),
+// CurriedExpr (`/\`), UncurriedExpr (`\/`). All three share the same
+// shape: { inner, delims?, as? }. The modifier glyph is synthetic
+// (not in any token's value) and adjacent to inner.end + 1 per the
+// no-trivia-between-base-and-modifier grammar rule.
+//
+// Walks inner + glyph + delims + .as in source-position order. Lifted
+// wrapper parens (from ComputedPropParenExpr's unwrap onto these node
+// types) land in delims with positions outside [inner.start, primePos],
+// so source-ordered traversal places them correctly — e.g. an
+// OpenParen at start < inner.start emits before inner, restoring
+// `%(foo')` instead of `%foo'()`.
+var emitPostfixWrap = (node, recur, glyph) => {
+	var modPos = node.inner.end + 1;
+	var pieces = [
+		{ start: node.inner.start, kind: "inner" },
+		{ start: modPos,           kind: "mod" },
+	];
+	if (node.as) {
+		pieces.push({ start: node.as.start, kind: "as", val: node.as });
+	}
+	if (node.delims) {
+		for (let d of node.delims) {
+			pieces.push({ start: d.start, kind: "delim", val: d });
+		}
+	}
+	pieces.sort((a, b) => a.start - b.start);
+	var out = "";
+	for (let p of pieces) {
+		if      (p.kind === "inner") out += recur(node.inner);
+		else if (p.kind === "mod")   out += glyph;
+		else if (p.kind === "as")    out += recur(p.val);
+		else                         out += p.val.value;
+	}
+	return out;
+};
+
+
 // =============================================================
 // HANDLER MAP
 //
@@ -296,51 +334,13 @@ var handlers = {
 	PickAccessor: (n, r) => r(n.accessor),
 	PickIndex:    (n, r) => n.index,
 
-	PrimedExpr(node, recur) {
-		// inner + "'" + any post-pieces (.as from AsExpr unwrap,
-		// post-end delims from StmtSemi α-claim).
-		var out = recur(node.inner) + "'";
-		var rest = [];
-		if (node.as) rest.push(node.as);
-		if (node.delims) {
-			for (let d of node.delims) rest.push(d);
-		}
-		rest.sort((a, b) => a.start - b.start);
-		for (let p of rest) out += isNode(p) ? recur(p) : p.value;
-		return out;
-	},
-
-	// CurriedExpr { inner } — postfix `/\` curry. PrimedExpr-shaped:
-	// modifier glyph isn't in node.delims (shaper drops it during
-	// wrapper synthesis), so handler reconstructs the two-char `/\`
-	// after recurring into inner, then walks any post-pieces (.as
-	// from AsExpr unwrap, post-end delims from StmtSemi α-claim like
-	// a trailing Semicolon) in source-position order.
-	CurriedExpr(node, recur) {
-		var out = recur(node.inner) + "/\\";
-		var rest = [];
-		if (node.as) rest.push(node.as);
-		if (node.delims) {
-			for (let d of node.delims) rest.push(d);
-		}
-		rest.sort((a, b) => a.start - b.start);
-		for (let p of rest) out += isNode(p) ? recur(p) : p.value;
-		return out;
-	},
-
-	// UncurriedExpr { inner } — postfix `\/` uncurry. Same shape
-	// rationale as CurriedExpr; reconstructs the two-char `\/`.
-	UncurriedExpr(node, recur) {
-		var out = recur(node.inner) + "\\/";
-		var rest = [];
-		if (node.as) rest.push(node.as);
-		if (node.delims) {
-			for (let d of node.delims) rest.push(d);
-		}
-		rest.sort((a, b) => a.start - b.start);
-		for (let p of rest) out += isNode(p) ? recur(p) : p.value;
-		return out;
-	},
+	// Three postfix-modifier wrappers share the same shape and
+	// traversal — see emitPostfixWrap above for the source-ordered
+	// walk that handles lifted wrapper parens correctly. Differ only
+	// in modifier glyph.
+	PrimedExpr:    (n, r) => emitPostfixWrap(n, r, "'"),
+	CurriedExpr:   (n, r) => emitPostfixWrap(n, r, "/\\"),
+	UncurriedExpr: (n, r) => emitPostfixWrap(n, r, "\\/"),
 
 	OpFuncExpr(node, recur) {
 		// Inner content depends on which arm:
