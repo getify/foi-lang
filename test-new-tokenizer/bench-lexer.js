@@ -1,4 +1,23 @@
-/* most recent run (500kb, 2 warmups)
+/* most recent bespoke "fast" tokenizer (5000kb, 2 warmups)
+
+warmup 1: 0.621s
+warmup 2: 0.542s
+run 1:    0.496s  (2,737,868 tokens, 10090.4 KB/s)
+run 2:    0.526s  (2,737,868 tokens, 9521.7 KB/s)
+run 3:    0.494s  (2,737,868 tokens, 10127.5 KB/s)
+run 4:    0.493s  (2,737,868 tokens, 10158.1 KB/s)
+run 5:    0.487s  (2,737,868 tokens, 10278.5 KB/s)
+bytes:        5004.7 KB
+tokens:       2,737,868
+chars/token:  1.87
+best run:     0.487s
+all runs (s): 0.496, 0.526, 0.494, 0.493, 0.487
+throughput:   10.04 MB/s
+              5623K tokens/sec
+*/
+
+
+/* most recent parser-combinator tokenizer (500kb, 2 warmups)
 
 warmup 1: 5.942s
 warmup 2: 5.700s
@@ -25,7 +44,8 @@ throughput:   0.09 MB/s
 // after a target byte count; times the full streaming pipeline.
 
 // import { tokenize } from "./orig-tokenizer.js";
-import { tokenize } from "./tokenizer.js";
+// import { tokenize } from "./tokenizer.js";
+import { tokenize } from "./fast-tokenizer.js";
 import { performance } from "node:perf_hooks";
 
 
@@ -940,7 +960,7 @@ var SNIPPETS = [
 ];
 
 var CORPUS = SNIPPETS.join("\n");
-var TARGET_BYTES = 500 * 1024; // 500 KB
+var TARGET_BYTES = 5000 * 1024; // 500 KB
 var WARMUP = 2;
 var RUNS   = 5;
 

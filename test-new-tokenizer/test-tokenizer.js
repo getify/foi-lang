@@ -1,10 +1,18 @@
 // =============================================================
 // test-tokenizer.js
 //
-// Diff harness comparing the combinator-based tokenizer (in
-// tokenizer.js) against the legacy hand-written tokenizer (in
-// orig-tokenizer.js). Fully streaming: tokens flow through the
-// pipeline as they're recognized.
+// Three-way diff harness comparing the legacy hand-written
+// tokenizer (orig-tokenizer.js), the combinator-based tokenizer
+// (tokenizer.js, authoritative executable spec of the lex
+// grammar), and the bespoke performant tokenizer
+// (fast-tokenizer.js, foi-toy's target implementation).
+//
+// Two independent axes are tracked per token position:
+//   orig-vs-new   — combinator agreement with legacy. Expected
+//                   divergences live in KNOWN_DIVERGENT.
+//   fast-vs-new   — bespoke agreement with combinator. NO
+//                   expected divergences; any divergence is a
+//                   bespoke regression.
 //
 // The new tokenizer emits PascalCase token types ("OpenParen");
 // the legacy tokenizer emits UPPERCASE_SNAKE ("OPEN_PAREN").
@@ -16,18 +24,26 @@
 
 import { tokenize as origTokenize } from "./orig-tokenizer.js";
 import { tokenize } from "./tokenizer.js";
+import { tokenize as fastTokenize } from "./fast-tokenizer.js";
 
 
 // =============================================================
-// KNOWN DIVERGENCES
+// KNOWN DIVERGENCES  (orig-vs-new axis only)
 //
-// Inputs where the new tokenizer's output is expected to differ
-// from the legacy tokenizer's. Each entry maps the exact input
-// string to a one-line reason explaining why the divergence is
-// intentional / expected.
+// Inputs where the combinator tokenizer's output is expected to
+// differ from the legacy tokenizer's. Each entry maps the exact
+// input string to a one-line reason explaining why the
+// divergence is intentional / expected.
 //
-// Three-state assertion: a sample is "passing" iff its diff
-// outcome matches its mark here.
+// This map governs the orig-vs-new axis ONLY. The fast-vs-new
+// axis has no exception list — fast-tokenizer.js is required to
+// match tokenizer.js exactly, on every input, including those
+// listed here (fast joins the expected divergence from legacy).
+// Any fast-vs-new disagreement is a regression in the bespoke
+// implementation, never an expectation.
+//
+// Three-state assertion on orig-vs-new: a sample is "passing"
+// iff its diff outcome matches its mark here.
 //   - unmarked + clean   → pass (✓)
 //   - marked   + dirty   → pass (⚠), reason printed
 //   - unmarked + dirty   → FAIL (✗), regression
@@ -144,63 +160,134 @@ async function *normalizeNewStream(newStream) {
 	}
 }
 
-// Streaming diff. Walks the legacy stream and the new tokenizer
-// stream in lockstep, yielding one event per position:
-//   { kind: "match", index, token }
-//   { kind: "diff",  index, orig, new }
-// Generator returns when both streams are exhausted.
+// Token equality for diff comparison. null-vs-null matches
+// (both streams reached EOF at the same position); null-vs-token
+// or token-vs-null mismatches (stream length disagreement).
+function tokensEqual(a, b) {
+	if (a === null && b === null) return true;
+	if (a === null || b === null) return false;
+	return (
+		a.type  === b.type &&
+		a.value === b.value &&
+		a.start === b.start &&
+		a.end   === b.end
+	);
+}
+
+// Streaming three-way diff. Walks all three token streams in
+// lockstep, yielding one event per token position:
+//
+//   {
+//     index,                  — position counter
+//     orig, new, fast,        — tokens at this position (null on EOF)
+//     newDiffsOrig,           — flag: combinator differs from legacy
+//     fastDiffsNew,           — flag: bespoke differs from combinator
+//   }
+//
+// The two axes are independent flags on the same event. Both
+// false → all three streams agree at this position. Either or
+// both true → the indicated axis (axes) diverged. Generator
+// returns when all three streams are exhausted at the same
+// position; staggered EOF surfaces as null-vs-token mismatches.
 export async function *diffStream(input) {
 	var origIter = normalizeOrigStream(origTokenize(input));
 	var newIter  = normalizeNewStream(tokenize(input));
+	var fastIter = normalizeNewStream(fastTokenize(input));
 
 	var i = 0;
 	while (true) {
-		let [ a, b ] = await Promise.all([
+		let [ a, b, c ] = await Promise.all([
 			origIter.next(),
 			newIter.next(),
+			fastIter.next(),
 		]);
-		if (a.done && b.done) return;
+		if (a.done && b.done && c.done) return;
 
 		let aTok = a.done ? null : a.value;
 		let bTok = b.done ? null : b.value;
+		let cTok = c.done ? null : c.value;
 
-		if (
-			aTok && bTok &&
-			aTok.type  === bTok.type &&
-			aTok.value === bTok.value &&
-			aTok.start === bTok.start &&
-			aTok.end   === bTok.end
-		) {
-			yield { kind: "match", index: i, token: aTok };
-		}
-		else {
-			yield { kind: "diff", index: i, orig: aTok, new: bTok };
-		}
+		yield {
+			index: i,
+			orig: aTok,
+			new:  bTok,
+			fast: cTok,
+			newDiffsOrig: !tokensEqual(aTok, bTok),
+			fastDiffsNew: !tokensEqual(bTok, cTok),
+		};
 		i++;
 	}
 }
 
-// Convenience accumulator over diffStream.
+// Convenience accumulator over diffStream. Bins each event by
+// which axes diverged. A position with both axes diverged
+// appears in BOTH diffs and fastDiffs (the same event object) —
+// the reporter prints each view independently. `total` counts
+// true token positions (one per event); neither matches nor
+// diff arrays double-count.
 export async function diff(input) {
-	var matches = 0;
-	var diffs   = [];
-	var total   = 0;
+	var matches   = 0;
+	var diffs     = [];
+	var fastDiffs = [];
+	var total     = 0;
 	for await (let ev of diffStream(input)) {
-		if (ev.kind === "match") matches++;
-		else diffs.push(ev);
 		total++;
+		if (!ev.newDiffsOrig && !ev.fastDiffsNew) {
+			matches++;
+			continue;
+		}
+		if (ev.newDiffsOrig) diffs.push(ev);
+		if (ev.fastDiffsNew) fastDiffs.push(ev);
 	}
 	return {
 		input,
 		matches,
 		diffs,
+		fastDiffs,
 		total,
-		summary: `${matches}/${total} matched, ${diffs.length} diff${diffs.length === 1 ? "" : "s"}`,
+		summary: `${matches}/${total} matched, ${diffs.length} diff${diffs.length === 1 ? "" : "s"}, ${fastDiffs.length} fast-diff${fastDiffs.length === 1 ? "" : "s"}`,
 	};
 }
 
 function safeShow(str) {
 	return str.replace(/\n/g, "\\n");
+}
+
+// Diff display helpers. printDiff shows the orig-vs-new pair
+// with positions on both — the orig-vs-new mismatch is the
+// focus. printFastDiff shows all three streams: orig as
+// upstream context (positions omitted; orig/new agreement is
+// implicit at the call site), then new and fast with positions
+// (the new-vs-fast mismatch is the focus).
+//
+// When a position has both axes diverged, the same event is
+// printed twice — once via printDiff (orig-vs-new view), once
+// via printFastDiff (three-way view). The caller separates the
+// two passes with a divider.
+function printDiff(ev) {
+	var o = ev.orig
+		? `${ev.orig.type}=${safeShow(ev.orig.value)}`
+		: "<none>";
+	var n = ev.new
+		? `${ev.new.type}=${safeShow(ev.new.value)}`
+		: "<none>";
+	console.log(`    [${ev.index}] orig: ${o} (${ev.orig?.start}:${ev.orig?.end})`);
+	console.log(`        new:  ${n} (${ev.new?.start}:${ev.new?.end})`);
+}
+
+function printFastDiff(ev) {
+	var o = ev.orig
+		? `${ev.orig.type}=${safeShow(ev.orig.value)}`
+		: "<none>";
+	var n = ev.new
+		? `${ev.new.type}=${safeShow(ev.new.value)}`
+		: "<none>";
+	var f = ev.fast
+		? `${ev.fast.type}=${safeShow(ev.fast.value)}`
+		: "<none>";
+	console.log(`    [${ev.index}] orig: ${o}`);
+	console.log(`        new:  ${n} (${ev.new?.start}:${ev.new?.end})`);
+	console.log(`        fast: ${f} (${ev.fast?.start}:${ev.fast?.end})`);
 }
 
 async function runTests() {
@@ -1157,58 +1244,98 @@ async function runTests() {
 		};`,
 	];
 
-	var cleanPass    = 0;   // ✓ unmarked + clean
-	var expectedFail = 0;   // ⚠ marked   + dirty
-	var unexpected   = 0;   // ✗ unmarked + dirty (regression)
-	var staleMark    = 0;   // ? marked   + clean (divergence resolved)
-	var totalMatches = 0;
-	var totalTokens  = 0;
+	// Counters are organized along two orthogonal axes:
+	//   First axis (orig-vs-new): every sample falls into
+	//     exactly one of cleanPass / expectedFail / unexpected /
+	//     staleMark. These four partition the sample space.
+	//   Second axis (fast-vs-new): every sample is independently
+	//     either clean (counted nowhere) or fastUnexpected. This
+	//     overlays the first-axis partition without constraining
+	//     it — a sample can be cleanPass AND fastUnexpected,
+	//     expectedFail AND fastUnexpected, etc.
+	// Total sample count therefore equals the sum of the four
+	// first-axis counters, regardless of fastUnexpected.
+	var cleanPass      = 0;   // ✓ unmarked + clean
+	var expectedFail   = 0;   // ⚠ marked   + dirty
+	var unexpected     = 0;   // ✗ unmarked + dirty (regression)
+	var staleMark      = 0;   // ? marked   + clean (divergence resolved)
+	var fastUnexpected = 0;   // ✗ fast-vs-new divergence (orthogonal)
+	var totalMatches   = 0;
+	var totalTokens    = 0;
 
 	for (let s of samples) {
 		let d = await diff(s);
-		let marked = KNOWN_DIVERGENT.has(s);
-		let dirty  = d.diffs.length > 0;
+		let marked    = KNOWN_DIVERGENT.has(s);
+		let dirty     = d.diffs.length > 0;
+		let fastDirty = d.fastDiffs.length > 0;
 		totalMatches += d.matches;
 		totalTokens  += d.total;
 
+		// First-axis symbol + counter + optional suffix.
+		let firstSym;
+		let suffix = "";
 		if (!marked && !dirty) {
 			cleanPass++;
-			console.log(`✓ ${safeShow(s).padEnd(40)} ${d.summary}`);
+			firstSym = "✓";
 		}
 		else if (marked && dirty) {
 			expectedFail++;
-			console.log(`⚠ ${safeShow(s).padEnd(40)} ${d.summary}  [expected: ${KNOWN_DIVERGENT.get(s)}]`);
+			firstSym = "⚠";
+			suffix = `  [expected: ${KNOWN_DIVERGENT.get(s)}]`;
 		}
 		else if (!marked && dirty) {
 			unexpected++;
-			console.log(`✗ ${safeShow(s).padEnd(40)} ${d.summary}`);
-			for (let ev of d.diffs.slice(0, 4)) {
-				let o = ev.orig
-					? `${ev.orig.type}=${safeShow(ev.orig.value)}`
-					: "<none>";
-				let n = ev.new
-					? `${ev.new.type}=${safeShow(ev.new.value)}`
-					: "<none>";
-				console.log(`    [${ev.index}] orig: ${o}`);
-				console.log(`        new:  ${n}`);
-			}
+			firstSym = "✗";
+		}
+		else {  // marked && !dirty
+			staleMark++;
+			firstSym = "?";
+			suffix = `  [marked divergent but matched cleanly — remove from KNOWN_DIVERGENT]`;
+		}
+
+		// Second-axis symbol + counter. fast-vs-new has no
+		// expected-divergence list; any fastDirty is a regression.
+		// When fast is clean, the second symbol echoes the
+		// first-axis state: ⚠ propagates (fast joined the expected
+		// divergence from legacy); all others render as ✓.
+		let secondSym;
+		if (fastDirty) {
+			fastUnexpected++;
+			secondSym = "✗";
 		}
 		else {
-			// marked && !dirty — divergence resolved; the map entry is stale.
-			staleMark++;
-			console.log(`? ${safeShow(s).padEnd(40)} ${d.summary}  [marked divergent but matched cleanly — remove from KNOWN_DIVERGENT]`);
+			secondSym = (firstSym === "⚠") ? "⚠" : "✓";
+		}
+
+		console.log(`${firstSym}  ${secondSym}  ${safeShow(s).padEnd(40)} ${d.summary}${suffix}`);
+
+		// Print diff details. Order: orig-vs-new first (only for
+		// unexpected divergences — expected ones don't need
+		// re-printing since the `[expected: ...]` suffix explains
+		// them), then fast-vs-new. Both-axes divergence at one
+		// position is printed twice with a divider between.
+		if (dirty && !marked) {
+			for (let ev of d.diffs.slice(0, 4)) printDiff(ev);
+		}
+		if (fastDirty) {
+			if (dirty && !marked) console.log("        --------");
+			for (let ev of d.fastDiffs.slice(0, 4)) printFastDiff(ev);
 		}
 	}
 
-	console.log("");
-	console.log(`── ${cleanPass} clean, ${expectedFail} expected-divergent, ${unexpected} unexpected-divergent, ${staleMark} stale-mark  /  ${totalMatches}/${totalTokens} tokens matched`);
+	let total = cleanPass + expectedFail + unexpected + staleMark;
 
-	let passes = cleanPass + expectedFail;
-	let fails  = unexpected + staleMark;
-	if (fails === 0) {
-		console.log(`── all ${passes} samples passing`);
+	console.log("");
+	console.log(`── ${cleanPass} clean, ${expectedFail} expected-divergent, ${unexpected} unexpected-divergent, ${staleMark} stale-mark, ${fastUnexpected} fast-divergent  /  ${totalMatches}/${totalTokens} tokens matched`);
+
+	if (unexpected === 0 && staleMark === 0 && fastUnexpected === 0) {
+		console.log(`── all ${total} samples passing`);
 	}
 	else {
-		console.log(`── ${passes} passing, ${fails} failing`);
+		let parts = [];
+		if (unexpected > 0)     parts.push(`${unexpected} combinator regression${unexpected === 1 ? "" : "s"}`);
+		if (staleMark > 0)      parts.push(`${staleMark} stale KNOWN_DIVERGENT mark${staleMark === 1 ? "" : "s"}`);
+		if (fastUnexpected > 0) parts.push(`${fastUnexpected} fast-tokenizer divergence${fastUnexpected === 1 ? "" : "s"}`);
+		console.log(`── ${parts.join(", ")}`);
 	}
 }
