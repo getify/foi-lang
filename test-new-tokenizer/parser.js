@@ -1618,6 +1618,25 @@ export const BlockExpr = production("BlockExpr",
 	{ preserveInnerDelim: true }
 );
 
+// BlockExprStrict := BlockDefsInitOpt _ BareBlockExpr.
+//
+// Host-attached body form (not a general expression). Reachable
+// only from the colon-led body slots of GuardedExpr and
+// MatchConsequent/MatchConsequentNoSemi — never from <Expr>.
+//
+// Uses the strict-optional inner: Identifier entries may omit
+// their init (implicit `: empty`), but DestructureTarget entries
+// require their init explicitly. The host positions have no
+// implicit input source, so destructure-no-init has nothing to
+// bind from.
+//
+// Same { type: "BlockExpr", defs, body } AST as BlockExpr —
+// shaper alias at the bottom of default-shapers.js.
+export const BlockExprStrict = production("BlockExprStrict",
+	and(BlockDefsInitOpt, delim(), BareBlockExpr),
+	{ preserveInnerDelim: true }
+);
+
 // DefBlockStmt := "def" _ BlockDefsInitOpt _ BareBlockExpr.
 //
 // `<Stmt>` orders DefBlockStmt before DefVarStmt — both open with
@@ -1840,11 +1859,16 @@ export const CondClause = production("CondClause",
 	and(or(Qmark, Exmark), BracketExpr)
 );
 
-// GuardedExpr := CondClause _ Colon _ Expr;
+// GuardedExpr := CondClause _ Colon _ (BlockExprStrict | Expr);
+//
+// PEG: BlockExprStrict before Expr — longer match wins when the
+// body opens `(defs) { ... }`. On no `{` after the close paren,
+// BlockExprStrict fails cleanly and Expr's grouped/operand arms
+// parse the bare `(...)` form.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 export const GuardedExpr = production("GuardedExpr",
-	and(CondClause, delim(), Colon, delim(), Expr)
+	and(CondClause, delim(), Colon, delim(), or(lazy(() => BlockExprStrict), Expr))
 );
 
 
@@ -1852,25 +1876,27 @@ export const GuardedExpr = production("GuardedExpr",
 // §15 MATCH EXPRESSIONS
 // =============================================================
 
-// MatchConsequent      := (Colon _ Expr _ Semicolon) | BareBlockExpr;
+// MatchConsequent      := (Colon _ (BlockExprStrict | Expr) _ Semicolon) | BareBlockExpr;
 //
 // PEG: Colon-arm first (disjoint from BareBlockExpr's OpenBrace opener).
+// Within the Colon arm, BlockExprStrict precedes Expr — longer match
+// wins when the consequent body opens `(defs) { ... }`. On no `{`
+// after the close paren, BlockExprStrict fails cleanly and Expr's
+// grouped/operand arms parse the bare `(...)` form.
 //
-// BareBlockExpr only — not BlockExpr. A match consequent has no
-// implicit input source, so a defs-init `(x: 1) { ... }` at this
-// position would have nothing to bind from. To bind names locally
-// inside a match consequent, use a `def` statement inside the
-// bare-block body.
+// BlockExprStrict uses the strict-optional inner — match consequents
+// have no implicit input source, so destructure-no-init entries are
+// rejected.
 var MatchConsequent = or(
-	and(Colon, delim(), Expr, delim(), Semicolon),
+	and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr), delim(), Semicolon),
 	BareBlockExpr
 );
 
-// MatchConsequentNoSemi := (Colon _ Expr) | BareBlockExpr;
+// MatchConsequentNoSemi := (Colon _ (BlockExprStrict | Expr)) | BareBlockExpr;
 //
-// Same BareBlockExpr-only rationale as MatchConsequent.
+// Same BlockExprStrict-before-Expr rationale as MatchConsequent.
 var MatchConsequentNoSemi = or(
-	and(Colon, delim(), Expr),
+	and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr)),
 	BareBlockExpr
 );
 

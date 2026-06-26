@@ -882,20 +882,26 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
    — match consequents have no implicit input, so a defs-init
    would have no source).
 
-   BlockExpr is the defs-init form: `(defs) { stmts }`, with the
-   defs-init container REQUIRED — not optional. The defs-init
-   uses BlockDefsInitOptImplIn (lenient inner), so
-   DestructureTarget entries may omit their init expression and
-   bind from the enclosing context's implicit input. BlockExpr is
-   reachable ONLY from implicit-input positions: <FlowRHSImplIn>
-   (ComprOp / PipelineOp RHS) and FuncBodyPipeline (pipeline body
-   of a function definition). It is NOT in <Expr>, NOT in
-   <AsableExpr>, NOT at MatchConsequent, NOT at ComposeOp RHS,
-   NOT at FuncBodyExpr / FuncBodyBlock. The reason: a defs-init
-   only has meaning when something supplies the implicit input
-   that destructure-no-init can bind from. Standalone
-   `(defs) { body };` is syntactically rejected — no
-   <Expr> alternative or <Stmt> arm reaches it.
+   BlockExpr is the lenient defs-init form: `(defs) { stmts }`, with
+   the defs-init container REQUIRED — not optional. The defs-init
+   uses BlockDefsInitOptImplIn (lenient inner), so DestructureTarget
+   entries may omit their init expression and bind from the enclosing
+   context's implicit input. BlockExpr is reachable ONLY from
+   implicit-input positions: <FlowRHSImplIn> (ComprOp / PipelineOp RHS)
+   and FuncBodyPipeline (pipeline body of a function definition). It
+   is NOT in <Expr>, NOT in <AsableExpr>, NOT at FuncBodyExpr /
+   FuncBodyBlock / ComposeOp RHS.
+
+   BlockExprStrict is the strict-optional defs-init form, with the
+   same `(defs) { stmts }` surface but a stricter inner: it uses
+   BlockDefsInitOpt, where Identifier entries may omit their init
+   (implicit `: empty`) but DestructureTarget entries require their
+   init explicitly. BlockExprStrict is a host-attached body form, not
+   a general expression — it is admitted only at the colon-led body
+   slots of GuardedExpr and MatchConsequent/MatchConsequentNoSemi.
+   It is NOT an arm of <Expr>, so a free-standing `(defs) { body }`
+   at a value-expression slot (e.g. a `def x:` initializer) is a
+   parse error.
 
    DefBlockStmt is the named-binding statement form:
    `def (defs) { stmts };`. It uses BlockDefsInitOpt — the
@@ -926,6 +932,7 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
    an expression. See the `:as` Precedence section. *)
 
 BlockExpr               := BlockDefsInitOptImplIn _ BareBlockExpr;
+BlockExprStrict         := BlockDefsInitOpt _ BareBlockExpr;
 DefBlockStmt            := "def" _ BlockDefsInitOpt _ BareBlockExpr;
 BareBlockExpr           := OpenBrace _ BlockStmts _ CloseBrace;
 <BlockStmts>            := (StmtSemi _)* StmtSemiOpt?;
@@ -1039,7 +1046,7 @@ DefFuncExpr shaper-shape notes:
    GuardedExpr. *)
 
 CondClause            := (Qmark | Exmark) BracketExpr;
-GuardedExpr           := CondClause _ Colon _ Expr;
+GuardedExpr           := CondClause _ Colon _ (BlockExprStrict | Expr);
 ```
 
 ## §15 Match Expressions
@@ -1070,8 +1077,8 @@ DepCondBoolExpr        := AsTypeOp _ NamedType
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 
 ElseStmt               := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
-<MatchConsequent>      := (Colon _ Expr _ Semicolon) | BareBlockExpr;
-<MatchConsequentNoSemi>:= (Colon _ Expr) | BareBlockExpr;
+<MatchConsequent>      := (Colon _ (BlockExprStrict | Expr) _ Semicolon) | BareBlockExpr;
+<MatchConsequentNoSemi>:= (Colon _ (BlockExprStrict | Expr)) | BareBlockExpr;
 ```
 
 `IndepPatternStmt` / `IndepPatternStmtNoSemi` and

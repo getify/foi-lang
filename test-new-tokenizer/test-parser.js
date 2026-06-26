@@ -225,6 +225,11 @@ var failSamples = [
 	'\\`"`\\u263A.foo`";',              // escape + chain access
 	'\\`"`1 + \\u263A`";',              // expression then escape
 	'\\`"`\\u263A \\u263A`";',          // two escapes in one slot
+
+	'def x: (tmp: 3) { tmp + 1; };',
+	'5 + (tmp: 3) { tmp + 1; };',
+	'?{ ?[x ?< 5]: (<:a>) { use(a); }; ?: 0 };',
+	'?[x ?> y]: (<:a>) { use(a); };',
 ];
 
 var passed = 0;

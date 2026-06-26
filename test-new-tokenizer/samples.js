@@ -749,6 +749,10 @@ export const samples = [
 	{ label: "GuardedExpr: BlockExpr consequent",    src: "?[ready]: { go(); };" },
 	{ label: "GuardedExpr (sanity): !empty unary",   src: "?[!empty x]: log(x);" },
 
+	{ label: "GuardedExpr: BlockExprStrict body, ident init", src: '?[x ?> y]: (tmp: x) { x := y; y := tmp; };' },
+	{ label: "GuardedExpr: BlockExprStrict body, ident no-init", src: '?[x ?> y]: (tmp) { tmp := x; tmp; };' },
+	{ label: "GuardedExpr: BlockExprStrict body, multi entries", src: '?[x ?> y]: (a, b: 0) { a := x; b := y; a + b; };' },
+
 	// CondClause at non-GuardedExpr call sites — same shape, different parents
 	{ label: "CondClause as FlowBinExpr LHS",        src: "?[isComplete] ~each { go(); };" },
 	{ label: "CondClause inside FuncPrecond",        src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
@@ -770,6 +774,10 @@ export const samples = [
 	{ label: "IndepMatch: with explicit ?: else",         src: '?{ ?[x]: "yes"; ?: "no" };' },
 	{ label: "IndepMatch: with abbreviated : else",       src: '?{ ?[x]: "yes"; : "no" };' },
 	{ label: "IndepMatch: block consequent",              src: '?{ ?[x]: { log("hi"); "ok" }; ?: "no" };' },
+
+	{ label: "IndepMatch: BlockExprStrict consequent, ident init", src: '?{ ?[x ?< 5]: (y: 3) { x + y; }; ?: 0 };' },
+	{ label: "IndepMatch: BlockExprStrict consequent, ident no-init", src: '?{ ?[x ?< 5]: (tmp) { tmp := x; tmp + 1; }; ?: 0 };' },
+	{ label: "DepMatch: BlockExprStrict consequent", src: '?(x){ ?[?>= 0]: (tmp: x) { tmp + 1; }; ?: 0 };' },
 
 	// DepMatchExpr / DepPatternStmt / DepCondClause / DepCondBoolExpr
 	{ label: "DepMatch: single string atom",              src: '?(name){ ?["Kyle"]: "hi" };' },

@@ -1899,18 +1899,22 @@ export const defaultShapers = {
 	// §11 BLOCK EXPRESSIONS
 	// =============================================================
 	//
-	// Three visible productions form the block family, with
+	// Four visible productions form the block family, with
 	// intentionally different reach (see parser.js §11 and the
 	// "Block Expressions" section of Syntactic-Grammar.md):
 	//
-	//   BareBlockExpr := OpenBrace _ BlockStmts _ CloseBrace;
-	//                    (no defs-init at all)
-	//   BlockExpr     := BlockDefsInitOptImplIn _ BareBlockExpr;
-	//                    (defs-init REQUIRED; lenient inner;
-	//                     implicit-input positions only)
-	//   DefBlockStmt  := "def" _ BlockDefsInitOpt _ BareBlockExpr;
-	//                    (strict-optional inner; stmt position, no
-	//                     implicit input source)
+	//   BareBlockExpr    := OpenBrace _ BlockStmts _ CloseBrace;
+	//                       (no defs-init at all)
+	//   BlockExpr        := BlockDefsInitOptImplIn _ BareBlockExpr;
+	//                       (defs-init REQUIRED; lenient inner;
+	//                        implicit-input positions only)
+	//   BlockExprStrict  := BlockDefsInitOpt _ BareBlockExpr;
+	//                       (defs-init REQUIRED; strict-optional inner;
+	//                        host-attached: GuardedExpr body and
+	//                        MatchConsequent only — not a general Expr)
+	//   DefBlockStmt     := "def" _ BlockDefsInitOpt _ BareBlockExpr;
+	//                       (strict-optional inner; stmt position, no
+	//                        implicit input source)
 	//
 	// AST shape — `body` is the nested BareBlockExpr node:
 	//
@@ -3073,3 +3077,8 @@ export const defaultShapers = {
 // dependency in the shaper bodies makes this safe.
 defaultShapers.VarDefInitOptImplIn    = defaultShapers.VarDefInitOpt;
 defaultShapers.BlockDefsInitOptImplIn = defaultShapers.BlockDefsInitOpt;
+
+// BlockExprStrict shapes to the same { type: "BlockExpr", defs, body }
+// AST as BlockExpr — the strict/lenient inner distinction is parser-
+// only, downstream consumers see one unified type.
+defaultShapers.BlockExprStrict = defaultShapers.BlockExpr;
