@@ -930,11 +930,50 @@ export const samples = [
 	{ label: "RecordTupleLit: nested-paren entry",               src: "<((1)), 2>;" },
 	{ label: "RecordTupleLit: paren-wrapped in ExplicitPropDef", src: "<x: (1)>;" },
 
+	// Paren-wrap arm widened to `Expr` — admits DefFuncExpr,
+	// MatchExpr, AssignmentExpr, BareBlockExpr, DoComprExpr,
+	// DoLoopComprExpr, and the full binary ladder (arithmetic,
+	// logical, comparison, flow, comprehension) via paren-wrap.
+	// Bare arms remain narrow.
+
+	// Binary ladder (rejected bare, admitted paren-wrapped)
+	{ label: "RecordTupleLit: paren-wrap AddBinExpr",            src: "<foo: (1 + 2)>;" },
+	{ label: "RecordTupleLit: paren-wrap MulBinExpr",            src: "<foo: (a * b)>;" },
+	{ label: "RecordTupleLit: paren-wrap CompareBinExpr",        src: "<foo: (x ?= y)>;" },
+	{ label: "RecordTupleLit: paren-wrap AndBinExpr",            src: "<foo: (x ?and y)>;" },
+	{ label: "RecordTupleLit: paren-wrap pipeline",              src: "<foo: (x #> f)>;" },
+	{ label: "RecordTupleLit: paren-wrap comprehension",         src: "<foo: (xs ~map fn)>;" },
+
+	// DefFuncExpr (concise body and block body)
+	{ label: "RecordTupleLit: paren-wrap DefFuncExpr concise",   src: "<foo: (defn(x)^x + 1)>;" },
+	{ label: "RecordTupleLit: paren-wrap DefFuncExpr block",     src: "<foo: (defn(x){x;})>;" },
+
+	// MatchExpr (independent and dependent)
+	{ label: "RecordTupleLit: paren-wrap MatchExpr indep",       src: "<foo: (?{?[c]: 1; ?: 0})>;" },
+	{ label: "RecordTupleLit: paren-wrap MatchExpr dep",         src: "<foo: (?(x){?[1]: \"one\";})>;" },
+
+	// AssignmentExpr
+	{ label: "RecordTupleLit: paren-wrap AssignmentExpr",        src: "<foo: (x := 5)>;" },
+
+	// BareBlockExpr / do-comprehensions
+	{ label: "RecordTupleLit: paren-wrap BareBlockExpr",         src: "<foo: ({x; y;})>;" },
+	{ label: "RecordTupleLit: paren-wrap DoComprExpr",           src: "<foo: (IO ~<< {x;})>;" },
+	{ label: "RecordTupleLit: paren-wrap DoLoopComprExpr",       src: "<foo: (xs ~<* {y;})>;" },
+
+	// Bare-entry forms (not keyed via ExplicitPropDef)
+	{ label: "RecordTupleLit: bare-entry paren-wrap DefFuncExpr", src: "<(defn(x)^x + 1)>;" },
+	{ label: "RecordTupleLit: bare-entry paren-wrap pipeline",    src: "<(x #> f), (y #> g)>;" },
+
 	// === SetLit ===
 	{ label: "SetLit: bare values",                              src: "<[1, 2, 3]>;" },
 	{ label: "SetLit: PickValue + bare",                         src: "<[&foo, x]>;" },
 	{ label: "SetLit: nested",                                   src: "<[<[1, 2]>, <[3, 4]>]>;" },
 	{ label: "SetLit: paren-wrapped entry",                      src: "<[(x), y]>;" },
+
+	// SetEntry inherits the widening via its RecordTupleValue arm
+	{ label: "SetLit: paren-wrap DefFuncExpr",                   src: "<[(defn(x)^x + 1)]>;" },
+	{ label: "SetLit: paren-wrap pipeline",                      src: "<[(x #> f), (1 + 2)]>;" },
+	{ label: "SetLit: paren-wrap MatchExpr",                     src: "<[(?{?[c]: 1; ?: 0})]>;" },
 
 	// === PickValue (8th access-fold site) ===
 	{ label: "PickValue: bare Identifier",                       src: "<&foo>;" },

@@ -2454,7 +2454,7 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 
 // RecordTupleValue := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
 //                   | DataStructLit | IdentifierExpr
-//                   | (OpenParen _ RecordTupleValue _ CloseParen);
+//                   | (OpenParen _ Expr _ CloseParen);
 //
 // PEG order:
 // - AsExpr first — longer match with `:as` tail; falls through on no `:as`.
@@ -2464,15 +2464,31 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 //   IdentifierExpr with dangling `.bar`.
 // - DataStructLit before IdentifierExpr — disjoint openers
 //   (`<` vs IdentBase).
-// - Paren-recursive arm consumes `(` before recursing — no LR.
+// - Paren-wrap arm last — consumes `(` before recursing, no LR.
+//
+// Paren-wrap inner is `Expr` (matching GroupedExpr's precedent), not
+// recursive RecordTupleValue. The bare arms stay narrow (visual
+// clarity inside `<...>` separators), but parens earn the right to
+// admit broad expressions. Forms newly admitted via paren-wrap:
+// DefFuncExpr (`<foo: (defn()^42)>`), MatchExpr (`<foo: (?{...})>`),
+// AssignmentExpr (`<foo: (x := 5)>`), BareBlockExpr
+// (`<foo: ({x; y;})>`), DoComprExpr (`<foo: (IO ~<< {x;})>`),
+// DoLoopComprExpr, plus the full binary ladder (arithmetic,
+// logical, comparison, flow/pipeline, comprehension): `<foo: (1 + 2)>`,
+// `<foo: (x #> f)>`, `<foo: (xs ~map fn)>`. SetEntry inherits this
+// widening via its RecordTupleValue arm — `<[(defn()^42), (x #> f)]>`
+// also admits.
 //
 // Visible production (promoted from combinator alias): the paren-
-// recursive arm needs its own frame so its OpenParen/CloseParen
-// tokens land at entry granularity rather than splicing up to
+// wrap arm needs its own frame so its OpenParen/CloseParen tokens
+// land at entry granularity rather than splicing up to
 // RecordTupleLit/SetLit/ExplicitPropDef. Shaper unwraps — returns
-// the inner node, lifting any wrapper parens onto its delims (same
-// pattern as DepCondBoolExpr arm-3 and GroupedTypeExpr). AST
-// surface unchanged.
+// the inner node, lifting wrapper parens onto its delims (same
+// pattern as DepCondBoolExpr arm-3 and GroupedTypeExpr). AST surface
+// for previously-admitted shapes (`(1)`, `((1))`, `(x)`) is unchanged
+// because the inner Expr dispatch reaches the same leaf nodes
+// through its own paren-wrap/unwrap path (GroupedExprNoBlock etc.),
+// and those productions also lift parens onto inner-node delims.
 var RecordTupleValue = production("RecordTupleValue", or(
 	AsExpr,
 	CallExpr,
@@ -2482,7 +2498,7 @@ var RecordTupleValue = production("RecordTupleValue", or(
 	StringLit,
 	lazy(() => DataStructLit),
 	IdentifierExpr,
-	and(OpenParen, delim(), lazy(() => RecordTupleValue), delim(), CloseParen)
+	and(OpenParen, delim(), lazy(() => Expr), delim(), CloseParen)
 ));
 
 // <RecordTupleEntry> := PickValue | RecordProperty | RecordTupleValue;

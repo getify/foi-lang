@@ -1287,6 +1287,8 @@ person.first;                   // "Kyle"
 person[prop];                   // "Simpson"
 ```
 
+**NOTE:** Simple values and expressions -- including primitives/natives, Records/Tuples literals, identifiers, property accesses, function calls, etc -- may appear in Record and Tuple literals as-is. But more complex expressions -- binary operations like `a + b`, `defn` function expressions, pattern match expressions, etc -- must be parenthesized (e.g., `< method: (defn()^42) >`) to avoid various syntactic ambiguities.
+
 The empty form `< >` qualifies as both an empty Tuple AND an empty Record -- it functions as either in any context, since spreading it contributes nothing and picking from it yields the empty structure back.
 
 Above, Record/Tuple fields are accessed with `.` operator, whether numeric or lexical-identifier. `[ ... ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).

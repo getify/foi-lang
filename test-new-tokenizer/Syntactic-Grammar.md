@@ -1152,8 +1152,10 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntryList> := (_ Comma)* (_ RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
-                        | IdentifierExpr | (OpenParen _ RecordTupleValue _ CloseParen);
+RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit
+                        | NumberLit | StringLit | DataStructLit
+                        | IdentifierExpr
+                        | (OpenParen _ Expr _ CloseParen);
 
 PickValue              := Ampersand IdentBase MultiAccessExpr?;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
@@ -1278,6 +1280,19 @@ match with `:as` tail. Falls through to `CallExpr` and the rest on
 no `:as`. The remaining order is unchanged from prior design:
 `CallExpr` before `IdentifierExpr` so `foo.bar` parses as a chain;
 `DataStructLit` before `IdentifierExpr` (disjoint openers).
+
+The paren-wrap arm's inner is `Expr` (matching `GroupedExpr`'s
+precedent), not recursive `RecordTupleValue`. The bare arms stay
+narrow — `<foo: 1 + 2>`, `<foo: defn()^42>`, `<foo: x #> f>` etc.
+remain parse errors at the bare arm for visual clarity inside the
+`<...>` separators. The paren-wrap arm earns the right to admit
+broad expressions (DefFuncExpr, MatchExpr, AssignmentExpr,
+BareBlockExpr, DoComprExpr, DoLoopComprExpr, the full binary
+ladder including pipelines, comprehensions, arithmetic, and
+comparison): `<foo: (1 + 2)>`, `<foo: (defn()^42)>`,
+`<foo: (x #> f)>`, `<foo: (?{...})>`, `<foo: (IO ~<< {x;})>` all
+parse. `SetEntry` inherits this widening via its `RecordTupleValue`
+arm — `<[(defn()^42), (x #> f)]>` also admits.
 
 `RecordTupleValue` is visible but UNWRAPS in its shaper — returns
 the inner node directly, lifting wrapper parens (from the paren-
