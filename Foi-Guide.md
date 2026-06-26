@@ -25,6 +25,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
 * [Defining Variables](#defining-variables)
     - [Block-Definitions Clause](#block-definitions-clause)
     - [Destructured Definitions](#destructured-definitions)
+    - [Lazy Forward References](#lazy-forward-references)
 * [Boolean Logic](#boolean-logic)
 * [Equality and Comparison](#equality-and-comparison)
 * [Pattern Matching](#pattern-matching)
@@ -755,6 +756,146 @@ order.items ~each (< itemPrice: price >) {
     itemPrice;      // 29.97
 };
 ```
+
+### Lazy Forward References
+
+Sometimes you want to define a value where one of its parts references the value itself, or another binding in the same `def` section that comes later. Consider:
+
+```java
+def life: <
+    meaning: defn(x, y) ^x + y,
+    answer: life.meaning(2, 40)         // `life` not yet bound!
+>;
+```
+
+At the moment the record literal is being constructed, the `life` binding doesn't exist yet -- the record itself is what `life` will refer to *once construction completes*. So `life.meaning(2, 40)` can't resolve.
+
+Without help, the *main* workaround is to construct an incomplete record, then reassign the binding to a corrected version:
+
+```java
+def life: <
+    meaning: defn(x, y) ^x + y
+>;
+life := <
+    &life,
+    answer: life.meaning(2, 40)
+>;
+```
+
+That works, but at significant cost. We've created an intermediate record that exists only as scaffolding. The `:=` reassignment makes `life` non-constant, which means any enclosing function that references `life` would need to declare it in a `:over (life)` clause (see [Function Overs](#function-overs)). And local reasoning about `life` weakens, because the name now refers to different values at different points in the scope.
+
+**NOTE:** The *other* workaround would have been to lift the `defn` function outside the structure, so that it can both be included in the structure AND used to define parts of it. The downside of course is that now an otherwise unnecessary named binding has leaked to the enclosing scope around the structure.
+
+None of that reflects what we actually wanted: a single value with a self-referential field.
+
+The `Lazy@` construct expresses this directly:
+
+```java
+def life: <
+    meaning: defn(x, y) ^x + y,
+    answer: Lazy@ life.meaning(2, 40)
+>;
+
+life.answer;            // 42
+```
+
+The `Lazy@ expr` form *defers* the resolution of any unresolved identifiers in `expr` until the surrounding scope's set of `def`s completes. The binding is still defined exactly once. No intermediate value. No reassignability. No `:over` annotation. No scope pollution.
+
+This construct exists *precisely* so that ordinary self-referential and mutually-referential value construction doesn't require mutability-flavored workarounds.
+
+----
+
+Other motivating examples...
+
+**Mutual reference between sibling bindings:**
+
+```java
+def alice: < name: "Alice", friends: < Lazy@ bob > >;
+def bob:   < name: "Bob",   friends: < alice > >;
+
+alice.friends;          // < bob >
+bob.friends;            // < alice >
+```
+
+Here `alice` references `bob` (which is defined *after* `alice`), so `Lazy@` defers it. The reverse direction (`bob` references `alice`) needs no `Lazy@`, because by the time `bob` is being defined, `alice` is already bound.
+
+**Cyclic structure (state machine):**
+
+```java
+def red:    < color: "red",    next: Lazy@ green >;
+def green:  < color: "green",  next: Lazy@ yellow >;
+def yellow: < color: "yellow", next: red >;
+
+red.next.color;        // "green"
+green.next.color;      // "yellow"
+yellow.next.color;     // "red"
+```
+
+This example shows a genuine cycle in the value graph -- which would be impossible/impractical without `Lazy@`, since each definition would have to reference the next one before it existed.
+
+**Mixed backward and forward references:**
+
+```java
+def base: 100;
+def offset: Lazy@ base + delta;  // `base` (backward); `delta` (forward)
+def delta: 7;
+
+offset;                 // 107
+```
+
+`Lazy@` resolves what it can immediately (`base` is already bound) and defers what it can't (`delta` arrives later).
+
+#### Scope Locality
+
+A `Lazy@` participates only in the set of `def`s of its directly enclosing scope. The deferral mechanism doesn't reach into other scopes -- a thunk that escapes its construction scope while still unresolved cannot be resolved from elsewhere.
+
+```java
+def seed: Lazy@ 7 * scale;
+defn compute() ^seed * 2;
+def answer: compute();      // ERROR: `seed` not resolved yet
+def scale: 3;
+```
+
+When `def answer: compute()` runs, `scale` hasn't been defined yet, so `seed` is still lazy deferred. The `compute()` body tries to resolve `seed * 2` from inside its own scope, but `seed` was constructed in a different scope; that's not allowed.
+
+The fix is either to reorder the bindings so the `Lazy@` resolves before the cross-scope use:
+
+```java
+def seed: Lazy@ 7 * scale;
+defn compute() ^seed * 2;
+def scale: 3;               // `seed` resolves here (`21`)
+def answer: compute();      // 42 -- `seed` is just a regular value now
+```
+
+...or to restructure so the lazy deferral only gets consumed within its immediate enclosing scope.
+
+This restriction reflects a broader **Foi** commitment: deferral doesn't quietly suspend executing functions (no deep continuations). The `def` section is the narrow, well-defined area of effect, and `Lazy@` operates within it.
+
+#### Automatic Resolution + Errors
+
+All `Lazy@` reference deferrals in a scope are resolved automatically with the completion of the last `def` in that scope.
+
+If any reference deferral cannot be statically resolved, the compiler raises an error.
+
+#### The `%` Effect Operator With `Lazy@`
+
+The `%` operator is an effect applicator; like `@`, it's a special paren-free call operator (but specifically dispatching to an effect-evaluation hook on the value, if any). You'll see it used heavily with explicitly-deferred monadic types like [IO](#io-monad) and `State`.
+
+`Lazy@` references don't expose such a hook; as explained in the previous section, resolution of lazy deferred references is handled entirely internally and automatically, not via any explicit invocation. So `x%` on a `Lazy@`-bound reference behaves exactly the same as a bare `x` read; `%` silently acts as a no-op.
+
+`%` may still be useful stylistically as a visual marker on a deferred reference, signalling "this is something that was lazily deferred."
+
+```java
+def x: Lazy@ z + 1;
+def y: x% + 1;        // same as `x + y`
+def z: 10;
+
+x;      // 11
+y;      // 12
+z;      // 10
+```
+
+`x%` has no operational effect, but it communicates intent more explicitly to the reader.
 
 ## Boolean Logic
 
