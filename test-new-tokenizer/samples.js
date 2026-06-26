@@ -471,6 +471,58 @@ export const samples = [
 	{ label: "IdentityCallExpr (spaced): @ x",       src: "@ x;" },
 	{ label: "IdentityCallExpr (no-space): @2",      src: "@2;" },
 
+	// EffectorCallExpr — `%` effector chain-tail. Single AST type
+	// (EffectorCallExpr { source, arg? }) with optional arg; all
+	// trivia variants admit, all collapse to the same AST shape
+	// modulo source positions.
+
+	// Bare effector forms (no arg)
+	{ label: "EffectorCallExpr (bare, no trivia): task%",        src: "task%;" },
+	{ label: "EffectorCallExpr (bare, trivia): task %",          src: "task %;" },
+	{ label: "EffectorCallExpr (bare, multi-WS): task   %",      src: "task   %;" },
+
+	// Binary forms (with arg) — four trivia variants, same AST
+	{ label: "EffectorCallExpr (binary, no trivia): task%env",       src: "task%env;" },
+	{ label: "EffectorCallExpr (binary, LHS trivia): task %env",     src: "task %env;" },
+	{ label: "EffectorCallExpr (binary, RHS trivia): task% env",     src: "task% env;" },
+	{ label: "EffectorCallExpr (binary, both trivia): task % env",   src: "task % env;" },
+
+	// Paren-grouped arg — same AST as un-parenned binary form
+	{ label: "EffectorCallExpr (paren arg, no trivia): task%(env)",  src: "task%(env);" },
+	{ label: "EffectorCallExpr (paren arg, trivia): task % (env)",   src: "task % (env);" },
+	{ label: "EffectorCallExpr (paren arg complex): task%(a + b)",   src: "task%(a + b);" },
+
+	// Full ChainExpr LHS — call / member / index source
+	{ label: "EffectorCallExpr (call source): processFile(\"f.txt\")%", src: "processFile(\"f.txt\")%;" },
+	{ label: "EffectorCallExpr (member source): obj.task%",         src: "obj.task%;" },
+	{ label: "EffectorCallExpr (member-call source): obj.method(x)%", src: "obj.method(x)%;" },
+	{ label: "EffectorCallExpr (index source): arr[0]%",            src: "arr[0]%;" },
+	{ label: "EffectorCallExpr (call w/arg): processFile(\"f.txt\") % cfg", src: "processFile(\"f.txt\") % cfg;" },
+
+	// Chained on result — parens around effector lift to ChainBase
+	{ label: "EffectorCallExpr (chained access): (task%).field",    src: "(task%).field;" },
+	{ label: "EffectorCallExpr (chained call): (task%(x))(y)",      src: "(task%(x))(y);" },
+	{ label: "EffectorCallExpr (chained .field on arg form): (task % env).field", src: "(task % env).field;" },
+
+	// Greedy ExprNoBlock — `task%(x)(y)` parses as `task % ((x)(y))`,
+	// where the arg is `(x)` called on `y`. Same pattern as `@`'s
+	// arg consumption (`foo@ (x)(y)` ≡ `foo @ ((x)(y))`). For the
+	// "call result of effector" reading, paren the effector:
+	// `(task%(x))(y)` — covered above.
+	{ label: "EffectorCallExpr (greedy arg: call result): task%(x)(y)", src: "task%(x)(y);" },
+
+	// :as on EffectorCallExpr — annotation wraps the whole effector
+	{ label: "EffectorCallExpr :as: (task%) :as Maybe",             src: "(task%) :as Maybe;" },
+
+	// Op-as-function — (%) and (%')
+	{ label: "OpFuncExpr (%) bare",                                 src: "(%);" },
+	{ label: "OpFuncExpr (%') primed",                              src: "(%');" },
+	{ label: "OpFuncExpr (%) applied: (%)(task, env)",              src: "(%)(task, env);" },
+	{ label: "OpFuncExpr (%') applied: (%')(env, task)",            src: "(%')(env, task);" },
+	{ label: "OpFuncExpr (%) partial: (%)|myIO|",                   src: "(%)|myIO|;" },
+	{ label: "OpFuncExpr (%) as def value: def run: (%)",           src: "def run: (%);" },
+	{ label: "OpFuncExpr (%) in pipeline: ios ~map (%)",            src: "ios ~map (%);" },
+
 
 	// =============================================================
 	// §8 UNARY

@@ -871,6 +871,7 @@ var TriplePeriod = tokType("TriplePeriod");
 var SingleQuote  = tokType("SingleQuote");
 var Mountain     = tokType("Mountain");
 var Valley       = tokType("Valley");
+var Percent      = tokType("Percent");
 var BuiltinNone  = tokVal("Builtin", "None");
 
 // PrefixCallSuffix  := OpenParen CallArgs CloseParen;
@@ -1031,71 +1032,126 @@ var ChainBase = or(
 	IdentifierExpr
 );
 
+// <ChainTail>       := EffectorTail | PostfixCallTail;
+// EffectorTail      := _ Percent (_ ExprNoBlock)?;
 // <PostfixCallTail> := SingleQuote (_ CallSuffix)*
 //                    | (Mountain | Valley) CallSuffix*;
 //
 // ChainExpr := ChainBase
 //              (
-//                  (_ ChainSeg)+ PostfixCallTail?
-//                | PostfixCallTail
+//                  (_ ChainSeg)+ ChainTail?
+//                | ChainTail
 //              );
 //
 // Requires extension beyond ChainBase — either ≥1 ChainSeg, or a
-// postfix modifier (`'`, `/\`, `\/`). A bare ChainBase alone falls
+// chain tail (`'`, `/\`, `\/`, or `%`). A bare ChainBase alone falls
 // through to the later alternatives in BareOperandExprNoEmpty.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 //
-// Three postfix modifiers, mutually exclusive (no stacking):
+// Four chain-tail forms, all mutually exclusive (no stacking with
+// each other, no access tail after any of them):
 //
 //   `'`     — argument-reversal / universal-prime inversion on the
-//             function value. Existing precedent.
+//             function value.
 //   `/\`    — curry. Reshapes the function's parameter signature
 //             into a tiered pyramid (one param per call site, by
 //             arity from fn.length, outer-tier-only).
 //   `\/`    — uncurry. Reshapes a tiered (curried) function into a
 //             flat n-ary application, walking each tier's
 //             fn.length to consume args from the call's arg list.
+//   `%`     — effector application. Dispatches to the source's
+//             effect-evaluation hook with an optional argument.
+//             See EffectorTail (above) for details.
 //
 // Mountain/Valley operator shapes ARE the resulting function's
 // parameter-signature shape — see Foi-Guide.md.
 //
-// All three modifiers share the chain-tail slot: adjacent to the
-// preceding expression (no trivia between), terminate the access
-// chain (no dot/bracket access may follow), and may be followed
-// only by zero or more call suffixes.
+// Adjacency rules differ between PostfixCallTail and EffectorTail:
 //
-// Adjacency to subsequent CallSuffix differs by modifier:
+//   PostfixCallTail (`'`/`/\`/`\/`): adjacent to the preceding
+//     expression (NO trivia between). Each may be followed only
+//     by zero or more call suffixes (terminates the access chain):
+//       `'`     — trivia allowed between `'` and CallSuffix, and
+//                 between consecutive CallSuffixes. `foo'(1,2,3)`
+//                 and `foo' (1,2,3)` both parse.
+//       `/\`/`\/` — NO trivia between modifier and first CallSuffix,
+//                 nor between consecutive CallSuffixes. Reinforces
+//                 "this is one operator-shaped call form, not a
+//                 free chain of calls." `foo/\(1)(2)(3)` parses;
+//                 `foo/\ (1)`, `foo/\(1) (2)` do not.
 //
-//   `'`     — trivia allowed between `'` and CallSuffix, and
-//             between consecutive CallSuffixes. Existing rule.
-//             `foo'(1,2,3)` and `foo' (1,2,3)` both parse.
-//   `/\`/`\/` — NO trivia between modifier and first CallSuffix,
-//             nor between consecutive CallSuffixes. Reinforces
-//             "this is one operator-shaped call form, not a free
-//             chain of calls." `foo/\(1)(2)(3)` parses;
-//             `foo/\ (1)`, `foo/\(1) (2)` do not.
+//   EffectorTail (`%`): trivia-tolerant on BOTH sides via leading
+//     and between-arg `_`. `task%`, `task %`, `task% env`,
+//     `task %env`, `task % env`, `task%env`, `task%(env)` all
+//     parse. Carries no trailing call suffix — `task%(x)` is the
+//     paren-grouped-arg binary form, not `(task%)` then `(x)`.
 //
 // Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
 // `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`, `foo/\(1)(2)(3)`,
-// `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`.
+// `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`; `task%`, `task %`,
+// `task % env`, `processFile("f.txt")%`, `obj.method(x) % cfg`.
 // Examples that do not: `foo'.bar`, `foo'[0]`, `foo' .bar` (trivia
 // before `'`); `foo /\`, `foo/\ (1)`, `foo/\'`, `foo/\\/` (stacking
-// or trivia-violation).
+// or trivia-violation on the curry/uncurry ops); `task%.field`,
+// `task%[0]`, `task%'` (stacking or access tail after `%`); `%task`,
+// `%`, `%y` (no LHS).
 //
 // PEG arm order inside PostfixCallTail: SingleQuote first
 // (single-char), then Mountain/Valley (two-char). Disjoint first
 // chars — order is mechanical, not load-bearing.
 //
+// PEG arm order inside ChainTail: EffectorTail first (Percent
+// opener, disjoint from SingleQuote / Mountain / Valley). Because
+// EffectorTail has a leading `_` and PostfixCallTail does not,
+// `foo '` (WS before `'`) correctly fails — EffectorTail fails
+// at Percent (no `%`), PostfixCallTail fails (no leading `_`),
+// whole ChainTail fails, optional retracts. Preserves the no-
+// trivia rule for `'`/`/\`/`\/`.
+//
 // PEG arm order in ChainExpr outer: ChainSeg+-first before
-// PostfixCallTail-only. The ChainSeg+-first arm requires ≥1
-// ChainSeg via many(); on input where a modifier immediately
-// follows ChainBase with no ChainSeg (e.g. `foo'`, `foo/\`), the
-// first arm fails at many() and the PostfixCallTail-only arm fires.
+// ChainTail-only. The ChainSeg+-first arm requires ≥1 ChainSeg
+// via many(); on input where a tail form immediately follows
+// ChainBase with no ChainSeg (e.g. `foo'`, `foo/\`, `task%`,
+// `task %`), the first arm fails at many() and the ChainTail-
+// only arm fires.
 var PostfixCallTail = or(
 	and(SingleQuote, any(and(delim(), CallSuffix))),
 	and(or(Mountain, Valley), any(CallSuffix))
 );
+
+// EffectorTail := _ Percent (_ ExprNoBlock)?;
+//
+// The effector chain tail — applies `%` to the preceding chain
+// expression, optionally with an argument. Bare `task%` is the
+// no-arg form; `task % env`, `task%env`, `task%(env)` are the
+// arg-taking forms — parens are expression grouping, not call
+// form (`task%(env)` ≡ `task % env`, same AST).
+//
+// Trivia-tolerant on BOTH sides of `%` — `task %`, `task % env`,
+// `task% env`, `task %env` all parse. Differs from `@`'s structural-
+// trivia rule (`foo@` no-trivia vs. `foo @ x` trivia-bearing are
+// distinct AST arms) because `%` has a single AST type with an
+// optional arg slot — trivia carries no AST consequence.
+//
+// Chain terminator: no stacking with `'`/`/\`/`\/`, no access tail
+// after `%`. To chain on the result: `(task%).field`, `(task%)(arg)`.
+// Identical chain-terminator semantics to PostfixCallTail.
+//
+// Shaper produces a transient `EffectorTail { arg?, delims }` node
+// that ChainExpr's shaper intercepts and folds into EffectorCallExpr.
+export const EffectorTail = production("EffectorTail",
+	and(delim(), Percent, optional(and(delim(), lazy(() => ExprNoBlock))))
+);
+
+// <ChainTail> := EffectorTail | PostfixCallTail;
+//
+// PEG order: EffectorTail first (Percent opener — disjoint from
+// SingleQuote / Mountain / Valley openers). EffectorTail's leading
+// `_` admits trivia before `%`; PostfixCallTail's modifiers require
+// adjacency, so `foo '` (WS before `'`) correctly fails: EffectorTail
+// fails at Percent (no `%`), PostfixCallTail fails (no leading `_`).
+var ChainTail = or(EffectorTail, PostfixCallTail);
 
 export const ChainExpr = production("ChainExpr",
 	and(
@@ -1103,9 +1159,9 @@ export const ChainExpr = production("ChainExpr",
 		or(
 			and(
 				many(and(delim(), ChainSeg)),
-				optional(PostfixCallTail)
+				optional(ChainTail)
 			),
-			PostfixCallTail
+			ChainTail
 		)
 	),
 	{ preserveInnerDelim: true }
@@ -1444,14 +1500,16 @@ var MulOp = or(Star, ForwardSlash);
 // <NamedUnaryOp> := "?empty" | "!empty";
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
 
-// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley;
+// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley | Percent;
 //
-// Mountain (`/\`) and Valley (`\/`) admitted so OpFuncExpr picks
-// up the bare op-as-function forms `(/\)` / `(\/)` alongside the
-// universal-prime forms `(/\')` / `(\/')` via OpFuncExpr's existing
-// `optional(SingleQuote)` tail. Postfix-attachment to a function
-// value is handled by ChainExpr's PostfixCallTail (§7), not here.
-var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley);
+// Mountain (`/\`), Valley (`\/`), and Percent (`%`) admitted so
+// OpFuncExpr picks up the bare op-as-function forms `(/\)` / `(\/)`
+// / `(%)` alongside the universal-prime forms `(/\')` / `(\/')` /
+// `(%')` via OpFuncExpr's existing `optional(SingleQuote)` tail.
+// Chain-tail attachment of `'`/`/\`/`\/` to a function value is
+// handled by ChainExpr's PostfixCallTail (§7); `%`'s chain-tail
+// attachment is handled by ChainExpr's EffectorTail (§7), not here.
+var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley, Percent);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);
@@ -2193,8 +2251,6 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 // =============================================================
 // §17 DATA STRUCTURE LITERALS
 // =============================================================
-
-var Percent      = tokType("Percent");
 
 // PickValue := Ampersand IdentBase MultiAccessExpr?;
 //

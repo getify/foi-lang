@@ -248,6 +248,19 @@ var OR_OPS = {
 //                      and unreachable as a runtime value through
 //                      the OpFuncExpr surface. Primed swaps to
 //                      (body, range) order.
+//   kind: "effector"  — variadic 1-or-2-arg `%` effector dispatch.
+//                      `(%)(src)` ≡ `src%` (bare); `(%)(src, arg)`
+//                      ≡ `src % arg` (binary). Runtime check for
+//                      `.run` function hook; falls through to
+//                      identity return of source when absent
+//                      (Lazy@-mock semantic — see EffectorCallExpr
+//                      handler for the matching direct lowering).
+//                      Primed swaps to (arg, src) order — strictly
+//                      2-arg-shaped under prime; 1-arg primed is
+//                      undefined-source territory, falls through
+//                      to identity-return of undefined (silent
+//                      failure matches other primed fixed-arity
+//                      ops like (?<=>')).
 //
 // Primed (`node.primed`) reverses arg order for n-ary kinds and
 // swaps arg positions for fixed-arity kinds (range3, in2, has2,
@@ -301,6 +314,7 @@ var OP_FUNC_TABLE = {
 	"...":  { kind: "spread" },
 	"..":   { kind: "range2" },
 	"~each": { kind: "each" },
+	"%":     { kind: "effector" },
 };
 
 
@@ -1761,6 +1775,47 @@ var handlers = {
 		return r(n.callee) + (n.arg == null ? "()" : "(" + r(n.arg) + ")");
 	},
 
+	// EffectorCallExpr { source, arg? } — the `%` effector applied
+	// to a chain-folded `source`, optionally with an argument.
+	//
+	// Bootstrap dispatch: if `source.run` is a function, call it
+	// (with `arg` if present); otherwise the effector is an identity
+	// no-op and `source` is returned unchanged. This carries the
+	// Lazy@ semantic (bare values have no hook, so `x%` ≡ `x`)
+	// alongside the IO semantic (instances carry `.run`, so `task%`
+	// fires the effect).
+	//
+	// Single-eval discipline: both source and (when present) arg
+	// must evaluate exactly once. The naive `src?.run ? src.run(arg)
+	// : src` form evaluates `src` three times — fine for bare
+	// identifiers, broken for call-bearing chains like
+	// `processFile("f.txt")%` (would invoke processFile 3×). IIFE
+	// wrap binds `__src` (and `__arg` in the binary form) once,
+	// dispatches without re-evaluation.
+	//
+	// `typeof __src?.run === "function"` rather than `__src?.run`
+	// alone: guards against non-function `.run` properties, which
+	// would otherwise raise TypeError("not a function") at the
+	// call site rather than falling through to identity. Optional
+	// chaining handles null / undefined sources gracefully.
+	//
+	// Two-branch emission keeps the arg-absent shape clean
+	// (`__src.run()` not `__src.run(undefined)`) — matches the
+	// AtCallExpr `None@` convention for no-arg unit dispatch.
+	//
+	// Source is always a ChainExpr-fold result (Identifier / CallExpr
+	// / MemberAccessExpr / IndexAccessExpr / PrimedExpr / etc.) or a
+	// GroupedExprNoBlock — all valid JS expression atoms for IIFE
+	// arg position.
+	EffectorCallExpr(n, r) {
+		var src = r(n.source);
+		if (n.arg == null) {
+			return "((__src) => typeof __src?.run === \"function\" ? __src.run() : __src)(" + src + ")";
+		}
+		var argEmit = r(n.arg);
+		return "((__src, __arg) => typeof __src?.run === \"function\" ? __src.run(__arg) : __src)(" + src + ", " + argEmit + ")";
+	},
+
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
 	// production; ChainExpr's fold produces this uniform shape.
 	// Generic emission: recur callee + paren-wrapped arg list.
@@ -2660,6 +2715,25 @@ var handlers = {
 				"} " +
 				"return __r; " +
 			"})";
+		}
+		// (%) / (%') — effector op-as-function. Variadic 1-or-2-arg
+		// shape mirrors EffectorCallExpr's direct lowering: source
+		// (first arg, or second under prime) is .run-dispatched if
+		// the hook exists; otherwise identity-returned. The runtime
+		// `__arg !== undefined` branch picks `.run()` vs `.run(arg)`
+		// so the bare-form call site `(%)(src)` lowers to the same
+		// `src.run()` shape that `src%` would, no spurious undefined
+		// arg threaded through.
+		//
+		// `typeof __src?.run === "function"` guards null / undefined
+		// sources AND non-function `.run` properties — same shape
+		// as EffectorCallExpr's hook check.
+		if (meta.kind === "effector") {
+			var p1 = node.primed ? "__arg" : "__src";
+			var p2 = node.primed ? "__src" : "__arg";
+			return "((" + p1 + ", " + p2 + ") => typeof __src?.run === \"function\" " +
+				"? (__arg !== undefined ? __src.run(__arg) : __src.run()) " +
+				": __src)";
 		}
 		return fallback(node);
 	},

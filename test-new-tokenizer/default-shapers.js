@@ -1776,6 +1776,29 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 
+	// EffectorTail := _ Percent (_ ExprNoBlock)?;
+	//
+	// Transient inner production — collapses to EffectorCallExpr
+	// in ChainExpr's part loop (see below). Parts are:
+	//   [maybe WS tokens, Percent token, maybe WS tokens,
+	//    maybe ExprNoBlock node]
+	// All non-node tokens (Percent + soft delims) into delims;
+	// the optional ExprNoBlock node, if present, into `arg`.
+	// emitGeneric piece-walks Percent + soft delims at their
+	// source positions, recovering "task %" / "task % env" /
+	// "task%env" / "task%(env)" alike.
+	EffectorTail(frame,parts) {
+		var arg = null;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) arg = p;
+			else delims.push(p); // Percent + WS / comments
+		}
+		var node = { type: "EffectorTail" };
+		if (arg) node.arg = arg;
+		return withDelims(node, delims);
+	},
+
 	// ChainExpr — base + ordered segments folded into JS-style
 	// nested typed nodes. ChainExpr itself emits no node — it's a
 	// parse vehicle only. SingleQuote captured into PrimedExpr
@@ -1800,6 +1823,36 @@ export const defaultShapers = {
 			if (isNode(p)) {
 				if (node === undefined) {
 					node = p; // ChainBase
+				}
+				else if (p.type === "EffectorTail") {
+					// Effector chain-tail — fold the source-so-far into
+					// EffectorCallExpr. EffectorTail's own delims (Percent
+					// + leading / between-arg soft delims, all with source
+					// positions) propagate onto the new node. arg lifts
+					// onto the EffectorCallExpr if present; bare form
+					// leaves it undefined.
+					//
+					// Chain-level `pending` (soft delims between ChainBase
+					// and EffectorTail, or between last ChainSeg and
+					// EffectorTail) should be empty here — EffectorTail's
+					// own leading `_` captures that trivia. Defensive
+					// merge anyway, before the EffectorTail's own delims
+					// (positionally precedes them).
+					var newNode = {
+						type: "EffectorCallExpr",
+						source: node,
+						start: node.start,
+						end: p.end,
+					};
+					if (p.arg) newNode.arg = p.arg;
+					var combinedDelims = [];
+					if (pending.length > 0) {
+						combinedDelims.push(...pending);
+						pending = [];
+					}
+					if (p.delims) combinedDelims.push(...p.delims);
+					if (combinedDelims.length > 0) newNode.delims = combinedDelims;
+					node = newNode;
 				}
 				else {
 					// ChainSeg / CallSuffix — both fold via applyChainSeg.
@@ -2765,7 +2818,7 @@ export const defaultShapers = {
 		}, delims);
 	},
 
-// ComputedPropAccessChain := IdentBase (DotIdentifier | BracketExpr)*;
+	// ComputedPropAccessChain := IdentBase (DotIdentifier | BracketExpr)*;
 	//
 	// Bare identifier-access chain for the computed-key bare alphabet.
 	// Folds segs via applyChainSeg (same helper ChainExpr uses) into

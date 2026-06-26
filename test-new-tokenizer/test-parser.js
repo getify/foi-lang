@@ -230,6 +230,24 @@ var failSamples = [
 	'5 + (tmp: 3) { tmp + 1; };',
 	'?{ ?[x ?< 5]: (<:a>) { use(a); }; ?: 0 };',
 	'?[x ?> y]: (<:a>) { use(a); };',
+
+	// === EffectorCallExpr negatives — `%` chain-tail rejects ===
+
+	// No LHS — `%` requires a source
+	"%task;",
+	"%;",
+	"%(x);",
+
+	// No stacking with PostfixCallTail modifiers — `%` is a chain terminator
+	"task%';",
+	"task%/\\;",
+	"task%\\/;",
+
+	// No access tail after `%` — paren the effector first
+	"task%.field;",
+	"task%[0];",
+	"task%.<a,b>;",
+	"task%.[1..3];",
 ];
 
 var passed = 0;
