@@ -672,11 +672,11 @@ A `Lazy@` construct fails to resolve, in its proper immediately enclosing scope,
 
 Reference-shaped cycles -- where identifiers reference each other through structural operations that carry thunks without forcing -- are not failures. Each cycle participant's referenced identifier resolves through the section, the listener mechanism updates each thunk's reference cell to its resolved value, and the cycle in the value graph is preserved. The end-of-section force pass walks these values, finds all thunks resolved, and produces no error.
 
-#### §2.2.9 The `%` Force Operator and `Lazy@`
+#### §2.2.9 The `%` Effector Operator and `Lazy@`
 
 Conceptually, a `Lazy@` thunk is a syntactically-simplified deferred value (e.g., IO, State).
 
-The `%` postfix dispatches to such deferred value's evaluation hook (if present); when a value has no such hook, `%` acts as the identity on the value.
+The `%` effector operator dispatches to such deferred value's effect-evaluation hook (if present); when a value has no such hook, `%` acts as the identity on the value.
 
 A `Lazy@` thunk exposes no such hook. Resolution is performed exclusively by the carry-and-force machinery (§2.2.3 through §2.2.5), which is not user-callable. So `x%` for a `Lazy@`-bound name behaves as identity, the same as a bare `x` read.
 

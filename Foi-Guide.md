@@ -909,9 +909,9 @@ All `Lazy@` reference deferrals in a scope are resolved automatically with the c
 
 If any reference deferral cannot be statically resolved, the compiler raises an error.
 
-#### The `%` Effect Operator With `Lazy@`
+#### The `%` Effector Operator With `Lazy@`
 
-The `%` operator is an effect applicator; like `@`, it's a special paren-free call operator (but specifically dispatching to an effect-evaluation hook on the value, if any). You'll see it used heavily with explicitly-deferred monadic types like [IO](#io-monad) and `State`.
+The `%` operator is the effector; like `@`, it's a special paren-free call operator (but specifically dispatching to an effect-evaluation hook on the value, if any). You'll see it used heavily with explicitly-deferred monadic types like [IO](#io-monad) and `State`.
 
 `Lazy@` references don't expose such a hook; as explained in the previous section, resolution of lazy deferred references is handled entirely internally and automatically, not via any explicit invocation. So `x%` on a `Lazy@`-bound reference behaves exactly the same as a bare `x` read; `%` silently acts as a no-op.
 
@@ -4177,7 +4177,7 @@ task%;
 // Log messages are a side effect!
 ```
 
-For deferred monad types like `IO` and `State`, `%` is the paren-free unary effect-applicator operator (similar to the `@` call operator). Where `@` constructs a monadic instance *at* a certain input value, `%` does the inverse: dispatches the instance's *effect evaluation hook* -- running whatever effects the instance represents.
+For deferred monad types like `IO` and `State`, `%` is the paren-free unary effector operator (similar to the `@` call operator). Where `@` constructs a monadic instance *at* a certain input value, `%` does the inverse: dispatches the instance's *effect evaluation hook* -- running whatever effects the instance represents.
 
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
