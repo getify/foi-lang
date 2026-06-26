@@ -632,7 +632,7 @@ def age: 42;
 
 All definitions need a value initialization, but you can use the `empty` value if there's no other value to specify.
 
-`def` definitions do not hoist, so to avoid confusion, they *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, `defn`, and `import`) statements.
+`def` definitions do not hoist; they *must not* be preceded in any scope (module, function, or block) by any other non-definition (besides `def`, `deft`, and `defn`) statements.
 
 To reassign a variable:
 
@@ -709,13 +709,29 @@ In addition to the definitions-block form just shown, several other expressions 
 
 * A [loop iteration block](#loops) with block-definitions clause:
 
-    ```java
+```java
     0..3 ~each (v) {
         log(`"v: `v`");
     };
-    ```
+```
 
-**Note:** While function body definitions, and the Record/Tuple *def*-block, both have `{    }` blocks, these *cannot* be prefaced by a block definitions clause.
+These host expressions split into two kinds based on whether they supply an *implicit input* to the block:
+
+**Without an implicit input** (guard expression consequents, pattern matching consequents, top-level `def (...) {...}` blocks): every block-definition needs an explicit initializer, except for the identifier-only form (`(tmp)`, which defaults to `: empty`). A destructure target *must* have its `: source` tail; there's no implicit value to bind against.
+
+**With an implicit input** (loop iteration blocks, comprehensions like `~each`, `~map`, `~fold`, etc., pipeline blocks i.e., `#>`, pipeline-bodied function bodies): the surrounding expression flows one or more values into the block (the current iteration element, the pipeline topic, the function's argument, etc.). Identifier definitions may omit their initializer and take their value from that implicit input. Destructure targets may also omit their `: source` tail and destructure the implicit input directly:
+
+```java
+def people: < < name: "Alice", title: "Engineer" > >;
+
+people ~each (< :name, :title >) {
+    log(`"`name` has role: `title`");
+};
+```
+
+Here the comprehension supplies each `people` element as the implicit input, and the destructure clause `< :name, :title >` extracts its fields without needing an explicit source. The earlier loop example -- `0..3 ~each (v) { ... }` -- is the simpler identifier-only case: `v` has no initializer, so it takes each loop value as its implicit input.
+
+**Note:** Function body definitions also use a `{    }` block, but cannot be prefaced by a block-definitions clause; parameters serve the equivalent purpose. See [Defining Functions](#defining-functions).
 
 ### Destructured Definitions
 
@@ -733,17 +749,33 @@ firstItem;      // < price: 29.97, label: ... >
 order;          // < id: 123, items: < < price: 29.97, ... >
 ```
 
+**TIP:** Notice each entry in the destructure clause is just an access path. JS readers may be used to a different model -- nested patterns that mirror the source's shape (e.g., `const { items: [{ price }] } = order;`). **Foi destructuring is path-rooted, not structure-mirroring.** Each entry says "give me the value at *this path* from the source, and bind it to *this name*." No nested patterns, no recursion -- just paths. There's no depth tax: `:items.0.price` is no harder to write or read than `:price`. It's the same access language you'd use anywhere else, just rooted at a binding name.
+
 The `:items.0.price` syntax form implicitly assumes a target variable name from the final source property name (`price`) above; for this syntax to be valid, the source property name must be fixed (cannot be a dynamic expression) and a valid identifier (cannot be a number like `0`).
 
-If you need to "rename" the target variable -- for example, if the source property name isn't fixed or a suitable identifier -- the target name (`firstItem` above) may be specified before the `:`.
+If you need to "rename" the target variable -- for example, if the source property name isn't fixed or a suitable identifier -- the target name (`firstItem` above) may be specified before the `:`, as:
 
-To capture the entire value being destructured, use `#` prefixing a target variable name (as in `#order` above).
+```java
+def <
+    itemPrice :items.0.price,
+    // ..
+>: getOrder(123);
+```
 
 To compute the top-level source property name with a dynamic expression:
 
-```java
+````java
 def < lastItem: [size(items)-1] >: items;
-```
+````
+
+This form is *rename-only* -- the target name must be given explicitly. Why? Because `[expr]` has no terminal identifier for the concise form to derive a name from. The expression evaluates to an index or key, but a key like `7` or `"price"` isn't usable as a binding name on its own; you have to explicitly declare what to call it.
+
+`[expr]` can also be used as the *start* of a longer access path, not just the terminal:
+
+````java
+def < deepest: [k].sub.0 >: items;
+// evaluates k -> picks items[k] -> reads .sub -> reads .0
+````
 
 These various destructuring forms are also allowed in a block-definitions clause:
 
@@ -1238,9 +1270,9 @@ The leading `?` is required on standalone guard expressions, unlike the optional
 
 ## Records And Tuples
 
-Records are immutable collections of values, delimited by `<    >`.
+Records are immutable structured values, delimited by `<    >`. Each entry is either *named* (`first: "Kyle"`) or *positional* (a bare value like `4`); positional entries get automatic numeric indices in source order (`0`-based).
 
-You can name each field of a record, but if you omit a name, numeric indexing is automatically applied. Any record with all numerically indexed fields (implicitly or explicitly defined) is a special case called a Tuple.
+A Tuple is a Record where every entry is positional -- no named entries. Tuples and Records share a single literal syntax (`< ... >`) and most operations; the distinction is just whether names are present.
 
 ```java
 def idx: 2;
@@ -1255,9 +1287,21 @@ person.first;                   // "Kyle"
 person[prop];                   // "Simpson"
 ```
 
-Above, Record/Tuple fields are accessed with `.` operator, whether numeric or lexical-identifier. `[    ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
+The empty form `< >` qualifies as both an empty Tuple AND an empty Record -- it functions as either in any context, since spreading it contributes nothing and picking from it yields the empty structure back.
 
-Since `.` is an operator, Record/Tuple field access can also be performed in the operator-as-function form, in which case it evaluates the second argument as an expression (like the `[    ]` form does):
+Above, Record/Tuple fields are accessed with `.` operator, whether numeric or lexical-identifier. `[ ... ]` field access syntax evaluates field-name expressions (including strings that may include non-identifier characters).
+
+Tuples (and Records with numerically-indexed positions) also support negative-index access with `.-N`, counting back from the end: `.-1` is the last positional entry, `.-2` the second-to-last, and so on.
+
+```java
+def numbers: < 4, 5, 6 >;
+numbers.-1;                     // 6
+numbers.-2;                     // 5
+```
+
+**Note:** The negative-index form only works with the dotted access (`.-1`), not bracketed (`[-1]`). Brackets do a literal key lookup, and since positional indices are non-negative, `numbers[-1]` returns `empty`.
+
+Since `.` and `[]` are both access operators, Record/Tuple field access can be performed via their operator-as-function forms `(.)` and `([])`. Both evaluate the second argument as an expression to get the access key, but they diverge on negative integer indices: `(.)` counts from the end (matching the dotted form `.-N`), while `([])` does a literal key lookup (matching the bracketed form `[N]`).
 
 ```java
 def idx: 2;
@@ -1267,6 +1311,10 @@ def numbers: < 4, 5, 6 >;
 
 (.)(numbers, 1);                // 5
 (.)(numbers, idx);              // 6
+(.)(numbers, -2);               // 5
+
+([])(numbers, 1);               // 5
+([])(numbers, -1);              // empty (literal "-1" key not found)
 
 def person: < first: "Kyle", last: "Simpson" >;
 
@@ -1294,7 +1342,7 @@ size(< "O", "K" >);         // 2
 size(< a: 1 >);             // 1
 ```
 
-If the desired index or field name is held in a variable, you can use it in the Record/Tuple literal definition by prefixing the variable name with the `%` sigil:
+If the desired index or field name is held in a variable, you can compute the field-name with an expression, by prefixing with the `%` sigil:
 
 ```java
 def idx: 3;
@@ -1441,6 +1489,23 @@ def profile: person.<first,nickname>;
 
 **Note:** The `.<` of this operator cannot have any whitespace between the two symbols, but whitespace is allowed inside the `.<    >`.
 
+Inside the `.< ... >`, entries can also use the `%` computed-name and `&` spread sigils -- the same forms allowed inside Record/Tuple literals:
+
+```java
+def rec: < x: 1, y: 2, z: 3 >;
+
+def key: "x";
+rec.<%key>;             // < x: 1 >
+
+def keys: < "x", "y" >;
+rec.<&keys>;            // < x: 1, y: 2 >
+
+def extras: < "y", "z" >;
+rec.<x, &extras>;       // < x: 1, y: 2, z: 3 >
+```
+
+The `%key` form looks up a single field whose name is computed from `key`. The `&keys` form spreads a Tuple of names, picking each one from the source. The two forms compose with each other and with bare static names, just like entries inside a Record literal.
+
 You can also select a ranged Tuple subset, with the `.[  ..  ]` syntax -- should be treated as a singular compound operator -- as a shorthand for the `.<    >` form:
 
 ```java
@@ -1465,9 +1530,19 @@ A ranged Tuple subset such as `.[2..5]` is a shorthand equivalent for `.<2,3,4,5
 
 Certain ranges (e.g., `.[0..]`, `.[..-1]`, and `.[0..-1]`) are no-op expressions, since they result in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in these cases.
 
+Out-of-range endpoints are silently clipped: a start `N` less than `0` is treated as `0`, and an end `M` past the last positional index is treated as the last positional index. No error; just the valid subset.
+
+```java
+def items: < 10, 20, 30, 40, 50 >;
+
+items.[-2..2];      // < 10, 20, 30 >          (N clipped to 0)
+items.[3..99];      // < 40, 50 >              (M clipped to 4)
+items.[-5..99];     // < 10, 20, 30, 40, 50 >  (both clipped)
+```
+
 ----
 
-Additionally, inside the `<    >` syntactic definition of a Record/Tuple, a special `&` pick sigil prefixed on a variable name (not an arbitrary expression) *picks and includes* some or all of the contents of that other Record/Tuple:
+Additionally, inside the `< ... >` syntactic definition of a Record/Tuple, a special `&` pick sigil prefixed on a variable name (not an arbitrary expression) *picks and includes* some or all of the contents of that other Record/Tuple:
 
 ```java
 def numbers: < 4, 5, 6 >;
@@ -4091,23 +4166,25 @@ def task: IO@ (defn someTask(){
 // (nothing)
 ```
 
-Notice that the log message didn't actually happen. `IO` instances are lazy. An `IO` instance (which may be a composed chain of many `IO`s) is run on-demand (one or more times), using the `run()` method on the instance:
+Notice that the log message didn't actually happen. `IO` instances are lazy. An `IO` instance (which may be a composed chain of many `IO`s) is run on-demand (one or more times), by applying the `%` effect operator to the instance:
 
 ```java
 def task: IO@ (defn someTask(){
     log("Log messages are a side effect!");
 });
 
-task.run();
+task%;
 // Log messages are a side effect!
 ```
+
+For deferred monad types like `IO` and `State`, `%` is the paren-free unary effect-applicator operator (similar to the `@` call operator). Where `@` constructs a monadic instance *at* a certain input value, `%` does the inverse: dispatches the instance's *effect evaluation hook* -- running whatever effects the instance represents.
 
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
 ```java
 def specialNumber: IO._@ 42;
 
-specialNumber.run();   // 42
+specialNumber%;        // 42
 ```
 
 As with all monads, we can compose instances together via comprehensions like `~map` and `~<` (chain):
@@ -4126,7 +4203,7 @@ def task: num
     ~map doubleIO
     ~< finish;
 
-task.run();   // 43
+task%;   // 43
 // v: 42
 ```
 
@@ -4140,7 +4217,7 @@ Because this is so common with `IO`, the *do comprehension* form is most common.
 (IO ~<< (v:: num) {
     def x:: doubleIO(v);
     ::finish(x);
-}).run();   // 43
+})%;   // 43
 // v: 42
 ```
 
@@ -4166,8 +4243,7 @@ defn processFile(filename) ^IO ~<< {
     < :res, :text >;
 };
 
-processFile("my-file.txt")
-.run();
+processFile("my-file.txt")%;
 // < res: .., text: ... >
 ```
 
@@ -4175,14 +4251,14 @@ processFile("my-file.txt")
 
 Reader is a pattern for carrying a value across monadic operations, without needing a shared outer scope to access it. We typically treat the Reader value as an *environment* context that is parameterized for the IO to run against. This enables a *pure* IO that doesn't need to access anything from its outer context.
 
-`IO` implements Reader by allowing a single argument (optional) to the `run()` function. If a Reader value is provided, it's automatically passed as the first argument to the *executor* function:
+`IO` implements Reader by allowing a single argument (optional) to be applied via the `%` operator. If a Reader value is provided, it's automatically passed as the first argument to the *executor* function:
 
 ```java
 def task: IO@ (defn(readerEnv){
     log(`"X: `readerEnv.x`");
 });
 
-task.run(< x: 42 >);
+task % < x: 42 >;
 // X: 42
 ```
 
@@ -4199,7 +4275,7 @@ def task:
         });
     };
 
-task.run(< x: 3 >);
+task % < x: 3 >;
 // Value: 42, Env.x: 3
 ```
 
@@ -4217,7 +4293,7 @@ def task: IO ~<< {
     log(`"Value: `v`, Env.x: `env.x`");
 };
 
-task.run(< x: 3 >);
+task % < x: 3 >;
 // Value: 42, Env.x: 3
 ```
 
@@ -4230,7 +4306,7 @@ def task: IO ~<< (env, v:: fortyTwo) {
     log(`"Value: `v`, Env.x: `env.x`");
 };
 
-task.run(< x: 3 >);
+task % < x: 3 >;
 // Value: 42, Env.x: 3
 ```
 
@@ -4253,12 +4329,12 @@ def task: IO ~<< {
     ::printValue(v);
 };
 
-task.run();
+task%;
 // Promise{}
 // Value: 42
 ```
 
-As illustrated, when the promise instance from `getValue()` was encountered, the rest of the IO evaluation -- in other words, what's returned from the `run()` call -- was *lifted* to a promise. Subsequent steps in the IO chain wait for a previous promise to resolve before proceeding.
+As illustrated, when the promise instance from `getValue()` was encountered, the rest of the IO evaluation -- in other words, what's returned from the `%` call -- was *lifted* to a promise. Subsequent steps in the IO chain wait for a previous promise to resolve before proceeding.
 
 That's basically the `Promise ~<< {    }` behavior combined automatically into `IO`'s `~<<` *do comprehension*.
 
@@ -4275,7 +4351,7 @@ def task: IO ~<< {
     ::printValue(v);
 };
 
-task.run();
+task%;
 // Promise{}
 // Value: 42
 ```
@@ -4293,7 +4369,7 @@ def task: IO ~<< {
     ::printValue(v);
 };
 
-task.run();
+task%;
 // Promise{}
 // Value: 42
 ```
@@ -4313,7 +4389,7 @@ def task: IO ~<< {
     ::(~cata)(ev, IO._@, printValue);
 };
 
-task.run();
+task%;
 // Promise{}
 // Value: 42
 ```
@@ -4339,14 +4415,14 @@ def task: IO ~<< {
     ::printValue(v);
 };
 
-task.run();
+task%;
 // PushStream{}
 // Value: 1
 // Value: 2
 // Value: 3
 ```
 
-Notice how `run()` this time returned a `PushStream` instance instead of a `Promise`, since the `IO` was *lifted* into that space for its evaluation.
+Notice how `%` this time returned a `PushStream` instance instead of a `Promise`, since the `IO` was *lifted* into that space for its evaluation.
 
 Here's the same, but with a `PullStream`:
 
@@ -4365,7 +4441,7 @@ def task: IO ~<< {
     ::printValue(v);
 };
 
-def s: task.run();
+def s: task%;
 // PullStream{}
 
 s.pullInto(3);
@@ -4395,11 +4471,11 @@ But importantly, a stream cannot be lifted to a promise evaluation (only vice ve
 def getValue() ^Promise@ 42;
 def getValues() ^PushStream@ 10;
 
-IO ~<< {
+(IO ~<< {
     def v:: getValue();
     def x:: getValues();
     log(`"v: `v`, x: `x`");
-}.run();
+})%;
 // (error)
 ```
 
@@ -4411,11 +4487,11 @@ But the reverse order *is* supported, so this is valid:
 def getValue() ^Promise@ 42;
 def getValues() ^PushStream@ 10;
 
-IO ~<< {
+(IO ~<< {
     def x:: getValues();
     def v:: getValue();
     log(`"v: `v`, x: `x`");
-}.run();
+})%;
 // v: 42, x: 10
 ```
 
@@ -4438,7 +4514,7 @@ def genIO: Gen@ (defn(env,yield){
 });
 ```
 
-Calling the unit constructor produces an `IO` instance (`genIO` above); when `run()` is invoked on the `IO`, the generator function starts running, and an iterator is returned to retrieve the generator instance's value(s).
+Calling the unit constructor produces an `IO` instance (`genIO` above); when `%` is applied against the `IO`, the generator function starts running, and an iterator is returned to retrieve the generator instance's value(s).
 
 The iterator holds two functions: `next()` for retrieving values, and `close()` for closing the iterator (and thus stopping the `IO` instance of the generator).
 
@@ -4456,7 +4532,7 @@ def fib: Gen@ (defn(env,yield){
     };
 });
 
-def it: fib.run();
+def it: fib%;
 
 
 // print the first 10 Fibonacci numbers
@@ -4488,7 +4564,7 @@ def someNums: Gen@ (defn(env,yield){
         ~map { "Complete." };
 });
 
-def it: someNums.run(< start: 4, end: 7 >);
+def it: someNums % < start: 4, end: 7 >;
 
 
 // consume all the values from this
@@ -4516,7 +4592,7 @@ def someNums: Gen@ (defn(env,yield){
         ~map { "Complete." };
 });
 
-def it: someNums.run(< start: 1, end: 10 >);
+def it: someNums % < start: 1, end: 10 >;
 
 
 // consume all the values from this
