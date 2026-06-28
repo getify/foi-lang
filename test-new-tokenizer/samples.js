@@ -299,10 +299,6 @@ export const samples = [
 	{ label: "PartialCallExpr on (~each): (~each)|, log|",
 	  src: "(~each)|, log|;" },
 
-	// IdentityFunc — bare @ (the value identity function)
-	{ label: "IdentityFunc: @",                      src: "@;" },
-	{ label: "IdentityFunc :as Maybe",               src: "@ :as Maybe;" },
-
 	// AtExpr — IdentBase + optional access + @
 	{ label: "AtExpr (bare base): foo@",             src: "foo@;" },
 	{ label: "AtExpr (BuiltIn base): Maybe@",        src: "Maybe@;" },
@@ -523,6 +519,13 @@ export const samples = [
 	{ label: "OpFuncExpr (%) as def value: def run: (%)",           src: "def run: (%);" },
 	{ label: "OpFuncExpr (%) in pipeline: ios ~map (%)",            src: "ios ~map (%);" },
 
+	{ label: "OpFuncExpr (@) 0-arg",                  src: "(@)();" },
+	{ label: "OpFuncExpr (@) 1-arg identity",         src: "(@)(7);" },
+	{ label: "OpFuncExpr (@) 2-arg dispatch",         src: "(@)(double, 7);" },
+	{ label: "OpFuncExpr (@') 1-arg no-op",           src: "(@')(7);" },
+	{ label: "OpFuncExpr (@') 2-arg swap",            src: "(@')(7, double);" },
+	{ label: "OpFuncExpr (@) partial: (@)|42|",       src: "(@)|42|;" },
+	{ label: "OpFuncExpr (@) null-app via partial",   src: "def f: (@)|42|; f();" },
 
 	// =============================================================
 	// §8 UNARY

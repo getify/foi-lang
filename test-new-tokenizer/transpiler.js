@@ -1722,17 +1722,6 @@ var handlers = {
 	// =============================================================
 	// §7 @ FAMILY — IdentityFunc / IdentityCallExpr / AtExpr / AtCallExpr
 	// =============================================================
-	//
-	// Bare `@` is the value identity function (`@2 ?= 2`). The
-	// `@` sigil's call-form variants are syntactic sugar that
-	// lower identically to non-`@` forms — what specific runtime
-	// value the callee resolves to (`Id@`, `Maybe@`, `IO@`, etc.)
-	// is the stdlib/runtime's concern, not the transpiler's.
-
-	// IdentityFunc { } — standalone bare `@` as a function value
-	// (e.g. `def f: @;`). Lowers to a JS arrow that returns its
-	// sole argument.
-	IdentityFunc: () => "((__v) => __v)",
 
 	// IdentityCallExpr { arg } — bare `@` applied to an argument.
 	// One indivisible construct: `@2` evaluates to `2`, `@ x` to
@@ -2474,6 +2463,35 @@ var handlers = {
 	//
 	// `?as` / `!as` still fall back.
 	OpFuncExpr(node, recur) {
+		// (@) — arity-polymorphic dispatch mirroring the @-call
+		// operator's LHS-presence dispatch:
+		//   0 args → null (empty)
+		//   1 arg  → identity (returns the arg)
+		//   2 args → invoke arg[0] against arg[1]
+		//   3+     → undefined behavior (spec: arity error;
+		//            transpiler emits no enforcement — type checker
+		//            handles statically. Positive-path lowering
+		//            only.)
+		//
+		// Primed (`(@')`):
+		//   1 arg  → identity (single-arg reversal is a no-op)
+		//   2 args → invoke arg[1] against arg[0] (swap)
+		//
+		// The @-marker contract on the callee is a static
+		// property; not enforced at runtime by the bootstrap.
+		if (node.op === "@") {
+			if (node.primed) {
+				return "((...__a) => " +
+					"__a.length === 0 ? null : " +
+					"__a.length === 1 ? __a[0] : " +
+					"__a[1](__a[0]))";
+			}
+			return "((...__a) => " +
+				"__a.length === 0 ? null : " +
+				"__a.length === 1 ? __a[0] : " +
+				"__a[0](__a[1]))";
+		}
+
 		// ([])(obj, i) → obj[i]. Strict 2-ary; primed swaps args.
 		// JS-faithful structural access — no from-end semantic
 		// (negative index returns undefined, matching JS bracket).

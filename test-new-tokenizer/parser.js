@@ -820,17 +820,18 @@ export const AtExpr = production("AtExpr",
 // shaper still subsumes BareIdentifier to its inner IdentBase node.
 export const BareIdentifier = production("BareIdentifier", IdentBase);
 
-// <IdentifierExpr> := IdentityFunc | AtExpr | BareIdentifier;
+// <IdentifierExpr> := AtExpr | BareIdentifier;
 //
 // All identifier-led access is handled by ChainExpr (§7) now —
-// IdentifierExpr is just the bare/at/identity forms.
+// IdentifierExpr is just the at/bare forms. Bare `@` as a value
+// is NOT admitted here; the LHS-less identity-function value is
+// reached via OpFuncExpr's operator-as-function lift `(@)`, the
+// same mechanism as every other operator.
 //
 // PEG order:
-//   - IdentityFunc (bare @) starts with At — disjoint from IdentBase-led arms.
 //   - AtExpr requires a trailing @ — fails fast on identifier-led input without @.
 //   - BareIdentifier catches the remainder.
 var IdentifierExpr = or(
-	IdentityFunc,
 	AtExpr,
 	BareIdentifier
 );
@@ -1500,16 +1501,23 @@ var MulOp = or(Star, ForwardSlash);
 // <NamedUnaryOp> := "?empty" | "!empty";
 var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
 
-// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley | Percent;
+// <UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley | Percent | At;
 //
-// Mountain (`/\`), Valley (`\/`), and Percent (`%`) admitted so
-// OpFuncExpr picks up the bare op-as-function forms `(/\)` / `(\/)`
-// / `(%)` alongside the universal-prime forms `(/\')` / `(\/')` /
-// `(%')` via OpFuncExpr's existing `optional(SingleQuote)` tail.
-// Chain-tail attachment of `'`/`/\`/`\/` to a function value is
-// handled by ChainExpr's PostfixCallTail (§7); `%`'s chain-tail
-// attachment is handled by ChainExpr's EffectorTail (§7), not here.
-var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley, Percent);
+// Mountain (`/\`), Valley (`\/`), Percent (`%`), and At (`@`)
+// admitted so OpFuncExpr picks up the bare op-as-function forms
+// `(/\)` / `(\/)` / `(%)` / `(@)` alongside the universal-prime
+// forms `(/\')` / `(\/')` / `(%')` / `(@')` via OpFuncExpr's
+// existing `optional(SingleQuote)` tail.
+//
+// Chain-tail attachment of `'` / `/\` / `\/` to a function value
+// is handled by ChainExpr's PostfixCallTail (§7); `%`'s chain-tail
+// attachment is handled by ChainExpr's EffectorTail (§7); `@`'s
+// call-form is handled by AtCallExpr (§7), not here.
+//
+// Bare `@` as a value is NOT reachable from IdentifierExpr (§6) —
+// the only first-class-value route for `@` is the operator-as-
+// function lift `(@)` admitted here.
+var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley, Percent, At);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
 var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp, UnaryOpSym);

@@ -248,6 +248,11 @@ var failSamples = [
 	"task%[0];",
 	"task%.<a,b>;",
 	"task%.[1..3];",
+
+	// narrowing of special-cased `@` call-operator form
+	"@;",
+	"@ :as Maybe;",
+	"@|42|;"
 ];
 
 var passed = 0;

@@ -2222,29 +2222,33 @@ hello();                // "Hello!"
 yes();                  // true
 ```
 
-The name of this utility (`Function@`) is a nod to the fact that it's a unit constructor for a function, specifically a null-application function.
+The name of this utility (`Function@`) is a nod to the fact that it's a unit constructor for a function, specifically a null-application function (one that accepts no arguments).
 
-But `Function@` is a little verbose, so the same thing can be accomplished by partially-applying the `@` value identity function:
+Here's an example of how you might use this utility:
 
 ```java
-def fortyTwo: @|42|;
-def hello: @|"Hello!"|;
-def yes: @|true|;
+defn getName(record,getLabel: Function@ "Default") {
+    ^(`"`getLabel(record)`: `record.name`");
+};
+```
+
+The `Function@ "Default"` form here constructs a default `getLabel` function that just returns the value `"Default"` when invoked (no matter what's passed to it.
+
+----
+
+Admittedly, `Function@` is a little verbose. A close approximation (with an important caveat!) can be accomplished by partially-applying the `@` operator (lifted as value identity function):
+
+```java
+def fortyTwo: (@)|42|;
+def hello: (@)|"Hello!"|;
+def yes: (@)|true|;
 
 fortyTwo();             // 42
 hello();                // "Hello!"
 yes();                  // true
 ```
 
-Here's an example of how you might use this utility:
-
-```java
-defn getName(record,getLabel: @|"Default"|) {
-    ^(`"`getLabel(record)`: `record.name`");
-};
-```
-
-**Note:** The `@|"Default"|` form here constructs a default `getLabel` function that just returns the value `"Default"` when invoked.
+**WARNING:** The important caveat: those functions (`fortyTwo()`, etc) must be called with **no arguments**, otherwise you'll encounter an error. The reason is, the `(@)` operator is polymorphic -- if passed more than one argument, the first argument is presumed to be the callee (as in `Foo@ 42` where `Foo` is the callee and `42` is the argument). Also, the `@` operator-function rejects (with an error) 3 or more arguments; it accepts only zero-arguments (returns `empty`), one-argument (fixed function over that value), or two-arguments (callee and single argument). Bottom line: you might be able to safely leverage the `(@)|42|` shorthand, if you're sure how the resulting null-application function will be invoked (with no arguments). Otherwise, just use the longer but more correct `Function@42` form.
 
 ## Loops
 
@@ -3099,13 +3103,13 @@ Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), wh
 For example:
 
 ```java
-def defaultMsg: @|"Default!"|;
+def defaultMsg: (@)|"Default!"|;
 
 def m: Maybe._@ 42;                 // Id{42}
 def g: Maybe._@ empty;              // None
 
-(~fold)(m, defaultMsg(), @);        // 42
-(~cata)(g, defaultMsg,   @);        // Default!
+(~fold)(m, defaultMsg(), (@));        // 42
+(~cata)(g, defaultMsg,   (@));        // Default!
 ```
 
 As shown, for the `~fold` comprehension, we provide the already-computed result of the `defaultMsg()` function for the *default iteration* operand. With `~cata`, we provide that `defaultMsg` function reference, for it to be invoked only if needed.
@@ -3125,8 +3129,8 @@ def m: Maybe._ @ 42;
 
 (~fold)(list,  two(), mult);    // 42
 
-(~fold)(m,     two(), @   );    // 42
-(~fold)(None@, two(), @   );    // 2
+(~fold)(m,     two(), (@) );    // 42
+(~fold)(None@, two(), (@) );    // 2
 ```
 
 For the list (Tuple) `~fold`, the `two()` function is eagerly invoked to provide the *initial-value* operand for the folding.

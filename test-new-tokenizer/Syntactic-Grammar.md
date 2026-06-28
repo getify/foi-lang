@@ -486,12 +486,22 @@ PEG ordering notes:
 
 ```ebnf
 (* ChainExpr (§7) covers all post-base chains (calls, access, or
-   mixed) on any base. IdentifierExpr here is the bare/at/monad
-   forms only. None of these arms carry `:as` directly — annotation
-   comes from enclosing AsExpr (§5). *)
+   mixed) on any base. IdentifierExpr here is the at/bare forms
+   only — bare `@` as a value is NOT admitted at identifier
+   position. To reference the `@`-call operator as a first-class
+   function value, use the operator-as-function lift form `(@)`
+   (§7 OpFuncExpr), same mechanism as every other operator.
+   None of these arms carry `:as` directly — annotation comes
+   from enclosing AsExpr (§5). *)
 
-<IdentifierExpr>     := IdentityFunc | AtExpr | BareIdentifier;
+<IdentifierExpr>     := AtExpr | BareIdentifier;
 
+(* IdentityFunc is reachable ONLY from AtCallExpr's third arm
+   (the LHS-less `@v` use form). Its single At token is consumed
+   by AtCallExpr's shaper and the production is folded into a
+   distinct IdentityCallExpr node — no IdentityFunc AST node
+   survives shaping. The production remains named here for
+   parser-grammar alignment. *)
 IdentityFunc         := At;
 AtExpr               := IdentBase SingleAccessExpr? At;
 BareIdentifier       := IdentBase;
@@ -860,7 +870,7 @@ Each is a distinct visible AST node.
 <MulOp>          := Star | ForwardSlash;
 
 <NamedUnaryOp>   := "?empty" | "!empty";
-<UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley;
+<UnaryOpSym> := Qmark | Exmark | SingleQuote | TriplePeriod | DoublePeriod | Period | Mountain | Valley | Percent | At;
 ```
 
 PEG ordering note inside `<SymbolicCompareOp>`: longest sequence first
