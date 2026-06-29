@@ -249,14 +249,14 @@ function applyChainSeg(object,seg) {
 	return node;
 }
 
-// Helper for the eight unified access-fold sites — AtExpr base,
-// AssignmentExpr LHS, AtCallExpr's inline AtExpr synthesis,
-// ExportNamedBinding source, ExportConciseBinding source,
-// DestructureNamedDef source, DestructureConciseDef source, and
-// PickValue source. Given a base node and a SingleAccessExpr or
-// MultiAccessExpr (or undefined), folds the access segments via
-// applyChainSeg left-to-right and returns the resulting nested
-// chain. undefined access returns the base unchanged.
+// Helper for the seven unified access-fold sites — AtCallExpr
+// base, AssignmentExpr LHS, ExportNamedBinding source,
+// ExportConciseBinding source, DestructureNamedDef source,
+// DestructureConciseDef source, and PickValue source. Given a
+// base node and a SingleAccessExpr or MultiAccessExpr (or
+// undefined), folds the access segments via applyChainSeg
+// left-to-right and returns the resulting nested chain.
+// undefined access returns the base unchanged.
 //
 // Wrapper-unwrap-at-assignment pattern — SingleAccessExpr /
 // MultiAccessExpr shapers still emit their own node, but parents
@@ -1676,61 +1676,52 @@ export const defaultShapers = {
 		return withDelims({ type: "PartialCallSuffix", args }, delims);
 	},
 
-	// AtCallExpr / IdentityCallExpr — at-form applied to
-	// (optionally) an argument. The IdentityFunc arm (bare-`@`
-	// applied) splits out to a distinct IdentityCallExpr node —
-	// no callee field, since `@2` is one indivisible language
-	// construct rather than a call of `@` on `2`. The phantom
-	// inner IdentityFunc node is discarded; its sole `@` token
-	// lifts onto the outer node's delims. The other three arms
-	// (`None@`, `foo@ x`, `foo @ x`) retain the AtCallExpr type
-	// tag with a user-rooted AtExpr callee.
+	// AtCallExpr / IdentityCallExpr — `@`-form applied to
+	// (optionally) an argument. Two-arm production, two output
+	// shapes:
 	//
-	// At sigil placement after the split:
-	//   - IdentityCallExpr: outer.delims = [At] (lifted from inner).
-	//   - AtCallExpr Arm 1 (None@): outer.delims = [At] (the
-	//     synthesized AtExpr callee carries no own delims since
-	//     its BuiltIn base does not).
-	//   - AtCallExpr Arm 2A (foo@ x): callee.delims = [At] (the
-	//     pre-shaped AtExpr owns its `@`); outer.delims = [].
-	//   - AtCallExpr Arm 2B (foo @ x): outer.delims = [At] (the
-	//     `@` token is at the outer level since AtExpr's no-trivia
-	//     rule doesn't apply when WS separates base from `@`).
+	// IdentBase-led (`Foo@`, `Foo@x`, `Foo @ x`, `Foo.bar@`,
+	// `Foo.bar@x`, `Foo.bar @ x`, `None@`, `Maybe@42`): produces
+	// AtCallExpr { base, arg? } where `base` is the foldAccess
+	// result of the IdentBase plus optional SingleAccessExpr.
+	// Matches the foldAccess-at-shape-time pattern used at the
+	// other access-fold sites (AssignmentExpr.target,
+	// ExportNamedBinding.source, etc.) — consumers see a uniform
+	// chain in `base` regardless of whether access was present.
+	//
+	// IdentityFunc-led (`@x`, `@ x`): produces
+	// IdentityCallExpr { arg }. The IdentityFunc node is phantom
+	// — its sole At delim lifts onto the outer
+	// IdentityCallExpr.delims; the inner node is discarded.
+	// `@2` is one indivisible construct, not a call of `@` on
+	// `2`.
+	//
+	// At sigil placement:
+	//   - IdentityCallExpr: outer.delims = [At] (lifted from
+	//     inner IdentityFunc.delims[0]).
+	//   - AtCallExpr: outer.delims = [At] uniformly. Soft delims
+	//     around the At auto-merge under preserveSoftDelims —
+	//     `foo @ x` recovers via auto-merged WS interleaved with
+	//     base / At / arg positions.
+	//
+	// AtExpr type retired — no longer synthesized as a callee
+	// wrapper. The OLD shape `{ callee: AtExpr{base}, arg? }`
+	// flattened to `{ base, arg? }`, dropping the layer. Dead
+	// branches removed: the bare-BuiltIn-token arm (Arm 1 from
+	// the prior parser, before IdentBase wrapped Builtin into a
+	// node) and the AtExpr-pre-shaped arm (Sub-form A from the
+	// prior parser, before AtExpr was retired as a production).
 	AtCallExpr(frame,parts) {
 		var first = parts[0];
 		var delims = [];
 
-		if (!isNode(first)) {
-			// Arm 1: `None@`. parts is [Builtin-tok("None"), At-tok].
-			let atTok;
-			for (let p of parts) {
-				if (!isNode(p) && p.type === "At") {
-					atTok = p;
-					delims.push(p);
-				}
-			}
-			let callee = {
-				type: "AtExpr",
-				base: {
-					type: "BuiltIn",
-					name: first.value,
-					start: first.start,
-					end: first.end,
-				},
-				start: first.start,
-				end: atTok.end,
-			};
-			return withDelims({ type: "AtCallExpr", callee }, delims);
-		}
-
 		if (first.type === "IdentityFunc") {
-			// Arm 2 sub-form C (bare-`@` applied → IdentityCallExpr).
-			// The IdentityFunc node's single At delim lifts onto
-			// the outer node; the inner node is discarded — no
-			// callee field. Any soft delims between `@` and the
-			// arg auto-merge onto IdentityCallExpr.delims by the
-			// machinery after return (preserveInnerDelim not set
-			// on AtCallExpr).
+			// Bare-`@` applied → IdentityCallExpr. The IdentityFunc
+			// node's single At delim lifts onto the outer node;
+			// the inner node is discarded — no base field. Soft
+			// delims between `@` and the arg auto-merge onto
+			// IdentityCallExpr.delims by the machinery after
+			// return (preserveInnerDelim not set on AtCallExpr).
 			delims.push(first.delims[0]);
 			let arg;
 			for (let p of parts.slice(1)) {
@@ -1739,40 +1730,24 @@ export const defaultShapers = {
 			return withDelims({ type: "IdentityCallExpr", arg }, delims);
 		}
 
-		var node = { type: "AtCallExpr" };
-
-		if (first.type === "AtExpr") {
-			// Arm 2 sub-form A: callee is pre-shaped (foo@ x,
-			// foo.bar@ x — no trivia between IdentBase/access and @).
-			node.callee = first;
-			for (let p of parts.slice(1)) {
-				if (isNode(p)) node.arg = p;
-				// no other tokens expected at this outer level
+		// IdentBase-led. Walk parts: IdentBase node first, then
+		// optional SingleAccessExpr node, the At token, and
+		// optional ExprNoBlock arg node. Fold access into base
+		// via foldAccess; capture At into delims; lift arg if
+		// present.
+		var base = first;
+		var access, arg;
+		for (let p of parts.slice(1)) {
+			if (isNode(p)) {
+				if (p.type === "SingleAccessExpr") access = p;
+				else arg = p;
+			}
+			else if (p.type === "At") {
+				delims.push(p);
 			}
 		}
-		else {
-			// Arm 2 sub-form B: IdentBase + ?SingleAccessExpr + At-tok + ExprNoBlock.
-			let base = first;
-			let access, arg, atTok;
-			for (let p of parts.slice(1)) {
-				if (isNode(p)) {
-					if (p.type === "SingleAccessExpr") access = p;
-					else arg = p;
-				}
-				else if (p.type === "At") {
-					atTok = p;
-					delims.push(p);
-				}
-			}
-			node.callee = {
-				type: "AtExpr",
-				base: foldAccess(base,access),
-				start: base.start,
-				end: atTok.end,
-			};
-			if (arg) node.arg = arg;
-		}
-
+		var node = { type: "AtCallExpr", base: foldAccess(base, access) };
+		if (arg) node.arg = arg;
 		return withDelims(node, delims);
 	},
 
@@ -1797,6 +1772,25 @@ export const defaultShapers = {
 		var node = { type: "EffectorTail" };
 		if (arg) node.arg = arg;
 		return withDelims(node, delims);
+	},
+
+	// AtRefTail := Period At;
+	//
+	// Transient inner production — collapses to AtRefExpr in
+	// ChainExpr's part loop (see below). Parts are exactly two
+	// raw tokens: Period and At. The grammar admits no soft
+	// delims (strict no-trivia between them, no leading trivia
+	// before Period). Both structural tokens flow into `delims`
+	// for the ChainExpr fold to propagate, paralleling
+	// EffectorTail's handling. emitGeneric walks Period + At at
+	// their source positions when round-tripping AtRefExpr,
+	// reconstructing `<source>.@`.
+	AtRefTail(frame,parts) {
+		var delims = [];
+		for (let p of parts) {
+			delims.push(p); // Period, At
+		}
+		return withDelims({ type: "AtRefTail" }, delims);
 	},
 
 	// ChainExpr — base + ordered segments folded into JS-style
@@ -1845,6 +1839,33 @@ export const defaultShapers = {
 						end: p.end,
 					};
 					if (p.arg) newNode.arg = p.arg;
+					var combinedDelims = [];
+					if (pending.length > 0) {
+						combinedDelims.push(...pending);
+						pending = [];
+					}
+					if (p.delims) combinedDelims.push(...p.delims);
+					if (combinedDelims.length > 0) newNode.delims = combinedDelims;
+					node = newNode;
+				}
+				else if (p.type === "AtRefTail") {
+					// AtRefTail chain-terminator — fold source-so-far
+					// into AtRefExpr. AtRefTail's own delims ([Period,
+					// At]) propagate onto the new node. No arg slot —
+					// `.@` is terminator-only with no payload syntax.
+					//
+					// Chain-level `pending` should be empty per the
+					// grammar's no-leading-`_` rule on AtRefTail (strict
+					// adjacency between the preceding chain content
+					// and `.@`). Defensive merge anyway, before the
+					// AtRefTail's own delims (positionally precedes
+					// them).
+					var newNode = {
+						type: "AtRefExpr",
+						source: node,
+						start: node.start,
+						end: p.end,
+					};
 					var combinedDelims = [];
 					if (pending.length > 0) {
 						combinedDelims.push(...pending);
@@ -2450,6 +2471,103 @@ export const defaultShapers = {
 		var node = { type: "DefFuncExpr" };
 		if (name) node.name = name;
 		if (at) node.at = true;
+		node.paramSets = paramSets;
+		if (preconditions.length > 0) node.preconditions = preconditions;
+		if (over) node.over = over;
+		if (as) node.as = as;
+		node.body = body;
+		return withDelims(node, delims);
+	},
+
+	// DefHookDecl := "defn" _ Identifier (At | Percent)
+	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
+	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
+	//                _ <FuncBody>;
+	//
+	// Mirrors DefFuncExpr's shape minus the optional `at` flag,
+	// plus a REQUIRED `marker` field carrying "@" or "%".
+	//
+	// "defn" keyword drops; the marker token (At or Percent) drops
+	// as it's captured into `marker` (parallel to DefFuncExpr's
+	// `at: true` capture). Parens are structural → delims; an
+	// empty paren-pair still synthesizes a zero-content
+	// ParameterList (per the empty-merged convention with end:null).
+	//
+	// Identifier is required by grammar (no anonymous form); the
+	// shaper's name-capture rule (first Identifier-typed node
+	// before any paramSet) matches DefFuncExpr's.
+	//
+	// Field shapes match DefFuncExpr:
+	//   - `over` is the full FuncOverClause node (parens / commas
+	//     / internal trivia carried in `.delims`).
+	//   - `as` is shape-polymorphic per AsExpr's `inner.as`
+	//     convention. Normalize with:
+	//       var annotation = as.type === "FuncAsClause" ? as.annotation : as;
+	DefHookDecl(frame,parts) {
+		var name, marker, over, as, body;
+		var paramSets = [];
+		var preconditions = [];
+		var delims = [];
+
+		var lastOpenParen = null;
+		var currentSet = null;
+
+		for (let p of parts) {
+			if (!isNode(p)) {
+				if (p.type === "Keyword" && p.value === "defn") continue;
+				if (p.type === "At")      { marker = "@"; continue; }
+				if (p.type === "Percent") { marker = "%"; continue; }
+				if (p.type === "OpenParen") {
+					lastOpenParen = p;
+					currentSet = null;
+					delims.push(p);
+					continue;
+				}
+				if (p.type === "CloseParen") {
+					if (currentSet) {
+						paramSets.push(currentSet);
+					}
+					else {
+						paramSets.push({
+							type: "ParameterList",
+							params: [],
+							start: lastOpenParen.end + 1,
+							end:   null,
+						});
+					}
+					lastOpenParen = null;
+					delims.push(p);
+					continue;
+				}
+				// Any other raw token at this level — push to
+				// delims for completeness (defensive; grammar
+				// shouldn't produce more here).
+				delims.push(p);
+				continue;
+			}
+			// Nodes
+			if (p.type === "Identifier" && !name && paramSets.length === 0 && !lastOpenParen) {
+				name = p;
+				continue;
+			}
+			if (lastOpenParen) {
+				currentSet = p;
+				continue;
+			}
+			if (p.type === "FuncPrecond")        { preconditions.push(p); continue; }
+			if (p.type === "FuncOverClause")     { over = p; continue; }
+			if (p.type === "FuncAsClause")       { as = p.delims ? p : p.annotation; continue; }
+			if (
+				p.type === "FuncBodyExpr" ||
+				p.type === "FuncBodyPipeline" ||
+				p.type === "FuncBodyBlock"
+			) {
+				body = p;
+				continue;
+			}
+		}
+
+		var node = { type: "DefHookDecl", name, marker };
 		node.paramSets = paramSets;
 		if (preconditions.length > 0) node.preconditions = preconditions;
 		if (over) node.over = over;

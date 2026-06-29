@@ -171,7 +171,7 @@ via `AsExpr`** (annotation reaches them through `<AsableExpr>`):
 `<AsableInner>` leaves — `EmptyLit`, `CallExpr` (i.e. `ChainExpr`
 and `AtCallExpr` via their `<CallExpr>` parent), `BooleanLit`,
 `NumberLit`, all four `StringLit` variants, `RecordTupleLit`,
-`SetLit`, the three `IdentifierExpr` arms, `OpFuncExpr`.
+`SetLit`, `BareIdentifier`, `OpFuncExpr`.
 
 **Productions with no `:as` path at all** (must be parenthesized
 to be annotated — `(...)` wrapping reaches a paren-grouping
@@ -194,7 +194,7 @@ an `AsExpr` could wrap it.
 Program             := _ ((StmtSemi | ExportStmtSemi) _)*
                        ((StmtSemiOpt | ExportStmtSemiOpt) _)?;
 
-<Stmt>              := DefBlockStmt | DefVarStmt | DefTypeStmt | Expr;
+<Stmt>              := DefHookDecl | DefBlockStmt | DefVarStmt | DefTypeStmt | Expr;
 StmtSemi            := Stmt? (_ Semicolon)+;
 StmtSemiOpt         := Stmt? (_ Semicolon)*;
 ExportStmtSemi      := ExportExpr (_ Semicolon)+;
@@ -352,8 +352,10 @@ DestructureCapture    := Hash Identifier;
 
 <BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 
-<BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit
-                          | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
+<BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit
+                          | StringLit | DataStructLit
+                          | BareIdentifier | OpFuncExpr
+                          | GroupedBareOpExprNoEmpty;
 
 (* AsExpr — the sole non-paren carrier of `:as`. Inner is restricted
    to <AsableExpr>: anything tighter than binary (chain/access via
@@ -384,9 +386,11 @@ DestructureCapture    := Hash Identifier;
    and via its own one-shot tail for the legitimate `(...) :as T`
    form. *)
 AsExpr                 := <AsableExpr> _ AsAnnotationExpr;
-<AsableExpr>           := BareBlockExpr | GuardedExpr | UnaryExpr | AsableInner;
-<AsableInner>          := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
-                        | DataStructLit | IdentifierExpr | OpFuncExpr;
+<AsableExpr>           := BareBlockExpr | GuardedExpr | UnaryExpr
+                        | AsableInner;
+<AsableInner>          := EmptyLit | CallExpr | BooleanLit | NumberLit
+                        | StringLit | DataStructLit | BareIdentifier
+                        | OpFuncExpr;
 
 (* Six paren-grouping productions. The two whose inner-expr forms
    include AsExpr via dispatch (GroupedExpr's Expr, GroupedExprNoBlock's
@@ -480,38 +484,39 @@ PEG ordering notes:
   precedes the bare literal and identifier forms so `"hi".len`
   parses as `ChainExpr` rather than `StringLit` with dangling `.len`.
   Within `CallExpr`, `AtCallExpr` precedes `ChainExpr` so `foo@ 5`
-  (an `AtCallExpr`) is preferred over a bare AtExpr with dangling `5`.
+  (an `AtCallExpr` with payload) is preferred over a no-payload
+  `foo@` with a dangling `5` it can't reach.
 
 ## §6 Identifier / Access Expressions
 
 ```ebnf
 (* ChainExpr (§7) covers all post-base chains (calls, access, or
-   mixed) on any base. IdentifierExpr here is the at/bare forms
-   only — bare `@` as a value is NOT admitted at identifier
-   position. To reference the `@`-call operator as a first-class
-   function value, use the operator-as-function lift form `(@)`
-   (§7 OpFuncExpr), same mechanism as every other operator.
-   None of these arms carry `:as` directly — annotation comes
+   mixed) on any base. BareIdentifier here is just the bare
+   identifier / builtin / pipeline-topic form. Bare `@` as a
+   value is NOT admitted at identifier position. To reference
+   the `@`-call operator as a first-class function value, use
+   the operator-as-function lift form `(@)` (§7 OpFuncExpr), same
+   mechanism as every other operator. To extract a marker-
+   preserving function reference from an `@`-hook-bearing
+   namespace, use the `.@` chain-tail form (§7 AtRefExpr).
+   BareIdentifier carries no `:as` directly — annotation comes
    from enclosing AsExpr (§5). *)
 
-<IdentifierExpr>     := AtExpr | BareIdentifier;
-
-(* IdentityFunc is reachable ONLY from AtCallExpr's third arm
-   (the LHS-less `@v` use form). Its single At token is consumed
-   by AtCallExpr's shaper and the production is folded into a
-   distinct IdentityCallExpr node — no IdentityFunc AST node
-   survives shaping. The production remains named here for
+(* IdentityFunc is reachable ONLY from AtCallExpr's IdentityFunc
+   arm (the LHS-less `@v` use form). Its single At token is
+   consumed by AtCallExpr's shaper and the production is folded
+   into a distinct IdentityCallExpr node — no IdentityFunc AST
+   node survives shaping. The production remains named here for
    parser-grammar alignment. *)
 IdentityFunc         := At;
-AtExpr               := IdentBase SingleAccessExpr? At;
 BareIdentifier       := IdentBase;
 
 <IdentBase>          := PipelineTopic | Identifier | BuiltIn;
 
 (* SingleAccessExpr and MultiAccessExpr are used by special contexts
    (ExportNamedBinding, DestructureNamedDef, AssignmentExpr LHS,
-   AtExpr's internal access) that take an identifier with an access
-   tail directly, not via ChainExpr. *)
+   AtCallExpr's internal access) that take an identifier with an
+   access tail directly, not via ChainExpr. *)
 
 SingleAccessExpr     := SingleAccessSeg (_ SingleAccessSeg)*;
 <SingleAccessSeg>    := DotIdentifier | BracketExpr;
@@ -578,60 +583,89 @@ TrailingRangeExpr    := DoublePeriod _ RangeOperand;
    expression) when the interp needs the typed-by-suffix-kind AST.
 
    ChainExpr requires extension beyond ChainBase — either ≥1
-   ChainSeg, or a postfix `'` (prime, argument-reversal modifier).
-   A bare base alone falls through to its non-chained form via
-   BareOperandExprNoEmpty's later alternatives.
+   ChainSeg, or a ChainTail. A bare base alone falls through to
+   its non-chained form via BareOperandExprNoEmpty's later
+   alternatives.
 
    None of ChainExpr / AtCallExpr / OpFuncExpr carry `:as` directly.
    Annotation comes from an enclosing AsExpr (§5).
 
-   Three postfix modifiers reach the chain tail, mutually exclusive
-   (no stacking):
+   Five chain-tail forms reach the chain tail, mutually exclusive
+   with one another (no stacking, no access tail after any of
+   them). All terminate the access chain — to chain on the result
+   of any tail, parenthesize: `(task%).field`, `(Foo.@)(x)`.
 
-   - `'` (SingleQuote) — argument-reversal / universal-prime
-     inversion on the function value. Existing precedent.
-   - `/\` (Mountain) — curry. Reshapes the function's parameter
-     signature into a tiered pyramid (one param per call site,
-     by fn.length, outer-tier-only).
-   - `\/` (Valley) — uncurry. Reshapes a tiered (curried)
-     function into a flat n-ary application, walking each tier's
-     fn.length to consume args.
+   - `'` (SingleQuote, PostfixCallTail arm) — argument-reversal /
+     universal-prime inversion on the function value.
+   - `/\` (Mountain, PostfixCallTail arm) — curry. Reshapes the
+     function's parameter signature into a tiered pyramid (one
+     param per call site, by fn.length, outer-tier-only).
+   - `\/` (Valley, PostfixCallTail arm) — uncurry. Reshapes a
+     tiered (curried) function into a flat n-ary application,
+     walking each tier's fn.length to consume args.
+   - `%` (EffectorTail) — effector application. Dispatches to
+     the source's effect-evaluation hook (`_percent` at lowering
+     time) with an optional argument.
+   - `.@` (AtRefTail) — marker-preserving function reference
+     extraction from a hook-bearing namespace. `Foo.@` lowers
+     to `Foo._at`. Strict no-trivia: no `_` between Period and
+     At, no `_` between the preceding chain content and `.@`.
+     Stricter than DotIdentifier's trivia-tolerant Period to
+     match its terminator semantics — there should be no
+     variance around when the chain ends.
 
-   Each modifier is adjacent to the preceding expression (no
-   trivia between), terminates the access chain (no dot/bracket
-   access may follow), and may be followed only by zero or more
-   call suffixes — matching its semantics as a function-value
-   modifier.
+   Adjacency rules differ between the three tail families.
 
-   Adjacency to subsequent CallSuffix differs by modifier. `'`
-   admits trivia between `'` and CallSuffix and between
-   consecutive CallSuffixes. `/\` and `\/` admit no trivia
-   between modifier and first CallSuffix, nor between consecutive
-   CallSuffixes — reinforcing "this is one operator-shaped call
-   form."
+   PostfixCallTail (`'`/`/\`/`\/`): adjacent to the preceding
+   expression (NO trivia between). Each may be followed only
+   by zero or more call suffixes. `'` admits trivia between
+   `'` and CallSuffix and between consecutive CallSuffixes.
+   `/\` and `\/` admit no trivia between modifier and first
+   CallSuffix, nor between consecutive CallSuffixes —
+   reinforcing "this is one operator-shaped call form."
 
-   Examples that parse: `foo'`, `foo'(1,2,3)`, `foo' (1,2,3)`,
-   `foo.bar'`, `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`,
-   `foo/\(1)(2)(3)`, `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`.
+   EffectorTail (`%`): trivia-tolerant on BOTH sides of `%`
+   via leading and between-arg `_`. `task%`, `task %`,
+   `task % env`, `task%env`, `task%(env)` all parse. Carries
+   no trailing call suffix — `task%(env)` is `%` with a
+   paren-grouped operand, not `(task%)` then `(x)`.
+
+   AtRefTail (`.@`): strict no-trivia on BOTH sides of `.@`.
+   Carries no trailing form whatsoever — `Foo.@(x)`, `Foo.@%`,
+   `Foo.@'`, `Foo.@.bar` all rejected.
+
+   Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
+   `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`, `foo/\(1)(2)(3)`,
+   `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`; `task%`, `task %`,
+   `task % env`, `processFile("f.txt")%`, `obj.method(x) % cfg`;
+   `Foo.@`, `Foo.bar.@`.
    Examples that do not: `foo'.bar`, `foo'[0]`, `foo' .bar`
    (trivia before `'`); `foo /\`, `foo/\ (1)`, `foo/\'`,
-   `foo/\\/` (stacking or trivia-violation on the new ops). *)
+   `foo/\\/` (stacking or trivia-violation on the curry/uncurry
+   ops); `task%.field`, `task%[0]`, `task%'` (stacking or
+   access tail after `%`); `%task`, `%`, `%y` (no LHS for `%`);
+   `Foo. @`, `Foo .@` (trivia in or before `.@`), `Foo.@(x)`,
+   `Foo.@.bar`, `Foo.@%`, `Foo.@'` (stacking on `.@`); `.@`
+   (no LHS). *)
 
 <CallExpr>     := AtCallExpr | ChainExpr;
 
 ChainExpr      := ChainBase
                   (
-                      (_ ChainSeg)+ PostfixCallTail?
-                    | PostfixCallTail
+                      (_ ChainSeg)+ ChainTail?
+                    | ChainTail
                   );
 
+<ChainTail>    := EffectorTail | AtRefTail | PostfixCallTail;
+EffectorTail   := _ Percent (_ ExprNoBlock)?;
+AtRefTail      := Period At;
 <PostfixCallTail> := SingleQuote (_ CallSuffix)*
                    | (Mountain | Valley) CallSuffix*;
 
 <ChainBase>    := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
                 | OpFuncExpr | GroupedExprNoBlock
                 | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
-                | IdentifierExpr;
+                | BareIdentifier;
 
 <ChainSeg>     := PrefixCallSuffix | PartialCallSuffix
                 | DotIdentifier | BracketExpr | DotBracketExpr | DotAngleExpr;
@@ -641,13 +675,29 @@ ChainExpr      := ChainBase
 PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 PartialCallSuffix := Pipe CallArgs Pipe;
 
-(* The shaper splits the IdentityFunc arm out into a separate
+(* AtCallExpr is uniformly a call form post-refactor. Was: a
+   ref-vs-call distinction with a separate AtExpr reference
+   production gated on payload presence. Now: `Foo@` calls with
+   no operand (semantic layer supplies an `empty` default);
+   `Foo@x`, `Foo @ x`, `Foo.bar@x` all call with the operand.
+   To extract a marker-preserving function reference instead of
+   calling, use the `.@` chain-tail form (AtRefTail above,
+   AtRefExpr at the AST layer).
+
+   AtRefTail is a chain-tail of ChainExpr, NOT an arm of
+   AtCallExpr — `Foo.@` parses via ChainExpr, not AtCallExpr.
+
+   The shaper folds the IdentityFunc arm out into a distinct
    IdentityCallExpr node (no callee field — bare `@` applied to
    an argument is one indivisible language construct, not a call
-   of `@` on the argument). The other three arms shape as
-   AtCallExpr with a user-rooted callee. *)
-AtCallExpr           := "None" At
-                      | (AtExpr | (IdentBase SingleAccessExpr? _ At) | IdentityFunc) _ ExprNoBlock;
+   of `@` on the argument). The IdentBase arm shapes as
+   AtCallExpr { base, arg? } where `base` is the foldAccess
+   result of the IdentBase + optional SingleAccessExpr — the
+   same foldAccess-at-shape-time pattern used at the other
+   unified access-fold sites (AssignmentExpr.target,
+   ExportNamedBinding.source, DestructureNamedDef.source, etc.). *)
+AtCallExpr           := IdentBase SingleAccessExpr? _ At (_ ExprNoBlock)?
+                      | IdentityFunc _ ExprNoBlock;
 
 <CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 <CallArgList>        := (_ Comma)* (_ CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -669,11 +719,16 @@ OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket 
 ```
 
 PEG ordering notes for `<ChainBase>`:
-- `MatchExpr` / `GuardedExpr` precede `AssignmentExpr` — they have distinctive `?`/`!` openers; AssignmentExpr's identifier-led opener could conflict only with `IdentifierExpr` (handled by ordering AssignmentExpr before IdentifierExpr).
+- `MatchExpr` / `GuardedExpr` precede `AssignmentExpr` — they have distinctive `?`/`!` openers; AssignmentExpr's identifier-led opener could conflict only with `BareIdentifier` (handled by ordering AssignmentExpr before BareIdentifier).
 - `OpFuncExpr` precedes `GroupedExprNoBlock` — both open with `(`; OpFuncExpr's restricted inner shape (`DotAngleExpr`, `DotBracketExpr`, the bare `[]` op, or `Op`) fails-through cleanly to `GroupedExprNoBlock` on any other paren-wrapped content. `GroupedExprNoBlock` rather than `GroupedExpr` because paren-wrapped `BareBlockExpr` / `DoComprExpr` / `DoLoopComprExpr` cannot serve as chain bases — bind those to a name first.
-- `IdentifierExpr` last among identifier-led arms — AssignmentExpr's longer match wins when `:=` follows.
+- `BareIdentifier` last among identifier-led arms — AssignmentExpr's longer match wins when `:=` follows.
 
 PEG ordering note for `<ChainSeg>`: order matches `<MultiAccessSeg>` for the four access variants (DotIdentifier before DotBracketExpr/DotAngleExpr); call suffixes are disjoint from access suffixes by opening token.
+
+PEG ordering notes for `<ChainTail>`:
+- `EffectorTail` first — Percent opener, disjoint from `AtRefTail`'s Period opener and `PostfixCallTail`'s SingleQuote/Mountain/Valley openers. Its leading `_` admits trivia before `%`.
+- `AtRefTail` next — Period+At opener. Period also opens `DotIdentifier` (a `<ChainSeg>`), but DotIdentifier requires Identifier/BuiltIn/IntegerLit after the Period, so `.@` fails DotIdentifier in the seg loop and the loop exits; `AtRefTail` then matches at the tail position.
+- `PostfixCallTail` last — disjoint openers from both above. The no-leading-`_` rule on its arms preserves the adjacency requirement for `'`/`/\`/`\/` against the preceding chain content.
 
 ## §8 Unary Expressions
 
@@ -977,7 +1032,38 @@ AssignmentExpr        := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equ
 (* :as on a function is FuncAsClause (typing the function value
    itself), not a trailing AsAnnotationExpr. *)
 
-DefFuncExpr           := "defn" (_ Identifier At?)?
+DefFuncExpr           := "defn" (_ Identifier)?
+                         (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
+                         (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+                         _ FuncBody;
+
+(* DefHookDecl is statement-only — admitted from <Stmt> (§1), not
+   from <Expr>. Anonymous hook declarations make no semantic sense
+   (no namespace to attach to), so the name is required (no `?`
+   on Identifier) and the form is unreachable at expression
+   position. The marker (At or Percent) declares which dispatch
+   operator's hook is being installed on the named namespace:
+
+   - `defn Foo@(...) ...`  installs the constructor hook on Foo,
+     invoked by `Foo@` / `Foo@x` (AtCallExpr) and extracted by
+     `Foo.@` (AtRefExpr).
+   - `defn Foo%(...) ...`  installs the effect hook on Foo,
+     invoked by `Foo%` / `Foo%env` when applied to an instance
+     (EffectorCallExpr).
+
+   Strict no-trivia between the Identifier and the marker (mirrors
+   `Foo@` adjacency at use sites). Trivia is admitted between the
+   marker and the first paren-set (mirrors normal `defn` paren
+   spacing). The post-marker signature is identical to
+   DefFuncExpr's — same paramSet+, optional precondition list,
+   :over clause, :as clause, and FuncBody alternatives.
+
+   At most one hook of each kind per namespace per scope; multiple
+   declarations of the same kind in one scope are not rejected at
+   the grammar layer (transpiler emits last-wins; semantic checker
+   enforces uniqueness). *)
+
+DefHookDecl           := "defn" _ Identifier (At | Percent)
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
                          _ FuncBody;
@@ -1136,13 +1222,11 @@ DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
 DoLoopComprExpr         := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
 <DoLoopIterationExpr>   := DoBlockExpr | DoLoopIterNoBlockExpr;
-<DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+<DoLoopIterNoBlockExpr> := CallExpr | BareIdentifier | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 ```
 
-Note: `<DoLoopIterNoBlockExpr>` lists `IdentifierExpr` directly (no
-`Expr` dispatch path). `:as` on an iter function (`range ~<* foo :as Maybe`)
-is therefore a parse error — wrap in parens (`range ~<* (foo :as Maybe)`)
-to annotate. Consistent with the "use parens" rule.
+Note: `<DoLoopIterNoBlockExpr>` lists `BareIdentifier` directly (no
+`Expr` dispatch path). `:as` on an iter function (`range ~<* foo :as Maybe`) is therefore a parse error — wrap in parens (`range ~<* (foo :as Maybe)`) to annotate. Consistent with the "use parens" rule.
 
 ## §17 Data Structure Literals
 
@@ -1163,8 +1247,8 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
 RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit
-                        | NumberLit | StringLit | DataStructLit
-                        | IdentifierExpr
+                        | NumberLit | StringLit
+                        | DataStructLit | BareIdentifier
                         | (OpenParen _ Expr _ CloseParen);
 
 PickValue              := Ampersand IdentBase MultiAccessExpr?;
@@ -1288,8 +1372,8 @@ SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket Cl
 PEG ordering note for `RecordTupleValue`: `AsExpr` first — longer
 match with `:as` tail. Falls through to `CallExpr` and the rest on
 no `:as`. The remaining order is unchanged from prior design:
-`CallExpr` before `IdentifierExpr` so `foo.bar` parses as a chain;
-`DataStructLit` before `IdentifierExpr` (disjoint openers).
+`CallExpr` before `BareIdentifier` so `foo.bar` parses as a chain;
+`DataStructLit` before `BareIdentifier` (disjoint openers).
 
 The paren-wrap arm's inner is `Expr` (matching `GroupedExpr`'s
 precedent), not recursive `RecordTupleValue`. The bare arms stay

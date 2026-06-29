@@ -299,16 +299,20 @@ export const samples = [
 	{ label: "PartialCallExpr on (~each): (~each)|, log|",
 	  src: "(~each)|, log|;" },
 
-	// AtExpr — IdentBase + optional access + @
-	{ label: "AtExpr (bare base): foo@",             src: "foo@;" },
-	{ label: "AtExpr (BuiltIn base): Maybe@",        src: "Maybe@;" },
-	{ label: "AtExpr :as: foo@ :as int",             src: "foo@ :as int;" },
+	// AtCallExpr (no payload) — IdentBase + optional access + @
+	// with no trailing operand. Uniformly a call form post-refactor;
+	// the semantic layer supplies an `empty` default at the call
+	// site. (To extract a marker-preserving function reference
+	// instead of calling, the `.@` chain-tail form / AtRefExpr is
+	// used — pending shaper landing.)
+	{ label: "AtCallExpr (no payload, bare base): foo@",          src: "foo@;" },
+	{ label: "AtCallExpr (no payload, BuiltIn base): Maybe@",     src: "Maybe@;" },
+	{ label: "AtCallExpr (no payload) :as: foo@ :as int",         src: "foo@ :as int;" },
 
-	// SingleAccessExpr surfacing via AtExpr — `foo.bar@` folds the
-	// access into AtExpr.base per the unified access-fold rule.
-	// (Note: same src as "AtExpr (retrofit): foo.bar@" below.)
-	{ label: "SingleAccessExpr (in AtExpr): foo.bar@", src: "foo.bar@;" },
-	{ label: "AtExpr (retrofit): foo.bar@",          src: "foo.bar@;" },
+	// SingleAccessExpr surfacing in AtCallExpr — `foo.bar@` folds
+	// the access into the AtExpr callee's base per the unified
+	// access-fold rule.
+	{ label: "SingleAccessExpr (in AtCallExpr): foo.bar@",        src: "foo.bar@;" },
 
 
 	// =============================================================
@@ -458,14 +462,36 @@ export const samples = [
 	{ label: "MemberAccessExpr :as int",             src: "foo.bar :as int;" },
 	{ label: "PrimedExpr :as int",                   src: "foo' :as int;" },
 
-	// === AtCallExpr — all four sub-forms ===
-	{ label: "AtCallExpr Arm 1: None@",              src: "None@;" },
-	{ label: "AtCallExpr Sub-form A: foo@ x",        src: "foo@ x;" },
-	{ label: "AtCallExpr Sub-form A w/access: foo.bar@ x", src: "foo.bar@ x;" },
-	{ label: "AtCallExpr Sub-form B: foo @ x",       src: "foo @ x;" },
-	{ label: "AtCallExpr Sub-form B w/access: foo.bar @ x", src: "foo.bar @ x;" },
-	{ label: "IdentityCallExpr (spaced): @ x",       src: "@ x;" },
-	{ label: "IdentityCallExpr (no-space): @2",      src: "@2;" },
+	// === AtCallExpr — payload and trivia variants ===
+	//
+	// Uniformly a call form post-refactor. No-payload forms live
+	// in §6 (above) under "AtCallExpr (no payload, ...)" labels;
+	// `None@` is duplicated here for explicit BuiltIn-base coverage
+	// in the §7 call cluster. With-payload forms cover the four
+	// trivia/access combos.
+	{ label: "AtCallExpr (BuiltIn base, no payload): None@",         src: "None@;" },
+	{ label: "AtCallExpr (no trivia, payload): foo@ x",              src: "foo@ x;" },
+	{ label: "AtCallExpr (no trivia, access, payload): foo.bar@ x",  src: "foo.bar@ x;" },
+	{ label: "AtCallExpr (LHS trivia, payload): foo @ x",            src: "foo @ x;" },
+	{ label: "AtCallExpr (LHS trivia, access, payload): foo.bar @ x", src: "foo.bar @ x;" },
+	{ label: "IdentityCallExpr (spaced): @ x",                       src: "@ x;" },
+	{ label: "IdentityCallExpr (no-space): @2",                      src: "@2;" },
+
+	// === AtRefExpr — `.@` chain-terminator, marker-preserving
+	// function reference extraction ===
+	//
+	// Strict no-trivia on both sides of `.@`. Folds the chain
+	// source-so-far into AtRefExpr { source }. Terminator —
+	// no stacking with other tails, no access/call after. To
+	// use the extracted reference in a call, parenthesize first.
+	{ label: "AtRefExpr (Identifier base): foo.@",                   src: "foo.@;" },
+	{ label: "AtRefExpr (BuiltIn base): None.@",                     src: "None.@;" },
+	{ label: "AtRefExpr (with access): foo.bar.@",                   src: "foo.bar.@;" },
+	{ label: "AtRefExpr (multi-seg access): foo.bar.baz.@",          src: "foo.bar.baz.@;" },
+	{ label: "AtRefExpr :as: Foo.@ :as Functor",                     src: "Foo.@ :as Functor;" },
+	{ label: "AtRefExpr (paren-then-call): (Foo.@)(x)",              src: "(Foo.@)(x);" },
+	{ label: "AtRefExpr (extract-then-call): def f: Foo.@; f@x;",    src: "def f: Foo.@; f@x;" },
+	{ label: "AtRefExpr (HOF arm idiom): (~cata)(x, None.@, Id.@)",  src: "(~cata)(x, None.@, Id.@);" },
 
 	// EffectorCallExpr — `%` effector chain-tail. Single AST type
 	// (EffectorCallExpr { source, arg? }) with optional arg; all
@@ -758,10 +784,12 @@ export const samples = [
 	// §13 FUNCTION DEFINITIONS
 	// =============================================================
 
-	// DefFuncExpr cluster — every variant
+	// DefFuncExpr cluster — every variant. (Legacy `@` marker
+	// removed from DefFuncExpr — hook-bearing declarations now go
+	// through DefHookDecl, statement-only; see the DefHookDecl
+	// cluster below.)
 	{ label: "defn: anonymous + empty params",       src: "defn () ^42;" },
 	{ label: "defn: named + params + expr body",     src: "defn add(x, y) ^x + y;" },
-	{ label: "defn: @ form + block body",            src: "defn fact@(n) { n; };" },
 	{ label: "defn: curried (2 paramSets)",          src: "defn curried(x)(y) ^x;" },
 	{ label: "defn: :over clause",                   src: "defn ovr(x) :over(y, z) ^x;" },
 	{ label: "defn: :as clause + empty params",      src: "defn typed() :as MyType ^empty;" },
@@ -792,6 +820,28 @@ export const samples = [
 	  src: "defn foo(<:x>)(<:y>)(<:z>) #> inc #> { x + y + #; };" },
 	{ label: "defn: destructure-with-init + pipeline",
 	  src: "defn foo(<:z>: src) #> inc;" },
+
+	// DefHookDecl cluster — `defn` + name + marker (@ or %) +
+	// paren-sets + body. Statement-only; expression-position usage
+	// is a parse error (see failSamples in test-parser.js). The
+	// post-marker signature mirrors DefFuncExpr's full feature
+	// set — curried paramSets, FuncPrecondList, :over, :as, all
+	// three FuncBody forms.
+	{ label: "DefHookDecl: @ marker + expr body",            src: "defn Foo@(x) ^x;" },
+	{ label: "DefHookDecl: @ marker + block body",           src: "defn fact@(n) { n; };" },
+	{ label: "DefHookDecl: @ marker + empty params",         src: "defn Foo@() ^empty;" },
+	{ label: "DefHookDecl: % marker + expr body",            src: "defn Bar%(self, env) ^env;" },
+	{ label: "DefHookDecl: % marker + block body",           src: "defn MyIO%(self, env) { self.run(env); };" },
+	{ label: "DefHookDecl: @ curried (2 paramSets)",         src: "defn Foo@(x)(y) ^x;" },
+	{ label: "DefHookDecl: % curried (2 paramSets)",         src: "defn Bar%(self)(env) ^env;" },
+	{ label: "DefHookDecl: @ :over clause",                  src: "defn Foo@(x) :over(y, z) ^x;" },
+	{ label: "DefHookDecl: @ :as clause + empty params",     src: "defn Foo@() :as MyType ^empty;" },
+	{ label: "DefHookDecl: @ pipeline body",                 src: "defn Foo@(x) #> log;" },
+	{ label: "DefHookDecl: @ gather parameter",              src: "defn Foo@(*args) ^args;" },
+	{ label: "DefHookDecl: @ with FuncPrecond",              src: "defn Foo@(x) ?[x ?< 0]: 0 ^x;" },
+	{ label: "DefHookDecl: % with FuncPrecond",              src: "defn Bar%(self, env) ?[?empty env]: self ^env;" },
+	{ label: "DefHookDecl: @ destructure param",             src: "defn Foo@(<:a, :b>) ^a + b;" },
+	{ label: "DefHookDecl: % destructure params",            src: "defn Bar%(<:s>, <:e>) ^s;" },
 
 
 	// =============================================================
@@ -1135,14 +1185,14 @@ export const samples = [
 	{ label: "compound §5: paren-around literals",
 	  src: '(42); (true); ("hi"); (empty);' },
 
-	// §6 — chain access mix, range access, multi-key angle-pick, AtExpr cluster
+	// §6 — chain access mix, range access, multi-key angle-pick, AtCallExpr cluster
 	{ label: "compound §6: chain member+bracket+member",
 	  src: "def x: foo.bar[42].baz;" },
 	{ label: "compound §6: range access (closed/leading/trailing)",
 	  src: "def x: arr.[1..5]; def y: arr.[..10]; def z: arr.[5..];" },
 	{ label: "compound §6: 3-key angle-pick",
 	  src: "def x: rec.<a, b, c>;" },
-	{ label: "compound §6: AtExpr + paren-@ + Hash",
+	{ label: "compound §6: AtCallExpr (no payload) + paren-@ + Hash",
 	  src: "def x: foo@; def y: (@); def z: #;" },
 
 	// §7 — chain-call mix, primed/op-as-func mix, dot-op-as-func
@@ -1183,8 +1233,10 @@ export const samples = [
 	{ label: "compound §12: assignment forms",
 	  src: "x := 5; foo.bar := 42; foo.bar[0] := y + 1; a.b.c := (1 + 2);" },
 
-	// §13 — defn cluster
-	{ label: "compound §13: defn cluster",
+	// §13 — defn cluster (mixed DefFuncExpr + DefHookDecl). The
+	// `fact@` entry parses as DefHookDecl (statement-only); the
+	// rest are DefFuncExpr.
+	{ label: "compound §13: defn + DefHookDecl cluster",
 	  src: "defn () ^42; " +
 		"defn add(x, y) ^x + y; " +
 		"defn fact@(n) { n; }; " +

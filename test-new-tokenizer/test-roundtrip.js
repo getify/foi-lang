@@ -434,6 +434,37 @@ var handlers = {
 		return out;
 	},
 
+	// DefHookDecl — keyword "defn" + required name + required
+	// marker (`@` or `%`) after name + paren-grouped param sets
+	// + sub-clauses + body. Two re-synthesized anchors: "defn"
+	// (always, at first gap) and `node.marker` glyph (always,
+	// immediately before the first OpenParen). Mirrors DefFuncExpr's
+	// emit logic with the marker always required — DefHookDecl's
+	// grammar production requires it (distinct from DefFuncExpr's
+	// now-removed optional `at:true`).
+	DefHookDecl(node, recur) {
+		var pieces = collectPieces(node);
+		var out = "";
+		var defnEmitted = false;
+		var markerEmitted = false;
+		var pos = node.start;
+		for (let p of pieces) {
+			if (!defnEmitted && p.start > pos) {
+				out += "defn";
+				defnEmitted = true;
+			}
+			if (!markerEmitted && !isNode(p) && p.type === "OpenParen") {
+				out += node.marker;
+				markerEmitted = true;
+			}
+			out += isNode(p) ? recur(p) : p.value;
+			pos = p.end != null ? p.end : pos;
+		}
+		if (!defnEmitted) out += "defn";
+		if (!markerEmitted) out += node.marker;
+		return out;
+	},
+
 	// GatherParameter — Star sigil is in delims, but the inner
 	// Identifier node was discarded by the shaper (only its `name`
 	// string survives). Emit "*" + name explicitly; ignore the

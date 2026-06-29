@@ -27,8 +27,17 @@ var tokVal  = (name, value)  => terminal(t => t && t.type === name && t.value ==
 // §1 PROGRAM / STATEMENTS
 // =============================================================
 
-// <Stmt> := DefBlockStmt | DefVarStmt | DefTypeStmt | Expr;
+// <Stmt> := DefHookDecl | DefBlockStmt | DefVarStmt | DefTypeStmt | Expr;
+//
+// PEG: DefHookDecl first — both DefHookDecl and Expr→DefFuncExpr
+// open with `defn`. DefHookDecl additionally requires a marker
+// (At or Percent) between Identifier and paren-set; the marker-
+// bearing form commits to DefHookDecl, and the marker-less form
+// falls through cleanly to Expr→DefFuncExpr. Anonymous DefFuncExpr
+// (no Identifier) also falls through — DefHookDecl requires the
+// Identifier.
 var Stmt = or(
+	lazy(() => DefHookDecl),
 	lazy(() => DefBlockStmt),
 	lazy(() => DefVarStmt),
 	lazy(() => DefTypeStmt),
@@ -417,7 +426,7 @@ var BareOperandExpr = or(
 	lazy(() => GroupedBareOpExpr)
 );
 
-// <BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit | IdentifierExpr | OpFuncExpr | GroupedBareOpExprNoEmpty;
+// <BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit | StringLit | DataStructLit | BareIdentifier | OpFuncExpr | GroupedBareOpExprNoEmpty;
 //
 // PEG ordering: CallExpr (= AtCallExpr | ChainExpr) precedes the
 // bare literal/identifier forms so `"hi".len` parses as a ChainExpr
@@ -430,7 +439,7 @@ var BareOperandExprNoEmpty = or(
 	NumberLit,
 	StringLit,
 	lazy(() => DataStructLit),
-	lazy(() => IdentifierExpr),
+	lazy(() => BareIdentifier),
 	lazy(() => OpFuncExpr),
 	lazy(() => GroupedBareOpExprNoEmpty)
 );
@@ -438,7 +447,7 @@ var BareOperandExprNoEmpty = or(
 // AsExpr := <AsableExpr> _ AsAnnotationExpr;
 // <AsableExpr>  := BareBlockExpr | GuardedExpr | UnaryExpr | AsableInner;
 // <AsableInner> := EmptyLit | CallExpr | BooleanLit | NumberLit | StringLit
-//                | DataStructLit | IdentifierExpr | OpFuncExpr;
+//                | DataStructLit | BareIdentifier | OpFuncExpr;
 //
 // The central carrier of `:as` annotations on non-paren expressions.
 // Reachable from <Expr> and <ExprNoBlock> dispatchers (outer-position
@@ -489,7 +498,7 @@ var AsableInner = or(
 	NumberLit,
 	StringLit,
 	lazy(() => DataStructLit),
-	lazy(() => IdentifierExpr),
+	lazy(() => BareIdentifier),
 	lazy(() => OpFuncExpr)
 );
 var AsableExpr = or(
@@ -802,39 +811,17 @@ export const MultiAccessExpr = production("MultiAccessExpr",
 // No `:as` tail — annotation comes via AsExpr (§5).
 export const IdentityFunc = production("IdentityFunc", At);
 
-// AtExpr := IdentBase SingleAccessExpr? At;
-//
-// No trivia between IdentBase, the optional SingleAccessExpr, and At
-// (per grammar). DotIdentifier carries its own internal `_`, so
-// `foo.bar@` still works; `foo .bar@` does not.
-//
-// No `:as` tail — annotation comes via AsExpr (§5).
-export const AtExpr = production("AtExpr",
-	and(IdentBase, optional(SingleAccessExpr), At)
-);
-
 // BareIdentifier := IdentBase;
 //
-// No `:as` tail — annotation comes via AsExpr (§5). The
-// reference-vs-binding distinction lives in the grammar; the
-// shaper still subsumes BareIdentifier to its inner IdentBase node.
+// No `:as` tail — annotation comes via AsExpr (§5). The shaper
+// subsumes BareIdentifier to its inner IdentBase node. Bare `@`
+// as a value is NOT admitted at identifier position; the LHS-less
+// identity-function value is reached via OpFuncExpr's operator-
+// as-function lift `(@)`, same mechanism as every other operator.
+// To extract a marker-preserving function reference from an
+// `@`-hook-bearing namespace, use the `.@` chain-tail form
+// (AtRefTail, §7).
 export const BareIdentifier = production("BareIdentifier", IdentBase);
-
-// <IdentifierExpr> := AtExpr | BareIdentifier;
-//
-// All identifier-led access is handled by ChainExpr (§7) now —
-// IdentifierExpr is just the at/bare forms. Bare `@` as a value
-// is NOT admitted here; the LHS-less identity-function value is
-// reached via OpFuncExpr's operator-as-function lift `(@)`, the
-// same mechanism as every other operator.
-//
-// PEG order:
-//   - AtExpr requires a trailing @ — fails fast on identifier-led input without @.
-//   - BareIdentifier catches the remainder.
-var IdentifierExpr = or(
-	AtExpr,
-	BareIdentifier
-);
 
 // <RangeOperand> := BareOperandExpr | GroupedOpExpr;
 //
@@ -873,7 +860,6 @@ var SingleQuote  = tokType("SingleQuote");
 var Mountain     = tokType("Mountain");
 var Valley       = tokType("Valley");
 var Percent      = tokType("Percent");
-var BuiltinNone  = tokVal("Builtin", "None");
 
 // PrefixCallSuffix  := OpenParen CallArgs CloseParen;
 export const PrefixCallSuffix = production("PrefixCallSuffix",
@@ -972,46 +958,55 @@ var CallArgs = or(
 	and(delim(), optional(CallArgList), delim())
 );
 
-// AtCallExpr := "None" At
-//             | (AtExpr | (IdentBase SingleAccessExpr? _ At) | IdentityFunc) _ ExprNoBlock;
+// AtCallExpr := IdentBase SingleAccessExpr? _ At (_ ExprNoBlock)?
+//             | IdentityFunc _ ExprNoBlock;
 //
-// Arm 1: bare `None@` (None unit constructor, no argument).
-// Arm 2: at-form applied to an ExprNoBlock argument.
+// Uniformly a call form post-refactor (was: ref-vs-call distinction
+// gated on payload presence, with a separate AtExpr reference
+// production). To extract a marker-preserving function reference
+// instead of calling, use the `.@` chain-tail form (AtRefTail,
+// above).
+//
+// Arm 1 (user-rooted): `Foo@`, `Foo@x`, `Foo @ x`, `Foo.bar@`,
+// `Foo.bar@x`, `Foo.bar @ x`. Trailing arg optional — when
+// absent, semantic layer supplies `empty` default. Any IdentBase
+// admits the no-payload form, including `None@` and other
+// builtins.
+//
+// Arm 2 (IdentityFunc): `@x`, `@ x` — bare-`@` identity form,
+// arg required.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 //
-// PEG within arm 2:
-//   - AtExpr first — matches IdentBase+access+adjacent At (no trivia between IdentBase and At).
-//   - `(IdentBase SingleAccessExpr? _ At)` — allows trivia between IdentBase (with optional access) and At (AtExpr does not).
-//   - IdentityFunc — bare `@` fallback.
+// PEG arm order: IdentBase arm first, IdentityFunc arm second.
+// Disjoint openers (IdentBase: PipelineTopic/Identifier/Builtin;
+// IdentityFunc: bare At). Order is mechanical.
 //
-// The shaper splits the IdentityFunc arm out into a distinct
-// IdentityCallExpr node (no callee field); the other three arms
-// shape as AtCallExpr with a user-rooted callee. See default-
-// shapers.js AtCallExpr for the split rationale.
+// The shaper folds Arm 1 into AtCallExpr { base, arg? } where
+// `base` is the foldAccess result of IdentBase + optional
+// SingleAccessExpr (matching the foldAccess-at-shape-time
+// pattern at the other unified access-fold sites). Arm 2 folds
+// into IdentityCallExpr { arg }. See default-shapers.js
+// AtCallExpr for the dispatch logic.
 export const AtCallExpr = production("AtCallExpr",
 	or(
-		and(BuiltinNone, At),
 		and(
-			or(
-				AtExpr,
-				and(IdentBase, optional(SingleAccessExpr), delim(), At),
-				IdentityFunc
-			),
-			delim(),
-			ExprNoBlock
-		)
+			IdentBase, optional(SingleAccessExpr),
+			delim(), At,
+			optional(and(delim(), ExprNoBlock))
+		),
+		and(IdentityFunc, delim(), ExprNoBlock)
 	)
 );
 
 // <ChainBase> := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
 //              | OpFuncExpr | GroupedExprNoBlock
 //              | EmptyLit | BooleanLit | NumberLit | StringLit | DataStructLit
-//              | IdentifierExpr;
+//              | BareIdentifier;
 //
 // PEG ordering (per grammar):
 // - MatchExpr / GuardedExpr precede AssignmentExpr — distinctive `?`/`!` openers.
-// - AssignmentExpr precedes IdentifierExpr — longer `:=` match wins when it follows.
+// - AssignmentExpr precedes BareIdentifier — longer `:=` match wins when it follows.
 // - OpFuncExpr precedes GroupedExprNoBlock — both open with `(`, OpFuncExpr's stricter
 //   inner shape (must be Op | DotAngle | DotBracket | `[]`) fails-through cleanly.
 //
@@ -1030,7 +1025,7 @@ var ChainBase = or(
 	NumberLit,
 	StringLit,
 	lazy(() => DataStructLit),
-	IdentifierExpr
+	BareIdentifier
 );
 
 // <ChainTail>       := EffectorTail | PostfixCallTail;
@@ -1045,12 +1040,13 @@ var ChainBase = or(
 //              );
 //
 // Requires extension beyond ChainBase — either ≥1 ChainSeg, or a
-// chain tail (`'`, `/\`, `\/`, or `%`). A bare ChainBase alone falls
-// through to the later alternatives in BareOperandExprNoEmpty.
+// chain tail (`'`, `/\`, `\/`, `%`, or `.@`). A bare ChainBase
+// alone falls through to the later alternatives in
+// BareOperandExprNoEmpty.
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 //
-// Four chain-tail forms, all mutually exclusive (no stacking with
+// Five chain-tail forms, all mutually exclusive (no stacking with
 // each other, no access tail after any of them):
 //
 //   `'`     — argument-reversal / universal-prime inversion on the
@@ -1063,12 +1059,15 @@ var ChainBase = or(
 //             fn.length to consume args from the call's arg list.
 //   `%`     — effector application. Dispatches to the source's
 //             effect-evaluation hook with an optional argument.
-//             See EffectorTail (above) for details.
+//             See EffectorTail (below) for details.
+//   `.@`    — marker-preserving function reference extraction
+//             from a hook-bearing namespace. `Foo.@` lowers to
+//             `Foo._at`. See AtRefTail (below) for details.
 //
 // Mountain/Valley operator shapes ARE the resulting function's
 // parameter-signature shape — see Foi-Guide.md.
 //
-// Adjacency rules differ between PostfixCallTail and EffectorTail:
+// Adjacency rules differ across the three tail families:
 //
 //   PostfixCallTail (`'`/`/\`/`\/`): adjacent to the preceding
 //     expression (NO trivia between). Each may be followed only
@@ -1088,34 +1087,50 @@ var ChainBase = or(
 //     parse. Carries no trailing call suffix — `task%(x)` is the
 //     paren-grouped-arg binary form, not `(task%)` then `(x)`.
 //
+//   AtRefTail (`.@`): strict NO-trivia on both sides. No `_`
+//     between Period and At, no leading `_` before Period.
+//     Terminator — no trailing form admitted. To use the
+//     extracted reference in a call, parenthesize: `(Foo.@)(x)`.
+//
 // Examples that parse: `foo'`, `foo'(1,2,3)`, `foo.bar'`,
 // `foo.bar'(1,2,3)`, `(+)'(1,2,3)`; `foo/\`, `foo/\(1)(2)(3)`,
 // `foo.bar/\(1)(2)`, `foo\/`, `foo\/(1,2,3)`; `task%`, `task %`,
-// `task % env`, `processFile("f.txt")%`, `obj.method(x) % cfg`.
+// `task % env`, `processFile("f.txt")%`, `obj.method(x) % cfg`;
+// `Foo.@`, `Foo.bar.@`.
 // Examples that do not: `foo'.bar`, `foo'[0]`, `foo' .bar` (trivia
 // before `'`); `foo /\`, `foo/\ (1)`, `foo/\'`, `foo/\\/` (stacking
 // or trivia-violation on the curry/uncurry ops); `task%.field`,
 // `task%[0]`, `task%'` (stacking or access tail after `%`); `%task`,
-// `%`, `%y` (no LHS).
+// `%`, `%y` (no LHS for `%`); `Foo. @`, `Foo .@` (trivia in or
+// before `.@`), `Foo.@(x)`, `Foo.@.bar`, `Foo.@%`, `Foo.@'`
+// (stacking on `.@`), `.@` (no LHS for `.@`).
 //
 // PEG arm order inside PostfixCallTail: SingleQuote first
 // (single-char), then Mountain/Valley (two-char). Disjoint first
 // chars — order is mechanical, not load-bearing.
 //
 // PEG arm order inside ChainTail: EffectorTail first (Percent
-// opener, disjoint from SingleQuote / Mountain / Valley). Because
-// EffectorTail has a leading `_` and PostfixCallTail does not,
-// `foo '` (WS before `'`) correctly fails — EffectorTail fails
-// at Percent (no `%`), PostfixCallTail fails (no leading `_`),
-// whole ChainTail fails, optional retracts. Preserves the no-
-// trivia rule for `'`/`/\`/`\/`.
+// opener), AtRefTail second (Period+At), PostfixCallTail last
+// (SingleQuote / Mountain / Valley). All three first-tokens are
+// disjoint, so the choice between EffectorTail and AtRefTail is
+// mechanical. PostfixCallTail's no-leading-`_` rule is what
+// makes `foo '` (WS before `'`) correctly fail: EffectorTail
+// fails at Percent, AtRefTail fails at Period, PostfixCallTail
+// fails on the leading WS, whole ChainTail fails, optional
+// retracts. Preserves the no-trivia rule for `'`/`/\`/`\/`.
+//
+// AtRefTail's Period opener shares an opening token with
+// DotIdentifier (a <ChainSeg>), but DotIdentifier requires
+// Identifier/BuiltIn/IntegerLit after the Period. On `.@`,
+// DotIdentifier fails in the seg loop; the loop exits and
+// AtRefTail matches at the tail position.
 //
 // PEG arm order in ChainExpr outer: ChainSeg+-first before
 // ChainTail-only. The ChainSeg+-first arm requires ≥1 ChainSeg
 // via many(); on input where a tail form immediately follows
 // ChainBase with no ChainSeg (e.g. `foo'`, `foo/\`, `task%`,
-// `task %`), the first arm fails at many() and the ChainTail-
-// only arm fires.
+// `task %`, `Foo.@`), the first arm fails at many() and the
+// ChainTail-only arm fires.
 var PostfixCallTail = or(
 	and(SingleQuote, any(and(delim(), CallSuffix))),
 	and(or(Mountain, Valley), any(CallSuffix))
@@ -1130,14 +1145,22 @@ var PostfixCallTail = or(
 // form (`task%(env)` ≡ `task % env`, same AST).
 //
 // Trivia-tolerant on BOTH sides of `%` — `task %`, `task % env`,
-// `task% env`, `task %env` all parse. Differs from `@`'s structural-
-// trivia rule (`foo@` no-trivia vs. `foo @ x` trivia-bearing are
-// distinct AST arms) because `%` has a single AST type with an
-// optional arg slot — trivia carries no AST consequence.
+// `task% env`, `task %env` all parse. The single AST type
+// (EffectorCallExpr) carries an optional arg slot — trivia
+// variants collapse into one node shape.
 //
-// Chain terminator: no stacking with `'`/`/\`/`\/`, no access tail
-// after `%`. To chain on the result: `(task%).field`, `(task%)(arg)`.
-// Identical chain-terminator semantics to PostfixCallTail.
+// Contrast with AtCallExpr (§7), which is also trivia-tolerant
+// on both sides of `@` but folds via the same `IdentBase access?
+// _ At (_ ExprNoBlock)?` production — `foo@`, `foo @ x`,
+// `foo.bar@x` all collapse into a flat AtCallExpr { base,
+// access?, arg? }. Contrast with AtRefTail (`.@`), which is
+// strict NO-trivia on both sides — its terminator semantics
+// demand a fixed `.@` form.
+//
+// Chain terminator: no stacking with `'`/`/\`/`\/`/`.@`, no
+// access tail after `%`. To chain on the result: `(task%).field`,
+// `(task%)(arg)`. Identical chain-terminator semantics to
+// PostfixCallTail and AtRefTail.
 //
 // Shaper produces a transient `EffectorTail { arg?, delims }` node
 // that ChainExpr's shaper intercepts and folds into EffectorCallExpr.
@@ -1145,14 +1168,53 @@ export const EffectorTail = production("EffectorTail",
 	and(delim(), Percent, optional(and(delim(), lazy(() => ExprNoBlock))))
 );
 
-// <ChainTail> := EffectorTail | PostfixCallTail;
+// AtRefTail := Period At;
 //
-// PEG order: EffectorTail first (Percent opener — disjoint from
-// SingleQuote / Mountain / Valley openers). EffectorTail's leading
-// `_` admits trivia before `%`; PostfixCallTail's modifiers require
-// adjacency, so `foo '` (WS before `'`) correctly fails: EffectorTail
-// fails at Percent (no `%`), PostfixCallTail fails (no leading `_`).
-var ChainTail = or(EffectorTail, PostfixCallTail);
+// Marker-preserving function reference extraction tail —
+// `Foo.@` lowers to `Foo._at`. Strict no-trivia on BOTH sides
+// of `.@`:
+//   - No `_` between Period and At (per grammar — `.@` is a
+//     fixed conceptual token to keep its terminator semantics
+//     unambiguous).
+//   - No leading `_` before Period (consistent with
+//     PostfixCallTail's adjacency rule, distinct from
+//     EffectorTail which is trivia-tolerant).
+//
+// Chain terminator: no stacking with any other tail (`'`,
+// `/\`, `\/`, `%`, `.@` itself), no access tail, no adjacency
+// call. To use the extracted reference in a call,
+// parenthesize: `(Foo.@)(x)`.
+//
+// Period also opens DotIdentifier (a <ChainSeg>), but
+// DotIdentifier requires Identifier/BuiltIn/IntegerLit after
+// the Period — `@` is a distinct token type, so DotIdentifier
+// fails in the seg loop on `.@`, the loop exits, and AtRefTail
+// matches at the tail position.
+//
+// Shaper produces a transient `AtRefTail { delims: [Period, At] }`
+// node that ChainExpr's shaper intercepts and folds into
+// `AtRefExpr { source }` (where `source` is the chain-fold up
+// to the `.@`). See default-shapers.js ChainExpr for the
+// interception path.
+export const AtRefTail = production("AtRefTail",
+	and(Period, At)
+);
+
+// <ChainTail> := EffectorTail | AtRefTail | PostfixCallTail;
+//
+// PEG order:
+//   - EffectorTail first — Percent opener, disjoint from
+//     AtRefTail's Period and PostfixCallTail's SingleQuote /
+//     Mountain / Valley. Its leading `_` admits trivia before `%`.
+//   - AtRefTail next — Period+At opener. Strict no-trivia on
+//     both sides; period opener is disjoint from EffectorTail's
+//     Percent and from PostfixCallTail's modifier tokens.
+//   - PostfixCallTail last — adjacency-required (no leading `_`),
+//     so `foo '` (WS before `'`) correctly fails: EffectorTail
+//     fails at Percent, AtRefTail fails at Period, PostfixCallTail
+//     fails on the leading WS, whole ChainTail fails, optional
+//     retracts. Preserves the no-trivia rule for `'`/`/\`/`\/`.
+var ChainTail = or(EffectorTail, AtRefTail, PostfixCallTail);
 
 export const ChainExpr = production("ChainExpr",
 	and(
@@ -1170,9 +1232,12 @@ export const ChainExpr = production("ChainExpr",
 
 // <CallExpr> := AtCallExpr | ChainExpr;
 //
-// PEG: AtCallExpr first so `foo@ 5` reaches the at-form (applied
-// call) rather than parsing as `foo@` (an AtExpr inside ChainExpr)
-// with dangling `5`.
+// PEG: AtCallExpr first so `foo@ 5` reaches the at-form (call
+// with payload) rather than `foo@` (call with empty default,
+// via AtCallExpr's optional payload) followed by a dangling
+// `5` that ChainExpr can't reach. AtCallExpr's `IdentBase
+// access? _ At (_ ExprNoBlock)?` always consumes the trailing
+// payload when present at this position.
 var CallExpr = or(AtCallExpr, ChainExpr);
 
 // OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
@@ -1512,11 +1577,10 @@ var NamedUnaryOp = or(KwQmarkEmpty, KwExmarkEmpty);
 // Chain-tail attachment of `'` / `/\` / `\/` to a function value
 // is handled by ChainExpr's PostfixCallTail (§7); `%`'s chain-tail
 // attachment is handled by ChainExpr's EffectorTail (§7); `@`'s
-// call-form is handled by AtCallExpr (§7), not here.
-//
-// Bare `@` as a value is NOT reachable from IdentifierExpr (§6) —
-// the only first-class-value route for `@` is the operator-as-
-// function lift `(@)` admitted here.
+// call-form is handled by AtCallExpr (§7), not here. Neither bare
+// `@` nor bare `%` is reachable at value position — `(@)` and
+// `(%)` (the op-as-function lifts admitted here) are the only
+// first-class-value routes.
 var UnaryOpSym = or(Qmark, Exmark, SingleQuote, TriplePeriod, DoublePeriod, Period, Mountain, Valley, Percent, At);
 
 // <Op> := FlowOp | OrOp | AndOp | CompareOp | AsTypeOp | AddOp | MulOp | NamedUnaryOp | UnaryOpSym;
@@ -1889,17 +1953,66 @@ export const FuncBodyBlock = production("FuncBodyBlock",
 // OpenBrace (Block).
 var FuncBody = or(FuncBodyExpr, FuncBodyPipeline, FuncBodyBlock);
 
-// DefFuncExpr := "defn" (_ Identifier At?)?
+// DefFuncExpr := "defn" (_ Identifier)?
 //                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
 //                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
 //                _ FuncBody;
 //
 // `:as` on a defn is FuncAsClause, NOT a trailing OptAsAnnotation —
 // DefFuncExpr does not carry any `(_ AsAnnotationExpr)?` tail.
+//
+// Legacy `@` marker (`defn Foo@(x) ^...`) removed — hook-bearing
+// declarations now go through DefHookDecl (statement-only, §1).
+// `defn Foo@(...)` at expression position is a parse error;
+// statement-position usage commits to DefHookDecl via the §1 Stmt
+// dispatcher.
 export const DefFuncExpr = production("DefFuncExpr",
 	and(
 		KwDefn,
-		optional(and(delim(), Identifier, optional(At))),
+		optional(and(delim(), Identifier)),
+		many(and(
+			delim(), OpenParen, delim(),
+			optional(or(ParameterList, GatherParameter)),
+			delim(), CloseParen
+		)),
+		optional(and(delim(), FuncPrecondList)),
+		optional(and(delim(), FuncOverClause)),
+		optional(and(delim(), FuncAsClause)),
+		delim(), FuncBody
+	)
+);
+
+// DefHookDecl := "defn" _ Identifier (At | Percent)
+//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
+//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+//                _ FuncBody;
+//
+// Statement-only — admitted from <Stmt> (§1), not from <Expr>.
+// Anonymous hook declarations make no semantic sense (no namespace
+// to attach to), so Identifier is required (no `optional()` on it,
+// distinct from DefFuncExpr's anonymous-admissible form).
+//
+// Strict no-trivia between Identifier and the marker (At or Percent)
+// — mirrors the `Foo@` adjacency at use sites in AtCallExpr. Trivia
+// IS admitted between the marker and the first paren-set (mirrors
+// normal `defn` paren spacing).
+//
+// Post-marker signature identical to DefFuncExpr — same paramSet+,
+// optional precondition list, :over, :as, and FuncBody alternatives.
+// Distinct production rather than shared because the AST shape and
+// transpiler lowering diverge: DefHookDecl carries `marker: "@" | "%"`,
+// has no `at` flag, and hoists into a namespace literal via the
+// transpiler's pre-pass.
+//
+// Marker token survives in parts for the shaper to capture into
+// `marker`. The At-or-Percent disjunction must be positionally
+// adjacent to Identifier in the and(...) sequence — no `delim()`
+// between — to enforce the no-trivia rule.
+export const DefHookDecl = production("DefHookDecl",
+	and(
+		KwDefn, delim(),
+		Identifier,
+		or(At, Percent),
 		many(and(
 			delim(), OpenParen, delim(),
 			optional(or(ParameterList, GatherParameter)),
@@ -2220,20 +2333,20 @@ export const DoComprExpr = production("DoComprExpr",
 	)
 );
 
-// <DoLoopIterNoBlockExpr> := CallExpr | IdentifierExpr | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+// <DoLoopIterNoBlockExpr> := CallExpr | BareIdentifier | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
 //
 // PEG: CallExpr first so `foo()` reaches the call form rather than
-// IdentifierExpr with dangling `(...)`.
+// BareIdentifier with dangling `(...)`.
 var DoLoopIterNoBlockExpr = or(
 	CallExpr,
-	IdentifierExpr,
+	BareIdentifier,
 	and(OpenParen, delim(), lazy(() => DoLoopIterNoBlockExpr), delim(), CloseParen)
 );
 
 // <DoLoopIterationExpr> := DoBlockExpr | DoLoopIterNoBlockExpr;
 //
 // PEG: DoBlockExpr opens with `(` or `{`; DoLoopIterNoBlockExpr
-// opens with anything-else (CallExpr/IdentifierExpr/`(`).
+// opens with anything-else (CallExpr/BareIdentifier/`(`).
 // Same shape as §5/§13 ordering.
 var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
 
@@ -2400,8 +2513,7 @@ var ComputedPropBare = or(
 // shapers (no own production — stays hidden, matching the prior
 // design pre-narrowing).
 //
-// Reach now narrowed from the previous CallExpr/IdentifierExpr/
-// PipelineTopic/StringLit alphabet:
+// Reach narrowed to a small, visually-distinct alphabet:
 //   - Bare arm admits leaf-shaped values + identifier-access chains.
 //     Multi-seg dot/bracket access is fine; pick/range/call/at/
 //     postfix-modifier forms are not.
@@ -2461,7 +2573,7 @@ export const ExplicitPropDef = production("ExplicitPropDef",
 var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 
 // RecordTupleValue := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
-//                   | DataStructLit | IdentifierExpr
+//                   | DataStructLit | BareIdentifier
 //                   | (OpenParen _ Expr _ CloseParen);
 //
 // PEG order:
@@ -2469,8 +2581,8 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 //   Preserves `<x :as int, y>` after the `:as` rework (leaves no longer
 //   carry `:as` directly).
 // - CallExpr next so `foo.bar` parses as ChainExpr rather than
-//   IdentifierExpr with dangling `.bar`.
-// - DataStructLit before IdentifierExpr — disjoint openers
+//   BareIdentifier with dangling `.bar`.
+// - DataStructLit before BareIdentifier — disjoint openers
 //   (`<` vs IdentBase).
 // - Paren-wrap arm last — consumes `(` before recursing, no LR.
 //
@@ -2505,7 +2617,7 @@ var RecordTupleValue = production("RecordTupleValue", or(
 	NumberLit,
 	StringLit,
 	lazy(() => DataStructLit),
-	IdentifierExpr,
+	BareIdentifier,
 	and(OpenParen, delim(), lazy(() => Expr), delim(), CloseParen)
 ));
 
@@ -2514,7 +2626,7 @@ var RecordTupleValue = production("RecordTupleValue", or(
 // PEG:
 //   - PickValue first — opens with `&`, disjoint.
 //   - RecordProperty before RecordTupleValue: ExplicitPropDef's
-//     PropertyExpr opener overlaps with RecordTupleValue's IdentifierExpr
+//     PropertyExpr opener overlaps with RecordTupleValue's BareIdentifier
 //     opener (both can start with Identifier) and with NumberLit
 //     (both can start with PositiveIntegerLit). ExplicitPropDef
 //     requires a `_ Colon _ value` tail; missing tail backtracks

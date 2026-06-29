@@ -252,7 +252,46 @@ var failSamples = [
 	// narrowing of special-cased `@` call-operator form
 	"@;",
 	"@ :as Maybe;",
-	"@|42|;"
+	"@|42|;",
+
+	// === DefHookDecl negatives ===
+
+	// Strict no-trivia between Identifier and marker — mirrors
+	// `Foo@` adjacency at use sites in AtCallExpr.
+	"defn Foo @(x) ^x;",
+	"defn Foo %(self, env) ^env;",
+
+	// Statement-only. At expression position the DefFuncExpr arm
+	// has no `@`/`%` marker (removed in the refactor), so these
+	// fail cleanly at the marker.
+	"def x: defn Foo@(x) ^x;",
+	"def x: defn Bar%(self, env) ^env;",
+
+	// === AtRefTail (.@) trivia negatives ===
+
+	// Strict no-trivia on BOTH sides of `.@`. The trivia-bearing
+	// shapes never commit to AtRefTail (DotIdentifier requires
+	// Identifier after the Period; AtRefTail requires Period+At
+	// adjacent and not preceded by `_`) — leaves trailing tokens
+	// dangling, fails at Program EOF.
+	"Foo. @;",
+	"Foo .@;",
+
+	// === AtRefTail (.@) terminator negatives ===
+
+	// `.@` is a chain terminator — no stacking with any other tail,
+	// no access tail. Each of these consumes `.@` cleanly into
+	// AtRefExpr; the trailing token (`.`, `%`, `'`) opens no
+	// Stmt/Expr arm, fails at Program EOF.
+	//
+	// (Note: `Foo.@(x);` is intentionally omitted — it parses as
+	// two adjacent stmts `Foo.@` and `(x)`, not a parse error.
+	// The "no adjacency call" claim is a semantic-shape claim,
+	// not a parser-rejection one.)
+	"Foo.@.bar;",
+	"Foo.@%;",
+	"Foo.@';",
+	".@;",
 ];
 
 var passed = 0;

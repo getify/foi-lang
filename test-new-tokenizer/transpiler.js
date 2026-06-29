@@ -339,23 +339,177 @@ var OP_FUNC_TABLE = {
 // braces, function body, etc.).
 // =============================================================
 
-var emitBlockBody = (stmts, recur, withReturn) => {
+var emitBlockBody = (stmts, recur, withReturn, declForm = "var") => {
+	var hooks = hoistHooksFromStmts(stmts, recur, declForm);
 	if (!withReturn) {
-		return stmts.map(s => recur(s) + ";").join(" ");
+		return hooks + stmts.map(s => recur(s) + ";").join(" ");
 	}
-	if (stmts.length === 0) return "return null;";
+	if (stmts.length === 0) return hooks + "return null;";
 	var lastIdx = stmts.length - 1;
 	var injected = false;
 	var body = stmts.map((s, i) => {
 		var rendered = recur(s);
-		if (i === lastIdx && s.type !== "DefVarStmt") {
+		if (i === lastIdx && s.type !== "DefVarStmt" && s.type !== "DefHookDecl") {
 			rendered = "return " + rendered;
 			injected = true;
 		}
 		return rendered + ";";
 	}).join(" ");
 	if (!injected) body += " return null;";
-	return body;
+	return hooks + body;
+};
+
+
+// =============================================================
+// HOOK NAMESPACE HOIST EMITTER (DefHookDecl)
+//
+// Pre-pass for each Foi scope: scan stmts for DefHookDecls, group
+// by namespace name, emit one `var <ns> = { _at: <fn>, _percent:
+// <fn> };` at scope top per distinct namespace. Mirrors the
+// declared design — hoisted, not in-place, so refs to the
+// namespace are live from scope entry regardless of source
+// position. Scope-local: each enclosing block's stmts list is
+// scanned independently; nested blocks own their own hoist pass.
+//
+// Each enclosing-scope emit site calls this helper once on its
+// stmts and prepends the result. Call sites:
+//   - emitBlockBody (covers BareBlockExpr, BlockExpr, DefBlockStmt,
+//     and the inner stmts portion of every pipeline / ~each /
+//     compr block body)
+//   - Program (top-level)
+//   - FuncBodyBlock handler (function bodies, no-prelude path)
+//   - renderFuncBodyWithPrelude FuncBodyBlock branch (function
+//     bodies, with-prelude path — destructure / precond preludes
+//     land BEFORE the hooks, matching their function-arg scoping)
+//
+// Marker → property mapping: "@" → `_at`, "%" → `_percent`.
+// AtCallExpr / AtRefExpr / EffectorCallExpr dispatch via the
+// matching property at the lowering site.
+//
+// Missing-hook case (only `@` or only `%` declared): the absent
+// hook is simply not in the namespace literal. The dispatching
+// call site (`Foo@` against a `Foo` with no `_at`) produces a
+// runtime TypeError. Matches "the hook isn't there because it
+// wasn't declared" semantics directly — no defensive defaults.
+//
+// Multi-decl-same-kind case (two `defn Foo@(...)` in one scope):
+// last-wins at this layer. Semantic checker's job to enforce
+// uniqueness; transpiler emits positive-path only. Source-position
+// emit (DefHookDecl handler below) leaves a trace comment per
+// decl so multi-decl situations are visible in the output.
+//
+// Bare-value namespaces (Lazy@ etc. — values with no hook decl
+// in scope) reach this helper as plain Identifiers in stmts and
+// are skipped. They aren't namespaces until something declares
+// against them via DefHookDecl.
+// =============================================================
+
+var renderHookFunctionValue = (hookDecl, recur) => {
+	// DefHookDecl and an anonymous DefFuncExpr share the same
+	// body-emission contract: same paramSets, same preconditions,
+	// same `:over` / `:as` / body shape. Only the name slot
+	// differs — anonymous DefFuncExpr emits the arrow form
+	// `(...) => ...`, which is exactly what the namespace
+	// literal's `_at` / `_percent` property value needs.
+	//
+	// The hook decl's `name` field carries the NAMESPACE name
+	// (the dispatch handle), not a function name. Stripping it
+	// when synthesizing the alias DefFuncExpr produces the arrow
+	// emission. The marker is dispatched by hoistHooksFromStmts
+	// (routes "@" to `_at`, "%" to `_percent`) and not relevant
+	// at this layer.
+	var synthetic = {
+		type: "DefFuncExpr",
+		paramSets: hookDecl.paramSets,
+		body: hookDecl.body,
+	};
+	if (hookDecl.preconditions) synthetic.preconditions = hookDecl.preconditions;
+	if (hookDecl.over)          synthetic.over          = hookDecl.over;
+	if (hookDecl.as)            synthetic.as            = hookDecl.as;
+	return handlers.DefFuncExpr(synthetic, recur);
+};
+
+var hoistHooksFromStmts = (stmts, recur, declForm = "var") => {
+	// Walk stmts once at scope level — no recursion into nested
+	// blocks (each owns its own hoist pass). Group DefHookDecls
+	// by namespace name into { at?, percent? } entries; emit
+	// one namespace literal per group at scope top.
+	//
+	// declForm = "var" for function-scoped contexts (Program,
+	// IIFE-wrapped block expressions, function bodies — `var`
+	// hoists to the enclosing function and matches the existing
+	// `def x: ...` → `var x = ...` convention).
+	//
+	// declForm = "let" for true JS block scope — currently only
+	// DefBlockStmt's bare `{ ... }` form, where `var` would leak
+	// out of the user's intended Foi-scope. Hooks are emitted at
+	// the top of the block (first thing after `{`), so no TDZ
+	// references occur — every source-position reference within
+	// the block sees the namespace bound.
+	//
+	// `\n` separator between decls and trailing `\n` so callers
+	// can concat `hooks + body` directly and get a clean line
+	// break before the body. Empty stmts / no-DefHookDecl-in-
+	// stmts → "" (no trailing `\n`, caller's concat is a no-op).
+	var byName = new Map();
+	for (let s of stmts) {
+		if (s.type !== "DefHookDecl") continue;
+		let nsName = s.name.name;
+		let entry = byName.get(nsName);
+		if (!entry) {
+			entry = {};
+			byName.set(nsName, entry);
+		}
+		if (s.marker === "@")      entry.at      = s;
+		else if (s.marker === "%") entry.percent = s;
+	}
+	if (byName.size === 0) return "";
+	var out = "";
+	for (let [nsName, hooks] of byName) {
+		let props = [];
+		if (hooks.at) {
+			// Wrap the user's `_at` arrow so the return value is
+			// auto-tagged with `__ns: <namespace>`. The tag is what
+			// EffectorCallExpr's `%` dispatch reads to find the
+			// instance's owning namespace at runtime; without it,
+			// `instance % env` falls through to identity.
+			//
+			// Guard `!("__ns" in __r)` is structural — Maybe@
+			// returning Id._at(v) gets the inner Id-tag from Id's
+			// own wrapper, then the outer Maybe wrapper sees the
+			// tag is already there and skips. Cross-namespace
+			// delegation preserves the delegated namespace's
+			// identity for the resulting instance.
+			//
+			// `typeof __r === "object"` filters out primitive
+			// returns (`defn Foo@(x) ^x*2` returning a number)
+			// and function returns (multi-tier `@` hooks at
+			// intermediate tiers). Primitives flow untagged and
+			// fall through to identity on `%`. Multi-tier final
+			// tiers are NOT auto-tagged — the second call doesn't
+			// route through this wrapper. Known limitation; no
+			// multi-tier `@` hooks in current samples.
+			//
+			// `nsName` reference inside the inner arrow resolves
+			// at call time, by which point the `var <nsName> = ...`
+			// declaration (built right here) is fully bound. Safe
+			// for `var`-hoisted and `let` block-scoped namespaces
+			// alike — both are in scope by the time user code
+			// triggers `<ns>._at(...)`.
+			let inner = renderHookFunctionValue(hooks.at, recur);
+			let wrapped =
+				"((__inner) => (...__a) => { " +
+					"var __r = __inner(...__a); " +
+					"if (typeof __r === \"object\" && __r !== null && !(\"__ns\" in __r)) " +
+						"__r.__ns = " + nsName + "; " +
+					"return __r; " +
+				"})(" + inner + ")";
+			props.push("_at: " + wrapped);
+		}
+		if (hooks.percent) props.push("_percent: " + renderHookFunctionValue(hooks.percent, recur));
+		out += declForm + " " + nsName + " = { " + props.join(", ") + " };\n";
+	}
+	return out;
 };
 
 
@@ -811,8 +965,16 @@ var renderFuncBodyWithPrelude = (body, prelude, recur) => {
 		return "{ " + pre + "return " + recur(body.body) + "; }";
 	}
 	if (body.type === "FuncBodyBlock") {
+		// Destructure / precond prelude lands BEFORE the hook
+		// hoist — preludes bind function-param-derived names that
+		// hook bodies may close over (e.g. `defn outer(x) {
+		// defn Foo@(y) ^x + y; ^Foo@; }`). Hook decls are scope-
+		// peer with regular body stmts but their bodies execute
+		// at call time, so prelude visibility through closure is
+		// what matters; emit-order has prelude first.
+		var hooks = hoistHooksFromStmts(body.stmts, recur);
 		var inner = body.stmts.map(s => recur(s) + ";").join(" ");
-		return "{ " + pre + inner + " }";
+		return "{ " + pre + hooks + inner + " }";
 	}
 	return null;
 };
@@ -1545,8 +1707,14 @@ var handlers = {
 	// Pure list-of-statements. Each handler emits its content
 	// without a trailing `;`; Program appends `;\n` after every
 	// stmt to produce JS-conformant output.
+	//
+	// Hook hoist (DefHookDecls in node.stmts) prepends at module
+	// top via hoistHooksFromStmts — namespace literals are live
+	// from program entry regardless of source position. See the
+	// hoister docblock for the full design.
 	Program(node, recur) {
-		return node.stmts.map(s => recur(s) + ";\n").join("");
+		var hooks = hoistHooksFromStmts(node.stmts, recur);
+		return hooks + node.stmts.map(s => recur(s) + ";\n").join("");
 	},
 
 	Identifier: (n, r) => n.name,
@@ -1707,20 +1875,7 @@ var handlers = {
 	},
 
 	// =============================================================
-	// §7 CHAIN-FOLD: CALL + MEMBER ACCESS
-	// =============================================================
-
-	// ImpliedEmpty — synthetic node from PrefixCallSuffix's skip-
-	// position detection. Carries "implied empty value at this
-	// position" semantic. Lowers to JS `undefined` because JS
-	// default-arg semantics only fire on `undefined`, not on
-	// `null` (so `f(1, undefined, 3)` triggers position 1's default
-	// param the way Foi's `f(1, empty, 3)` would; `null` would
-	// pass through as a real null value).
-	ImpliedEmpty: () => "undefined",
-
-	// =============================================================
-	// §7 @ FAMILY — IdentityFunc / IdentityCallExpr / AtExpr / AtCallExpr
+	// §7 @ FAMILY — IdentityCallExpr / AtCallExpr
 	// =============================================================
 
 	// IdentityCallExpr { arg } — bare `@` applied to an argument.
@@ -1732,65 +1887,112 @@ var handlers = {
 	// evaluates to 42 — correct without a separate shortcut here.
 	IdentityCallExpr: (n, r) => r(n.arg),
 
-	// AtExpr { base } — `foo@`, `foo.bar@`, `Maybe@` as a
-	// function value (no application). The `@` sigil is sugar;
-	// the value is just the base. Lower by emitting the base.
-	AtExpr: (n, r) => r(n.base),
-
-	// AtCallExpr { callee, arg? } — user-callee `@`-form applied
-	// (or `None@` with no arg). Covers `Foo@ x`, `foo.bar@ x`,
-	// `foo @ x`, and `None@`. Callee is always an AtExpr; r(callee)
-	// emits the base via the AtExpr handler. Arg-absent `None@`
-	// lowers to `None()` (no-arg call — matches the unit-
-	// constructor convention).
+	// AtCallExpr { base, arg? } — user-rooted `@`-form applied
+	// (or no-payload form when arg absent). Covers `Foo@`,
+	// `Foo@x`, `foo @ x`, `foo.bar@ x`, `None@`, etc. `base` is
+	// the foldAccess chain of the source IdentBase + optional
+	// SingleAccessExpr — for `foo.bar@` it's the
+	// MemberAccessExpr{foo, .bar} fold, for `foo@` it's just the
+	// Identifier. r(base) handles both uniformly.
+	//
+	// Lowers to `<base>._at(<arg>)` (or `<base>._at()` when arg
+	// absent — the unit-constructor case). The `_at` property on
+	// the base resolves to the namespace's constructor hook,
+	// installed by DefHookDecl's pre-pass hoister (see
+	// hoistHooksFromStmts). `Foo.@` (AtRefExpr) extracts the
+	// same `_at` value as a function reference — `def ofId:
+	// Id.@; ofId(42)` and `Id@ 42` produce the same instance.
+	//
+	// Bare `Foo` is the namespace handle (non-callable per the
+	// language model); `Foo(x)` is a runtime TypeError, which
+	// matches the spec's "rejected for @-marked" framing — the
+	// JS runtime surfaces the rejection without transpile-time
+	// enforcement (semantic-checker territory).
+	//
+	// Built-ins (None, Just, Id, Left, Right, etc.) inherit the
+	// same convention — they live as `{ _at, _percent }` namespace
+	// literals in the runtime (when one exists). `None@` lowers
+	// to `None._at()`, `Just@ x` to `Just._at(x)`, etc.
 	//
 	// Bespoke `Done@` intercept (low-fidelity): `Done@ <expr>`
 	// lowers to the sentinel object `{__tag: "Done"}`, with the
 	// payload discarded. Used by ~each (and eventually other
-	// comprehensions) as the early-termination signal. Grammar
-	// requires a payload via AtCallExpr arm-2 (the no-payload
-	// form is reserved for `BuiltinNone @`); idiomatic spelling
-	// is `Done@ 1` or `Done@ empty`. The check inside ~each is
-	// `__result?.__tag === "Done"` — optional-chaining handles
-	// non-object results cleanly. Globally intercepted here
-	// rather than scoped to ~each context; outside ~each `Done@ x`
-	// just evaluates to the tagged object as a value.
+	// comprehensions) as the early-termination signal. The check
+	// inside ~each is `__result?.__tag === "Done"` —
+	// optional-chaining handles non-object results cleanly.
+	// Globally intercepted here rather than scoped to ~each
+	// context; outside ~each `Done@ x` just evaluates to the
+	// tagged object as a value. Intercept short-circuits before
+	// the `._at` lowering — `Done` doesn't need a runtime
+	// namespace stub.
 	AtCallExpr(n, r) {
-		if (n.callee?.type === "AtExpr" &&
-			n.callee.base?.type === "Identifier" &&
-			n.callee.base.name === "Done") {
+		if (n.base?.type === "Identifier" &&
+			n.base.name === "Done") {
 			return "({__tag: \"Done\"})";
 		}
-		return r(n.callee) + (n.arg == null ? "()" : "(" + r(n.arg) + ")");
+		return r(n.base) + "._at" + (n.arg == null ? "()" : "(" + r(n.arg) + ")");
 	},
+
+	// AtRefExpr { source } — marker-preserving function reference
+	// extraction via `.@` chain-tail. Source is the foldAccess
+	// chain of the preceding ChainExpr fold (Identifier /
+	// MemberAccessExpr / etc.). Lowers to `<source>._at` — direct
+	// property access producing the constructor function value.
+	//
+	// Pairs with AtCallExpr's `._at`-dispatch lowering: `Foo.@`
+	// and `Foo@` resolve to the same function (the former as a
+	// value, the latter applied). `def ofId: Id.@; ofId(42)`
+	// produces the same instance as `Id@ 42` — both routes
+	// terminate at `Id._at(42)` at the JS level.
+	//
+	// No call-suffix coupling at this site — the grammar's
+	// chain-terminator rule on `.@` blocks any adjacency call,
+	// access tail, or other modifier directly after. To use the
+	// extracted reference in a call, the user must parenthesize
+	// (`(Foo.@)(x)`), at which point GroupedExprNoBlock wraps
+	// the AtRefExpr and CallExpr's call suffix handles the
+	// application — both layers emit through their existing
+	// handlers, no special handling needed here.
+	AtRefExpr: (n, r) => r(n.source) + "._at",
 
 	// EffectorCallExpr { source, arg? } — the `%` effector applied
 	// to a chain-folded `source`, optionally with an argument.
 	//
-	// Bootstrap dispatch: if `source.run` is a function, call it
-	// (with `arg` if present); otherwise the effector is an identity
-	// no-op and `source` is returned unchanged. This carries the
-	// Lazy@ semantic (bare values have no hook, so `x%` ≡ `x`)
-	// alongside the IO semantic (instances carry `.run`, so `task%`
-	// fires the effect).
+	// Dispatch routes through the source's `__ns._percent` hook —
+	// the `__ns` tag is auto-attached by the constructor hook's
+	// wrapper at instance creation (see hoistHooksFromStmts's `_at`
+	// wrap). `<ns>._percent` is the effect handler installed by
+	// `defn <ns>%(self, env) ^...;`; it receives the instance as
+	// `self` (always) and the operand as `env` (when present).
 	//
-	// Single-eval discipline: both source and (when present) arg
-	// must evaluate exactly once. The naive `src?.run ? src.run(arg)
+	// Sources without `__ns._percent` fall through to identity
+	// return — `x%` on a bare number is `x`. This carries the
+	// Lazy@ semantic alongside instance-with-effect semantic in
+	// one runtime check.
+	//
+	// `typeof __src?.__ns?._percent === "function"` guards null/
+	// undefined sources (optional chaining on both `__ns` and
+	// `_percent`) AND non-function `_percent` properties. Falling
+	// through to identity rather than throwing TypeError matches
+	// the bootstrap's positive-path-only stance — `%` on a
+	// non-hooked source is well-defined as identity, not an
+	// error.
+	//
+	// Single-eval discipline: source must evaluate exactly once.
+	// The naive `src?.__ns?._percent ? src.__ns._percent(src, arg)
 	// : src` form evaluates `src` three times — fine for bare
 	// identifiers, broken for call-bearing chains like
 	// `processFile("f.txt")%` (would invoke processFile 3×). IIFE
 	// wrap binds `__src` (and `__arg` in the binary form) once,
-	// dispatches without re-evaluation.
-	//
-	// `typeof __src?.run === "function"` rather than `__src?.run`
-	// alone: guards against non-function `.run` properties, which
-	// would otherwise raise TypeError("not a function") at the
-	// call site rather than falling through to identity. Optional
-	// chaining handles null / undefined sources gracefully.
+	// dispatches without re-evaluation. The `_percent` lookup
+	// `__src.__ns._percent` evaluates twice in the typeof/call
+	// sequence but is pure property access on already-bound `__src`,
+	// so no observable side effect duplication.
 	//
 	// Two-branch emission keeps the arg-absent shape clean
-	// (`__src.run()` not `__src.run(undefined)`) — matches the
-	// AtCallExpr `None@` convention for no-arg unit dispatch.
+	// (`_percent(__src)` not `_percent(__src, undefined)`) — the
+	// `_percent` hook author can rely on `arguments.length` /
+	// `env === undefined` discriminating bare vs binary form.
 	//
 	// Source is always a ChainExpr-fold result (Identifier / CallExpr
 	// / MemberAccessExpr / IndexAccessExpr / PrimedExpr / etc.) or a
@@ -1799,10 +2001,10 @@ var handlers = {
 	EffectorCallExpr(n, r) {
 		var src = r(n.source);
 		if (n.arg == null) {
-			return "((__src) => typeof __src?.run === \"function\" ? __src.run() : __src)(" + src + ")";
+			return "((__src) => typeof __src?.__ns?._percent === \"function\" ? __src.__ns._percent(__src) : __src)(" + src + ")";
 		}
 		var argEmit = r(n.arg);
-		return "((__src, __arg) => typeof __src?.run === \"function\" ? __src.run(__arg) : __src)(" + src + ", " + argEmit + ")";
+		return "((__src, __arg) => typeof __src?.__ns?._percent === \"function\" ? __src.__ns._percent(__src, __arg) : __src)(" + src + ", " + argEmit + ")";
 	},
 
 	// CallExpr { callee, args }. PrefixCallSuffix is the source
@@ -2467,7 +2669,7 @@ var handlers = {
 		// operator's LHS-presence dispatch:
 		//   0 args → null (empty)
 		//   1 arg  → identity (returns the arg)
-		//   2 args → invoke arg[0] against arg[1]
+		//   2 args → dispatch into callee's `_at` hook
 		//   3+     → undefined behavior (spec: arity error;
 		//            transpiler emits no enforcement — type checker
 		//            handles statically. Positive-path lowering
@@ -2475,21 +2677,36 @@ var handlers = {
 		//
 		// Primed (`(@')`):
 		//   1 arg  → identity (single-arg reversal is a no-op)
-		//   2 args → invoke arg[1] against arg[0] (swap)
+		//   2 args → dispatch into arg[1]'s `_at` hook with arg[0]
 		//
-		// The @-marker contract on the callee is a static
-		// property; not enforced at runtime by the bootstrap.
+		// 2-arg dispatch reaches through `_at` rather than calling
+		// the namespace directly — namespaces are non-callable
+		// literals (`{ _at, _percent, ... }`). `(@)(Foo, 5)` is
+		// `Foo._at(5)`, semantically equivalent to `Foo@5`. The
+		// `_at`-dispatch convention is uniform across AtCallExpr,
+		// AtRefExpr, and this op-as-function form — see AtCallExpr
+		// docblock for the broader model.
+		//
+		// 1-arg identity is NOT dispatch — `(@)(Foo)` returns the
+		// namespace handle unchanged. Auto-dispatch on 1-arg would
+		// collide with the identity semantic memory #5 locked.
+		//
+		// The @-marker contract on the callee is a static property;
+		// not enforced at runtime by the bootstrap. `(@)(<non-ns>, x)`
+		// produces a TypeError at runtime (no `_at` on non-namespace
+		// values), matching the spec's "rejected at non-marked
+		// callee" framing.
 		if (node.op === "@") {
 			if (node.primed) {
 				return "((...__a) => " +
 					"__a.length === 0 ? null : " +
 					"__a.length === 1 ? __a[0] : " +
-					"__a[1](__a[0]))";
+					"__a[1]._at(__a[0]))";
 			}
 			return "((...__a) => " +
 				"__a.length === 0 ? null : " +
 				"__a.length === 1 ? __a[0] : " +
-				"__a[0](__a[1]))";
+				"__a[0]._at(__a[1]))";
 		}
 
 		// ([])(obj, i) → obj[i]. Strict 2-ary; primed swaps args.
@@ -2736,21 +2953,23 @@ var handlers = {
 		}
 		// (%) / (%') — effector op-as-function. Variadic 1-or-2-arg
 		// shape mirrors EffectorCallExpr's direct lowering: source
-		// (first arg, or second under prime) is .run-dispatched if
-		// the hook exists; otherwise identity-returned. The runtime
-		// `__arg !== undefined` branch picks `.run()` vs `.run(arg)`
-		// so the bare-form call site `(%)(src)` lowers to the same
-		// `src.run()` shape that `src%` would, no spurious undefined
-		// arg threaded through.
+		// (first arg, or second under prime) dispatches through
+		// `__ns._percent` if the namespace hook chain exists;
+		// otherwise identity-returned. The runtime `__arg !==
+		// undefined` branch picks `_percent(__src)` vs
+		// `_percent(__src, __arg)`, so the bare-form call site
+		// `(%)(src)` lowers to the same single-arg shape `src%`
+		// would, no spurious undefined arg threaded through.
 		//
-		// `typeof __src?.run === "function"` guards null / undefined
-		// sources AND non-function `.run` properties — same shape
-		// as EffectorCallExpr's hook check.
+		// `typeof __src?.__ns?._percent === "function"` guards
+		// null / undefined sources, missing `__ns` tags (bare
+		// values, Lazy@-style sources), AND non-function `_percent`
+		// — same shape as EffectorCallExpr's hook check.
 		if (meta.kind === "effector") {
 			var p1 = node.primed ? "__arg" : "__src";
 			var p2 = node.primed ? "__src" : "__arg";
-			return "((" + p1 + ", " + p2 + ") => typeof __src?.run === \"function\" " +
-				"? (__arg !== undefined ? __src.run(__arg) : __src.run()) " +
+			return "((" + p1 + ", " + p2 + ") => typeof __src?.__ns?._percent === \"function\" " +
+				"? (__arg !== undefined ? __src.__ns._percent(__src, __arg) : __src.__ns._percent(__src)) " +
 				": __src)";
 		}
 		return fallback(node);
@@ -3008,7 +3227,12 @@ var handlers = {
 			return fallback(node);
 		}
 		var defs = defParts.join(" ");
-		var body = emitBlockBody(node.body.stmts, recur, false);
+		// declForm: "let" so hook hoists are block-scoped to this
+		// bare `{ ... }` rather than function-scoped (the `var`
+		// default would leak hooks out of the user's intended
+		// `def (...) { ... };` scope). Per-entry user defs above
+		// already use `let` for the same reason.
+		var body = emitBlockBody(node.body.stmts, recur, false, "let");
 		return "{ " + defs + (body ? " " + body : "") + " }";
 	},
 
@@ -3207,6 +3431,31 @@ var handlers = {
 		return "(" + outerTier.jsParams + ") => " + chain;
 	},
 
+	// DefHookDecl { name, marker, paramSets, preconditions?,
+	// over?, as?, body } — `defn Foo@(...)` / `defn Foo%(...)`.
+	// Statement-only at the grammar layer; source-position emit
+	// is a marker comment for trace. The actual lowering is owned
+	// by hoistHooksFromStmts, called at every enclosing-scope
+	// boundary that reaches the decl (Program, BareBlockExpr,
+	// BlockExpr body, DefBlockStmt body, FuncBodyBlock — see
+	// hoistHooksFromStmts call sites).
+	//
+	// Hoisting (not in-place emission) is necessary because the
+	// namespace literal must exist from scope entry — refs to
+	// `Foo` anywhere in the scope (including stmts BEFORE the
+	// DefHookDecl in source order) need the binding live. The
+	// pre-pass emits `var Foo = { _at, _percent };` at scope
+	// top; this source-position emit leaves the trace comment.
+	//
+	// Trailing `;` from the enclosing stmt-list emitter follows
+	// the comment naturally and is a harmless empty statement.
+	// emitBlockBody's return-injection rule skips DefHookDecl
+	// (matching its DefVarStmt skip) so the last-stmt position
+	// doesn't synthesize a `return /* hoisted */;`.
+	DefHookDecl(n, r) {
+		return "/* " + n.name.name + n.marker + " hoisted */";
+	},
+
 	// ParameterList { params: [VarDefInitOpt, ...] }. Joins the
 	// rendered params with `, ` — same shape JS expects between
 	// formal parameter declarations. An empty-paren synthetic
@@ -3238,9 +3487,18 @@ var handlers = {
 	// the function value as JS undefined. Whether Foi's settled
 	// semantic for the no-^ case is undefined / empty / something
 	// else is a downstream interpreter question.
+	//
+	// Hook hoist (DefHookDecls in node.stmts) prepends inside
+	// the brace at function-body top. Function body is a scope
+	// in the Foi sense; namespace declarations within reach from
+	// every position of the body. Reached via this handler when
+	// the function has no destructure / precond prelude; the
+	// with-prelude path goes through renderFuncBodyWithPrelude
+	// (which carries its own hoist call).
 	FuncBodyBlock(node, recur) {
+		var hooks = hoistHooksFromStmts(node.stmts, recur);
 		var body = node.stmts.map(s => recur(s) + ";").join(" ");
-		return "{ " + body + " }";
+		return "{ " + hooks + body + " }";
 	},
 
 	// FuncBodyExpr { body } — `^expr` shorthand form. Single-

@@ -48,6 +48,8 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Function Overs](#function-overs)
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
+    - [`@`-suffix (At) Functions](#--suffix-at-functions)
+    - [`%`-suffix (Percent) Functions](#--suffix-percent-functions)
 * [Base Unit Functions](#base-unit-functions)
     - [Value Identity Function](#value-identity-function)
     - [Null-Application Function](#null-application-function)
@@ -2139,11 +2141,92 @@ compute(11);    // 18
 
 The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
 
+### `@`-Suffix (At) Functions
+
+If you declare a function with a `@` suffix on its name (declaration form only), it's referred to as a "unit constructor":
+
+```java
+defn Double@(x: 0) ^x * 2;
+```
+
+The `@` must appear in the name (`Double@` above) with no space in it; there can be optional whitespace after the `@` before the parameter list (`(x: 0)` above).
+
+**NOTE:** This is how various built-ins you've already seen in this guide, such as `Lazy@`, `Left@`, etc, are all declared.
+
+This form of function declaration must include zero or one parameter (which may optionally have a default) for the first parameter set; the `*args` gather parameter form is not allowed for that parameter set.
+
+The declaration above reserves `Double` as a lexical namespace name in that scope. No other `def` or `defn` (in that scope) may bind `Double` (bare) or `Double@`.
+
+However, bare `Double` is not a reference to the function. To reference the function itself (for assignment, passing as a callback, etc), use the special `Double.@` form:
+
+```js
+def doub: Double.@;
+
+doub;                   // defn Double@(...
+```
+
+#### At-Call Expression
+
+Functions of this form are opted (exclusively) into alternate parentheses-free call syntax, with the `@` call operator:
+
+```java
+def v: Double@ 21;      // 42 -- instead of Double(21)
+
+def zero: Double@;      // 0
+```
+
+**TIP:** Conceptually, you may think of `defn Double@(..) { .. }` as creating a "type namespace" `Double` with a property on it called `@`; that's why `Double.@` references the function itself without an invocation. And the `Double@ 21` / `doub@ 21` call forms are dispatching to that `Double.@` function.
+
+If the `@` function call passes no argument, as in `def zero: Double@;`, a default `empty` is passed; the parameter's default expression, if any, will thus be resolved (as above).
+
+The `@` call form allows *optional* whitespace on either side of the `@`, so `Double@21`, `Double @ 21`, `Double@ 21` and `Double @21` are all valid, stylistically varied call forms (as are `Double@` and `Double @` for the zero-arg form).
+
+----
+
+`@` is an operator, so it can also be invoked in the operator-function form, as well, taking a callee ("type namespace") and an argument:
+
+```java
+(@)(Double,21);         // 42
+
+(@)(Double,,);          // 0 -- the ,, skips the second argument
+```
+
+**TIP:** The `,,` on the second call above is necessary here -- or alternately, `,empty` -- as it forces invocation of the two-argument form of the `@` operator function, with the second argument just `empty`. Omitting a second argument entirely (i.e., `(@)(42)`) assumes the one-argument form of `@`, which assumes *no callee* to invoke. That may seem like a contradiction -- invoking a callee when there is no callee -- but, since there's nothing to call, the expression `(@)(42)` is just a no-op passthrough that resolves to the `42` value itself. We'll revisit this again shortly, in "Value Identity Function".
+
+### `%`-Suffix (Percent) Functions
+
+A similar special suffix function declaration form uses `%`:
+
+```java
+defn Runner@(fn) ^< :fn >;
+
+defn Runner%(dInst,arg) ^dInst.fn(arg);
+```
+
+The `defn ...%` form *must* be accompanied in the same scope with a `defn ...@` of the same name.
+
+This opts *instances* constructed by the `Runner@` unit constructor into a dispatch by the special `%` effector call-operator, to this function (passing the instance and, optionally any argument):
+
+```java
+def greet: Runner@ (
+    defn(name) ^log(`"Hello, `name`!")
+);
+
+greet% "friend";            // Hello, friend!
+
+// instead of:
+greet.fn("friend");         // Hello, friend!
+```
+
+`greet` is an instance of the `Runner@` unit constructor, and `Runner` "type namespace" also has the `%` effector dispatch defined. So `greet% "friend"` invokes that `Runner%(dInst,arg)` function, passing `greet` and `"friend"` as its arguments, respectively.
+
+You will most commonly use this form of effector `%` dispatch paired with deferred monadic types like `IO`, `State`, etc.
+
 ## Base Unit Functions
 
-A unit function, also known as a unit constructor, is a utility for "constructing" a value. There are two helpful utility unit functions that are nearly ubiquitous in FP programs.
+In the previous couple of sections, we covered the `@`-suffixed "unit constructor" functions.
 
-**Foi** provides both of these unit function utilities built-in.
+In addition to `Lazy@`, `Left@`, and others you've already seen, **Foi** provides two very common/helpful base unit constructor function utilities built in.
 
 ### Value Identity Function
 
@@ -2155,34 +2238,45 @@ defn identity(v) ^v;
 identity(42);       // 42
 ```
 
-However, this utility is so commonly needed that **Foi** provides it built-in, as well as its `@` shorthand:
+However, this utility is so commonly needed that **Foi** provides it built-in, as a `@` shorthand identity function:
 
 ```java
-Value@42;           // 42
-Value@ 42;          // 42
-Value@(42);         // 42
-
 @42;                // 42
 @ 42;               // 42
 @(42);              // 42
 ```
 
-Both `Value@` and the abbreviated `@` are defined as the identity function. They are interchangeable, so the choice between them is primarily a readability/style preference.
+**NOTE:** The bare `@` function can be used in a call-expression, as above, but it cannot be used as a standalone reference to that utility function itself; `def iden: @;` would be illegal. However, assuming you know only one value will ever be passed to it, you *can* get a close-approximation by referencing the `@` operator-function; for example, `def identity: (@)`, or passing it as a callback like `xs ~map (@)`.
 
-Additionally, as shown, **Foi** provides a shorthand when a single-argument function name ends in `@`; its argument can be applied without surrounding `(    )`, with or without whitespace between `@` and the argument, saving 1-2 characters.
+----
 
-**Note:** For readability/operator-precedence sake, you may still optionally use the `(    )` around the argument; it's technically treated as an expression grouping rather than part of the required prefix function invocation syntax.
+Recall from a few sections ago, the discussion of the single-argument form of the `@` operator-function form, as in:
+
+```java
+(@)(42);            // 42
+```
+
+Given the obvious conceptual connection here -- compare to the previous snippet forms like `@(42)`, etc -- **Foi** allows that bare `@` identity function in a call-expression (only), as terser alias for the one-argument `(@)(..)` operator-function usage. Thus, `@42` is valid and available. These are technically different mechanisms, but yield the same outcome.
+
+Conceptually, it's as if `@` identity function is defined as:
+
+```java
+// not actually!
+defn @(v) ^(@)(v);
+```
+
+----
 
 Here's an example of how you might use the identity unit function:
 
 ```java
-defn formatRecord(record,formatFn: @) {
+defn formatRecord(record,formatFn: (@)) {
     // ..
     ^formatFn(record);
 };
 ```
 
-The `@` serves as a default pass-through function here.
+The `(@)` operator-function serves as a default pass-through function here, presuming only one argument will be passed to it.
 
 ### Null-Application Function
 
@@ -2748,10 +2842,10 @@ def g: Id@ 42;
 m ?= g;                 // true
 ```
 
-For any monadic value besides instances of `None`, if `@` is partially applied with a monad type, you get a regular factory function for constructing that specific monad instance:
+To get a reference to the factory function for constructing a specific monad instance, use `.@`:
 
 ```java
-def ofId: Id@;
+def ofId: Id.@;
 
 ofId(42);               // Id{42}
 ```
@@ -2772,8 +2866,6 @@ m ~map double;                  // Id{42}
 m ~map (v) { v * 2; };          // Id{42}
 ```
 
-**Note:** Unless the *range* is a [`List` monad](#list-monad), the *iteration* for monadic `~map` will always be provided the instance's single held value as argument; for list (Tuple) and the `List` monad, the *iteration* is provided both value and index arguments.
-
 ----
 
 Comprehension operations for `None` are all no-ops, meaning they do nothing but simply return the same `None` value again:
@@ -2781,7 +2873,7 @@ Comprehension operations for `None` are all no-ops, meaning they do nothing but 
 ```java
 defn double(v) ^v * 2;
 
-Id@ 21 ~map double;     // 42
+Id@ 21 ~map double;     // Id{42}
 None@ ~map double;      // None
 ```
 
@@ -2796,10 +2888,10 @@ defn double(v) ^v * 2;
 
 def m: Id@ 21;
 
-m ~bind (double +> Id@);        // Id{42}
-m ~flatMap (double +> Id@);     // Id{42}
-m ~chain (double +> Id@);       // Id{42}
-m ~< (double +> Id@);           // Id{42}
+m ~bind (double +> Id.@);        // Id{42}
+m ~flatMap (double +> Id.@);     // Id{42}
+m ~chain (double +> Id.@);       // Id{42}
+m ~< (double +> Id.@);           // Id{42}
 ```
 
 **Note:** As shown, for convenience/familiarity sake, `~flatMap`, `~chain` and `~<` are all aliases for the `~bind` comprehension. All 4 are interchangeable, but for brevity sake, `~<` is generally most preferable.
@@ -2820,7 +2912,7 @@ For formality sake, here are the 3 monad laws demonstrated, using the `Id` monad
 2. **Right Identity:**
 
     ```java
-    Id@ 42 ~< Id@;
+    Id@ 42 ~< Id.@;
     // Id{42}
     ```
 
@@ -2919,7 +3011,7 @@ Non-monadic-returning functions can also be composed with the intended unit cons
 
 ```java
 defn inc(v) ^v + 1;
-def incM: inc +> Id@;
+def incM: inc +> Id.@;
 
 incM(3);                // Id{4}
 ```
@@ -2973,7 +3065,7 @@ List@ 41 ~< incM;
 // < 42 >
 
 // (2) Right Identity:
-List@ 42 ~< List@;
+List@ 42 ~< List.@;
 // < 42 >
 
 // (3) Associativity:
@@ -3001,46 +3093,30 @@ None@;                  // None
 
 But that's not particularly useful or interesting: we could already select `Id` or `None` explicitly.
 
-A special `Maybe._` constructor (not the main unit constructor) inspects the provided value and selects `None` when it encounters the `empty` value, and `Id` for any other value:
+A special `MaybeFrom@` constructor (not the main unit constructor) inspects the provided value and selects `None` when it encounters the `empty` value, and `Id` for any other value:
 
 ```java
-Maybe._(42);            // Id{42}
-Maybe._(empty);         // None
+MaybeFrom@ 42;            // Id{42}
+MaybeFrom@ empty;         // None
 ```
 
-For syntactic consistency, you can still use the `@` form:
+Instead of using `MaybeFrom@`, you can define custom constructor functions that select `None` or `Id` for various values:
 
 ```java
-Maybe._ @ 42;           // Id{42}
-Maybe._ @ empty;        // None
-```
-
-For further convenience, you may choose to do this:
-
-```java
-def May: Maybe._@;
-
-May(42);                // Id{42}
-May(empty);             // None
-May@ 42;                // Id{42}
-May@ empty;             // None
-```
-
-Instead of using `Maybe._`, you can define custom constructor functions that select `None` or `Id` for various values:
-
-```java
-defn nonZero(v)
+defn nonZero@(v)
     ?[v ?= 0]: None@
     ^Id@ v;
 
-def qty: nonZero(0);            // None
+def qty: nonZero@ 0;            // None
 def cost: nonZero@ 1.99;        // Id{1.99}
 ```
+
+**NOTE:** The `@` suffix in `defn nonZero@` is *required* to opt the function into `@` call syntax like `nonZero@ 1.99`. If you left the `@` off the definition, then the calls must look like `nonZero(0)` and `nonZero(1.99)`, respectively.
 
 One common idiom where `Maybe` is used is conditional property access:
 
 ```java
-defn prop(name)(obj) ^Maybe._ @ obj[name];
+defn prop(name)(obj) ^MaybeFrom@ obj[name];
 
 def order: Id@ <
     shippingAddress: <
@@ -3075,7 +3151,6 @@ Maybe ~<< {
 };
 // Street: 123 Easy St
 
-
 Maybe ~<< {
     def billAddr:: prop("billingAddress",order);
     def street:: prop("street",billAddr);
@@ -3098,15 +3173,15 @@ For a monadic value *range*, the `~fold` / `~cata` comprehensions require multip
 
 The difference between monadic `~fold` and `~cata` is with the *default iteration* operand. For `~fold`, this operand is an already computed *default-value*, whereas for `~cata` it's a function that computes a value. In either case, this operand is evaluated/used when the first/left-most component of the Sum type is encountered.
 
-Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"defaultMsg`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `@`s below) is invoked.
+Let's consider a binary Sum type like `Maybe` (comprised of `None` and `Id`), which thus requires a *range* expression and **two** *iteration* expressions. For `None`, the *default iteration* expression (second operand, `"defaultMsg`s below) is evaluated; for `Id`, the *alternate iteration* expression (third operand, `(@)`s below) is invoked.
 
 For example:
 
 ```java
 def defaultMsg: (@)|"Default!"|;
 
-def m: Maybe._@ 42;                 // Id{42}
-def g: Maybe._@ empty;              // None
+def m: MaybeFrom@ 42;                 // Id{42}
+def g: MaybeFrom@ empty;              // None
 
 (~fold)(m, defaultMsg(), (@));        // 42
 (~cata)(g, defaultMsg,   (@));        // Default!
@@ -3125,7 +3200,7 @@ defn two() ^2;
 defn mult(x,y) ^x * y;
 
 def list: < 1, 3, 7 >;
-def m: Maybe._ @ 42;
+def m: MaybeFrom@ 42;
 
 (~fold)(list,  two(), mult);    // 42
 
@@ -3171,20 +3246,20 @@ defn halve(v)
 
 // natural transformation utilities
 defn maybeFromEither(e)
-    ^(~fold)(e, None@, Id@);
+    ^(~fold)(e, None.@, Id.@);
 defn eitherFromMaybe(m)
-    ^(~fold)(m, Left@ "Missing!", Right@);
+    ^(~fold)(m, Left@|"Missing!"|, Right.@);
 
-def m1: halve(0) #> maybeFromEither;    // None
-def m2: halve(4) #> maybeFromEither;    // Id{2}
+def m1: halve(0) #> maybeFromEither;      // None
+def m2: halve(4) #> maybeFromEither;      // Id{2}
 
-(~cata)(eitherFromMaybe(m1), @, @);     // "Missing!"
-(~cata)(eitherFromMaybe(m2), @, @);     // 2
+(~cata)(eitherFromMaybe(m1), (@), (@) );  // "Missing!"
+(~cata)(eitherFromMaybe(m2), (@), (@) );  // 2
 ```
 
 Above, `halve(0)` returns a `Left` holding the error message, which we then transform to a `None` with the `maybeFromEither()` utility. `halve(4)` produces a `Right{2}`, which is transformed to `Id{2}`.
 
-Then, for `m1` and `m2` instances, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. We fold the resulting `Either` instances, extracting the values `"Missing!"` and `2`, respectively.
+Then, for `m1` and `m2` instances, we perform a *natural* transformation back to `Either`, with the `eitherFromMaybe()` utility. We fold the resulting `Either` instances, extracting the values (via `(@)` identity function): `"Missing!"` and `2`, respectively.
 
 ## Broader Category Theory Capabilities
 
@@ -3321,7 +3396,7 @@ For the list (Tuple) `~fold` comprehension, recall that:
 Thankfully, this familiar behavior is defined the same for `~foldMap`. Thus, if the list (Tuple) only has one element, the "empty value" of a monoid (`""` below) is a useful candidate to provide as the *default-value*, to ensure a *fold* actually occurs:
 
 ```java
-(~foldMap)(< "Hello" >, "", Id@);
+(~foldMap)(< "Hello" >, "", Id.@);
 // Id{"Hello"}
 ```
 
@@ -3457,7 +3532,7 @@ defn getCacheData(key)
 
 getCacheData("customers")
 ~< (resE) {
-    (~cata)(resE, fetchCustomers, Promise@);
+    (~cata)(resE, fetchCustomers, Promise.@);
 }
 ~map printRecords;
 // Promise{..pending..}
@@ -3475,7 +3550,7 @@ Instead of constructing multi-step `~<` / `~map` chains, `Promise` also supports
 Promise ~<< {
     def resE:: getCacheData("customers");
     def customers:: (~cata)(
-        resE, fetchCustomers, Promise@
+        resE, fetchCustomers, Promise.@
     );
     printRecords(customers);
 };
@@ -4188,7 +4263,7 @@ For deferred monad types like `IO` and `State`, `%` is the paren-free unary effe
 When you simply want to hold a value in an `IO` instance, instead of providing a function that only returns the value, we can use a special unit constructor as a shortcut:
 
 ```java
-def specialNumber: IO._@ 42;
+def specialNumber: IO_@ 42;
 
 specialNumber%;        // 42
 ```
@@ -4203,7 +4278,7 @@ defn finish(v) {
     ^incIO(v);
 };
 
-def num: IO._@ 21;
+def num: IO_@ 21;
 
 def task: num
     ~map doubleIO
@@ -4274,7 +4349,7 @@ Inside a `~<` chain step, the carried Reader value can be *accessed* as so:
 
 ```java
 def task:
-    IO._@ 42
+    IO_@ 42
     ~< (v) {
         IO@ (defn(env){
             log(`"Value: `v`, Env.x: `env.x`");
@@ -4288,10 +4363,10 @@ task % < x: 3 >;
 This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extract* the Reader value:
 
 ```java
-// Recall: Value@ and @ are the identity function
-defn getEnv() ^IO @(Value@);
+// Recall: the inner @ in (@) is the identity function
+defn getEnv() ^IO@ (@);
 
-def fortyTwo: IO._@ 42;
+def fortyTwo: IO_@ 42;
 
 def task: IO ~<< {
     def v:: fortyTwo;
@@ -4306,7 +4381,7 @@ task % < x: 3 >;
 In fact, this is even cleaner:
 
 ```java
-def fortyTwo: IO._@ 42;
+def fortyTwo: IO_@ 42;
 
 def task: IO ~<< (env, v:: fortyTwo) {
     log(`"Value: `v`, Env.x: `env.x`");
@@ -4347,7 +4422,7 @@ That's basically the `Promise ~<< {    }` behavior combined automatically into `
 If an `IO` instance holds a `Promise` instance, that's unwrapped automatically:
 
 ```java
-defn readValue() ^IO._@ (Promise@ 42);
+defn readValue() ^IO_@ (Promise@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -4365,7 +4440,7 @@ task%;
 Even in the inverse scenario -- where a `Promise` instance holds an `IO` instance -- the transformation still occurs:
 
 ```java
-defn readValue() ^Promise@ (IO._@ 42);
+defn readValue() ^Promise@ (IO_@ 42);
 defn printValue(v) ^IO@ (defn(){
     log(`"Value: `v`");
 });
@@ -4392,7 +4467,7 @@ defn printValue(v) ^IO@ (defn(){
 
 def task: IO ~<< {
     def ev:: getValue();
-    ::(~cata)(ev, IO._@, printValue);
+    ::(~cata)(ev, IO_.@, printValue);
 };
 
 task%;
