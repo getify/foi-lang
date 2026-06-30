@@ -1482,7 +1482,46 @@ The required name (`add`) is bound in the enclosing scope as a structurally cons
 
 A declaration `defn` is a statement, not an expression: it cannot appear in operand position. To produce a function value at expression position with the binding effect, use a `def`-binding with a named-expression form (§3.1.2).
 
-**NOTE:** If a `defn` declaration includes a single `@` symbol as suffix on its name (no whitespace between), it *marks* the function (§3.8.2) to opt-into the special `@`-Call syntax (§3.8). The `@` is not part of the bound name, but does require the function to be invoked only with that call syntax. Also, it requires the function to define zero or one parameter (variadic'ness with `*` gather parameter forbidden).
+##### 3.1.1.1 `@`-Suffix Declaration Form
+
+A function literal may declare itself with a `@` marker at the end of its name:
+
+```java
+defn None@() ^empty;
+defn Id@(v) ^v;
+defn Value@(v) ^v;
+```
+
+The `@` marker is **not part of the function's name as a binding**; `Value` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Value` and `Value@` cannot coexist as separate bindings in the same scope.
+
+`@`-marked functions may only have zero parameters, or one parameter; that single parameter (if any) may *not* be a gather parameter.
+
+The marker opts the function value into the `@`-call operator at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
+
+Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
+
+```java
+Value@42;        // call: passes 42
+Value @ 42;
+Value@ 42;
+Value @42;
+Value@(42);      // ( ) is expression grouping, not arg list
+```
+
+A function defined *without* the `@` marker cannot be invoked via the `@`-call operator; `regular@x` is a semantic error against a `regular` that was not declared `@`-callable. The marker is the function value's opt-in.
+
+##### 3.1.1.2 `%`-Suffix Declaration Form
+
+A function literal may declare itself with a `%` marker at the end of its name:
+
+```java
+// pre-requisite:
+defn Task@(fn) ^< :fn >;
+
+defn Task%(tInst,env) ^tInst.fn(env);
+```
+
+// TODO
 
 #### §3.1.2 Named Expression Form
 
@@ -1537,7 +1576,7 @@ A parameter entry may take one of the following shapes:
 defn add(x, y) ^x + y;
 ```
 
-At call time, the parameter list opens a fresh frame (§2.11); each identifier parameter is bound to one positional argument value from the call site, by source position. If the call omits an argument at that position, the parameter is bound to `empty` (§1.1, §3.9.1).
+At call time, the parameter list opens a fresh frame (§2.11); each identifier parameter is bound to one positional argument value from the call site, by source position. If the call omits an argument at that position, the parameter is bound to `empty` (§1.1, §3.10.1).
 
 #### §3.2.2 Default Parameter Values
 
@@ -1638,7 +1677,7 @@ defn buildURL(origin) ^defn(path) ^defn(query)
 2. Each successive call accumulates bindings until the innermost tier is called.
 3. After the innermost call, the body executes in the accumulated frame.
 
-A curried `defn` will not automatically "spread" a call with multiple arguments across the separate curried calls. To call a multi-tier function with a single multi-argument list, uncurry it at the call site with the `\/` uncurry operator (§3.11.3):
+A curried `defn` will not automatically "spread" a call with multiple arguments across the separate curried calls. To call a multi-tier function with a single multi-argument list, uncurry it at the call site with the `\/` uncurry operator (§3.12.3):
 
 ```java
 buildURL\/("https://my.site", "/api/find", "name=getify");
@@ -1680,7 +1719,7 @@ defn process(v) {
 1. Allocate the body's frame (parent: the call frame; see §2.9.1).
 2. Evaluate each statement in source order.
 3. If a `^expr;` statement executes, evaluate `expr` and immediately return that value as the function's return value.
-4. If the block completes without executing any `^`, the function returns `empty` (§3.9.9).
+4. If the block completes without executing any `^`, the function returns `empty` (§3.10.9).
 
 **Single-`^` Rule:** A block body may contain **at most one** `^` return statement, and if present it must be the body's final statement (aside from `defn` function declaration statements. Multiple exit values are expressed by placing a pattern match or guard inside that single `^`:
 
@@ -1965,7 +2004,7 @@ To reference the `@` operator as a first-class function value, use the standard 
     (@)(7);       // 7
     ```
 
-- **2-arg:** treats the first argument as a callee (must have been opted into the `@`-call syntax; §3.8.2) and the second as the call-time argument; semantically equivalent to invoking the first against the second.
+- **2-arg:** treats the first argument as a callee (must have been opted into the `@`-call syntax; §3.1.1.1) and the second as the call-time argument; semantically equivalent to invoking the first against the second.
 
     ```java
     // assumes:
@@ -1978,33 +2017,7 @@ The `@` operator returns a runtime error if called with 3+ arguments.
 
 The prime form `(@')` reverses argument order for the 2-argument arity: swaps to `(arg, callee)` order -- semantically equivalent to invoking the second against the first.
 
-#### §3.8.2 `@` Suffix In Function Declaration Name
-
-A function literal may declare itself with an `@` marker at the end of its name:
-
-```java
-defn None@() ^empty;
-defn Id@(v) ^v;
-defn Value@(v) ^v;
-```
-
-The `@` marker is **not part of the function's name as a binding**; `Value` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Value` and `Value@` cannot coexist as separate bindings in the same scope.
-
-The marker opts the function value into the `@`-call operator at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
-
-Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
-
-```java
-Value@42;        // call: passes 42
-Value @ 42;
-Value@ 42;
-Value @42;
-Value@(42);      // ( ) is expression grouping, not arg list
-```
-
-A function defined without the `@` marker cannot be invoked via the `@`-call operator; `regular@x` is a semantic error against a `regular` that was not declared `@`-callable. The marker is the function value's opt-in.
-
-#### §3.8.3 Reference vs. Call Semantics For `@`-Marked Functions
+#### §3.8.2 Reference vs. Call Semantics For `@`-Marked Functions
 
 The argument-trail expectation differs by the function's declared arity:
 
@@ -2013,9 +2026,11 @@ The argument-trail expectation differs by the function's declared arity:
 
 This asymmetry exists because the call shape `Name@` has no syntactic continuation when arity is zero, so it must commit; for non-zero arity it can wait for the argument trail.
 
-#### §3.8.4 Call Lowering
+#### §3.8.3 Call Lowering
 
-The `@`-call operator delivers the argument to the function the same way a positional call delivers it. There is no semantic difference between `Foo@(x)` and `Foo(x)` when both are admissible. The benefit of `@`-call is purely syntactic — one fewer paren-pair at the call site, supporting a "constructor-like" reading for value-introducing functions (`Some@x`, `Right@v`, etc.).
+The `@`-call operator delivers the argument to the function the same way a positional call would have delivered it.
+
+// TODO?
 
 #### §3.8.5 The Two Roles Are One Operator
 
@@ -2025,32 +2040,36 @@ The value-position and call-position uses of `@` are not two separate facts but 
 
 The value-identity behavior in value position is what the operator does when there is no callee to call. The call behavior in call position is what the operator does when there is one. The marker requirement on `@`-marked function definitions is a contract on the callee side; it does not affect the LHS-less use form `@v`, which always behaves as identity.
 
-## §3.9 Call Semantics
+## 3.9 The `%` Effector Call Operator
+
+// TODO
+
+## §3.10 Call Semantics
 
 This section specifies what happens when a function value is invoked. It covers the regular `foo(..)` call form and the alternate `@`-call and `%`-call forms.
 
-#### §3.9.1 Argument Binding
+#### §3.10.1 Argument Binding
 
 A parameter tier (§3.2) takes one of exactly two shapes: zero or more positional non-gather parameters, or exactly one `*gather` parameter. The two shapes cannot mix within a tier.
 
 **Abstract execution:**
 
-1. Let `argumentExpressions` be a list holding, for each call-site argument slot in source order, either the source text of the argument expression or the distinguished marker `skip` for an empty slot (§3.9.4). Spread arguments are first expanded per §3.9.5.
+1. Let `argumentExpressions` be a list holding, for each call-site argument slot in source order, either the source text of the argument expression or the distinguished marker `skip` for an empty slot (§3.10.4). Spread arguments are first expanded per §3.10.5.
 2. Evaluate the callee `f` to a function value.
 3. Let `arguments` be an empty list. For each entry in `argumentExpressions`:
     - If the entry is `skip`, append `skip` to `arguments`.
     - Otherwise, evaluate the expression in the **caller's** environment and append the value to `arguments`.
 4. Allocate a fresh frame parented to the function value's captured frame.
 5. Bind the outermost parameter tier of `f` per §3.2 against `arguments`:
-    - **If the tier is all-positional non-gather** with parameters `p1, p2, ..., pK`: for each `pi` in order, bind to the value at position `i` of `arguments`. If position `i` is absent, is `skip`, or evaluates to `empty`, the parameter's default expression (§3.9.2) is evaluated if present; otherwise the parameter is bound to `empty`. Surplus arguments beyond position `K` are discarded.
+    - **If the tier is all-positional non-gather** with parameters `p1, p2, ..., pK`: for each `pi` in order, bind to the value at position `i` of `arguments`. If position `i` is absent, is `skip`, or evaluates to `empty`, the parameter's default expression (§3.10.2) is evaluated if present; otherwise the parameter is bound to `empty`. Surplus arguments beyond position `K` are discarded.
     - **If the tier is a single `*gather` parameter**: bind the gather to a Tuple containing all values from `arguments`. Skip slots contribute `empty` entries. If `arguments` is empty, the gather binds the empty Tuple.
 6. Evaluate preconditions per §3.5. If one matches, its evaluated consequent is the result of the function call expression; the function body is not evaluated.
 7. Evaluate the body per §3.3.
 8. The function return value (the value of the `^` expression that executed, or `empty` if no `^` executed) is the result of the function call expression.
 
-#### §3.9.2 Parameter Default Evaluation
+#### §3.10.2 Parameter Default Evaluation
 
-A parameter's default expression is evaluated only when the call provides no value at that parameter's position, the call provides a `skip` slot at that position (§3.9.4), or the call provides an expression that evaluates to `empty`.
+A parameter's default expression is evaluated only when the call provides no value at that parameter's position, the call provides a `skip` slot at that position (§3.10.4), or the call provides an expression that evaluates to `empty`.
 
 Defaults evaluate in the **callee's** frame, after all preceding parameters in the same tier have been bound. A default expression may reference any earlier-bound parameter in the same tier, or any parameter from an outer (already-bound) tier:
 
@@ -2072,9 +2091,9 @@ Tiers act like nested frames: an inner-tier default resolves names by walking ou
 
 A default expression may not reference a later parameter in the same tier, nor a parameter in a not-yet-bound (inner) tier.
 
-#### §3.9.3 Gather Binding
+#### §3.10.3 Gather Binding
 
-A `*gather` parameter takes the place of an entire tier — a tier is either all-positional non-gather (§3.9.1) or a single `*gather`; the two shapes do not mix within a tier.
+A `*gather` parameter takes the place of an entire tier — a tier is either all-positional non-gather (§3.10.1) or a single `*gather`; the two shapes do not mix within a tier.
 
 The gather binds all positional arguments at that tier as a Tuple (§3.2.4). Skip slots contribute `empty` entries. If the tier receives no arguments, the gather binds the empty Tuple.
 
@@ -2094,7 +2113,7 @@ defn tagged(label)(*items) ^< :label, :items >;
 tagged("primes")(2, 3, 5);               // < label: "primes", items: < 2, 3, 5 > >
 ```
 
-#### §3.9.4 Skip Slots
+#### §3.10.4 Skip Slots
 
 The call syntax permits empty slots:
 
@@ -2104,11 +2123,11 @@ defn xyz(x, y, z) ^log(`"x: `x`, y: `y`, z: `z`");
 xyz(1, , 3);                             // x: 1, y: empty, z: 3
 ```
 
-A skip slot is recorded as the distinguished `skip` marker in `argumentExpressions` (§3.9.1) and contributes no evaluated expression. At binding time, a parameter that receives `skip` evaluates its default expression if present; otherwise it binds `empty`.
+A skip slot is recorded as the distinguished `skip` marker in `argumentExpressions` (§3.10.1) and contributes no evaluated expression. At binding time, a parameter that receives `skip` evaluates its default expression if present; otherwise it binds `empty`.
 
-Skip slots are also admitted in partial application (§3.10).
+Skip slots are also admitted in partial application (§3.11).
 
-#### §3.9.5 Spread Arguments
+#### §3.10.5 Spread Arguments
 
 The call syntax admits `...expr` arguments in positional argument lists. Spread is evaluated and expanded before parameter binding.
 
@@ -2126,11 +2145,11 @@ f(1, ...mid, 9);                         // 1, 4, 5, 6, 9
 f(1, , ...mid);                          // 1, skip, 4, 5, 6
 ```
 
-Spread is positional-only: it is not admitted in a named-argument call (§3.9.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named — never mixed.
+Spread is positional-only: it is not admitted in a named-argument call (§3.10.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named — never mixed.
 
 **Open:** Whether a Record with named slots whose names correspond to parameters may be spread into a call as a named-argument expansion (`f(...rec)`) is undecided. The current spec rejects all Record spread; admitting a named-arg form remains under consideration.
 
-#### §3.9.6 Named Arguments
+#### §3.10.6 Named Arguments
 
 A regular function call (not `@` or `%`) may bind arguments by parameter name instead of position:
 
@@ -2141,7 +2160,7 @@ add(x: 3, y: 4);                         // 7
 add(y: 5);                               // 5 — x defaults to 0
 ```
 
-A single call must use either positional arguments (with optional skip slots and spread, per §§3.9.4 and 3.9.5) or named arguments — the two forms cannot be mixed within a single call.
+A single call must use either positional arguments (with optional skip slots and spread, per §§3.10.4 and 3.10.5) or named arguments — the two forms cannot be mixed within a single call.
 
 **Abstract execution:**
 
@@ -2150,14 +2169,14 @@ A single call must use either positional arguments (with optional skip slots and
 
 A named argument referencing a non-existent parameter is rejected at compile time.
 
-In a multi-tier function (§3.9.9), the named-argument form applies to one tier at a time: each tier's call binds named arguments against that tier's parameter list only.
+In a multi-tier function (§3.10.9), the named-argument form applies to one tier at a time: each tier's call binds named arguments against that tier's parameter list only.
 
-#### §3.9.7 `@`-Call Form
+#### §3.10.7 `@`-Call Form
 
-A function declared with `@`-suffix (§3.8) is invoked with the `@`-call form, **not** the parenthesized form. For an `@`-marked namespace `Foo`:
+A function declared with `@`-suffix (§3.1.1.1) is invoked with the `@`-call form, **not** the parenthesized form. For an `@`-marked namespace `Foo`:
 
 - `Foo@x` invokes the constructor hook with argument `x`.
-- `Foo@` (no operand) invokes the constructor hook with `empty` as the argument; the parameter's default expression (§3.9.2) resolves if present.
+- `Foo@` (no operand) invokes the constructor hook with `empty` as the argument; the parameter's default expression (§3.10.2) resolves if present.
 - `Foo(x)` is rejected. Bare `Foo` is a namespace handle (§3.8), not a callable.
 
 Whitespace around `@` is optional: `Foo@x`, `Foo @ x`, `Foo@ x`, and `Foo @x` are all valid call forms; `Foo@` and `Foo @` are both valid zero-operand forms.
@@ -2166,13 +2185,13 @@ The `@`-call form admits exactly zero or one operand. Spread arguments and named
 
 **NOTE:** Parentheses following `@` are not call syntax; they are expression-grouping for the operand. `Foo@(x + 1)` is `Foo` applied to the value of `x + 1`, not a parenthesized argument list.
 
-To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.11).
+To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.12).
 
 The hook-and-dispatch chapter specifies how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity.
 
-#### §3.9.8 `%`-Call Form
+#### §3.10.8 The `%`-Call Form
 
-An instance constructed through an `@`-marked namespace that also declares a `%`-suffix hook (§3.8) is invoked with the `%`-call form:
+An instance constructed through an `@`-marked namespace that also declares a `%`-suffix hook (§3.1.1.2) is invoked with the `%`-call form:
 
 - `inst%` invokes the effector hook with `inst` as the sole argument.
 - `inst % env` invokes the effector hook with `inst` and `env` as arguments.
@@ -2183,13 +2202,13 @@ If the instance's owning namespace declares no `%` hook, the `%`-call form falls
 
 The `%`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
 
-To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.11).
+To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.12).
 
 The hook-and-dispatch chapter specifies the dispatch routing in full.
 
-#### §3.9.9 Multi-Tier Function Call
+#### §3.10.9 Multi-Tier Function Call
 
-A call against a function value with multiple parameter tiers binds the outermost tier per §3.9.1. The body of a non-innermost tier evaluates to a function value over the next tier; that value is the result of the tier call.
+A call against a function value with multiple parameter tiers binds the outermost tier per §3.10.1. The body of a non-innermost tier evaluates to a function value over the next tier; that value is the result of the tier call.
 
 ```java
 defn add(x)(y) ^x + y;
@@ -2198,15 +2217,15 @@ add(3);                                  // function value over (y)
 add(3)(4);                               // 7
 ```
 
-Each subsequent tier call evaluates per §3.9.1 against that tier's parameter list.
+Each subsequent tier call evaluates per §3.10.1 against that tier's parameter list.
 
-Per §3.2.5, loose-curry is not provided: each tier call must satisfy that tier's parameters with its own call. To flatten the tier shape into a single argument list, use `\/` (§3.11.3).
+Per §3.2.5, loose-curry is not provided: each tier call must satisfy that tier's parameters with its own call. To flatten the tier shape into a single argument list, use `\/` (§3.12.3).
 
-Tiers act like nested frames for name resolution: an inner-tier body, and any default expression in an inner tier (§3.9.2), can reference parameters from outer tiers.
+Tiers act like nested frames for name resolution: an inner-tier body, and any default expression in an inner tier (§3.10.2), can reference parameters from outer tiers.
 
 Preconditions are hoisted to the highest/earliest tier at which their references can be satisfied by that tier's parameters (§3.5).
 
-#### §3.9.10 The `empty` Completion Fallthrough
+#### §3.10.10 The `empty` Completion Fallthrough
 
 A function call evaluates to `empty` when:
 
@@ -2216,73 +2235,134 @@ A function call evaluates to `empty` when:
 
 This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
 
-### §3.10 Partial Application: `f|args|`
+Yeah, you're right — the bolded prose headings are doing subsection work without the numbering. Promoting to §3.11.N. Order kept as written; numbered the procedural intro as §3.11.1 since "Abstract execution" and "Combination step" are paired halves of the same mechanism.
 
-The `f|args|` form produces a partially-applied function value:
+---
+
+## §3.11 Partial Application: `f|arg,arg,..|`
+
+The `f|arg,arg,..|` form produces a partially-applied function value:
 
 ```java
 def add6: (+)|6|;
+
 add6(12);                                // 18
 ```
 
-**Abstract execution:**
+Partial application is an ahead-of-time argument collection process. It does not invoke `f`'s preconditions, does not validate arguments against `f`'s parameters, and does not allocate a call frame. All of that happens only at the final application, when the collected args meet the rest-args from the final call.
+
+#### §3.11.1 Capture and Combination
+
+**Abstract execution at partial-application time:**
 
 1. Evaluate the callee `f` to a function value.
-2. Evaluate each supplied argument in source order, in the caller's environment.
-3. Allocate a new function value whose application logic, when later called with `rest`-args, invokes `f` with the captured supplied args slotted into their positions and the rest-args filling the remaining positions (including skip slots).
-4. The result of `f|args|` is that new function value; no call to `f` happens yet.
+2. Process each supplied arg slot in source order:
+    - A positional argument expression is evaluated in the caller's environment; its value is captured.
+    - A `skip` slot is captured as the `skip` marker (§3.10.4).
+    - A spread `...expr` is evaluated in the caller's environment and its elements are captured in order (§3.10.5).
+    - A named argument `name: expr` evaluates `expr` in the caller's environment; the captured entry binds `name` to that value.
+3. Allocate a new function value whose application logic, when later called with final-call args, performs the combination step (below) and invokes `f` with the combined argument list.
+4. No call to `f` occurs at partial-application time.
 
-Partial application does **not depend on `f`'s arity**:
+**Combination step at final call time:**
+
+1. Final-call args are processed per §3.10.5 (spread expansion) into an ordered argument list.
+2. The captured args from partial-application time are walked left-to-right:
+    - A non-`skip` captured arg occupies that position directly.
+    - A `skip` captured arg consumes the next final-call arg in order; if none remains, the slot stays `skip`.
+3. Any final-call args not consumed by skip slots append at the end of the captured list.
+4. The combined argument list is passed to `f` per §3.10.1 — at which point parameter binding, default evaluation, skip-to-`empty` binding (§3.10.4), surplus discard, and precondition evaluation occur normally.
+
+#### §3.11.2 Arity Independence
+
+Partial application is independent of `f`'s arity — capture is syntactic, and arity reconciliation happens at the final call:
 
 ```java
 def add37: (+)|6, 12, 19|;
+
 add37(5);                                // 42
 ```
 
-(`(+)` is variadic in its operator-as-function lift; the partial captures three values and the final call appends `5` for four total operands.)
+`(+)`'s operator-as-function lift is variadic; the partial captures three values, the final call appends `5`, and `(+)` receives four operands.
 
-**Skip slots in partial application:**
+#### §3.11.3 Skip Slots in Captured Args
 
 ```java
-defn xyz(x, y, z) ^ log(`"x: `x`, y: `y`, z: `z`");
+defn xyz(x, y, z) ^log(`"x: `x`, y: `y`, z: `z`");
+
 def fn: xyz|3, , 7|;
+
 fn(5);                                   // x: 3, y: 5, z: 7
+fn();                                    // x: 3, y: empty, z: 7
 ```
 
-The skip slot at the y position is filled by the rest-arg at final call time.
+`fn(5)` consumes the `5` into the skip-slot at position 1. `fn()` provides no rest-args; the skip-slot stays `skip` and binds to `empty` per §3.10.4.
 
-**Spread in partial application:**
+#### §3.11.4 Spread in Partial Application
 
 ```java
 def nums: < 9, 8, 7 >;
+
 def fn: xyz|...nums|;
+
 fn();                                    // x: 9, y: 8, z: 7
 ```
 
-Spread sources are evaluated and captured at partial-application time (preserving "arguments are remembered for later" semantics even when the spread source is itself effectful — e.g., a generator yielding values).
+Spread sources are evaluated and captured at partial-application time. This preserves "arguments are remembered for later" semantics even when the spread source is itself effectful — e.g., a generator yielding values.
 
-**Prime-and-partial composition:**
+#### §3.11.5 Partial Application of Primed Function
 
 ```java
 def sub1: (-')|1|;
+
 sub1(6);                                 // 5 :: 6 - 1
 ```
 
-The prime `'` reverses the accumulated argument order at final application (§3.11.1). Order: the complete argument sequence (captured + rest-call) is reversed before delivery to the underlying function.
+The prime `'` reverses the *expected argument order* for final application (§3.12.1); the partial then captures the supplied arg in the post-reversal first position. `(-')|1|` captures `1` as the subtrahend; `sub1(6)` supplies `6` as the minuend.
 
-**Named arguments in partial application:**
+#### §3.11.6 Named Arguments in Partial Application
 
 ```java
+defn add(x, y) ^x + y;
+
 add|x: 4|(y: 5);                         // 9
 ```
 
-Same name-resolution rules as §3.9.6, applied to the union of captured and final-call arguments.
+Captured named args and final-call named args resolve against `f`'s parameter list as the union of both, per §3.10.6.
 
-### §3.11 Function-Shape Transforms
+The all-positional-or-all-named rule (§3.10.6) is enforced on the *combined* argument list at final-call time, not on either side independently. If the combined list contains a mix of positional and named entries — even when each side is internally uniform — `f` rejects the call:
 
-Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position. All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.12.
+```java
+add|x: 4|(5);                            // ERROR — combined: < x: 4 > and 5 (mixed)
+add|3|(y: 5);                            // ERROR — combined: 3 and < y: 5 > (mixed)
+```
 
-#### §3.11.1 Reverse: `f'`
+#### §3.11.7 Multi-Tier Callees
+
+Partial application captures against a single tier of function application — the outermost tier of `f`. On final call, the outermost tier is bound per §3.10.1 using the combined argument list; the result is whatever the outermost tier would return — the body result for a single-tier `f`, or the next-tier function value for a multi-tier `f`.
+
+```java
+defn add(x)(y) ^x + y;
+
+def addOuter: add|3|;
+
+addOuter();                              // function value over (y) — outer tier completes with x = 3
+addOuter()(4);                           // 7
+```
+
+To partially apply against a deeper tier, complete the outer tiers first and partially apply the resulting function value: `(add(3))|4|`.
+
+#### §3.11.8 `@`-Marked and `%`-Dispatched Functions
+
+Partial application is exclusive to standard call-form functions; a namespace declared via `defn Foo@(..)` (§3.1.1.1), or a hook declared via `defn Foo%(..)` (§3.1.1.2), opts out of this `f(args)` call surface.
+
+`Foo|x|` and `Foo.@|x|` raise runtime errors; likewise, if `inst` is an instance of `Foo@` with an accompanying `Foo%`, `inst|x|` is rejected.
+
+### §3.12 Function-Shape Transforms
+
+Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position. All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.13.
+
+#### §3.12.1 Reverse: `f'`
 
 The prime operator `'` produces a function value that reverses its argument order at call time:
 
@@ -2298,11 +2378,11 @@ rsub(2, 5);                              // 3 :: 5 - 2
 2. Reverse the sequence.
 3. Apply `f` to the reversed sequence.
 
-The reverse is **semantic, not syntactic** — `f'` is a function value carrying a reverse-then-apply behavior, applicable at any later call. The reversal applies to the complete argument sequence delivered at the final call, including when composed with partial application (§3.10) or pipeline topic placement.
+The reverse is **semantic, not syntactic** — `f'` is a function value carrying a reverse-then-apply behavior, applicable at any later call. The reversal applies to the complete argument sequence delivered at the final call, including when composed with partial application (§3.11) or pipeline topic placement.
 
 `f'` preserves `f`'s arity (the language guarantees that arity-introspecting transforms like `/\` and `\/` see `f`'s declared arity through the prime wrapper).
 
-#### §3.11.2 Curry: `f/\`
+#### §3.12.2 Curry: `f/\`
 
 The mountain operator `/\` produces a curried function value:
 
@@ -2327,7 +2407,7 @@ parts("https://my.site")("/api/find")("name=getify");
 parts("https://my.site", "/api/find", "name=getify");
 ```
 
-#### §3.11.3 Uncurry: `f\/`
+#### §3.12.3 Uncurry: `f\/`
 
 The valley operator `\/` produces a flat-argument function value over a curry-shaped function:
 
@@ -2346,7 +2426,7 @@ flat("https://my.site", "/api/find", "name=getify");
 
 `\/` is the canonical way to call a multi-tier `defn` with a flat argument list (§3.2.5). Loose-curry is not a language feature; `\/` is the explicit form.
 
-#### §3.11.4 Primed inverses
+#### §3.12.4 Primed inverses
 
 `/\` and `\/` are each other's inverses; `'` is its own inverse. So each transform admits a primed-inverse form expressing the other:
 
@@ -2357,15 +2437,15 @@ def curry: (\/');
 
 The primed forms exist for language consistency (every operator admits a primed form) but the recommended style is to use the named operator directly: `\/` rather than `/\'`, `/\` rather than `\/'`.
 
-### §3.12 Operator-as-Function
+### §3.13 Operator-as-Function
 
 Any operator can be lifted to a function value by parenthesizing it: `(+)`, `(?and)`, `(.)`, `(.<a, b>)`. The `@` operator lifts the same way: `(@)` evaluates to the unary value-identity function (the `@`-call operator with no LHS callee; see §3.8.1).
 
-The lifted value is a callable function whose application invokes the operator on the supplied arguments. The prime form `(+')` produces the reverse of the lifted operator (§3.11.1).
+The lifted value is a callable function whose application invokes the operator on the supplied arguments. The prime form `(+')` produces the reverse of the lifted operator (§3.12.1).
 
 The per-operator argument arity, argument types, and semantic behavior of each lifted operator is specified in the section that owns that operator (e.g., `(+)` per §1.3 numeric arithmetic; `(.)` per §2.12 indexed access; `(.<a, b>)` per §2.12 multi-pick; etc.). §3 specifies only the lifting mechanism:
 
 1. The parenthesized operator-symbol expression produces a function value.
 2. Calling that function value evaluates the operator against the supplied arguments.
-3. The prime `'` form applies §3.11.1 reverse semantics to the lifted function value.
-4. Operator-as-function values compose freely with `|args|` (§3.10), `/\` (§3.11.2), `\/` (§3.11.3), `+>` (composition, §6), and `#>` (pipelines, §6).
+3. The prime `'` form applies §3.12.1 reverse semantics to the lifted function value.
+4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §6), and `#>` (pipelines, §6).
