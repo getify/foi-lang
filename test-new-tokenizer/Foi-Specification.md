@@ -395,7 +395,7 @@ In the declaration form, `defn` is a binding statement (§2.8); the required bou
 
 Function expressions can *optionally* have a name, and it's bound to the function's own scope only (for self-reference, such as recursion).
 
-In the anonymous form, `defn(params) ^ body` is an expression producing a function value, with no name binding in any scope.
+In the anonymous form, `defn(params) ^body` is an expression producing a function value, with no name binding in any scope.
 
 Function values are first-class: they may be stored in slots, passed as arguments, returned from other functions, and embedded in Records and Tuples. A function value carries the environment in which it was created (its closure); call-time semantics are specified in §2.11. The full surface area of function definition forms -- parameter modifiers, defaults, preconditions, named arguments, operator-as-function, curry/uncurry -- is specified in §3.
 
@@ -438,7 +438,7 @@ A `def` slot persists for the lifetime of its frame. When the frame is exited, t
 ```java
 def x: 1;
 def y: 2;
-defn helper(v) ^ v + 1;
+defn helper(v) ^v + 1;
 log(x + y);                 // first non-definitional statement
 helper(10);
 def z: 99;                  // ill-formed: def below a non-def statement
@@ -1089,7 +1089,7 @@ Modules additionally admit `import` -- which appears only as an initializer valu
 A function value carries a reference to the environment in which it was created. When the function is later called, the call's body is evaluated in a frame whose parent is the captured environment.
 
 ```java
-defn make(n) ^ defn(x) ^ x + n;
+defn make(n) ^defn(x) ^x + n;
 def addTen: make(10);
 addTen(5);                  // 15
 ```
@@ -1097,7 +1097,7 @@ addTen(5);                  // 15
 **Abstract execution:**
 
 1. `make(10)` evaluates `make`'s body in a frame where `n` is bound to `10`.
-2. The body returns a function value `defn(x) ^ x + n`. The function captures the frame in which it was created (the frame with `n: 10`).
+2. The body returns a function value `defn(x) ^x + n`. The function captures the frame in which it was created (the frame with `n: 10`).
 3. `addTen(5)` calls the captured function, allocating a new frame where `x` is bound to `5`, with the captured frame as parent.
 4. The body `x + n` resolves `x` in the local frame and `n` in the parent (captured) frame.
 
@@ -1105,19 +1105,19 @@ addTen(5);                  // 15
 
 ```java
 def x: 1;
-def f: defn() ^ x;
+def f: defn() ^x;
 x := 2;
 f();                        // 2
 ```
 
-#### §2.11.1 Per-iteration Freshness
+#### §2.11.1 Per-Iteration Freshness
 
 Inside loop blocks (`~each` and the comprehension family, §6), each iteration allocates a **fresh** frame for its locals. Closures captured during one iteration close over that iteration's frame, not over a shared mutable variable:
 
 ```java
 def fs: < >;
 0..3 ~each (i) {
-    fs := < &fs, defn() ^ i >;
+    fs := < &fs, @|i| >;
 };
 fs.0();                     // 0
 fs.1();                     // 1
@@ -1461,3 +1461,911 @@ Per §2.12.5, the intended Foi semantic for computed-name picks with non-string 
 #### §2.14.5 Empty `< >` typing
 
 Per §1.5.5, the polymorphism of `< >` between Record and Tuple slots may need formal type-system treatment (union, structural any-of-either, distinguished empty). Operational semantics settled; type-level representation open. Covered in §9.
+
+## §3 Functions
+
+This section specifies function values: how they are introduced, what their parameter shapes mean, how their bodies execute, and how a call binds arguments to parameters and produces a result.
+
+§1.6 established that a function is a value, introduced via `defn`, first-class in every value position. §2.8 established that `defn` is a binding form that hoists and is structurally constant. §2.11 specified the closure-frame mechanics: that a function value carries the lexical frame in which it was created, and that frame is live (not a snapshot). This section assumes both and cross-refs them where relevant; it does not re-derive them.
+
+### §3.1 Function Literal Forms
+
+A function literal has three surface forms. All produce a function value; they differ in what name (if any) is bound, and where.
+
+#### §3.1.1 Declaration Form
+
+```java
+defn add(x, y) ^x + y;
+```
+
+The required name (`add`) is bound in the enclosing scope as a structurally constant `defn` binding (§2.8). Through lexical scope lookup, the name is available to the function body for self-reference (recursion).
+
+A declaration `defn` is a statement, not an expression: it cannot appear in operand position. To produce a function value at expression position with the binding effect, use a `def`-binding with a named-expression form (§3.1.2).
+
+**NOTE:** If a `defn` declaration includes a single `@` symbol as suffix on its name (no whitespace between), it *marks* the function (§3.8.2) to opt-into the special `@`-Call syntax (§3.8). The `@` is not part of the bound name, but does require the function to be invoked only with that call syntax. Also, it requires the function to define zero or one parameter (variadic'ness with `*` gather parameter forbidden).
+
+#### §3.1.2 Named Expression Form
+
+```java
+def double: defn double(v) ^v * 2;
+```
+
+The `defn name(params) body` syntax in expression position produces a function value. The name is in scope **only inside the function body**; it exists for self-reference. The enclosing scope sees no `double` binding from the function literal itself; only the `def double:` outside introduces a binding there. The two `double` names happen to coincide in this example by convention; they are distinct bindings in distinct frames.
+
+The inner and outer names need not match:
+
+```java
+def f: defn double(v) ^v * 2;
+```
+
+Here `f` is in the enclosing scope; `double` is in the function body's scope only. Outside the function, `double` is not defined.
+
+#### §3.1.3 Anonymous Expression Form
+
+```java
+def double: defn(v) ^v * 2;
+```
+
+`defn(params) body` produces a function value with no name binding in any scope. There is no self-owned self-reference name; recursion would rely on a name binding in the enclosing scope:
+
+```java
+def factorial: defn(n) {
+    ^?{
+        [n ?= 0]: 1;
+        [n ?<= 2]: n;
+        : n * factorial(n - 1)       // recursive call
+    };
+};
+```
+
+**NOTE:** Relying on a non-local name for recursion may stylistically be considered a "layering" violation to be avoided where possible.
+
+### §3.2 Parameter Lists
+
+A parameter list is a comma-separated sequence of parameter entries enclosed in `( )`. A function literal carries one or more parameter lists; multiple lists indicate a multi-tier (curried) shape (§3.2.5).
+
+A parameter entry may take one of the following shapes:
+
+- **Identifier parameter** (§3.2.1): `x`
+- **Default-valued parameter** (§3.2.2): `x: expr`
+- **Destructure parameter** (§3.2.3): `<:a, :b>` (with optional `: source` tail)
+- **Gather parameter** (§3.2.4): `*args` (single parameter list)
+
+#### §3.2.1 Identifier parameters
+
+```java
+defn add(x, y) ^x + y;
+```
+
+At call time, the parameter list opens a fresh frame (§2.11); each identifier parameter is bound to one positional argument value from the call site, by source position. If the call omits an argument at that position, the parameter is bound to `empty` (§1.1, §3.9.1).
+
+#### §3.2.2 Default Parameter Values
+
+A parameter may carry a default expression:
+
+```java
+defn add(x: 0, y: 0) ^x + y;
+```
+
+**Abstract execution at call time:**
+
+1. For each parameter in source order:
+    1. If the call site supplied a positional argument value at this position, bind the parameter to that value.
+    2. Otherwise, evaluate the default expression **in the frame of the in-progress call** (parameters bound earlier in the same list are visible) and bind the result.
+
+Default expressions can reference parameters that appear earlier in the same parameter list:
+
+```java
+defn rect(width, height: width) ^width * height;
+
+rect(5);                            // 25
+rect(5, 3);                         // 15
+```
+
+A default expression that references a later parameter is a forward reference: the later parameter has not yet been defined, and this results in an error. However, as with forward references in `def` statements, `Lazy@` (§2.2) can be used to create a deferred resolution:
+
+```java
+defn rect(width: Lazy@ height, height) ^width * height;
+
+rect(5);                            // 25
+rect(5, 3);                         // 15
+```
+
+#### §3.2.3 Destructure Parameters
+
+A destructure parameter takes the form of a destructure target (§2.13), optionally with an explicit `: source` tail:
+
+```java
+defn area(<:width, :height>) ^width * height;
+
+area(< width: 5, height: 3 >);      // 15
+```
+
+**Abstract execution at call time:**
+
+1. Bind the positional argument value at this parameter's position to an internal slot.
+2. Apply the destructure target to that internal slot per §2.13, introducing the named bindings into the call frame.
+
+If the parameter carries an explicit `: source` tail, the source expression is evaluated in the call frame (parameters earlier in the list visible) and that value becomes the destructure source, overriding the positional. The positional value at this slot is then unused.
+
+A destructure parameter without a positional argument receives `empty` as its source value; destructure against `empty` results in an error. A destructure parameter with a default structure value avoids this error:
+
+```java
+defn area(<:width, :height>: <>) ^width * height;
+
+area(< width: 5, height: 3 >);      // 15
+```
+
+**Open:** Decide if destructuring should provide a mechanism for defaulting each assignment, such as `< :foo = 2 >`.
+
+#### §3.2.4 Gather Parameter
+
+A variadic function (accepting a varying number of inputs) is defined with a single gather parameter, with the `*` sigil prefixing the parameter name:
+
+```java
+defn allFlags(*flags) ^(?and)(...flags);
+
+allFlags(true, true, false);        // false
+```
+
+At call time, all positional arguments are collected into a Tuple value and bound to the gather identifier. If no arguments are passed, the binding is the empty Tuple `< >`.
+
+The gather parameter cannot define a default value.
+
+#### §3.2.5 Multiple Parameter Sets
+
+A function literal may carry multiple parameter-list groups:
+
+```java
+defn buildURL(origin)(path)(query)
+    ^`"`origin``path`?`query`";
+```
+
+This declares what's traditionally recognized as a **curried** function value: each tier is called separately, and each call returns either a function expecting the next tier (when more tiers remain) or the final body result (when the innermost tier has just been called).
+
+The more verbose equivalent:
+
+```java
+defn buildURL(origin) ^defn(path) ^defn(query)
+    ^`"`origin``path`?`query`";
+```
+
+**Important: Foi's curried defn is one logical parameter list.** Paren-grouping designates call-shape tiers; it is *not* a closure-scoping boundary in the user's mental model. The bodies of all tiers share a single frame at call completion: parameters from outer tiers are visible inside the body alongside parameters from inner tiers.
+
+**Abstract execution at call time:**
+
+1. Calling the outer-tier-bearing function value with the outer-tier arguments produces a function value over the next tier, with the outer-tier parameters bound in its closure frame.
+2. Each successive call accumulates bindings until the innermost tier is called.
+3. After the innermost call, the body executes in the accumulated frame.
+
+A curried `defn` will not automatically "spread" a call with multiple arguments across the separate curried calls. To call a multi-tier function with a single multi-argument list, uncurry it at the call site with the `\/` uncurry operator (§3.11.3):
+
+```java
+buildURL\/("https://my.site", "/api/find", "name=getify");
+```
+
+Tier-shape constraints:
+- A gather parameter `*args` may appear only in a single-tier `defn`. **Grammar permits multi-tier with gather; semantics reject. Open: enforcement location** (grammar tightening vs. shaper/interpreter rejection).
+- Destructure parameters may appear at any tier.
+- Defaults may appear at any tier.
+
+### §3.3 Function Body Forms
+
+A function body has one of three surface shapes. All three produce a single return value; multi-exit selection is expressed by pattern matching inside the body, not by multiple return statements (see §3.4 for the single-`^` rule).
+
+#### §3.3.1 Concise return: `^expr`
+
+```java
+defn double(v) ^v * 2;
+```
+
+**Abstract execution at call time** (after parameter binding per §3.2):
+
+1. Evaluate `expr` in the call frame.
+2. The function's return value is the result.
+
+The concise body admits any `ExprNoBlock` or a `GroupedExpr` (§13 grammar). To use a body construct that opens with `{`, paren-wrap it.
+
+#### §3.3.2 Block body: `{ stmts; ^expr; }`
+
+```java
+defn process(v) {
+    def doubled: v * 2;
+    ^doubled + 1;
+};
+```
+
+**Abstract execution at call time** (after parameter binding):
+
+1. Allocate the body's frame (parent: the call frame; see §2.9.1).
+2. Evaluate each statement in source order.
+3. If a `^expr;` statement executes, evaluate `expr` and immediately return that value as the function's return value.
+4. If the block completes without executing any `^`, the function returns `empty` (§3.9.9).
+
+**Single-`^` Rule:** A block body may contain **at most one** `^` return statement, and if present it must be the body's final statement (aside from `defn` function declaration statements. Multiple exit values are expressed by placing a pattern match or guard inside that single `^`:
+
+```java
+defn classify(n) {
+    ^ ?{
+        [n ?< 0]: "negative";
+        [n ?= 0]: "zero";
+        : "positive";
+    };
+};
+```
+
+This rule is what makes Foi's tail-position analysis a structural property of the AST rather than a control-flow analysis (§3.4).
+
+#### §3.3.3 Pipeline body: `#> stage #> stage ...`
+
+```java
+defn compute(x) #> add(1) #> triple #> half;
+```
+
+This function body is sugar for `^(x #> add(1) #> triple #> half)`, where `x` is the outermost tier's first positional parameter.
+
+**Abstract execution at call time** (after parameter binding):
+
+1. The seed value is the binding held by **the outermost parameter list's first positional parameter**, regardless of how many tiers the function declares.
+2. The pipeline chain is evaluated per §6 (pipeline semantics) with the seed as initial topic.
+3. The function's return value is the chain's final stage result.
+
+**Outermost-seeds rule rationale.** A multi-tier function like `defn f(x)(y) #> stage` seeds the chain with `x`, not `y`. Paren-grouping designates only call shape; the function still presents one logical parameter list, and "the first positional" means the first positional.
+
+**Constraints on pipeline-body parameter shapes:**
+- The seed parameter must be an Identifier or a DestructureTarget (named binding or destructure binding).
+- If the seed is a DestructureTarget, the **whole positional value** flows into the chain as seed, not any destructured name. Destructured names are in scope and reachable, but the stage-1 input is the positional value itself.
+- A gather parameter as the seed is single-tier only.
+
+### §3.4 Proper Tail Calls
+
+Foi ensures **proper tail calls (PTC)**: evaluation of a chain of tail calls consumes O(1) frames beyond the entry frame, regardless of chain length. This is a normative semantic property; implementation strategy (frame reuse, trampolining, native call rewriting, CPS lowering, etc.) is not constrained. A host that cannot deliver constant stack space across tail-call chains is non-conformant on this aspect.
+
+**Tail calls are not limited to recursion.** Any function call in a tail position consumes O(1) stack against the next call's entry. This applies to mutual recursion, indirect dispatch, and calls to unrelated functions equally.
+
+#### §3.4.1 Tail-Position Eligibility
+
+A position in a function body is **tail-position-eligible** if it's another function call whose result value can flow out without further computation; `n * fact(n - 1)` is NOT a tail call, but `fact(n - 1,curTotal)` could be.
+
+Eligible positions (presuming the expression itself is a function call), defined structurally:
+
+1. **Function Body Return:** With `^e` inside a function body block, `e` is eligible. Recurse into `e`'s structure for further eligible sub-positions per the rules below.
+2. **Concise Function Return:** Same as (1), for `^e` as a concise function body.
+3. **Independent Match Consequents:** In an eligible `?{ [c1]: e1; [c2]: e2; : e_else; }`, each consequent `e1`, `e2`, `e_else` inherits eligibility from the match position.
+4. **Dependent Match Consequents:** Same as (3), for `?(match){ ... }` dependent match form.
+5. **Guard Consequent:** In an eligible `?[c]: e` (or `![c]: e`), the consequent `e` inherits eligibility from the guard position. (The guard-fail path returns `empty`, which is a value-leaf, not a call site.)
+6. **`:as` Annotation:** In an eligible `e :as T`, the position of `e` is eligible, if and only if the `:as T` is (per compiler analysis and/or configuration) resolvable or erasable, and thus not deferred for runtime assertion.
+7. **Pipeline Expression:** In an eligible pipeline expression `x #> e1 #> e2 #> e3`, the final expression position `e3` inherits eligibility. Intermediate stages have their results consumed by the next stage's dispatch; intermediate calls are not tail calls. (Implementations are nonetheless free to evaluate the pipeline with constant stack regardless of tail-position labeling, because each stage's value is fully resolved before the next stage runs; no frame is held by the dispatch itself.)
+8. **Pipeline Function Body:** Same as (7), for `defn f(x) #> e1 #> e2 #> e3`, only `e3` inherits eligibility.
+
+##### §3.4.1.1 Non-Eligible Positions
+
+These positions are generally *NOT* tail-call eligible:
+
+- Operator operands: `^f(x) + 1`.
+- Call arguments: `^h(f(x))`: `f(x)` is consumed as an argument; `h(..)` itself is eligible as the tail call.
+
+    **NOTE:** This is the same reasoning as `x #> f #> h`, which makes `h(..)` eligible but not `f(..)`.
+- Statement-level positions: In `{ f(x); ^42; }`, the value of `f(x)` is not in a return position.
+- Binding initializers: In `{ def y: f(x); ^y; }`, `f(x)` is consumed by the binding, not the return. See §3.4.1.1.
+- Inside a bare block expression used as `^`'s operand: In `^{ stmts; lastExpr; }`, `lastExpr` is the bare block's completion value (§2.9.1), not a return path -- the block itself is in the return path. See §3.4.1.1.
+
+##### §3.4.1.2 Position Transformation
+
+Non-normative: the Foi compiler may statically analyze other constructs besides the explicitly eligible list, for expanded tail-call eligibility; if it can statically guarantee a transformation to one of those forms, the function call may adopt apply tail-call behavior.
+
+For example:
+
+```java
+defn recur(n) {
+    // ..
+
+    def res: recur(n - 1);      // not tail call eligible
+    ^res;                       // not a function call
+};
+```
+
+The Foi compiler may determine it can safely fold the last two lines of that function body into:
+
+```java
+^recur(n - 1);      // now, tail call eligible
+```
+
+The compiler may or may not apply such transformations, depending on conditions in the code and compiler configuration.
+
+#### §3.4.2 Tail calls
+
+A **tail call** is a function call whose call-expression is itself the entire content of an eligible position -- meaning the call's result is the function's result. An expression like `f(x) + 1` at an eligible position contains a call to `f`, but the call is not a tail call because `+` consumes the call result after it returns.
+
+Tail calls require the return expression to, as its last operation, invoke a function call.
+
+Examples:
+
+```java
+defn loop(state) ^?{
+    [done(state)]: result(state);      // tail call
+    : loop(step(state));               // tail call (recursive)
+};
+
+defn check(x) ^?[x ?> 0]: process(x);  // tail call (guard consequent)
+
+defn pipeline(x) #> stageA #> stageB #> stageC;
+// Only `stageC` invocation at chain end is a tail call.
+
+defn add1(x) ^f(x) + 1;                // NOT a tail call (operator consumes)
+defn nested(x) ^h(f(x));               // f is NOT tail; h IS tail
+```
+
+#### §3.4.4 Single-`^` and PTC
+
+The single-`^` rule (§3.3.2) is what allows tail-position eligibility to be a purely structural property of the AST. Because a function has at most one explicit return statement, multiple exit *values* must come from pattern-matching or guarding inside that one return; those constructs propagate eligibility to their consequents per §3.4.1. This is the design choice that lets PTC be specified without control-flow analysis.
+
+### §3.5 Preconditions
+
+A function definition may carry one or more **preconditions** between the parameter lists and the body:
+
+```java
+defn safeDiv(x, y) ?[y != 0]: empty ^x / y;
+defn clamp(x) ?[x ?< 0]: 0 ?[x ?> 100]: 100 ^x;
+```
+
+A precondition is syntactically the same as a guard-expression: `?[cond]: consequent` or `![cond]: consequent`.
+
+**Preconditions are call-site guards, not part of function body proper.** They are evaluated *after* the arguments have been resolved and name-bound, but *before* the function itself is invoked. Preconditions may reference only formal parameters; neither bindings from the function body's own scope nor closure-captured bindings from the enclosing scope are visible inside a precondition expression.
+
+The function frame is provisionally allocated, and parameters are bound (preconditions may reference parameters). But if a precondition matches, the function is not invoked. Instead, the resulting value is set to the precondition's consequent value.
+
+**Abstract execution at call time:**
+
+1. Bind parameters per §3.2 in a fresh, provisional frame (no body heap allocation yet).
+2. Evaluate each precondition in source order. For each:
+    1. Evaluate the CondClause `[cond]` (or `![cond]`); see §4 for full guard semantics.
+    2. If the clause fires:
+        1. Evaluate `consequent` in the call frame.
+        2. The function's return value is the consequent value; subsequent preconditions and the body are not evaluated.
+        3. **The call is complete.** The body is not entered.
+    3. If the clause does not fire, proceed to the next precondition.
+3. If no precondition matches, execute the body per §3.3.
+
+Preconditions may reference *only* formal parameters. Closure-captured bindings from the enclosing scope are not visible inside a precondition expression; preconditions are self-contained predicates over the call's arguments.
+
+### §3.5.1 Multi-Parameter Function Preconditions
+
+For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest function that can fully satisfy the precondition with the provided parameter(s).
+
+Consider these two function definitions:
+
+```java
+defn add(x)(y)(z)
+    ?[x ?< 0]: Left@ "Undefined"
+    ?[y ?< 0]: Left@ "Undefined"
+    ?[z ?< 0]: Left@ "Undefined"
+    ^x + y + z;
+
+defn mult(x)(y)(z)
+    ?[(?or)(x ?< 0,y ?< 0,z ?< 0)]: Left@ "Undefined"
+    ^x * y * z;
+```
+
+Now consider these call-sites:
+
+```java
+add(2)(-3)(4);      // Left<"Undefined">
+add(-5);            // Left<"Undefined">
+
+mult(2)(-3)(4);     // Left<"Undefined">
+mult(-5);           // defn(y)(z)
+```
+
+Conceptually, preconditions guard the initial function call. That's why the `add(-5)` fails eagerly, instead of returning a function to defer the check until later. The verbose granularity of the pre-conditions on `add()` allows for that early failure.
+
+But since the precondition on `mult()` requires all three parameters to be evaluated, the precondition must wait for the final function call (as in `mult(2)(-3)(4)` to evaluate the precondition, rather than failing at `mult(2)(-3)` or at `mult(-5)`).
+
+### §3.5.2 Precondition Tail Calls
+
+Function preconditions operate as guard expressions; if the function call itself is already tail-eligible (§3.4), and a matching precondition contains a tail-eligible function call in its consequent, then *this* consequent function call is eligible to operate as a tail-call.
+
+For example:
+
+```java
+// only valid
+defn factorial(n,res: 1)
+    ?[n ?< 0]: Left@ "Undefined"
+    ?[n ?> 1]: factorial(n - 1,n * res)
+    ^res;
+```
+
+In this example, both the `Left@` call and the `factorial(..)` recursive call are tail-call eligible.
+
+### §3.6 Mutable Closure-Capture Declaration: `:over`
+
+A function literal may carry a `:over (name, name, ...)` clause between the function's preconditions (if any) and its body (but before any `:as`):
+
+```java
+defn lookup(id) :over (cache) {
+    cache := cacheAppend(cache,lookupRemote(id));
+    ^cache;
+};
+```
+
+**Mutability and closure-capture rule.** A binding (`def`) is internally flagged as **mutable** if it is the target of any `:=` reassignment anywhere in a scope it's accessible within (§2.5). A function literal that closes over a mutable binding from its enclosing scope **MUST** list that binding in its `:over` clause. Constant bindings (those never reassigned) may be referenced freely; they need not appear in `:over`.
+
+**Direct closure only.** `:over` declares **direct** closure references within the function itself.
+
+If a nested function closes over a mutable variable, that nested function requires an `:over()` annotation for the mutable variable; but the parent function does not need an `:over()` unless it makes its own reference to a mutable closure.
+
+```java
+def counter: 0;
+
+// no direct reference to `counter`, so no need
+// for an `:over` here
+defn incTwice() {
+    inc();
+    ^inc();
+
+    // directly references `counter`, which is
+    // mutable; `:over(counter)` required
+    defn inc() :over(counter) {
+        counter := counter + 1;
+    };
+};
+```
+
+**Constant bindings need no `:over`:**
+
+```java
+def pi: \3.14159;                        // never reassigned → constant
+
+defn area(r) ^pi * r * r;               // no :over needed
+```
+
+### §3.7 Type Annotation: `:as`
+
+A function literal may carry a `:as Type` clause:
+
+```java
+// deft AddFunc (int,int) ^int
+
+defn add(x, y) :as AddFunc ^x + y;
+```
+
+`:as` on a function always references a function type (§9). For §3's purposes:
+
+- `:as Type` is transparent at runtime; it imposes no behavior beyond what §9 specifies.
+- `:as` appears once, after any `:over` clause and before the body.
+
+### §3.8 The `@`-Call Operator
+
+The glyph `@` is a unary call operator with an optional left-hand callee. With a callee, it dispatches a call to that function (subject to an opt-in marker on the function's definition). Without a callee, it has nothing to dispatch to, and the operator passes its right-hand value through unchanged.
+
+This single mechanism underlies both `@`'s call-position use and its value-position use as the unary value-identity function — the latter is the former with the callee slot empty.
+
+#### §3.8.1 `@` Used Without a Callee
+
+When `@` is used with no left-hand callee, it has nothing to dispatch to and passes its right-hand value through unchanged. `@v` evaluates to `v`.
+
+```java
+def x: @42;                              // 42
+def y: @(1 + 2);                         // 3
+```
+
+To reference the `@` operator as a first-class function value, use the standard operator-as-function lift form `(@)`. This matches the rule applied to every other operator: bare-operator-in-value-position is not admitted; `( )` is required to lift an operator up to a value (e.g., `(+)`, `(?and)`, `(@)`). The LHS-less *use* form `@v` is a special-case of the operator being applied with no callee, not the operator referenced as a value.
+
+`(@)` is **arity-polymorphic:** it dispatches at call time on the number of arguments supplied, mirroring the `@`-call operator's LHS-presence dispatch at the lifted-function layer:
+
+- **0-arg:** returns `empty`:
+
+    ```java
+    (@)();      // empty
+    ```
+
+- **1-arg:** returns the argument unchanged. This is the **unary value-identity function**, equivalent in effect to `@v` at the operator-use level.
+
+    ```java
+    (@)(7);       // 7
+    ```
+
+- **2-arg:** treats the first argument as a callee (must have been opted into the `@`-call syntax; §3.8.2) and the second as the call-time argument; semantically equivalent to invoking the first against the second.
+
+    ```java
+    // assumes:
+    // defn double@(v) ^v*2;
+
+    (@)(double, 7);    // 14 :: double@(7)
+    ```
+
+The `@` operator returns a runtime error if called with 3+ arguments.
+
+The prime form `(@')` reverses argument order for the 2-argument arity: swaps to `(arg, callee)` order -- semantically equivalent to invoking the second against the first.
+
+#### §3.8.2 `@` Suffix In Function Declaration Name
+
+A function literal may declare itself with an `@` marker at the end of its name:
+
+```java
+defn None@() ^empty;
+defn Id@(v) ^v;
+defn Value@(v) ^v;
+```
+
+The `@` marker is **not part of the function's name as a binding**; `Value` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Value` and `Value@` cannot coexist as separate bindings in the same scope.
+
+The marker opts the function value into the `@`-call operator at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
+
+Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
+
+```java
+Value@42;        // call: passes 42
+Value @ 42;
+Value@ 42;
+Value @42;
+Value@(42);      // ( ) is expression grouping, not arg list
+```
+
+A function defined without the `@` marker cannot be invoked via the `@`-call operator; `regular@x` is a semantic error against a `regular` that was not declared `@`-callable. The marker is the function value's opt-in.
+
+#### §3.8.3 Reference vs. Call Semantics For `@`-Marked Functions
+
+The argument-trail expectation differs by the function's declared arity:
+
+- A function declared with `@` and expecting one parameter: `Foo@` *alone* (no argument trail) is a **reference** to the function value, not a call. `Foo@ 42` is a call.
+- A function declared with `@` and expecting zero parameters: `Foo@` *alone* is a **call** (a no-arg call). There is no argument trail to wait for; the `@`-call operator dispatches immediately. `None@` is a call producing the function's return value, not a reference to `None`.
+
+This asymmetry exists because the call shape `Name@` has no syntactic continuation when arity is zero, so it must commit; for non-zero arity it can wait for the argument trail.
+
+#### §3.8.4 Call Lowering
+
+The `@`-call operator delivers the argument to the function the same way a positional call delivers it. There is no semantic difference between `Foo@(x)` and `Foo(x)` when both are admissible. The benefit of `@`-call is purely syntactic — one fewer paren-pair at the call site, supporting a "constructor-like" reading for value-introducing functions (`Some@x`, `Right@v`, etc.).
+
+#### §3.8.5 The Two Roles Are One Operator
+
+The value-position and call-position uses of `@` are not two separate facts but one operational rule applied with different LHS conditions:
+
+> `@` is the unary call operator with an optional LHS callee. With a callee, it dispatches the call (subject to the `@`-marker contract on the callee's definition). Without a callee, it passes the RHS through unchanged.
+
+The value-identity behavior in value position is what the operator does when there is no callee to call. The call behavior in call position is what the operator does when there is one. The marker requirement on `@`-marked function definitions is a contract on the callee side; it does not affect the LHS-less use form `@v`, which always behaves as identity.
+
+## §3.9 Call Semantics
+
+This section specifies what happens when a function value is invoked. It covers the regular `foo(..)` call form and the alternate `@`-call and `%`-call forms.
+
+#### §3.9.1 Argument Binding
+
+A parameter tier (§3.2) takes one of exactly two shapes: zero or more positional non-gather parameters, or exactly one `*gather` parameter. The two shapes cannot mix within a tier.
+
+**Abstract execution:**
+
+1. Let `argumentExpressions` be a list holding, for each call-site argument slot in source order, either the source text of the argument expression or the distinguished marker `skip` for an empty slot (§3.9.4). Spread arguments are first expanded per §3.9.5.
+2. Evaluate the callee `f` to a function value.
+3. Let `arguments` be an empty list. For each entry in `argumentExpressions`:
+    - If the entry is `skip`, append `skip` to `arguments`.
+    - Otherwise, evaluate the expression in the **caller's** environment and append the value to `arguments`.
+4. Allocate a fresh frame parented to the function value's captured frame.
+5. Bind the outermost parameter tier of `f` per §3.2 against `arguments`:
+    - **If the tier is all-positional non-gather** with parameters `p1, p2, ..., pK`: for each `pi` in order, bind to the value at position `i` of `arguments`. If position `i` is absent, is `skip`, or evaluates to `empty`, the parameter's default expression (§3.9.2) is evaluated if present; otherwise the parameter is bound to `empty`. Surplus arguments beyond position `K` are discarded.
+    - **If the tier is a single `*gather` parameter**: bind the gather to a Tuple containing all values from `arguments`. Skip slots contribute `empty` entries. If `arguments` is empty, the gather binds the empty Tuple.
+6. Evaluate preconditions per §3.5. If one matches, its evaluated consequent is the result of the function call expression; the function body is not evaluated.
+7. Evaluate the body per §3.3.
+8. The function return value (the value of the `^` expression that executed, or `empty` if no `^` executed) is the result of the function call expression.
+
+#### §3.9.2 Parameter Default Evaluation
+
+A parameter's default expression is evaluated only when the call provides no value at that parameter's position, the call provides a `skip` slot at that position (§3.9.4), or the call provides an expression that evaluates to `empty`.
+
+Defaults evaluate in the **callee's** frame, after all preceding parameters in the same tier have been bound. A default expression may reference any earlier-bound parameter in the same tier, or any parameter from an outer (already-bound) tier:
+
+```java
+defn f(x, y: x + 1) ^< :x, :y >;
+
+f(5);                                    // < x: 5, y: 6 >
+f(5, 10);                                // < x: 5, y: 10 >
+f(5, empty);                             // < x: 5, y: 6 >
+f(5, );                                  // < x: 5, y: 6 >
+
+defn g(x)(y: x * 2) ^< :x, :y >;
+
+g(3)();                                  // < x: 3, y: 6 >
+g(3)(10);                                // < x: 3, y: 10 >
+```
+
+Tiers act like nested frames: an inner-tier default resolves names by walking outward through already-bound tiers, exactly as the body would.
+
+A default expression may not reference a later parameter in the same tier, nor a parameter in a not-yet-bound (inner) tier.
+
+#### §3.9.3 Gather Binding
+
+A `*gather` parameter takes the place of an entire tier — a tier is either all-positional non-gather (§3.9.1) or a single `*gather`; the two shapes do not mix within a tier.
+
+The gather binds all positional arguments at that tier as a Tuple (§3.2.4). Skip slots contribute `empty` entries. If the tier receives no arguments, the gather binds the empty Tuple.
+
+```java
+defn collect(*nums) ^nums;
+
+collect(1, 2, 3);                        // < 1, 2, 3 >
+collect();                               // <>
+collect(1, , 3);                         // < 1, empty, 3 >
+```
+
+A function that needs both leading fixed parameters and a gather expresses the gather as its own tier:
+
+```java
+defn tagged(label)(*items) ^< :label, :items >;
+
+tagged("primes")(2, 3, 5);               // < label: "primes", items: < 2, 3, 5 > >
+```
+
+#### §3.9.4 Skip Slots
+
+The call syntax permits empty slots:
+
+```java
+defn xyz(x, y, z) ^log(`"x: `x`, y: `y`, z: `z`");
+
+xyz(1, , 3);                             // x: 1, y: empty, z: 3
+```
+
+A skip slot is recorded as the distinguished `skip` marker in `argumentExpressions` (§3.9.1) and contributes no evaluated expression. At binding time, a parameter that receives `skip` evaluates its default expression if present; otherwise it binds `empty`.
+
+Skip slots are also admitted in partial application (§3.10).
+
+#### §3.9.5 Spread Arguments
+
+The call syntax admits `...expr` arguments in positional argument lists. Spread is evaluated and expanded before parameter binding.
+
+**Abstract execution:**
+
+1. Evaluate `expr` in the caller's environment. The result must be a Tuple, a List, or another iterable positional sequence.
+2. Each element of the iterable contributes one entry to `argumentExpressions` at the position of the spread.
+
+Spread may be combined with positional arguments and skip slots:
+
+```java
+def mid: < 4, 5, 6 >;
+
+f(1, ...mid, 9);                         // 1, 4, 5, 6, 9
+f(1, , ...mid);                          // 1, skip, 4, 5, 6
+```
+
+Spread is positional-only: it is not admitted in a named-argument call (§3.9.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named — never mixed.
+
+**Open:** Whether a Record with named slots whose names correspond to parameters may be spread into a call as a named-argument expansion (`f(...rec)`) is undecided. The current spec rejects all Record spread; admitting a named-arg form remains under consideration.
+
+#### §3.9.6 Named Arguments
+
+A regular function call (not `@` or `%`) may bind arguments by parameter name instead of position:
+
+```java
+defn add(x: 0, y) ^x + y;
+
+add(x: 3, y: 4);                         // 7
+add(y: 5);                               // 5 — x defaults to 0
+```
+
+A single call must use either positional arguments (with optional skip slots and spread, per §§3.9.4 and 3.9.5) or named arguments — the two forms cannot be mixed within a single call.
+
+**Abstract execution:**
+
+1. Each named argument is bound to its corresponding parameter by name.
+2. Parameters with no named argument evaluate their default expression if present, otherwise bind `empty`.
+
+A named argument referencing a non-existent parameter is rejected at compile time.
+
+In a multi-tier function (§3.9.9), the named-argument form applies to one tier at a time: each tier's call binds named arguments against that tier's parameter list only.
+
+#### §3.9.7 `@`-Call Form
+
+A function declared with `@`-suffix (§3.8) is invoked with the `@`-call form, **not** the parenthesized form. For an `@`-marked namespace `Foo`:
+
+- `Foo@x` invokes the constructor hook with argument `x`.
+- `Foo@` (no operand) invokes the constructor hook with `empty` as the argument; the parameter's default expression (§3.9.2) resolves if present.
+- `Foo(x)` is rejected. Bare `Foo` is a namespace handle (§3.8), not a callable.
+
+Whitespace around `@` is optional: `Foo@x`, `Foo @ x`, `Foo@ x`, and `Foo @x` are all valid call forms; `Foo@` and `Foo @` are both valid zero-operand forms.
+
+The `@`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
+
+**NOTE:** Parentheses following `@` are not call syntax; they are expression-grouping for the operand. `Foo@(x + 1)` is `Foo` applied to the value of `x + 1`, not a parenthesized argument list.
+
+To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.11).
+
+The hook-and-dispatch chapter specifies how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity.
+
+#### §3.9.8 `%`-Call Form
+
+An instance constructed through an `@`-marked namespace that also declares a `%`-suffix hook (§3.8) is invoked with the `%`-call form:
+
+- `inst%` invokes the effector hook with `inst` as the sole argument.
+- `inst % env` invokes the effector hook with `inst` and `env` as arguments.
+
+Dispatch resolves the effector hook through the instance's owning namespace, carried as a runtime contract on the instance. Whitespace around `%` is optional.
+
+If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity: `inst%` evaluates to `inst`, and `inst % env` evaluates to `inst` (the `env` argument is discarded). This fallthrough is normative — it preserves the `Lazy@` evaluation semantic for instances of any `@`-marked namespace, whether or not the namespace defines an effector.
+
+The `%`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
+
+To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.11).
+
+The hook-and-dispatch chapter specifies the dispatch routing in full.
+
+#### §3.9.9 Multi-Tier Function Call
+
+A call against a function value with multiple parameter tiers binds the outermost tier per §3.9.1. The body of a non-innermost tier evaluates to a function value over the next tier; that value is the result of the tier call.
+
+```java
+defn add(x)(y) ^x + y;
+
+add(3);                                  // function value over (y)
+add(3)(4);                               // 7
+```
+
+Each subsequent tier call evaluates per §3.9.1 against that tier's parameter list.
+
+Per §3.2.5, loose-curry is not provided: each tier call must satisfy that tier's parameters with its own call. To flatten the tier shape into a single argument list, use `\/` (§3.11.3).
+
+Tiers act like nested frames for name resolution: an inner-tier body, and any default expression in an inner tier (§3.9.2), can reference parameters from outer tiers.
+
+Preconditions are hoisted to the highest/earliest tier at which their references can be satisfied by that tier's parameters (§3.5).
+
+#### §3.9.10 The `empty` Completion Fallthrough
+
+A function call evaluates to `empty` when:
+
+1. The body is a concise return `^expr` and `expr` evaluates to `empty` — `empty` flows out normally.
+2. The body is a block body and no `^` statement executed — the block completed without an explicit return.
+3. A precondition fired with `empty` as its consequent (e.g., `?[bad]: empty`).
+
+This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
+
+### §3.10 Partial Application: `f|args|`
+
+The `f|args|` form produces a partially-applied function value:
+
+```java
+def add6: (+)|6|;
+add6(12);                                // 18
+```
+
+**Abstract execution:**
+
+1. Evaluate the callee `f` to a function value.
+2. Evaluate each supplied argument in source order, in the caller's environment.
+3. Allocate a new function value whose application logic, when later called with `rest`-args, invokes `f` with the captured supplied args slotted into their positions and the rest-args filling the remaining positions (including skip slots).
+4. The result of `f|args|` is that new function value; no call to `f` happens yet.
+
+Partial application does **not depend on `f`'s arity**:
+
+```java
+def add37: (+)|6, 12, 19|;
+add37(5);                                // 42
+```
+
+(`(+)` is variadic in its operator-as-function lift; the partial captures three values and the final call appends `5` for four total operands.)
+
+**Skip slots in partial application:**
+
+```java
+defn xyz(x, y, z) ^ log(`"x: `x`, y: `y`, z: `z`");
+def fn: xyz|3, , 7|;
+fn(5);                                   // x: 3, y: 5, z: 7
+```
+
+The skip slot at the y position is filled by the rest-arg at final call time.
+
+**Spread in partial application:**
+
+```java
+def nums: < 9, 8, 7 >;
+def fn: xyz|...nums|;
+fn();                                    // x: 9, y: 8, z: 7
+```
+
+Spread sources are evaluated and captured at partial-application time (preserving "arguments are remembered for later" semantics even when the spread source is itself effectful — e.g., a generator yielding values).
+
+**Prime-and-partial composition:**
+
+```java
+def sub1: (-')|1|;
+sub1(6);                                 // 5 :: 6 - 1
+```
+
+The prime `'` reverses the accumulated argument order at final application (§3.11.1). Order: the complete argument sequence (captured + rest-call) is reversed before delivery to the underlying function.
+
+**Named arguments in partial application:**
+
+```java
+add|x: 4|(y: 5);                         // 9
+```
+
+Same name-resolution rules as §3.9.6, applied to the union of captured and final-call arguments.
+
+### §3.11 Function-Shape Transforms
+
+Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position. All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.12.
+
+#### §3.11.1 Reverse: `f'`
+
+The prime operator `'` produces a function value that reverses its argument order at call time:
+
+```java
+defn sub(x, y) ^ x - y;
+def rsub: sub';
+rsub(2, 5);                              // 3 :: 5 - 2
+```
+
+**Abstract execution at call to `f'`:**
+
+1. Collect the call's arguments into a sequence.
+2. Reverse the sequence.
+3. Apply `f` to the reversed sequence.
+
+The reverse is **semantic, not syntactic** — `f'` is a function value carrying a reverse-then-apply behavior, applicable at any later call. The reversal applies to the complete argument sequence delivered at the final call, including when composed with partial application (§3.10) or pipeline topic placement.
+
+`f'` preserves `f`'s arity (the language guarantees that arity-introspecting transforms like `/\` and `\/` see `f`'s declared arity through the prime wrapper).
+
+#### §3.11.2 Curry: `f/\`
+
+The mountain operator `/\` produces a curried function value:
+
+```java
+defn buildURL(origin, path, query) ^ `"`origin``path`?`query`";
+def parts: buildURL/\;
+
+parts("https://my.site")("/api/find")("name=getify");
+```
+
+**Abstract execution at call to `f/\`:**
+
+1. Accumulate arguments across call sites.
+2. At each call, if total accumulated arguments meet or exceed `f`'s declared arity, apply `f` to the accumulated arguments and produce the result.
+3. Otherwise, return a function value that continues accumulation.
+
+`/\` operates on `f`'s declared arity (the count of its outermost-tier parameters), not on multi-tier curry shape. For a function already declared with multi-tier curry shape, `/\` is idempotent — the wrapper just passes arguments through.
+
+**Loose-curry compatibility.** Supplying all arguments at once short-circuits the accumulation:
+
+```java
+parts("https://my.site", "/api/find", "name=getify");
+```
+
+#### §3.11.3 Uncurry: `f\/`
+
+The valley operator `\/` produces a flat-argument function value over a curry-shaped function:
+
+```java
+def flat: parts\/;
+flat("https://my.site", "/api/find", "name=getify");
+```
+
+**Abstract execution at call to `f\/`:**
+
+1. Receive a flat positional argument sequence.
+2. Walk `f`'s tier chain at apply time: at each tier, consume that tier's arity from the front of the sequence and apply, advancing through the chain.
+3. The final tier's body result is the call's value.
+
+`\/` respects multi-tier shape: a `defn foo(x)(y, z)(w) ^ ...` uncurried takes its tier arities sequentially from the flat list.
+
+`\/` is the canonical way to call a multi-tier `defn` with a flat argument list (§3.2.5). Loose-curry is not a language feature; `\/` is the explicit form.
+
+#### §3.11.4 Primed inverses
+
+`/\` and `\/` are each other's inverses; `'` is its own inverse. So each transform admits a primed-inverse form expressing the other:
+
+```java
+def uncurry: (/\');
+def curry: (\/');
+```
+
+The primed forms exist for language consistency (every operator admits a primed form) but the recommended style is to use the named operator directly: `\/` rather than `/\'`, `/\` rather than `\/'`.
+
+### §3.12 Operator-as-Function
+
+Any operator can be lifted to a function value by parenthesizing it: `(+)`, `(?and)`, `(.)`, `(.<a, b>)`. The `@` operator lifts the same way: `(@)` evaluates to the unary value-identity function (the `@`-call operator with no LHS callee; see §3.8.1).
+
+The lifted value is a callable function whose application invokes the operator on the supplied arguments. The prime form `(+')` produces the reverse of the lifted operator (§3.11.1).
+
+The per-operator argument arity, argument types, and semantic behavior of each lifted operator is specified in the section that owns that operator (e.g., `(+)` per §1.3 numeric arithmetic; `(.)` per §2.12 indexed access; `(.<a, b>)` per §2.12 multi-pick; etc.). §3 specifies only the lifting mechanism:
+
+1. The parenthesized operator-symbol expression produces a function value.
+2. Calling that function value evaluates the operator against the supplied arguments.
+3. The prime `'` form applies §3.11.1 reverse semantics to the lifted function value.
+4. Operator-as-function values compose freely with `|args|` (§3.10), `/\` (§3.11.2), `\/` (§3.11.3), `+>` (composition, §6), and `#>` (pipelines, §6).
