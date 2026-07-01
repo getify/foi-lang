@@ -49,7 +49,7 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §2 Bindings & Data Access *(done)*
 - §3 Functions *(done)*
 - §4 Decisions and guards *(done)*
-- §5 Pattern matching *(planned)*
+- §5 Pattern matching *(done)*
 - §6 Loops and comprehensions *(planned)*
 - §7 Suspension and evaluation control *(planned)*
 - §8 Modules *(planned)*
@@ -2685,3 +2685,309 @@ def maybeResult: ?[x ?> 0]: compute(x);
 - **Function preconditions (§3.5)** are CondClause-headed forms occupying the position between a function's parameter list and its body. They share the `?[cond]:` clause syntax and polarity vocabulary defined here, with two differences: the consequent grammar is narrower (`ExprNoBlock` rather than `BlockExprStrict | Expr`), and matching shortcircuits the function body rather than producing the guard's value in place. See §3.5 for precondition semantics and §3.5.1 for the multi-parameter tier-lifting rule.
 
 - **Pattern matching (§5)** extends this single-clause form to multi-clause cascades. An independent-match expression (`?{ ?[c1]: e1; ?[c2]: e2; ?: else }`) is a first-match-wins ordering of clauses that reuse the CondClause primitive defined here; a single-clause independent match is semantically equivalent to a guard expression. A dependent-match expression (`?(topic){ ... }`) additionally threads a shared topic through its clauses via the DepCondClause form, which has no counterpart in the guard-expression surface.
+
+## §5 Pattern Matching
+
+**Pattern matching** extends the single-clause guard expression form of §4 to multi-clause **cascades**. A pattern-match expression is a sequence of clauses, each a CondClause-headed decision paired with a consequent, evaluated in source order with **first-match-wins** semantics. An optional trailing else clause supplies a default consequent when no pattern clause matches; if no clause matches and there is no else, the expression's value is `empty` (§1.1).
+
+**NOTE:** Depending on compiler configuration, if a set of clauses does not have a default clause, and there is a *pattern-match coverage gap* -- a value could plausibly "fall through" and not match any of the clauses -- this situation can raise a compiler/type error.
+
+Two forms are available:
+
+- **Independent** pattern matching (`?{ ... }`): each clause carries its own CondClause, evaluated independently. The clauses share no common subject; each is a self-contained boolean test.
+
+- **Dependent** pattern matching (`?(topic){ ... }`): a topic expression is evaluated once at match entry, then threaded as the implicit left-hand side of each clause. Each clause tests the (single, shared) topic against one or more atom expressions.
+
+Both forms are value-bearing expressions: the matching clause's consequent value is the match expression's value. Both share the same consequent grammar and the same else-clause form; the two forms differ only in how their clauses read the input.
+
+### §5.1 Independent Pattern Matching
+
+An **independent pattern-match expression** is a brace-delimited sequence of clauses opened with `?{`:
+
+```
+IndepMatchExpr    := Qmark OpenBrace _ IndepMatchStmts _ CloseBrace
+IndepPatternStmt  := IndepCondClause _ MatchConsequent (_ Semicolon)*
+IndepCondClause   := (Qmark | Exmark)? BracketExpr
+```
+
+Each clause consists of a CondClause (with optionally-elided positive `?` polarity; see below) followed by a match consequent (§5.3). Clauses are separated by semicolons.
+
+Example:
+
+```java
+def myName: "Kyle";
+
+def greeting: ?{
+    ?[myName ?= "Kyle"]: "Hello!";
+    ![myName ?= "Kyle"]: "Goodbye!"
+};
+
+greeting;                   // "Hello!"
+```
+
+**Abstract execution:**
+
+1. For each clause in source order:
+    1. Evaluate the clause's CondClause per §4.1.
+    2. If the clause matches:
+        1. Evaluate the consequent in the current environment.
+        2. The match expression's value is the consequent value; no further clauses are evaluated.
+    3. If the clause does not match, proceed to the next clause.
+2. If no clause matches:
+    1. If a trailing else clause is present (§5.4), evaluate its consequent; the match expression's value is the else consequent value.
+    2. Otherwise, the match expression's value is `empty`.
+
+**Implicit-`?` polarity.** Within an independent pattern-match clause, the positive polarity sigil is *optional*. A bare `[test]` reads as implicit `?[test]`. The `!` polarity, when desired, must be written explicitly. This differs from §4.1's standalone CondClause, where the polarity is required.
+
+```java
+?{
+    [isLoggedIn()]:   showDashboard();       // implicit `?`
+    ![isRegistered()]: showRegistration()    // explicit `!`
+}
+```
+
+**Equivalence to guard expression.** With the exception of the optional compiler configuration that rejects coverage gaps (§5.5), a single-clause independent match with no else clause has the same semantics as a guard expression (§4.2): the consequent value on match, `empty` on non-match. The standalone `?[c]: e` form is the shorter surface for that case; the `?{ [c]: e }` form is preferred only when a second clause or an else is anticipated.
+
+### §5.2 Dependent Pattern Matching
+
+A **dependent pattern-match expression** evaluates a topic expression once, then threads the resulting value through each clause as the implicit left-hand side of the clause's tests:
+
+```
+DepMatchExpr    := Qmark OpenParen _ ExprNoBlock _ CloseParen
+                    OpenBrace _ DepMatchStmts _ CloseBrace
+DepPatternStmt  := DepCondClause _ MatchConsequent (_ Semicolon)*
+```
+
+Example:
+
+```java
+def myName: "Kyle";
+
+def greeting: ?(myName){
+    ?["Kyle"]:   "Hello!";
+    !["Kyle"]:   "Goodbye!"
+};
+
+greeting;                   // "Hello!"
+```
+
+**Abstract execution:**
+
+1. Evaluate the topic expression in the current environment, producing a value `T`. `T` is bound once at match entry and is *not* re-evaluated for subsequent clauses.
+2. For each clause in source order:
+    1. Evaluate the clause's DepCondClause against `T` per §5.2.1.
+    2. If the clause matches:
+        1. Evaluate the consequent in the current environment, with `T` available at the topic reference position `#` (§5.2.2).
+        2. The match expression's value is the consequent value; no further clauses are evaluated.
+    3. If the clause does not match, proceed to the next clause.
+3. If no clause matches:
+    1. If a trailing else clause is present (§5.4), evaluate its consequent (with `T` still available at `#`); the match expression's value is the else consequent value.
+    2. Otherwise, the match expression's value is `empty`.
+
+The topic expression's single-evaluation property is load-bearing: dependent-match reads once, tests many. Side-effecting topic expressions therefore fire exactly once per match entry, regardless of the number of clauses.
+
+#### §5.2.1 DepCondClause and Its Atoms
+
+A **DepCondClause** is a bracketed list of one or more **atoms**, with optional polarity sigil:
+
+```
+DepCondClause   := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket
+DepCondExprList := DepCondExprAtom (_ Comma _ DepCondExprAtom)*
+DepCondExprAtom := DepCondBoolExpr | ExprNoBlock
+DepCondBoolExpr := AsTypeOp _ NamedType
+                 | DepCondBoolOp _ CompareDispatch
+                 | OpenParen _ DepCondBoolExpr _ CloseParen
+DepCondBoolOp   := CompareOp | AndOp | OrOp
+```
+
+Each atom is a **boolean test against the topic** `T`. A DepCondClause matches when *any* of its atoms match (OR-semantics), further adjusted by clause polarity.
+
+**Atom kinds.** Four shapes of atom are admitted:
+
+1. **Bare expression atom** (`ExprNoBlock`). Evaluates to a value `V`; matches when `T ?= V` (equality against topic). Example: `?["Kyle"]` matches when `T ?= "Kyle"`.
+
+2. **Operator-led atom** (`DepCondBoolExpr`, `DepCondBoolOp` arm). A comparison, boolean-logic, containment, or membership operator with the topic as implicit left operand and a written right operand. The operator is one of the CompareOp / AndOp / OrOp families. Examples:
+
+    ```java
+    ?(something){
+        [?>= 18]: ...;                // matches when T ?>= 18
+        [?< 0]: ...;                  // matches when T ?< 0
+        [?in <1, 2, 3>]: ...;         // matches when T ?in <1, 2, 3>
+        [?has "key"]: ...;            // matches when T ?has "key"
+    };
+    ```
+
+    Negated forms (`!<`, `!<=`, `!>`, `!>=`, `!in`, `!has`, `!=`, `!<>`) use their inverted meaning at the atom position; the atom matches iff the negated comparison holds against `T`.
+
+3. **Type-check atom** (`DepCondBoolExpr`, `AsTypeOp` arm). A `?as` or `!as` operator followed by a named type; matches when the topic's type satisfies the annotation. Example: `[?as int]` matches when `T` is an `int`. Semantics for `?as` / `!as` and named types are specified in §9.
+
+4. **Paren-grouped atom** (`DepCondBoolExpr`, paren-recursive arm). A parenthesized `DepCondBoolExpr` for annotation reachability or precedence disambiguation. Example: `?[?and (x :as int)]`. Without the parens, `:as` is unreachable inside the operator-led arm because that arm reaches `CompareDispatch` directly rather than through `OperandExpr`; the paren-recursive form is the annotation escape hatch.
+
+5. **Unary-operator atom** (`DepCondBoolExpr`, unary-op arm). A `NamedUnaryOp` (`?empty` or `!empty`) applied to the implicit topic with no written operand. Matches when the topic satisfies the unary test. Extends the "topic is the implicit operand" principle from binary atoms (topic as LHS) to the unary case (topic as sole operand).
+
+    ```java
+        ?(user){
+            [?empty]: "no user";
+            [!empty]: `"Hello, `#`"
+        };
+    ```
+
+    The `?empty` and `!empty` operators here are the same operators specified as prefix unary boolean tests in §1.2. At dep-match atom position they carry no written operand; the topic supplies it.
+
+**Implicit-`?` polarity.** As in §5.1, a bare `[atoms]` reads as implicit `?[atoms]`. The `!` polarity must be written explicitly.
+
+The bare-expression atom form `?[expr]` and the fully-explicit form `?[?= expr]` are semantically equivalent; the bare form is the idiomatic surface.
+
+**Multi-atom OR-list.** A DepCondClause may list several atoms separated by commas; the clause matches if any atom matches:
+
+```java
+def name: "Kyle";
+
+?(name){
+    ["Kyle", "Fred", "Joe"]: "Hello!";
+    : "Goodbye"
+};
+```
+
+##### §5.2.1.1 DepCondClause Abstract Execution
+
+Abstract execution of a DepCondClause against topic `T`:
+
+1. Evaluate each atom, in source order, against `T`:
+    1. Bare expression atom: evaluate to `V`; the atom matches iff `T ?= V`.
+    2. Operator-led atom: evaluate the RHS operand; the atom matches iff `T <op> RHS` holds.
+    3. Type-check atom: the atom matches iff `T` satisfies the named type per §9.
+    4. Unary-operator atom: the atom matches iff `<op> T` holds (the unary operator applied to the topic per §1.2).
+2. Short-circuit at the first matching atom (no further atoms evaluated).
+3. Apply the clause polarity:
+    1. If polarity is `?` (or absent, implicit `?`), the clause matches iff any atom matched.
+    2. If polarity is `!`, the clause matches iff no atom matched.
+
+Atom-level short-circuit avoids evaluating the tail of the OR-list once a match is established; this parallels the `?or` boolean-logic operator's short-circuit semantic. Clause polarity applies to the whole OR-list result: `![a, b, c]` matches when none of `a`, `b`, `c` match against `T`.
+
+**Shared consequent.** All atoms of a clause share a single consequent, evaluated at most once when the clause matches. Splitting a multi-atom clause into separate clauses with duplicated consequents is *not* equivalent when the consequent has side effects; the OR-list form guarantees single-consequent evaluation.
+
+#### §5.2.2 The Topic Reference `#`
+
+Within a dependent match consequent, the symbol `#` refers to the topic value `T` bound at match entry. It is the same `T` regardless of which clause matched.
+
+```java
+def myName: "Kyle";
+
+?(myName){
+    ?["Kyle"]:  `"Hello, `#`!";       // "Hello, Kyle!"
+    ?: `"Goodbye, `#`."
+};
+```
+
+`#` at this position is a *value reference*, not a fresh evaluation of the topic expression. The topic's single-evaluation property (per §5.2's abstract execution) guarantees that side effects in the topic expression fire once, and every consequent's `#` observes the same value.
+
+#### §5.2.2.1 `#` Topic Not In DepCondClause
+
+`#` is not available inside DepCondClause atoms.
+
+The topic is already the implicit left-hand operand of each atom's operator (for operator-led atoms) or the implicit equality target (for bare expression atoms); there is no additional need to write `#`, and no binding is provided at that position.
+
+A `#` written inside an atom does not refer to the match topic; it either resolves to an enclosing pipeline topic (per §6, if the match itself sits inside a `#>` pipeline body) or is otherwise a stale reference.
+
+##### §5.2.2.2 Nested Dependent Match
+
+A dependent match nested inside another dependent match's consequent establishes its own topic binding, shadowing the enclosing match's topic. Within the inner match's consequents, `#` refers to the inner topic; the outer topic is not directly reachable through `#` at that depth (the outer topic must be captured into a named binding at the outer scope if the inner needs it).
+
+```java
+?(outerName){
+    ?["Kyle"]: ?(innerAge){
+        ?[?>= 18]: `"Adult `#`";     // # is innerAge
+        ?: `"Minor `#`"              // -same-
+    };
+    ?: "Unknown"
+};
+```
+
+### §5.3 Match Consequents
+
+Match consequents share the guard consequent forms of §4.3, with the addition that the final match consequent can omit the otherwise required `;` terminator.
+
+```
+<MatchConsequent>       := Colon _ (BlockExprStrict | Expr) _ Semicolon
+<MatchConsequentNoSemi> := Colon _ (BlockExprStrict | Expr)
+```
+
+Consequent shapes: the same three sub-shapes as guard consequents (§4.3) — expression consequent (§4.3.1), block consequent (§4.3.2, both bare and def-block forms), and assignment consequent (§4.3.3). Semantics are identical to their guard counterparts.
+
+```java
+?(myName){
+    ["Kyle"]: log("hi");                 // expression
+    ["Kyle"]: (y: 3) { log(y); ^y * 2 }; // def-block (BlockExprStrict)
+    ["Kyle"]: { log("hi"); };            // bare block
+    ["Kyle"]: myName := "KYLE!";         // assignment
+};
+```
+
+As with guard consequents (§4.3), the block does not carry an implicit input at this position, so destructure targets in a def-block's defs clause require explicit initializers.
+
+### §5.4 The Else Clause
+
+Both independent and dependent match expressions admit an optional trailing **else clause**:
+
+```
+ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*
+```
+
+The else clause consists of an optional leading `?` sigil followed by a match consequent. It appears as the final statement in the match's brace body. When no preceding pattern clause matches, the else clause's consequent is evaluated to produce the match expression's value.
+
+Two surface forms are semantically equivalent:
+
+```java
+?(name){
+    ?["Kyle"]: "hi";
+    ?: "hello"                        // explicit ?: form
+};
+
+?(name){
+    ?["Kyle"]: "hi";
+    : "hello"                         // abbreviated: no leading ?
+};
+```
+
+The leading `?` on the else clause is a stylistic marker; it may be omitted for brevity or included for visual consistency when the match's pattern clauses use explicit polarity sigils.
+
+**Semantic.** If any preceding pattern clause matches, the else clause is not evaluated. If no preceding clause matches, the else consequent is evaluated in the current environment (with the topic `T` available at `#` in the dependent form); its value is the match expression's value.
+
+The else clause is the only way to give a match expression a total return semantic. Without an else, the match expression's value on non-match is `empty` (§1.1).
+
+### §5.5 Composition and Value
+
+Match expressions compose in the same two modes as guard expressions (§4.4):
+
+- **As value-bearing expression:** the matching clause's consequent value (or the else consequent value, when applicable) is the match's value. On no match with no else, the value is `empty`.
+
+    ```java
+    def result: ?(status){
+        ["ready"]:   compute();
+        ["pending"]: waitFor();
+        :            defaultValue
+    };
+    ```
+
+- **As statement:** the match's value is discarded; clauses apply their side effects.
+
+    ```java
+    ?(event){
+        ?["click"]: handleClick();
+        ?["hover"]: handleHover()
+    };
+    ```
+
+**Determinacy.** A match expression is *determinate* when its clauses cover all possible topic values (dependent form) or when the disjunction of clause conditions is a tautology (independent form).
+
+Depending on compiler configuration, Foi will or will not enforce determinacy (no *pattern-match coverage gap*) at compile time: a non-determinate match's value on no match is `empty`, per the abstract execution of §5.1 and §5.2.
+
+**Related forms.**
+
+- **Guard expressions (§4.2)** are the single-clause degenerate case of independent pattern matching. A single-clause independent match `?{ ?[c]: e }` is semantically equivalent to the guard `?[c]: e`.
+
+- **Function preconditions (§3.5)** share the `?[cond]:` clause syntax but compose as a shortcircuit sequence at call entry rather than as a value-bearing cascade. See §3.5.1 for the multi-parameter tier-lifting rule that governs their evaluation ordering.
+
+- **Comprehension conditionals** (§6, forward reference) reuse the CondClause primitive to gate `~each` loop-iteration continuation; see §4.1's reachability list.
+```
