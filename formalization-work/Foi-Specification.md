@@ -45,10 +45,10 @@ Open regions appear inline under an **Open** heading within the relevant section
 
 Sections are organized by semantic category, not by grammar production. Current TOC:
 
-- §1 Values *(this document)*
-- §2 Bindings & Data Access *(this document)*
-- §3 Functions *(planned)*
-- §4 Decisions and guards *(planned)*
+- §1 Values *(done)*
+- §2 Bindings & Data Access *(done)*
+- §3 Functions *(done)*
+- §4 Decisions and guards *(done)*
 - §5 Pattern matching *(planned)*
 - §6 Loops and comprehensions *(planned)*
 - §7 Suspension and evaluation control *(planned)*
@@ -1879,11 +1879,11 @@ The function frame is provisionally allocated, and parameters are bound (precond
 1. Bind parameters per §3.2 in a fresh, provisional frame (no body heap allocation yet).
 2. Evaluate each precondition in source order. For each:
     1. Evaluate the CondClause `[cond]` (or `![cond]`); see §4 for full guard semantics.
-    2. If the clause fires:
+    2. If the clause matches:
         1. Evaluate `consequent` in the call frame.
         2. The function's return value is the consequent value; subsequent preconditions and the body are not evaluated.
         3. **The call is complete.** The body is not entered.
-    3. If the clause does not fire, proceed to the next precondition.
+    3. If the clause does not match, proceed to the next precondition.
 3. If no precondition matches, execute the body per §3.3.
 
 Preconditions may reference *only* formal parameters. Closure-captured bindings from the enclosing scope are not visible inside a precondition expression; preconditions are self-contained predicates over the call's arguments.
@@ -2298,7 +2298,7 @@ A function call evaluates to `empty` when:
 
 1. The body is a concise return `^expr` and `expr` evaluates to `empty` — `empty` flows out normally.
 2. The body is a block body and no `^` statement executed — the block completed without an explicit return.
-3. A precondition fired with `empty` as its consequent (e.g., `?[bad]: empty`).
+3. A precondition matched with `empty` as its consequent (e.g., `?[bad]: empty`).
 
 This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
 
@@ -2514,3 +2514,174 @@ The per-operator argument arity, argument types, and semantic behavior of each l
 2. Calling that function value evaluates the operator against the supplied arguments.
 3. The prime `'` form applies §3.12.1 reverse semantics to the lifted function value.
 4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §6), and `#>` (pipelines, §6).
+
+## §4 Decisions and Guards
+
+This section specifies the standalone **guard expression** form, `?[cond]: consequent` (and its `![cond]: consequent` negated form), together with its shared **CondClause** primitive.
+
+A guard expression produces a value based on a single boolean test. If the test's polarity-adjusted result is `true`, the guard **matches** and the consequent is evaluated to produce the guard's value. If the guard does not match, the consequent is not evaluated and the guard's value is `empty` (§1.1).
+
+The CondClause primitive introduced here is also the atomic decision form embedded in function preconditions (§3.5), the independent form of pattern matching (§5), and the conditional-form of the `~each` loop comprehension (§6). Pattern matching (§5) extends the single-clause shape defined here to a multi-clause first-match-wins cascade, with optional topic dispatch and an optional else clause; the forms share the `?[cond]:` clause syntax and the `?/!` polarity vocabulary, and diverge on how many clauses combine and on whether a shared topic threads through them. A single-clause independent-match expression is semantically equivalent to the guard expression form here; the standalone guard is the shorter surface.
+
+### §4.1 The CondClause Primitive
+
+A **CondClause** is a polarity sigil (`?` or `!`) followed adjacently by a bracket-delimited test expression:
+
+```
+CondClause := (Qmark | Exmark) BracketExpr
+```
+
+No trivia is admitted between the polarity sigil and the opening `[`; the two must be lexically adjacent.
+
+Examples:
+
+```java
+?[x ?> 0]
+![y ?= empty]
+?[(?and)(isReady, isValid)]
+```
+
+**Abstract execution:**
+
+1. Evaluate the test expression in the current environment.
+2. The test must produce a boolean value (`true` or `false`). Non-boolean values are ill-typed per §1.2; the language provides no implicit coercion to boolean at this position.
+3. Apply the polarity:
+    1. If polarity is `?`, the clause **matches** when the test is `true`.
+    2. If polarity is `!`, the clause **matches** when the test is `false`.
+4. If the clause matches, its enclosing form (guard expression, precondition, or pattern-matching arm) proceeds to evaluate the corresponding consequent. If it does not match, the enclosing form takes its non-match path.
+
+The `!` polarity negates the *test's truth relative to matching*, not the value of the test. This is distinct from the unary `!` operator's function-complement / boolean-flip semantics; a `!` at the head of a CondClause is a polarity sigil, not application of the `!` operator to the test.
+
+**Reachability.** A CondClause is not a standalone form. It appears only embedded:
+
+- In a guard expression (§4.2): `CondClause _ Colon _ consequent`.
+- In a function precondition (§3.5): syntactically the same shape at the position between the parameter list and the body, with a slightly narrower consequent grammar.
+- In an independent pattern-matching arm (§5), where the polarity sigil is optionally elided (bare `[test]` reads as implicit `?[test]`).
+- In a conditional `~each` loop comprehension, where the conditional determines whether the next loop iteration is executed or the loop concludes.
+
+Dependent pattern matching (§5) uses a distinct **DepCondClause** with richer internal structure supporting operator-led boolean sub-expressions and `?as` type arms; that form appears only within dependent-match expressions.
+
+### §4.2 Guard Expression
+
+A **guard expression** attaches a consequent to a CondClause via a colon:
+
+```
+GuardedExpr := CondClause _ Colon _ (BlockExprStrict | Expr)
+```
+
+Examples:
+
+```java
+?[x ?> 0]: log(x);
+![y ?= empty]: process(y);
+```
+
+**Abstract execution:**
+
+1. Evaluate the CondClause per §4.1.
+2. If the CondClause matches:
+    1. Evaluate the consequent in the current environment.
+    2. The guard expression's value is the consequent value.
+3. If the CondClause does not match:
+    1. The consequent is not evaluated.
+    2. The guard expression's value is `empty`.
+
+The empty result on non-match is the source of §1.1's "A failed guard expression" bullet.
+
+### §4.3 Consequent Forms
+
+The consequent slot admits three shapes: an expression consequent, a block consequent, and an assignment consequent. The consequent's shape determines what value the guard produces on match, but the match/no-match semantic of §4.2 is uniform across all three.
+
+#### §4.3.1 Expression Consequent
+
+Any expression is admitted. On match, the expression evaluates in the current environment; its value is the guard's value.
+
+```java
+?[x ?> 0]: log(x);
+?[x ?< 0]: Left@ "negative";
+?[isReady]: task ~< process;
+```
+
+**NOTE:** As shown, these are *statements*; their resultant completion values are not preserved or used by the surrounding program. If one such statement were to appear as the final statement in a block, its completion value would be adopted as the block-expression's result value, which would further propagate up the expression evaluation chain.
+
+#### §4.3.2 Block Consequent
+
+The consequent may be a block expression in either of two forms: a **bare block** with no bindings clause, or a **def-block** with a leading bindings clause.
+
+**Bare block:**
+
+```java
+?[isReady]: {
+    log("starting");
+    initialize();
+    ^status
+};
+```
+
+**Def-block:**
+
+```java
+?[x ?< 3]: (y: 3) {
+    log(x + y);
+    ^y * 2
+};
+```
+
+The bare block reaches the consequent as an ordinary expression; its execution semantics are the bare-block rules of §2.9.1. The def-block form is the **BlockExprStrict** variant of §2.9.3, host-attached to the guard's colon-led body slot. Two properties are load-bearing at the def-block position:
+
+- The def-block form is *host-attached*, admitted only at the colon-led body slots of guards (this section) and match consequents (§5). A bare `(defs) { body }` at a value-expression slot (for example, a `def x:` initializer) is a parse error.
+- The def-block form uses the **strict-optional** defs-init inner: Identifier entries may omit their initializer (defaulting to `: empty`), but destructure-target entries require an explicit initializer, because a guard consequent has no implicit input to bind against.
+
+On match, the block executes; its final value-bearing expression is the guard's value. On non-match, the block is not evaluated and the guard's value is `empty` per §4.2.
+
+#### §4.3.3 Assignment Consequent
+
+The consequent may be an assignment expression:
+
+```java
+?[shouldLog]: lastLog := currentTime;
+?[valid]: counter := counter + 1;
+```
+
+This form has a load-bearing property that the other consequent shapes do not carry as directly:
+
+**The assignment evaluates only when the guard matches.** When the CondClause does not match, the RHS is not evaluated and the target's slot is not mutated. The guard expression's value is `empty` (per §4.2), unchanged from any other non-match outcome.
+
+**When the guard matches, the guard's value is the assigned value** -- the value written to the target's slot. This follows compositionally from three properties: the guard's value on match is the consequent value (§4.2); an assignment expression's value is the assigned RHS; and the consequent slot receives the assignment expression directly.
+
+**Abstract execution when the guard matches:**
+
+1. Evaluate the RHS in the current environment, producing a value `v`.
+2. Assign `v` to the target per §2's assignment semantics.
+3. The guard expression's value is `v`.
+
+**Abstract execution when the guard does not match:**
+
+1. The RHS is not evaluated.
+2. The target's slot is not mutated.
+3. The guard expression's value is `empty`.
+
+The conditional-mutation property is intentional: `?[cond]: target := value` is the canonical form for "mutate this slot only when this condition holds", without needing to wrap the mutation in a block. It is the shortest expression of a guarded re-assignment side effect in Foi.
+
+### §4.4 Composition
+
+Guard expressions compose in two modes: as **statements** (side-effect application, value discarded) and as **value-bearing expressions**.
+
+**As statement:** the guard's `empty` on non-match is discarded; the form reads as a conditional side effect.
+
+```java
+?[isLoggingEnabled]: log(currentEvent);
+```
+
+**As value-bearing expression:** the guard's value is captured, and the surrounding form must accommodate both the evaluated-consequent value and the `empty` on non-match.
+
+```java
+def maybeResult: ?[x ?> 0]: compute(x);
+// maybeResult is either the compute result, or empty
+```
+
+**Related forms.**
+
+- **Function preconditions (§3.5)** are CondClause-headed forms occupying the position between a function's parameter list and its body. They share the `?[cond]:` clause syntax and polarity vocabulary defined here, with two differences: the consequent grammar is narrower (`ExprNoBlock` rather than `BlockExprStrict | Expr`), and matching shortcircuits the function body rather than producing the guard's value in place. See §3.5 for precondition semantics and §3.5.1 for the multi-parameter tier-lifting rule.
+
+- **Pattern matching (§5)** extends this single-clause form to multi-clause cascades. An independent-match expression (`?{ ?[c1]: e1; ?[c2]: e2; ?: else }`) is a first-match-wins ordering of clauses that reuse the CondClause primitive defined here; a single-clause independent match is semantically equivalent to a guard expression. A dependent-match expression (`?(topic){ ... }`) additionally threads a shared topic through its clauses via the DepCondClause form, which has no counterpart in the guard-expression surface.
