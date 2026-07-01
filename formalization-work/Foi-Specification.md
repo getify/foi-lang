@@ -1482,7 +1482,7 @@ The required name (`add`) is bound in the enclosing scope as a structurally cons
 
 A declaration `defn` is a statement, not an expression: it cannot appear in operand position. To produce a function value at expression position with the binding effect, use a `def`-binding with a named-expression form (§3.1.2).
 
-##### 3.1.1.1 `@`-Suffix Declaration Form
+##### §3.1.1.1 `@`-Suffix Declaration Form
 
 A function literal may declare itself with a `@` marker at the end of its name:
 
@@ -1496,7 +1496,7 @@ The `@` marker is **not part of the function's name as a binding**; `Value` is t
 
 `@`-marked functions may only have zero parameters, or one parameter; that single parameter (if any) may *not* be a gather parameter.
 
-The marker opts the function value into the `@`-call operator at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
+The marker opts the function value into the `@`-call operator (§3.8) at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
 
 Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
 
@@ -1510,7 +1510,9 @@ Value@(42);      // ( ) is expression grouping, not arg list
 
 A function defined *without* the `@` marker cannot be invoked via the `@`-call operator; `regular@x` is a semantic error against a `regular` that was not declared `@`-callable. The marker is the function value's opt-in.
 
-##### 3.1.1.2 `%`-Suffix Declaration Form
+The full `@`-call dispatch mechanism is specified in §3.8.
+
+##### §3.1.1.2 `%`-Suffix Declaration Form
 
 A function literal may declare itself with a `%` marker at the end of its name:
 
@@ -1521,7 +1523,25 @@ defn Task@(fn) ^< :fn >;
 defn Task%(tInst,env) ^tInst.fn(env);
 ```
 
-// TODO
+Like `@`, the `%` marker is **not part of the function's name as a binding**; `Task` is the bound name in the enclosing scope, and the `%` marker is a separate AST-recorded flag on the function value. A `%`-marked `defn` does not introduce a binding distinct from `Task` or `Task@`; it installs an effector hook on the same `Task` namespace that an accompanying `defn Task@(..)` constructs against. `Task`, `Task@`, and `Task%` are three syntactic forms over a single binding slot.
+
+A `defn Name%(..)` declaration is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; the `%` hook installs against the namespace introduced by the `@` hook. A `%`-only declaration is rejected at compile time.
+
+The `%` hook receives an instance as its first parameter and an optional effector argument as its second. The outermost parameter list of a `%`-marked `defn` must declare exactly one or two parameters, neither of which may be a gather parameter; `%` on a parameter list shape outside this range is rejected at compile time. When the hook declares two parameters and the `%`-call form supplies none (`inst%`), the second parameter binds to `empty` per §3.10.1.
+
+The marker opts the function value into the `%`-call operator (§3.9) at call sites: a postfix effector form invoked against an instance constructed through the same-named `@` hook. Call shapes for `%`-marked functions (all equivalent; trivia-tolerant on both sides of `%`):
+
+```java
+inst%;             // call: passes inst alone
+inst %;
+inst % env;        // call: passes inst and env
+inst%env;
+inst%(env);        // ( ) is expression grouping, not arg list
+```
+
+A function defined *without* the `%` marker cannot be invoked via the `%`-call operator; `regular%env` is a semantic error against a `regular` that was not declared `%`-callable. The marker is the function value's opt-in.
+
+The full `%`-call dispatch mechanism -- how `inst%` routes to its owning namespace's `%` hook, and the identity-fallthrough behavior when no `%` hook is declared -- is specified in §3.9.
 
 #### §3.1.2 Named Expression Form
 
@@ -1975,7 +1995,15 @@ defn add(x, y) :as AddFunc ^x + y;
 
 ### §3.8 The `@`-Call Operator
 
-The glyph `@` is a unary call operator with an optional left-hand callee. With a callee, it dispatches a call to that function (subject to an opt-in marker on the function's definition). Without a callee, it has nothing to dispatch to, and the operator passes its right-hand value through unchanged.
+Foi has a family of operators that dispatch through user-declared bindings. Each operator's behavior against a value is not fixed at the language level; it is delegated to the binding that value was constructed through. `@` is the first and most fundamental member of this family. It invokes a **type namespace** — a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot — `Maybe`, `IO`, `List`, `Vector` — plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
+
+The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values — `%` in the next section, and eventually others — read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
+
+The result is an operator-overloading system that behaves as a typeclass in the ad-hoc-polymorphism sense: a type namespace's set of declared hooks IS the set of operations that admit its instances. The namespace is the load-bearing entity; there is no separate class abstraction, no external instance declarations, no orphan installations. A hook is well-defined only against the namespace that declared it; a hook is invoked only against values that identify with that namespace.
+
+The family's operator vocabulary is closed. Additional dispatch operators are added only from the existing language operator set — arithmetic, comparison, comprehension, and shape-transform operators are candidates; flow operators (`#>`, `+>`, `<+`), partial-application brackets, and access operators are not. No user-defined operator symbols, and no changes to an operator's precedence, arity, or operand contract when dispatched through a namespace. Each dispatch operator's behavior against namespaced values is a language-level extension of that operator's existing semantics, not a replacement of them.
+
+`@` is the constructor-side member of the family. The symbol `@` is a unary call operator with an optional left-hand callee. With a callee, it dispatches a call to that function (subject to an opt-in marker on the function's definition). Without a callee, it has nothing to dispatch to, and the operator passes its right-hand value through unchanged.
 
 This single mechanism underlies both `@`'s call-position use and its value-position use as the unary value-identity function — the latter is the former with the callee slot empty.
 
@@ -2026,13 +2054,7 @@ The argument-trail expectation differs by the function's declared arity:
 
 This asymmetry exists because the call shape `Name@` has no syntactic continuation when arity is zero, so it must commit; for non-zero arity it can wait for the argument trail.
 
-#### §3.8.3 Call Lowering
-
-The `@`-call operator delivers the argument to the function the same way a positional call would have delivered it.
-
-// TODO?
-
-#### §3.8.5 The Two Roles Are One Operator
+#### §3.8.3 The Two Roles Are One Operator
 
 The value-position and call-position uses of `@` are not two separate facts but one operational rule applied with different LHS conditions:
 
@@ -2040,11 +2062,56 @@ The value-position and call-position uses of `@` are not two separate facts but 
 
 The value-identity behavior in value position is what the operator does when there is no callee to call. The call behavior in call position is what the operator does when there is one. The marker requirement on `@`-marked function definitions is a contract on the callee side; it does not affect the LHS-less use form `@v`, which always behaves as identity.
 
-## 3.9 The `%` Effector Call Operator
+### §3.9 The `%` Effector Call Operator
 
-// TODO
+The symbol `%` is an effector call operator against an instance value, with an optional right-hand environment operand. It dispatches an effector call through the instance's owning namespace, subject to an opt-in `%`-marked hook (§3.1.1.2) on that namespace. If the namespace declares no such hook, the operator passes the instance through unchanged.
 
-## §3.10 Call Semantics
+Where `@` invokes a namespace as a constructor (§3.8), `%` invokes an instance's namespace as an effector. An instance carries its namespace identity as a runtime contract, established at construction; `%` reads that identity to route dispatch.
+
+The full dispatch routing is specified with the call form in §3.10.8.
+
+#### §3.9.1 Identity Fallthrough
+
+If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity:
+
+- `inst%` evaluates to `inst`.
+- `inst % env` evaluates to `inst`; the `env` operand is discarded.
+
+This fallthrough is **normative**. It admits every `@`-marked namespace's instances to the `%`-call form regardless of whether the namespace defines an effector, preserving pass-through semantics for value-like namespaces (`Lazy@`, `Id@`, etc.) that carry no effect.
+
+Identity fallthrough applies to the dispatch lookup on a namespaced instance whose namespace declares no `%` hook. It does **not** apply to `%` against a value that carries no namespace identity — that case is rejected. `%` requires an instance whose namespace has been established through an `@`-marked construction.
+
+#### §3.9.2 Uniformly a Call Form
+
+`%` admits no reference-extraction form. Unlike `@`, which supports `Foo.@` to extract the constructor as a first-class function value (§3.8), there is no `inst.%` form. Every syntactic use of `%` against an instance LHS is a call: it either dispatches to the effector hook or falls through to identity per §3.9.1.
+
+`%` also admits no LHS-less use form. `%v` is not a valid expression; `%` requires an instance LHS.
+
+To reference the `%` operator as a first-class function value, use the operator-as-function lift form `(%)` (§3.9.3).
+
+#### §3.9.3 `(%)` As A Function Value
+
+The `%` operator lifts to a function value via the standard operator-as-function form (§3.13). `(%)` is a callable function whose application performs the `%`-call.
+
+`(%)` is arity-polymorphic. It dispatches at call time on the number of arguments supplied, mirroring the `%`-call operator's LHS+RHS shape at the lifted-function layer:
+
+- **1-arg:** `(%)(inst)` is semantically equivalent to `inst%`. If `inst`'s owning namespace declares a `%` hook, dispatch fires with `inst` as the sole argument; otherwise identity fallthrough returns `inst` unchanged.
+
+```java
+    (%)(taskInst);           // taskInst%
+```
+
+- **2-arg:** `(%)(inst, env)` is semantically equivalent to `inst % env`. If dispatch fires, the hook receives `(inst, env)`; otherwise identity fallthrough returns `inst` (discarding `env`).
+
+```java
+    (%)(taskInst, myEnv);    // taskInst % myEnv
+```
+
+The `%` operator returns a runtime error if `(%)` is called with zero arguments or with 3+ arguments.
+
+The prime form `(%')` reverses the 2-argument order to `(env, inst)`; semantically equivalent to `(%)(inst, env)` with arguments swapped.
+
+### §3.10 Call Semantics
 
 This section specifies what happens when a function value is invoked. It covers the regular `foo(..)` call form and the alternate `@`-call and `%`-call forms.
 
@@ -2187,7 +2254,7 @@ The `@`-call form admits exactly zero or one operand. Spread arguments and named
 
 To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.12).
 
-The hook-and-dispatch chapter specifies how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity.
+The `@` operator, including how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity, is specified in full in §3.8.
 
 #### §3.10.8 The `%`-Call Form
 
@@ -2198,13 +2265,13 @@ An instance constructed through an `@`-marked namespace that also declares a `%`
 
 Dispatch resolves the effector hook through the instance's owning namespace, carried as a runtime contract on the instance. Whitespace around `%` is optional.
 
-If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity: `inst%` evaluates to `inst`, and `inst % env` evaluates to `inst` (the `env` argument is discarded). This fallthrough is normative — it preserves the `Lazy@` evaluation semantic for instances of any `@`-marked namespace, whether or not the namespace defines an effector.
+If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity per §3.9.1.
 
 The `%`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
 
-To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.12).
+To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.9.3).
 
-The hook-and-dispatch chapter specifies the dispatch routing in full.
+The `%` operator is specified in full in §3.9.
 
 #### §3.10.9 Multi-Tier Function Call
 
@@ -2234,8 +2301,6 @@ A function call evaluates to `empty` when:
 3. A precondition fired with `empty` as its consequent (e.g., `?[bad]: empty`).
 
 This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
-
-Yeah, you're right — the bolded prose headings are doing subsection work without the numbering. Promoting to §3.11.N. Order kept as written; numbered the procedural intro as §3.11.1 since "Abstract execution" and "Combination step" are paired halves of the same mechanism.
 
 ---
 
