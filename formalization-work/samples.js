@@ -727,16 +727,6 @@ export const samples = [
 	{ label: "DefBlockStmt: destructure w/ explicit init",
 	  src: "def (<:a, :b>: src) { a + b; };" },
 
-	// BareBlockExpr at MatchConsequent / MatchConsequentNoSemi
-	// (match consequents have no implicit source, so only the BareBlockExpr
-	// arm — not BlockExpr — is reachable here)
-	{ label: "BareBlockExpr: IndepMatch consequent",
-	  src: "?{ ?[c] { y; } };" },
-	{ label: "BareBlockExpr: IndepMatch else (Qmark + bare)",
-	  src: "?{ ?[c]: x; ? { y; } };" },
-	{ label: "BareBlockExpr: DepMatch consequent",
-	  src: '?(x){ ?["a"] { y; } };' },
-
 	// =============================================================
 	// §12 ASSIGNMENT
 	// =============================================================
@@ -900,11 +890,9 @@ export const samples = [
 
 	// DepMatchExpr — else variants
 	{ label: "DepMatch: abbreviated : else",              src: '?(name){ ?["Kyle"]: "hi"; : "bye" };' },
-	{ label: "DepMatch: BareBlockExpr else consequent",   src: '?(x){ ?[?= 1]: "one"; ? { log("none"); "?" } };' },
 
 	// DepMatchExpr — # topic reference
 	{ label: "DepMatch: # in colon-expr consequent",      src: '?(name){ ?["Kyle"]: log(#); ?: "no" };' },
-	{ label: "DepMatch: # in BareBlockExpr consequent",   src: '?(x){ ?[?>= 0] { log(#); "pos" }; ?: "neg" };' },
 
 	// DepMatchExpr — nesting
 	{ label: "DepMatch: nested DepMatch in consequent",   src: '?(name){ ?["Kyle"]: ?(age){ ?[?>= 18]: "adult"; ?: "minor" }; ?: "?" };' },
@@ -920,6 +908,11 @@ export const samples = [
 	// DepMatchExpr — topic shape
 	{ label: "DepMatch: CallExpr topic",                  src: '?(getName()){ ?["Kyle"]: "hi"; ?: "?" };' },
 
+	// DepCondBoolExpr — NamedUnaryOp arm (5th atom kind)
+	{ label: "DepMatchExpr NamedUnaryOp atom: [?empty] / [!empty]", src: `?(user){ [?empty]: "none"; [!empty]: "some" };` },
+	{ label: "DepMatchExpr NamedUnaryOp atom explicit ! polarity: ![?empty]", src: `?(user){ ![?empty]: "some"; ?: "none" };` },
+	{ label: "DepMatchExpr NamedUnaryOp in OR-list: [?empty, ?< 0]", src: `?(x){ [?empty, ?< 0]: "bad"; ?: "ok" };` },
+	{ label: "DepMatchExpr NamedUnaryOp with # in consequent", src: `?(name){ [?empty]: "none"; [!empty]: \`"got \`#\`" };` },
 
 	// =============================================================
 	// §16 DO-COMPREHENSIONS

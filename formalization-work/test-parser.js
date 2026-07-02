@@ -19,9 +19,9 @@ import { samples } from "./samples.js";
 
 
 var passSamples = [
-	...samples.map(sample => sample.src),
+	...samples.map(sample => ({ label: sample.label, src: sample.src })),
 
-	`export {
+	{ label: "audio player module", src: `export {
 	  :playlist, :clear, :play, :resume, :pause, :stop,
 	  :onPlay, :onTimeUpdate, :onPause, :onStop,
 	};
@@ -106,7 +106,7 @@ var passSamples = [
 	  defn cb() ^action(player.src);
 	  player.addEventListener("ended", cb);
 	  ^defn() ^player.removeEventListener("ended", cb)
-	};`,
+	};`,},
 ];
 
 
@@ -292,14 +292,30 @@ var failSamples = [
 	"Foo.@%;",
 	"Foo.@';",
 	".@;",
+
+	// bare-block consequents without the `:`
+	"?{ ?[c] { y; } };",
+	"?{ ?[c]: x; ? { y; } };",
+	'?(x){ ?["a"] { y; } };',
+	'?(x){ ?[?= 1]: "one"; ? { log("none"); "?" } };',
+	'?(x){ ?[?>= 0] { log(#); "pos" }; ?: "neg" };',
+
+	// DepCondBoolExpr — bare CompareOp/AndOp/OrOp at atom position
+	// (no RHS) must still reject. The unary arm admits ONLY
+	// NamedUnaryOp (?empty/!empty), not CompareOp or containment ops.
+	"?(x){ [?<]: a };",           // bare CompareOp without RHS
+	"?(x){ [?in]: a };",          // bare containment op without RHS
+	"?(x){ [?has]: a };",         // same
+	"?(x){ [?and]: a };",         // bare AndOp without RHS
 ];
 
 var passed = 0;
 var unexpectedFails = [];
 
 for (let i = 0; i < passSamples.length; i++) {
+	let { label, src } = passSamples[i];
 	try {
-		for await (let tree of parseFoi(passSamples[i],{
+		for await (let tree of parseFoi(src,{
 			// preserveSoftDelims: true,
 		})) {
 			// console.log(util.inspect(tree,{depth:50}));
@@ -307,7 +323,7 @@ for (let i = 0; i < passSamples.length; i++) {
 		passed++;
 	}
 	catch (err) {
-		unexpectedFails.push({ idx: i, src: passSamples[i], err: err.message });
+		unexpectedFails.push({ idx: i, label, src, err: err.message });
 	}
 }
 
@@ -344,7 +360,7 @@ console.log(`${negativePassed}/${failSamples.length} negative-passed`);
 
 for (let f of unexpectedFails) {
 	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
-	console.log(`\n[pos ${f.idx}] ${f.err}`);
+	console.log(`\n[pos ${f.idx}] ${f.label ?? "<unlabeled>"} — ${f.err}`);
 	console.log(`      ${preview}`);
 }
 

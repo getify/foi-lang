@@ -2796,6 +2796,7 @@ DepCondExprList := DepCondExprAtom (_ Comma _ DepCondExprAtom)*
 DepCondExprAtom := DepCondBoolExpr | ExprNoBlock
 DepCondBoolExpr := AsTypeOp _ NamedType
                  | DepCondBoolOp _ CompareDispatch
+                 | NamedUnaryOp
                  | OpenParen _ DepCondBoolExpr _ CloseParen
 DepCondBoolOp   := CompareOp | AndOp | OrOp
 ```

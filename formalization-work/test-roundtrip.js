@@ -642,7 +642,7 @@ var passed = 0;
 var failures = [];
 
 for (let i = 0; i < samples.length; i++) {
-	let { src } = samples[i];
+	let { label, src } = samples[i];
 
 	let program = null;
 	try {
@@ -651,12 +651,12 @@ for (let i = 0; i < samples.length; i++) {
 		}
 	}
 	catch (err) {
-		failures.push({ idx: i, src, stage: "parse", err });
+		failures.push({ idx: i, label, src, stage: "parse", err });
 		continue;
 	}
 
 	if (program == null) {
-		failures.push({ idx: i, src, stage: "parse", err: new Error("no Program node yielded") });
+		failures.push({ idx: i, label, src, stage: "parse", err: new Error("no Program node yielded") });
 		continue;
 	}
 
@@ -665,7 +665,7 @@ for (let i = 0; i < samples.length; i++) {
 		out = emit(program);
 	}
 	catch (err) {
-		failures.push({ idx: i, src, stage: "emit", err });
+		failures.push({ idx: i, label, src, stage: "emit", err });
 		continue;
 	}
 
@@ -673,7 +673,7 @@ for (let i = 0; i < samples.length; i++) {
 		passed++;
 	}
 	else {
-		failures.push({ idx: i, src, out, stage: "diff", diffAt: firstDiff(src, out) });
+		failures.push({ idx: i, label, src, out, stage: "diff", diffAt: firstDiff(src, out) });
 	}
 }
 
@@ -681,7 +681,7 @@ console.log(`${passed}/${samples.length} round-tripped`);
 
 for (let f of failures) {
 	let srcPreview = f.src.length > 60 ? f.src.slice(0, 57) + "..." : f.src;
-	console.log(`\n[${f.idx}] ${f.stage} failure`);
+	console.log(`\n[${f.idx}] ${f.label ?? "<unlabeled>"} — ${f.stage} failure`);
 	console.log(`  src: ${JSON.stringify(srcPreview)}`);
 	if (f.stage === "diff") {
 		console.log(`  diverged at offset ${f.diffAt} (src len=${f.src.length}, out len=${f.out.length})`);

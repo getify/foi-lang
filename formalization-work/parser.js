@@ -1605,8 +1605,10 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 // Where each is reachable:
 //
 // - BareBlockExpr — reachable from <Expr>, <AsableExpr>, <FlowRHSImplIn>,
-//   FuncBodyPipeline body, and <MatchConsequent>/<MatchConsequentNoSemi>.
-//   Carries the bare-body case at every block-accepting slot.
+//   and FuncBodyPipeline body. Also reachable transitively at
+//   MatchConsequent / GuardedExpr colon-led body slots through their
+//   inner Expr arm (Expr → AsableExpr → BareBlockExpr). Carries the
+//   bare-body case at every block-accepting slot.
 //
 // - BlockExpr — only at <FlowRHSImplIn> (ComprOp / PipelineOp RHS) and
 //   FuncBodyPipeline body. Both are implicit-input positions: the
@@ -2055,29 +2057,26 @@ export const GuardedExpr = production("GuardedExpr",
 // §15 MATCH EXPRESSIONS
 // =============================================================
 
-// MatchConsequent      := (Colon _ (BlockExprStrict | Expr) _ Semicolon) | BareBlockExpr;
+// MatchConsequent      := Colon _ (BlockExprStrict | Expr) _ Semicolon;
 //
-// PEG: Colon-arm first (disjoint from BareBlockExpr's OpenBrace opener).
-// Within the Colon arm, BlockExprStrict precedes Expr — longer match
-// wins when the consequent body opens `(defs) { ... }`. On no `{`
-// after the close paren, BlockExprStrict fails cleanly and Expr's
-// grouped/operand arms parse the bare `(...)` form.
+// Colon-led uniformly with §14 GuardedExpr and §3.5 preconditions —
+// every CondClause/DepCondClause consequent attachment requires the
+// leading `:`. BlockExprStrict precedes Expr — longer match wins when
+// the consequent body opens `(defs) { ... }`. On no `{` after the
+// close paren, BlockExprStrict fails cleanly and Expr's grouped/
+// operand arms parse the bare `(...)` form. The bare `{ stmts }`
+// consequent form reaches through Expr's <AsableExpr> path to
+// BareBlockExpr.
 //
 // BlockExprStrict uses the strict-optional inner — match consequents
 // have no implicit input source, so destructure-no-init entries are
 // rejected.
-var MatchConsequent = or(
-	and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr), delim(), Semicolon),
-	BareBlockExpr
-);
+var MatchConsequent = and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr), delim(), Semicolon);
 
-// MatchConsequentNoSemi := (Colon _ (BlockExprStrict | Expr)) | BareBlockExpr;
+// MatchConsequentNoSemi := Colon _ (BlockExprStrict | Expr);
 //
 // Same BlockExprStrict-before-Expr rationale as MatchConsequent.
-var MatchConsequentNoSemi = or(
-	and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr)),
-	BareBlockExpr
-);
+var MatchConsequentNoSemi = and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr));
 
 // ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
 //
@@ -2146,15 +2145,20 @@ var DepCondBoolOp = or(
 
 // DepCondBoolExpr := AsTypeOp _ NamedType
 //                  | DepCondBoolOp _ CompareDispatch
+//                  | NamedUnaryOp
 //                  | OpenParen _ DepCondBoolExpr _ CloseParen;
 //
 // PEG: AsTypeOp arm first — disjoint opener (?as/!as) from
 // DepCondBoolOp (which is CompareOp|AndOp|OrOp, none of which include
-// ?as/!as anymore).
+// ?as/!as anymore). NamedUnaryOp arm is a single BooleanOper token
+// (?empty/!empty), disjoint from AsTypeOp, DepCondBoolOp, and the
+// paren-recursive arm's OpenParen opener. Bare form — no RHS; the
+// topic supplies the implicit operand at atom-render time.
 export const DepCondBoolExpr = production("DepCondBoolExpr",
 	or(
 		and(AsTypeOp, delim(), lazy(() => NamedType)),
 		and(DepCondBoolOp, delim(), CompareDispatch),
+		NamedUnaryOp,
 		and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
 	)
 );

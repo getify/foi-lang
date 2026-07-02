@@ -1169,12 +1169,13 @@ DepCondClause          := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ Clos
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
 DepCondBoolExpr        := AsTypeOp _ NamedType
                         | DepCondBoolOp _ CompareDispatch
+                        | NamedUnaryOp
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 
 ElseStmt               := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
-<MatchConsequent>      := (Colon _ (BlockExprStrict | Expr) _ Semicolon) | BareBlockExpr;
-<MatchConsequentNoSemi>:= (Colon _ (BlockExprStrict | Expr)) | BareBlockExpr;
+<MatchConsequent>      := Colon _ (BlockExprStrict | Expr) _ Semicolon;
+<MatchConsequentNoSemi>:= Colon _ (BlockExprStrict | Expr);
 ```
 
 `IndepPatternStmt` / `IndepPatternStmtNoSemi` and
@@ -1191,14 +1192,23 @@ use `[?and (x :as int)]` (the paren-recursive arm wraps the inner
 operand). This is consistent with the rule that `:as` cannot attach
 as a bare binary-operand suffix.
 
-Note: `<MatchConsequent>` and `<MatchConsequentNoSemi>` use
-`BareBlockExpr`, not `BlockExpr`. Match consequents have no implicit
-input — a defs-init at this position would have no source for
-destructure-no-init to bind from. The `(Colon _ Expr ...)` arm
-handles the `: expr` consequent form; the `BareBlockExpr` arm
-handles the `{ stmts }` consequent form. To bind names locally
-inside a match consequent, use a `def` statement inside the
-bare-block body.
+Note: `DepCondBoolExpr`'s `NamedUnaryOp` arm is bare — a single
+`?empty` / `!empty` token with no written operand. The topic supplies
+the operand implicitly (extending the "topic is implicit LHS"
+principle from the operator-led arm to the unary case). No `:as` tail
+reachability here either; annotate at the DepCondClause level via the
+paren-recursive arm if needed.
+
+Note: `<MatchConsequent>` and `<MatchConsequentNoSemi>` are colon-led
+uniformly with §4 guard consequents (`GuardedExpr`) and §3.5
+preconditions — every position where a CondClause / DepCondClause
+attaches a consequent requires the leading `:`. The consequent slot
+admits `BlockExprStrict` (host-attached def-block; strict-optional
+inner because there is no implicit input source at this position) or
+any `Expr` (which reaches `BareBlockExpr` through `<AsableExpr>` for
+the bare `{ stmts }` consequent form). To bind names locally inside
+a match consequent, use a `def` statement inside the bare-block body,
+or use the def-block form directly.
 
 ## §16 Do-Comprehensions
 

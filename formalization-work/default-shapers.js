@@ -2679,11 +2679,15 @@ export const defaultShapers = {
 
 	// DepCondBoolExpr := AsTypeOp _ NamedType
 	//                  | DepCondBoolOp _ CompareDispatch
+	//                  | NamedUnaryOp
 	//                  | OpenParen _ DepCondBoolExpr _ CloseParen;
 	//
 	// Arm 1/2: operator tokens accumulate into `op` (drop into
-	// field). No structural delims.
-	// Arm 3 (paren-recursive): UNWRAPS — returns the inner
+	// field), single RHS node into `right`. No structural delims.
+	// Arm 3 (unary): single NamedUnaryOp token accumulates into
+	// `op`; no RHS node — topic is implicit operand at render
+	// time. `right` omitted from the shape.
+	// Arm 4 (paren-recursive): UNWRAPS — returns the inner
 	// DepCondBoolExpr with the wrapper parens lifted onto its
 	// delims in source-position order (via liftWrapperDelims).
 	DepCondBoolExpr(frame,parts) {
@@ -2702,7 +2706,9 @@ export const defaultShapers = {
 			}
 		}
 		if (wrapperDelims.length > 0) return liftWrapperDelims(right, wrapperDelims);
-		return { type: "DepCondBoolExpr", op, right };
+		var node = { type: "DepCondBoolExpr", op };
+		if (right) node.right = right;
+		return node;
 	},
 
 	// ElseStmt := (Qmark _)? <MatchConsequentNoSemi> (_ Semicolon)*;

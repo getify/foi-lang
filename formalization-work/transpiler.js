@@ -1689,6 +1689,14 @@ var renderDepAtom = (atom, atomDispatch) => {
 		return "(" + atomDispatch(synth) + ")(__topic, " + atomDispatch(atom.right) + ")";
 	}
 
+	if (op in NAMED_UNARY_OPS) {
+		// Unary arm — no atom.right; topic supplies the operand.
+		// Reuses the NAMED_UNARY_OPS render fn directly (same
+		// semantic as the standalone `?empty x` / `!empty x`
+		// binary-atom-position lowering), applied with __topic.
+		return NAMED_UNARY_OPS[op]("__topic");
+	}
+
 	// ?as / !as, ?$= / !$=, anything else — whole-node fallback.
 	return null;
 };
