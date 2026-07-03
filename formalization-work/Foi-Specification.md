@@ -1334,6 +1334,8 @@ The target shapes are:
 - `#name`: full-context capture
 - `name: [sourceExpr]`: dynamic source
 
+Any non-capture form additionally admits an optional `:? default` tail: if the entry's extraction resolves to `empty`, the `default` expression is evaluated and its value overrides the empty read. Default expressions may reference names bound by earlier entries in the same destructure.
+
 #### §2.13.1 Concise Form
 
 ```java
@@ -1345,11 +1347,20 @@ def
 
 The concise form `:path` denotes a destructure entry whose bound name is taken from the terminal segment of `path`. With no path tail (`:orderID`), the entry name and the slot read from the source are the same. With a path tail (`:items.0.price`), the entry reads through the path and binds the terminal segment's name (`price`).
 
+An optional `:? default` tail overrides an empty extraction:
+
+```java
+def < :count:? 0 >: getOrder(123);
+```
+
+If the source has no `count` slot (per §2.12.1, a missing slot resolves to `empty`), the entry binds `count` to `0`. When the extraction is non-empty, the default is not evaluated.
+
 **Per-entry abstract execution** (against the destructure source `__src` established by §2.13.5):
 
 1. Let `name` be the terminal segment of `path` (a static identifier; see Constraint below).
 2. Read the value at the slot path `path` from `__src`. Per §2.12.1, any missing slot along the path resolves to `empty`, which propagates as the read value.
-3. Allocate a slot in the current frame for `name` and store the value into it.
+3. If the read value is `empty` and a `:? default` tail is present, evaluate `default` in the current environment; the resulting value overrides the empty read.
+4. Allocate a slot in the current frame for `name` and store the value into it.
 
 Constraint: the final path segment of a concise entry must be a static identifier; not an integer, not a computed expression. `:items.0` is rejected because `0` is not a valid identifier for the bound name.
 
@@ -1361,10 +1372,19 @@ def < firstItem: items.0 >: getOrder(123);
 
 The renamed form `name: path` decouples the bound name from the source path. The bound name is `name`, explicitly given. The source path is `path`. This form is **required** whenever the path's terminal segment fails the concise-form constraint -- an integer (`items.0`), computed expression, or any non-identifier terminal -- and is **available** whenever a bound name different from the path's terminal segment is preferred.
 
+An optional `:? default` tail overrides an empty extraction:
+
+```java
+def < firstItem: items.0 :? <> >: getOrder(123);
+```
+
+If `items` is missing or `items.0` resolves to `empty`, the entry binds `firstItem` to the default (`<>` here). When the extraction is non-empty, the default is not evaluated.
+
 **Per-entry abstract execution** (against the destructure source `__src` established by §2.13.5):
 
 1. Read the value at the slot path `path` from `__src`. Per §2.12.1, any missing slot along the path resolves to `empty`, which propagates as the read value.
-2. Allocate a slot in the current frame for `name` and store the value into it.
+2. If the read value is `empty` and a `:? default` tail is present, evaluate `default` in the current environment; the resulting value overrides the empty read.
+3. Allocate a slot in the current frame for `name` and store the value into it.
 
 #### §2.13.3 Full-Context Capture Form
 
@@ -1388,11 +1408,20 @@ def < lastItem: [size(items) - 1] >: items;
 
 The computed source form `name: [expr]` reads the source at a dynamically computed slot. The `[expr]` evaluates to an integer index or string key, which is then used to read from `__src`. The form is **rename-only**: the bound name must be given explicitly, since `[expr]` has no terminal identifier to derive a concise-form name from.
 
+An optional `:? default` tail overrides an empty extraction:
+
+```java
+def < lastItem: [size(items) - 1] :? <> >: items;
+```
+
+If the computed slot resolves to `empty`, the entry binds `lastItem` to the default. When the extraction is non-empty, the default is not evaluated.
+
 **Per-entry abstract execution** (against the destructure source `__src` established by §2.13.5):
 
 1. Evaluate `expr` in the current environment to a key value `__k` (an integer index or string slot name).
 2. Read the value at slot `__k` from `__src`. Per §2.12.1, a missing slot resolves to `empty`.
-3. Allocate a slot in the current frame for `name` and store the value into it.
+3. If the read value is `empty` and a `:? default` tail is present, evaluate `default` in the current environment; the resulting value overrides the empty read.
+4. Allocate a slot in the current frame for `name` and store the value into it.
 
 The `[expr]` may also appear as the *root* of a longer path: `def < deepest: [k].sub.0 >: items;` evaluates `k`, picks `[k]` from the source, then reads through `.sub.0`. See §2.13's target shapes list and the grammar's `DestructureNamedDef` base-of-`BracketExpr` option.
 

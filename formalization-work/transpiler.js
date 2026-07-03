@@ -809,6 +809,29 @@ var renderRecordEntry = (entry, recur, position) => {
 // segments). Single-temp + chained decls is uniform across all
 // path complexity.
 //
+// [SERIES 2] Per-entry `:? default` tail — non-capture entries
+// carrying `.default` emit as an inline IIFE that preserves
+// single-eval of the path AND lazy evaluation of the default:
+//
+//   def <:x, :y:? 5>: payload;
+//   → var __t = payload, x = __t.x,
+//     y = ((__d) => __d == null ? 5 : __d)(__t.y)
+//
+// The IIFE is self-scoping — `__d` is the arrow's own parameter,
+// no external declaration needed. `== null` catches both JS
+// `undefined` (missing slot per JS's own semantic) and JS `null`
+// (Foi `empty`), uniformly handling the "extraction resolved
+// empty" trigger per Foi-Specification.md §2.13.1/§2.13.2/§2.13.4.
+// The default expression appears in the ternary's alternate,
+// evaluated only when the path resolves empty.
+//
+// (Design-lock alternative was a comma-expression form using a
+// shared `__v` temp; abandoned because `__v` is already used by
+// emitEachOp's loop iteration variable — a destructure-with-
+// default nested inside an `~each` body would clobber the loop
+// var. IIFE-per-entry sidesteps the shared-temp coordination
+// entirely.)
+//
 // tempName is the JS-side root identifier the destructure paths
 // resolve against. Each caller-context allocates its own:
 //   - DefVarStmt         → "__t"           (single; sequential
@@ -838,21 +861,37 @@ var renderDestructure = (target, recur, tempName) => {
 
 var renderDestructureEntry = (entry, recur, tempName) => {
 	if (entry.type === "DestructureCapture") {
+		// No `.default` on capture arm (grammatically excluded per
+		// parser.js §4 / Foi-Specification.md §2.13.3).
 		return entry.target.name + " = " + tempName;
 	}
 	if (entry.type === "DestructureNamedDef") {
 		let pathStr = renderDestructurePath(entry.source, recur, tempName);
 		if (pathStr == null) return null;
-		return entry.target.name + " = " + pathStr;
+		return entry.target.name + " = " + renderEntryRHS(pathStr, entry.default, recur);
 	}
 	if (entry.type === "DestructureConciseDef") {
 		let bindName = conciseBindingName(entry.source);
 		if (bindName == null) return null;
 		let pathStr = renderDestructurePath(entry.source, recur, tempName);
 		if (pathStr == null) return null;
-		return bindName + " = " + pathStr;
+		return bindName + " = " + renderEntryRHS(pathStr, entry.default, recur);
 	}
 	return null;
+};
+
+// Shared RHS emitter for the two non-capture arms. When the entry
+// carries a `:? default` tail, wrap in an IIFE that preserves
+// single-eval of the path and lazy evaluation of the default:
+//
+//   pathStr with no default → pathStr
+//   pathStr with default    → ((__d) => __d == null ? <default> : __d)(pathStr)
+//
+// `__d` is IIFE-local — safe against `__v` (used by emitEachOp
+// loop var) and any other outer synthesized names.
+var renderEntryRHS = (pathStr, defaultNode, recur) => {
+	if (!defaultNode) return pathStr;
+	return "((__d) => __d == null ? " + recur(defaultNode) + " : __d)(" + pathStr + ")";
 };
 
 // Concise form derives the binding name from the terminal
@@ -1010,6 +1049,32 @@ var renderPrecondPrelude = (preconditions, recur) => {
 	}).join(" ");
 };
 
+// Parameter defaults come from two AST fields depending on sigil:
+// `.init` at bare-`:` (strict) positions, `.default` at `:?`
+// (lenient) positions. VarDefInitOpt handler reads them uniformly
+// via `node.init || node.default`; ParameterList entries always
+// arrive from VarDefInitOptImplIn (lenient — Series 1 locked
+// ParameterList as a lenient site), so `.default` is the usual
+// carrier, but the same either-field read keeps the emit sigil-
+// agnostic.
+//
+// Two emit shapes per default-bearing param:
+//   - Identifier target: JS param default `name = expr`. Fires on
+//     `undefined` only, which matches Foi call-site `f()` but NOT
+//     `f(empty)` (empty → JS null; JS defaults ignore null).
+//     For the identifier case this small semantic gap is accepted
+//     — the common case is the omitted-argument shape.
+//   - DestructureTarget target: prelude runtime check
+//     `if (__pT_N == null) __pT_N = <default>;` — matches Foi's
+//     override-on-empty semantic uniformly (both null and
+//     undefined). The prelude check must land BEFORE the
+//     destructure-prelude var-decls, since those read `__pT_N.<path>`.
+//     Reason for asymmetry with the identifier case: destructure
+//     parameters lower to path reads on the synthesized param,
+//     and reading `.w` on JS null throws — strict semantic match
+//     is load-bearing, not cosmetic. Identifier param defaults
+//     don't have the same failure mode; they just miss a corner
+//     case.
 var renderTierParams = (paramSet, tierIdx, recur) => {
 	if (paramSet.type === "GatherParameter") {
 		return { jsParams: "..." + paramSet.name, prelude: "" };
@@ -1019,17 +1084,21 @@ var renderTierParams = (paramSet, tierIdx, recur) => {
 	var preludeDecls = [];
 	for (let i = 0; i < paramSet.params.length; i++) {
 		let p = paramSet.params[i];
+		let defaultExpr = p.init || p.default;
 		if (p.target.type === "Identifier") {
 			let s = p.target.name;
-			if (p.init) s += " = " + recur(p.init);
+			if (defaultExpr) s += " = " + recur(defaultExpr);
 			jsParams.push(s);
 			continue;
 		}
 		if (p.target.type === "DestructureTarget") {
 			let pname = "__p" + tierIdx + "_" + i;
-			let s = pname;
-			if (p.init) s += " = " + recur(p.init);
-			jsParams.push(s);
+			jsParams.push(pname);
+			if (defaultExpr) {
+				preludeDecls.push(
+					"if (" + pname + " == null) " + pname + " = " + recur(defaultExpr) + ";"
+				);
+			}
 			let entries = renderDestructure(p.target, recur, pname);
 			if (entries == null) return null;
 			preludeDecls.push("var " + entries + ";");

@@ -1015,6 +1015,60 @@ export const defaultShapers = {
 		return withDelims({ type: "DestructureCapture", target }, delims);
 	},
 
+	// DestructureDef := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
+	//
+	// [SERIES 2] Subsuming shaper — DestructureDef is a visible
+	// production (parser.js §4) hosting the per-entry default
+	// tail (`:?`), but no DestructureDef node appears in the AST.
+	// The shaper returns the inner node directly:
+	//
+	//   - Capture arm (single DestructureCapture node): returned
+	//     unchanged.
+	//   - Non-capture arm, no tail (single DestructureNamedDef or
+	//     DestructureConciseDef node): returned unchanged.
+	//   - Non-capture arm with tail (two nodes: inner +
+	//     ExprNoBlock): fold the tail's ExprNoBlock onto inner's
+	//     `.default`; append the tail's Colon+Qmark tokens to
+	//     inner's `delims` (preserves source-position order for
+	//     round-trip — the tail tokens come after inner's own
+	//     Colon by position, so the emit walker interleaves them
+	//     with the default node in the correct sequence).
+	//
+	// This mirrors §11's `.init` (bare `:`, strict) vs `.default`
+	// (`:?`, lenient) field split — sigil-teaches-semantics
+	// extended to the per-entry level of destructure definitions.
+	// Downstream consumers see the same three node types they
+	// always have (DestructureNamedDef, DestructureConciseDef,
+	// DestructureCapture), now optionally carrying `.default`
+	// on the two non-capture arms; consumers read
+	// `node.default` (may be undefined) rather than a wrapping
+	// DestructureDef node.
+	//
+	// Direct field mutation of the subsumed inner (precedent:
+	// AsExpr attaches `.as`) — inner is a fresh node from its
+	// own shaper in this parse frame, safe to mutate. Delims
+	// concat via `(inner.delims || []).concat(tokens)` rather
+	// than push, defensively guarding against a missing delims
+	// array (all current inner shapers set delims via
+	// withDelims, so the array is always present in practice —
+	// but the guard costs nothing).
+	DestructureDef(frame,parts) {
+		var nodes = [];
+		var tokens = [];
+		for (let p of parts) {
+			if (isNode(p)) nodes.push(p);
+			else tokens.push(p); // Colon, Qmark (tail; absent on non-tail arms)
+		}
+		// Single node — capture arm, or non-capture without tail.
+		// Subsume directly.
+		if (nodes.length === 1) return nodes[0];
+		// Two nodes — inner (Named/Concise) + default (ExprNoBlock).
+		var [ inner, defaultExpr ] = nodes;
+		inner.default = defaultExpr;
+		inner.delims = (inner.delims || []).concat(tokens);
+		return inner;
+	},
+
 	// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
 	//
 	// Angle brackets and commas are structural → delims.

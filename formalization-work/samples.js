@@ -189,6 +189,17 @@ export const samples = [
 	{ label: "Destructure capture (whole value)",     src: "def < #whole >: payload;" },
 	{ label: "Destructure mixed (all three forms)",   src: "def < a: src.x, :b, #whole >: payload;" },
 
+	// [SERIES 2] Per-entry `:? default` — coverage across the two
+	// non-capture arms plus grammar interactions (mixed w/ capture,
+	// default-references-earlier-binding, multi-default).
+	{ label: "Destructure concise + default",              src: "def < :count:? 0 >: payload;" },
+	{ label: "Destructure concise + default, with access", src: "def < :items.0.price:? 0 >: payload;" },
+	{ label: "Destructure renamed + default",              src: "def < firstItem: items.0 :? <> >: payload;" },
+	{ label: "Destructure computed source + default",      src: "def < byKey: [k] :? <> >: payload;" },
+	{ label: "Destructure default references earlier",     src: "def < :first, :second:? first >: payload;" },
+	{ label: "Destructure mixed with default + capture",   src: "def < :a, :b:? 5, #whole >: payload;" },
+	{ label: "Destructure multi-default",                  src: "def < :x:? 1, :y:? 2 >: payload;" },
+
 
 	// =============================================================
 	// §5 EXPRESSION SCAFFOLDING
@@ -799,6 +810,12 @@ export const samples = [
 	  src: "defn f(<:a, :b>) ^a + b;" },
 	{ label: "defn: destructure param (with default)",
 	  src: "defn f(<:a, :b> :? defs) ^a + b;" },
+	// [SERIES 2] Per-entry `:?` on destructure params, plus
+	// composition with Series 1's parameter-source-tail `:? <>`.
+	{ label: "defn: destructure param + per-entry default",
+	  src: "defn f(<:a:? 0, :b:? 0>) ^a + b;" },
+	{ label: "defn: destructure param + per-entry + param default",
+	  src: "defn f(<:a:? 0, :b:? 0> :? <>) ^a + b;" },
 	{ label: "defn: destructure + ident param",
 	  src: "defn f(<:a, :b>, c) ^a + b + c;" },
 

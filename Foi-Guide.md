@@ -257,7 +257,7 @@ Identifiers cannot conflict with keywords: `def`, `defn`, `deft`, `import`, `exp
 
 Adding comments to **Foi** code takes two forms, single-line and multi-line:
 
-````java
+```java
 // this is a single line comment
 
 whatever;   // so is this one
@@ -267,7 +267,7 @@ another; /// But...
    can span as many lines
      as needed.
 ///
-````
+```
 
 The triple-slash `///` comment block can start anywhere on a line, span as many lines as needed (including just a single line), and must end with another triple-slash `///`.
 
@@ -766,18 +766,64 @@ def <
 
 To compute the top-level source property name with a dynamic expression:
 
-````java
+```java
 def < lastItem: [size(items)-1] >: items;
-````
+```
 
 This form is *rename-only* -- the target name must be given explicitly. Why? Because `[expr]` has no terminal identifier for the concise form to derive a name from. The expression evaluates to an index or key, but a key like `7` or `"price"` isn't usable as a binding name on its own; you have to explicitly declare what to call it.
 
+Any non-capture entry (e.g., `#order`) can carry an optional `:? default` expression, which fires when the entry's extraction resolves to `empty`:
+
+```java
+def <
+    :name,
+    :count :? 0,
+    :status :? "unknown",
+    #order
+>: getOrder(123);
+```
+
+**NOTE:** The `:?` sigil can have optional whitespace on either side, as you see fit stylistically; all of these are accepted: `:count:?0`, `:count :? 0`, `:count:? 0`, and `:count :?0`.
+
+If the source has no `count` slot -- or `count` is present with the value `empty` -- the entry binds `count` to `0`. If `count` is present with a non-empty value, the default is not evaluated. Defaults are *lazy*; they're only invoked when the extraction is empty.
+
+The default expression can reference names bound by earlier entries in the same destructure (entries dispatch in source order, so earlier bindings are visible):
+
+```java
+def <
+    :baseUrl,
+    :apiPath :? baseUrl + "/api"
+>: config;
+```
+
+Renamed and computed-source forms also allow the default expression form:
+
+```java
+def <
+    firstItem: items.0 :? <>,
+    lastKey: [size(keys) - 1] :? "default-key"
+>: source;
+```
+
+The capture form (`#name`) does not admit a default. Capture reads the entire source value, and a destructure against an empty source errors before per-entry procedures proceed -- so a capture-with-default is unreachable.
+
+This default expression form works everywhere destructuring appears -- function parameters, block-definition clauses, pattern-match clauses -- not just in top-level `def` statements. For example, as a function parameter:
+
+```java
+defn greet(< :name :? "friend", :greeting :? "hello" >)
+    ^greeting + ", " + name + "!";
+
+greet(< name: "Kyle" >);              // "hello, Kyle!"
+greet(< greeting: "hi" >);            // "hi, friend!"
+greet(<>);                            // "hello, friend!"
+```
+
 `[expr]` can also be used as the *start* of a longer access path, not just the terminal:
 
-````java
+```java
 def < deepest: [k].sub.0 >: items;
 // evaluates k -> picks items[k] -> reads .sub -> reads .0
-````
+```
 
 These various destructuring forms are also allowed in a block-definitions clause:
 

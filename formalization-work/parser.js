@@ -289,6 +289,7 @@ var ExportExpr = production("ExportExpr",
 var OpenAngle  = tokType("OpenAngle");
 var CloseAngle = tokType("CloseAngle");
 var Hash       = tokType("Hash");
+var Qmark      = tokType("Qmark");
 
 var KwDef = tokVal("Keyword", "def");
 
@@ -313,9 +314,47 @@ var DestructureCapture = production("DestructureCapture",
 	and(Hash, Identifier)
 );
 
-// <DestructureDef>     := DestructureNamedDef | DestructureConciseDef | DestructureCapture;
+// DestructureDef       := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
 // <DestructureDefList> := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
-var DestructureDef     = or(DestructureNamedDef, DestructureConciseDef, DestructureCapture);
+//
+// [SERIES 2] `:?` per-entry default tail. The `Colon Qmark`
+// two-token composite is the same sigil introduced in §11 for
+// VarDefInitOptImplIn — no delim() between the two tokens
+// (mirrors the `Colon Equal` adjacency convention of
+// AssignmentExpr in §12). The tail is attached at the
+// alternation level: admitted on the two non-capture arms,
+// excluded from DestructureCapture (capture reads the entire
+// source, and destructure-against-empty errors before per-entry
+// procedures per Foi-Specification.md §3.2.3, so a
+// capture-with-default is unreachable).
+//
+// DestructureDef was previously a hidden dispatcher (plain
+// `or()`); it becomes a visible `production()` here so its
+// shaper can capture the tail. The shaper subsumes — the
+// returned node is the inner DestructureNamedDef,
+// DestructureConciseDef, or DestructureCapture directly, with
+// the tail's ExprNoBlock folded onto the inner node's `.default`
+// slot and the tail's `Colon Qmark` pushed to the inner node's
+// `delims`. No `DestructureDef` node appears in the AST;
+// downstream consumers see the same three node types they always
+// have, now optionally carrying a `.default` field on the two
+// non-capture arms. This mirrors §11's split of `.init` (bare
+// `:`, strict positions) from `.default` (`:?`, lenient
+// positions) — sigil-teaches-semantics extended per-entry.
+//
+// PEG: non-capture arm first (opens with Identifier or Colon);
+// DestructureCapture second (opens with Hash). Disjoint openers
+// make ordering mechanical.
+var DestructureDef = production("DestructureDef",
+	or(
+		and(
+			or(DestructureNamedDef, DestructureConciseDef),
+			optional(and(delim(), Colon, Qmark, delim(), lazy(() => ExprNoBlock)))
+		),
+		DestructureCapture
+	)
+);
+
 var DestructureDefList = and(
 	DestructureDef,
 	any(and(delim(), Comma, delim(), DestructureDef)),
@@ -1281,7 +1320,6 @@ export const OpFuncExpr = production("OpFuncExpr",
 // `?x :as bool` now correctly hoists `as` onto the outer
 // SymbolicUnaryExpr rather than the inner Identifier.
 
-var Qmark  = tokType("Qmark");
 var Exmark = tokType("Exmark");
 
 var KwQmarkEmpty  = tokVal("BooleanOper", "?empty");

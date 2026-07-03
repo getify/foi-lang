@@ -319,11 +319,37 @@ DefVarStmt            := "def" _ (Identifier | DestructureTarget) _ Colon _ (Exp
 
 DestructureTarget     := OpenAngle _ DestructureDefList _ CloseAngle;
 <DestructureDefList>  := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
-<DestructureDef>      := DestructureNamedDef | DestructureConciseDef | DestructureCapture;
+DestructureDef        := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
 DestructureNamedDef   := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
 DestructureConciseDef := Colon Identifier SingleAccessExpr?;
 DestructureCapture    := Hash Identifier;
 ```
+
+The `(_ Colon Qmark _ ExprNoBlock)?` tail on `DestructureDef` is the
+per-entry default form (Foi-Specification.md §2.13.1, §2.13.2, §2.13.4).
+The `Colon Qmark` composite is the same two-token sigil introduced in
+§11's `VarDefInitOptImplIn` (Series 1) — trivia insignificant around
+the composite, but the `Qmark` must immediately follow the `Colon`
+with no intervening trivia (mirrors the `Colon Equal` convention of
+`AssignmentExpr` in §12).
+
+`DestructureDef` was previously a hidden dispatcher; it becomes visible
+here to host the default tail without scattering the concern across
+consumers. Its shaper subsumes — the returned node is the inner
+`DestructureNamedDef` or `DestructureConciseDef` (or `DestructureCapture`
+unmodified), with the tail's `ExprNoBlock` folded onto the inner
+node's `.default` slot and the tail's `Colon Qmark` pushed to the
+inner node's `delims`. No `DestructureDef` node appears in the AST;
+downstream consumers see the same three node types they always have,
+now optionally carrying a `.default` field on the two non-capture arms.
+This mirrors §11's split of `.init` (bare `:`, strict positions) from
+`.default` (`:?`, lenient positions) — the sigil-teaches-semantics
+lock extends per-entry.
+
+The tail is grammatically excluded from the `DestructureCapture` arm.
+Per Foi-Specification.md §2.13.3, capture reads the entire source; a
+destructure-against-empty errors before per-entry procedures proceed
+(§3.2.3), so a capture-with-default entry is unreachable.
 
 ## §5 Expression Scaffolding
 

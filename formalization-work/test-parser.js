@@ -151,6 +151,22 @@ var failSamples = [
 	"list ~map (x: 3) { x; };",      // bare `:` at BlockDefsInitOptImplIn Identifier entry
 	"list ~map (<:a>: src) { a; };", // bare `:` at BlockDefsInitOptImplIn DestructureTarget source tail
 
+	// Series 2: per-entry `:?` default tail negatives —
+	// (i) capture arm grammatically excludes the tail (per
+	// Foi-Specification.md §2.13.3 a capture-with-default is
+	// unreachable — destructure-against-empty errors before
+	// per-entry procedures proceed);
+	// (ii) non-capture tail requires the `Colon Qmark` composite,
+	// bare `:` is not a valid tail sigil;
+	// (iii) default RHS is `ExprNoBlock` — no BareBlockExpr /
+	// block-body default;
+	// (iv) no valid `DestructureDef` arm opens with `:?` — the
+	// tail attaches after a non-capture entry, not standalone.
+	"def < #whole:? 5 >: src;",       // capture-with-default (excluded arm)
+	"def < :foo: 5 >: src;",          // tail sigil `:?` required (bare `:` not admitted)
+	"def < :foo:? { x; } >: src;",    // default RHS is ExprNoBlock (BareBlockExpr rejected)
+	"def < :? 5 >: src;",             // bare `:?` at entry position (no valid opener)
+
 	"10 + x := 5;",
 
 	// Dynamic-pick boundaries — confirm grammar narrowness.
