@@ -1580,6 +1580,45 @@ A function defined *without* the `%` marker cannot be invoked via the `%`-call o
 
 The full `%`-call dispatch mechanism -- how `inst%` routes to its owning namespace's `%` hook, and the identity-fallthrough behavior when no `%` hook is declared -- is specified in §3.9.
 
+##### §3.1.1.3 Comprehension-Suffix Declaration Form
+
+A function literal may declare itself with a comprehension marker at the end of its name:
+
+```java
+// pre-requisite:
+defn Container@(v) ^< value: v >;
+
+defn Container~map(inst, fn) ^Container@ fn(inst.value);
+defn Container~<(inst, fn) ^fn(inst.value);
+```
+
+Like `@` and `%`, a comprehension marker is **not part of the function's name as a binding**; the identifier before the marker is the bound namespace name in the enclosing scope. `Container`, `Container@`, `Container%`, `Container~map`, `Container~<`, and any other comprehension-suffix form on the same identifier are syntactic forms over a single typeclass namespace (`Container`).
+
+A comprehension-marked `defn` installs a comprehension hook on the namespace named by the identifier. At a comprehension call site, the LHS's owning namespace is inspected for the corresponding hook; if present, the hook is invoked with the LHS instance as its first argument, followed by the operands the comprehension supplies.
+
+A comprehension-marked `defn` is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; a comprehension-only declaration is rejected at compile time. This mirrors the `%` hook requirement (§3.1.1.2).
+
+**Admitted markers.** The comprehension markers admitted at declaration position are:
+
+- Tier 1 (no language-provided default): `~<`, `~each`
+- Tier 2 (language-provided default composition at call sites): `~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`
+
+Both tiers use identical declaration syntax; the tier difference affects call-site behavior when the hook is absent from a namespace (below).
+
+The `~<<` (do) and `~<*` (looping-do) comprehensions are not admitted at declaration position pending design of a per-step-controllable override interface for these operators. Their call-site behavior stands independently — nested `~<` / `~map` composition per each namespace's declared primitives (§3.10.9) — and does not depend on the override interface's shape. The override interface is deferred as its own design question; the yield mechanism (TBD) is the current leading candidate. Call-site use of `~<<` / `~<*` continues to dispatch via the composition machinery over declared primitives; these operators are simply not user-overridable in this specification revision.
+
+**Canonical markers.** The `~<` (bind) hook has surface aliases at call sites: `~chain`, `~bind`, `~flatMap`. At declaration position, only the canonical `~<` form is admitted. `defn Foo~chain(..)`, `defn Foo~bind(..)`, and `defn Foo~flatMap(..)` are rejected at compile time with a message directing the author to declare the hook as `defn Foo~<(..)`. All four spellings continue to dispatch to the `~<` hook at call sites (§3.10.9).
+
+**Adjacency.** Strict no-trivia between the identifier and the marker, mirroring `Foo@` and `Foo%` at their declaration positions. Trivia is admitted between the marker and the first paren-set (mirrors normal `defn` paren spacing).
+
+**Missing hook at call site.** Tier 1 markers (`~<`, `~each`) have no default; a comprehension expression against a namespace that has not declared the corresponding hook is rejected at compile time. Tier 2 markers have language-provided defaults; missing-hook call sites expand to a composition over the namespace's declared primitives (§3.10.9). Where a Tier 2 default's precondition does not structurally fit the namespace shape (e.g., `~foldR` on an infinite structure), the type checker rejects the expression at compile time.
+
+**Multi-decl uniqueness.** At most one hook per marker per namespace per scope; multiple declarations of the same marker on the same namespace are rejected at compile time.
+
+**Parameter constraints.** The outermost parameter list must declare the fixed shape for the hook's operation. Gather parameters are not admitted in the outermost list. Subsequent (curried) parameter lists are unconstrained.
+
+The full comprehension-dispatch mechanism -- how a comprehension call site routes to its LHS's owning namespace's hook, how alias spellings normalize to canonical, how Tier 2 defaults expand, and the semantic error taxonomy -- is specified in §3.10.9.
+
 #### §3.1.2 Named Expression Form
 
 ```java
@@ -2341,15 +2380,151 @@ To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.9
 
 The `%` operator is specified in full in §3.9.
 
-#### §3.10.9 Multi-Tier Function Call
+#### §3.10.9 The Comprehension-Call Form
+
+An instance constructed through an `@`-marked namespace that also declares one or more comprehension-suffix hooks (§3.1.1.3) is invoked with a **comprehension-call form**:
+
+```java
+inst ~< fn;
+inst ~map fn;
+inst ~fold init fn;
+```
+
+The general shape is `LHS ~<glyph> operands...`, where `~<glyph>` is one of the comprehension markers admitted at §3.1.1.3 -- Tier 1 (`~<`, `~each`), Tier 2 (`~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`), the deferred `~<<` / `~<*`, or one of the `~<` surface aliases (`~chain`, `~bind`, `~flatMap`).
+
+Dispatch resolves the corresponding hook through the LHS's owning namespace, carried as a runtime contract on the instance (same mechanism as the `%`-call form, §3.10.8). The hook is invoked with the LHS as its first argument, followed by the operands the comprehension supplies (§3.10.9.2 fixes the operand shape per marker).
+
+If the LHS carries no owning-namespace identity, the comprehension-call form is rejected: comprehension dispatch requires an instance whose namespace was established through an `@`-marked construction. `42 ~< fn` is rejected because `42` is not a namespaced instance.
+
+##### §3.10.9.1 Alias Normalization
+
+The `~<` bind hook has surface aliases at call sites: `~chain`, `~bind`, `~flatMap`. All four spellings normalize to the canonical `~<` marker at dispatch time:
+
+```java
+inst ~< fn;         // dispatches to ~< hook
+inst ~chain fn;     // dispatches to ~< hook (alias)
+inst ~bind fn;      // dispatches to ~< hook (alias)
+inst ~flatMap fn;   // dispatches to ~< hook (alias)
+```
+
+Aliases resolve at the call site's dispatch step; a namespace's hook table carries only the canonical `~<` key, per §3.1.1.3's canonical-declaration rule.
+
+No other comprehension marker has aliases. Every other marker is its own canonical spelling at both declaration and call sites.
+
+##### §3.10.9.2 Operand Shape Per Marker
+
+Each comprehension marker fixes the operand shape supplied at call time and threaded to the hook. The hook receives the LHS as its first parameter, followed by the operands in source order:
+
+- `~<` (and aliases): one operand, a function of value-of-inst returning an inst of the same namespace. Hook signature: `(inst, fn)`.
+- `~map`: one operand, a function of value-of-inst returning any value. Hook signature: `(inst, fn)`.
+- `~ap`: one operand, an inst holding a value. Hook signature: `(fnInst, valInst)` -- LHS holds the function.
+- `~each`: one operand, a function of value-of-inst returning either a value or a `Done@`-wrapped early-exit sentinel. Hook signature: `(inst, fn)`.
+- `~filter`: one operand, a predicate function. Hook signature: `(inst, pred)`.
+- `~fold`: two operands, an initial value and a folding function of `(accumulator, value)`. Hook signature: `(inst, init, fn)`.
+- `~cata`: two operands, an initial-value thunk and a folding function of `(accumulator, value)`. Hook signature: `(inst, initThunk, fn)`.
+- `~foldR`: two operands, an initial value and a folding function of `(value, accumulator)`. Hook signature: `(inst, init, fn)`.
+- `~<<` and `~<*`: block operands per §16's do-comprehension grammar; not user-overridable in this specification revision (§3.1.1.3).
+
+##### §3.10.9.3 Missing-Hook Behavior
+
+**Tier 1** (`~<`, `~each`): no language-provided default. A comprehension expression against a namespace that has not declared the corresponding hook is rejected at compile time.
+
+**Tier 2** (`~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`): the language provides defaults that compose over the namespace's declared primitives.
+
+The `~fold` and `~cata` markers form a **mutual-defaulting pair**: they express the same catamorphism, differing only in the None-branch handler's representation (eager value vs. thunk). Missing-hook dispatch routes through the other member of the pair:
+
+- `~fold` missing, `~cata` present: `inst ~fold init fn` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
+- `~cata` missing, `~fold` present: `inst ~cata initThunk fn` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
+- Both missing: rejected at compile time.
+
+For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the default composition expands over the namespace's declared `~<` primitive and its `@` constructor hook. Where the composition's structural precondition does not fit the namespace's shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an "empty of shape"), the expansion is rejected at compile time.
+
+**Open:** exact default-composition formulas per Tier 2 marker are pending the `__ns_defaults` runtime table design. The bootstrap transpiler currently emits direct dispatch at all comprehension-call sites and produces a runtime error on a missing Tier 2 hook; the default-composition wiring lands as follow-on work and does not affect declaration or call-site grammar.
+
+##### §3.10.9.4 `~<<` and `~<*` Call-Site Expansion
+
+At call sites, `~<<` (do) and `~<*` (looping-do) expand to nested `~<` / `~map` composition over the LHS's owning namespace's declared primitives, per §16's do-comprehension semantics. These operators are not admitted at declaration position and cannot be user-overridden in this specification revision (§3.1.1.3); their call-site expansion is fixed to the composition machinery.
+
+The override interface for `~<<` and `~<*` is deferred as its own design question (yield mechanism candidate, TBD).
+
+##### §3.10.9.5 Semantic Error Taxonomy
+
+The following comprehension-call errors are reported at compile time:
+
+1. **No owning namespace:** the LHS carries no runtime namespace identity. Comprehension dispatch requires an instance whose namespace was established through an `@`-marked construction.
+2. **Tier 1 missing hook:** the LHS's owning namespace has not declared the invoked Tier 1 hook. `container ~< fn` where `Container` has no `~<` hook is rejected.
+3. **Tier 2 mutual-pair both-missing:** for `~fold` / `~cata`, both members are absent. `container ~fold init fn` where `Container` has neither `~fold` nor `~cata` is rejected.
+4. **Tier 2 structural non-fit:** a Tier 2 default's composition precondition does not structurally match the namespace shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an available "empty of shape").
+5. **Operand-shape mismatch:** the operands supplied at the call site do not match the operand shape for the invoked marker (arity, type constraints). Diagnosed per §3.10.1's argument-binding rules applied to the hook's declared parameter list.
+6. **Alias at declaration:** a `~<` alias (`~chain`, `~bind`, `~flatMap`) appears at declaration position (§3.1.1.3). Diagnostic directs the author to declare the hook as `defn Name~<(..)`.
+
+##### §3.10.9.6 Comprehension Operators As Function Values
+
+Each comprehension operator lifts to a function value via the standard operator-as-function paren-wrap form (§3.13):
+
+```java
+(~<)     (~chain)   (~bind)   (~flatMap)     // all lift to canonical ~< dispatch
+(~each)  (~map)     (~ap)     (~filter)
+(~fold)  (~cata)    (~foldR)
+```
+
+The lifted function dispatches at call time on the LHS argument's owning namespace, exactly as the corresponding infix comprehension-call form does. Alias spellings (`~chain`, `~bind`, `~flatMap`) normalize to the canonical `~<` marker at lift time; a namespace's hook table sees only the canonical key (§3.10.9.1).
+
+The `~<<` and `~<*` comprehensions do not lift to function values in this specification revision. Their RHS is a block (§16), not a value expression; there is no first-class function-call shape that supplies a block operand. Consistent with the deferral in §3.1.1.3, override of these operators awaits a per-step-controllable interface.
+
+**Arity.** Each lifted comprehension has a fixed arity matching the operand shape declared at §3.10.9.2:
+
+- Binary (`(~<)`, `(~each)`, `(~map)`, `(~ap)`, `(~filter)`): exactly two arguments -- the LHS instance and one operand.
+- Ternary (`(~fold)`, `(~cata)`, `(~foldR)`): exactly three arguments -- the LHS instance, the initial value (or initial-value thunk, for `~cata`), and the folding function.
+
+Calls with an arity outside this range produce a runtime error. To supply fewer arguments than the arity, use partial application (§3.11) to fix a subset and close over the rest at a later call.
+
+**Ternary invocation is lift-only.** The infix comprehension-call form supplies at most one RHS operand; ternary comprehensions therefore have no inline form that supplies all three operands. The lifted-function form is the primary way to invoke them with an initial value:
+
+```java
+def defaultMsg: (@)|"Default!"|;
+
+def m: MaybeFrom@ 42;                    // Id{42}
+def g: MaybeFrom@ empty;                 // None
+
+(~fold)(m, defaultMsg(), (@));           // 42
+(~cata)(g, defaultMsg,   (@));           // "Default!"
+
+defn sub(x,y) ^x - y;
+
+(~fold)(1..5, 100, sub);                 // 85  -- (100 - 1 - 2 - 3 - 4 - 5)
+```
+
+The two-operand inline forms of `~fold` / `~foldR` on Tuples (`xs ~fold fn` with no initial value; see §6, pending) remain available for the initial-value-omitted case; the lifted-function form is required only when the initial-value operand is supplied.
+
+**Prime forms.** The prime form of a lifted comprehension follows the semantic-inversion rule established for primed operators (§3.12.1, §3.12.4): prime is the natural inverse along whatever axis is meaningful for the operator. For the comprehension family, the meaningful axis is **direction of traversal** -- the axis that unifies the family's identity (`~fold` / `~foldR` being the canonical example).
+
+Argument-order-swap prime, admitted for other Foi binary operators without a direction axis (`.`, `%`, `?<=>`, `?in`), is **not** admitted for comprehension operators. Mixing arg-swap prime with direction-reversal prime within the same operator family would impose a per-marker cognitive load users would have to memorize; unifying prime on the direction axis, and requiring partial application or explicit lambda for argument reordering, keeps the family coherent.
+
+Comprehension primes fall into three categories:
+
+- **Direction-reversal (admitted).** The fold family carries a direction axis. `(~fold')` dispatches to the `~foldR` hook; `(~foldR')` dispatches to the `~fold` hook (inverse-of-inverse per §3.12.1). At declaration position, `~fold` and `~foldR` remain separate canonical markers with independent hook slots on the namespace; the prime is a call-site alias linking them. A namespace that declares `~fold` but not `~foldR` (or vice versa) is subject to the missing-hook rules of §3.10.9.3; the prime resolves at dispatch, then the standard Tier 2 default expansion applies to the resolved hook.
+
+- **Reserved (semantic-reject; future activation possible).** `(~each')`, `(~map')`, and `(~cata')` parse at the grammar layer (universal-prime path per §3.13) and reject at the semantic layer with a diagnostic. Each carries a plausible direction axis whose semantics await commitment: `~each'` for right-to-left iteration on ordered containers; `~map'` for direction-observable mapping where hooks carry effects; `~cata'` for direction-reversed catamorphism on ordered-container `~cata` shapes. Reserving the surface spelling -- rather than silently accepting it as a no-op or admitting arg-swap semantics -- preserves the option to activate these primes with direction semantics in a future revision without breaking existing code.
+
+- **Rejected (permanent; no direction axis).** `(~<')`, `(~ap')`, and `(~filter')` reject at the semantic layer with a diagnostic. These operators have no direction axis; the only inversion available on them at the operator layer is argument-order-swap. Argument-order-swap is not admitted for the comprehension family per the family-coherence rule above -- and, independently, is redundant with partial application (§3.11): a fixed operand with the instance flowing in later is expressed as `(~<glyph>)|, operand|`, which is what arg-swap prime would have served anyway. The diagnostic directs the author to this pattern.
+
+**Infix does not admit prime.** The ComprOp production (§10) admits only `Comprehension` or `Tilde OpenAngle` markers; prime is not part of infix comprehension syntax. `xs ~fold' fn` is a parse error. Prime forms are reachable only through the operator-as-function paren-wrap: `(~fold')(xs, init, fn)`. To invoke a direction-reversed fold in infix position, use the direct spelling `xs ~foldR fn`.
+
+**Semantic errors.** The error taxonomy of §3.10.9.5 applies uniformly to lifted-function-form calls, with dispatch resolution and hook lookup performed against the LHS argument at call time rather than against the LHS operand at parse time. In addition, the arity-mismatch error described above is diagnosed at call time. Two errors specific to primed comprehensions:
+
+- **Reserved prime form**: `(~each')`, `(~map')`, or `(~cata')` appears in an expression. Diagnostic directs the author to use the base marker pending semantic definition of the prime form in a future spec revision.
+- **Prime not admitted**: `(~<')`, `(~ap')`, or `(~filter')` appears in an expression. These markers carry no direction axis, and arg-swap prime is not part of the comprehension family. Diagnostic directs the author to partial application (§3.11) for the operand-fixed, instance-flows-through pattern arg-swap would have served: `(~filter)|, pred|`, `(~<)|, fn|`, `(~ap)|, valInst|`.
+
+#### §3.10.10 Multi-Tier Function Call
 
 A call against a function value with multiple parameter tiers binds the outermost tier per §3.10.1. The body of a non-innermost tier evaluates to a function value over the next tier; that value is the result of the tier call.
 
 ```java
 defn add(x)(y) ^x + y;
 
-add(3);                                  // function value over (y)
-add(3)(4);                               // 7
+add(3);            // function value over `x` (still waiting on `y`)
+add(3)(4);         // 7
 ```
 
 Each subsequent tier call evaluates per §3.10.1 against that tier's parameter list.
@@ -2360,7 +2535,7 @@ Tiers act like nested frames for name resolution: an inner-tier body, and any de
 
 Preconditions are hoisted to the highest/earliest tier at which their references can be satisfied by that tier's parameters (§3.5).
 
-#### §3.10.10 The `empty` Completion Fallthrough
+#### §3.10.11 The `empty` Completion Fallthrough
 
 A function call evaluates to `empty` when:
 

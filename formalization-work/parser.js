@@ -31,11 +31,11 @@ var tokVal  = (name, value)  => terminal(t => t && t.type === name && t.value ==
 //
 // PEG: DefHookDecl first — both DefHookDecl and Expr→DefFuncExpr
 // open with `defn`. DefHookDecl additionally requires a marker
-// (At or Percent) between Identifier and paren-set; the marker-
-// bearing form commits to DefHookDecl, and the marker-less form
-// falls through cleanly to Expr→DefFuncExpr. Anonymous DefFuncExpr
-// (no Identifier) also falls through — DefHookDecl requires the
-// Identifier.
+// (At, Percent, Comprehension, or Tilde+OpenAngle) between
+// Identifier and paren-set; the marker-bearing form commits to
+// DefHookDecl, and the marker-less form falls through cleanly to
+// Expr→DefFuncExpr. Anonymous DefFuncExpr (no Identifier) also
+// falls through — DefHookDecl requires the Identifier.
 var Stmt = or(
 	lazy(() => DefHookDecl),
 	lazy(() => DefBlockStmt),
@@ -2036,7 +2036,8 @@ export const DefFuncExpr = production("DefFuncExpr",
 	)
 );
 
-// DefHookDecl := "defn" _ Identifier (At | Percent)
+// DefHookDecl := "defn" _ Identifier
+//                (At | Percent | Comprehension | (Tilde OpenAngle))
 //                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
 //                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
 //                _ FuncBody;
@@ -2046,27 +2047,53 @@ export const DefFuncExpr = production("DefFuncExpr",
 // to attach to), so Identifier is required (no `optional()` on it,
 // distinct from DefFuncExpr's anonymous-admissible form).
 //
-// Strict no-trivia between Identifier and the marker (At or Percent)
-// — mirrors the `Foo@` adjacency at use sites in AtCallExpr. Trivia
-// IS admitted between the marker and the first paren-set (mirrors
+// Marker admits four disjoint shapes:
+//   - At (@)              — constructor hook (§3.1.1.1)
+//   - Percent (%)         — effect hook (§3.1.1.2)
+//   - Comprehension       — single-token comprehension hook: ~map,
+//                           ~each, ~filter, ~fold, ~foldR, ~cata, ~ap
+//                           (and the lexed aliases ~chain/~bind/
+//                           ~flatMap, which parse here but semantic-
+//                           reject as aliases of ~<) (§3.1.1.3)
+//   - Tilde OpenAngle     — two-token composite for the bind hook ~
+//                           (§3.1.1.3)
+//
+// `~<<` (Tilde OpenAngle OpenAngle) and `~<*` (Tilde OpenAngle Star)
+// are NOT admitted at declaration position — grammar rejection at
+// parse time. User override of these operators requires a per-step-
+// controllable interface not yet designed; leading candidate is
+// generator-based lowering via the yield mechanism (TBD).
+//
+// Strict no-trivia between Identifier and the marker (mirrors the
+// `Foo@` adjacency at use sites in AtCallExpr, and same rule for
+// `Foo%` and `Foo~<glyph>`). For the Tilde OpenAngle composite,
+// strict no-trivia between Tilde and OpenAngle as well — matches
+// `~<`'s adjacency rule at ComprOp use sites in §10. Trivia IS
+// admitted between the marker and the first paren-set (mirrors
 // normal `defn` paren spacing).
 //
 // Post-marker signature identical to DefFuncExpr — same paramSet+,
 // optional precondition list, :over, :as, and FuncBody alternatives.
 // Distinct production rather than shared because the AST shape and
-// transpiler lowering diverge: DefHookDecl carries `marker: "@" | "%"`,
-// has no `at` flag, and hoists into a namespace literal via the
-// transpiler's pre-pass.
+// transpiler lowering diverge: DefHookDecl carries a `marker` field
+// (surface glyph string: "@", "%", "~map", "~<", etc.), has no `at`
+// flag, and hoists into a namespace literal via the transpiler's
+// pre-pass.
 //
-// Marker token survives in parts for the shaper to capture into
-// `marker`. The At-or-Percent disjunction must be positionally
-// adjacent to Identifier in the and(...) sequence — no `delim()`
-// between — to enforce the no-trivia rule.
+// Marker token(s) survive in parts for the shaper to capture into
+// `marker`. The marker disjunction must be positionally adjacent to
+// Identifier in the and(...) sequence — no `delim()` between — to
+// enforce the no-trivia rule.
+//
+// PEG ordering of the marker disjunction: all four arms are disjoint
+// at token-type level (At, Percent, Comprehension, Tilde), so order
+// is mechanical. Listed extension-first: At, Percent (existing
+// markers) before Comprehension and Tilde+OpenAngle composite.
 export const DefHookDecl = production("DefHookDecl",
 	and(
 		KwDefn, delim(),
 		Identifier,
-		or(At, Percent),
+		or(At, Percent, ComprehensionTok, and(Tilde, OpenAngle)),
 		many(and(
 			delim(), OpenParen, delim(),
 			optional(or(ParameterList, GatherParameter)),

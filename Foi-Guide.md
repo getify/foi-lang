@@ -50,6 +50,7 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Function Pipelines](#function-pipelines)
     - [`@`-suffix (At) Functions](#--suffix-at-functions)
     - [`%`-suffix (Percent) Functions](#--suffix-percent-functions)
+    - [`~`-suffix (Comprehension) Functions](#--suffix-comprehension-functions)
 * [Base Unit Functions](#base-unit-functions)
     - [Value Identity Function](#value-identity-function)
     - [Null-Application Function](#null-application-function)
@@ -2266,6 +2267,34 @@ greet.fn("friend");         // Hello, friend!
 `greet` is an instance of the `Runner@` unit constructor, and `Runner` "type namespace" also has the `%` effector dispatch defined. So `greet% "friend"` invokes that `Runner%(dInst,arg)` function, passing `greet` and `"friend"` as its arguments, respectively.
 
 You will most commonly use this form of effector `%` dispatch paired with deferred monadic types like `IO`, `State`, etc.
+
+### `~`-Suffix (Comprehension) Functions
+
+Comprehension operators like `~map`, `~<`, `~each`, `~fold`, and friends aren't built into the language against fixed types. They dispatch through hooks declared on the target namespace, using a suffix declaration form that mirrors `@` and `%`:
+
+```java
+defn Container@(v) ^< value: v >;
+
+defn Container~map(inst,fn) ^Container@ fn(inst.value);
+defn Container~<(inst,fn) ^fn(inst.value);
+```
+
+Now `Container@` instances flow through comprehensions naturally:
+
+```java
+def wrapped: Container@ 42;
+
+wrapped ~map (defn(v) ^v * 2);          // Container@ 84
+wrapped ~< (defn(v) ^Container@v * 2);  // Container@ 84
+```
+
+Like `%`, a `~`-suffix declaration must be accompanied in the same scope by a `defn Name@(..)` of the same name; the hook installs onto that namespace. `Container`, `Container@`, `Container~map`, `Container~<`, and any other comprehension-suffix form on the same identifier all share one namespace.
+
+The `~<` hook has surface aliases at call sites -- `~chain`, `~bind`, and `~flatMap` all dispatch through the same hook -- but declaration uses only the canonical `~<`.
+
+**NOTE:** Not every comprehension needs a hook to work on a given namespace. `~map`, `~ap`, `~filter`, `~fold`, `~cata`, and `~foldR` have language-provided defaults that compose over whatever primitives you *have* declared (`~<`, `~map`, etc.). `~<` and `~each` are the primitives; if a comprehension expression reaches for one of these on a namespace that hasn't declared it, that's a compile-time rejection.
+
+Comprehension hook declaration and the dispatch/default machinery are covered in depth in the advanced guide and specification (§3.1.1.3, §3.10.9).
 
 ## Base Unit Functions
 

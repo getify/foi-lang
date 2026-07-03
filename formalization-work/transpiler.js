@@ -382,21 +382,47 @@ var emitBlockBody = (stmts, recur, withReturn, declForm = "var") => {
 //     bodies, with-prelude path — destructure / precond preludes
 //     land BEFORE the hooks, matching their function-arg scoping)
 //
-// Marker → property mapping: "@" → `_at`, "%" → `_percent`.
-// AtCallExpr / AtRefExpr / EffectorCallExpr dispatch via the
-// matching property at the lowering site.
+// Marker → property mapping:
+//   "@"          → `_at`      (dispatched by AtCallExpr/AtRefExpr)
+//   "%"          → `_percent` (dispatched by EffectorCallExpr)
+//   Comprehension markers → string-keyed props matching the
+//     CANONICAL marker glyph. Non-canonical aliases in the AST
+//     (`~chain`, `~bind`, `~flatMap`) normalize to canonical `~<`
+//     at the hoist layer, so all four spellings resolve to the
+//     same "~<"-keyed hook. The other comprehension markers
+//     (`~each`, `~map`, `~filter`, `~fold`, `~foldR`, `~cata`,
+//     `~ap`) have no aliases; their canonical IS the surface
+//     glyph. Dispatched by ComprOp emit (once wired up — currently
+//     legacy built-in path; namespace hook dispatch is the
+//     landing target).
 //
-// Missing-hook case (only `@` or only `%` declared): the absent
-// hook is simply not in the namespace literal. The dispatching
-// call site (`Foo@` against a `Foo` with no `_at`) produces a
-// runtime TypeError. Matches "the hook isn't there because it
-// wasn't declared" semantics directly — no defensive defaults.
+// Missing-hook case (some markers declared, others absent): the
+// absent hook is simply not in the namespace literal. The
+// dispatching call site produces a runtime TypeError on the
+// missing property (`Foo@` against a `Foo` with no `_at`, and —
+// once ComprOp dispatch is wired — `xs ~< fn` against a namespace
+// with no "~<" hook, etc.). Matches "the hook isn't there because
+// it wasn't declared" semantics directly — no defensive defaults
+// at this layer. The Tier 2 default table for language-provided
+// fallbacks (`~map` / `~ap` / `~filter` / `~foldR` / mutual
+// `~fold`↔`~cata`) is a separate runtime concern layered above
+// this emit, wired at ComprOp dispatch.
 //
-// Multi-decl-same-kind case (two `defn Foo@(...)` in one scope):
-// last-wins at this layer. Semantic checker's job to enforce
-// uniqueness; transpiler emits positive-path only. Source-position
-// emit (DefHookDecl handler below) leaves a trace comment per
-// decl so multi-decl situations are visible in the output.
+// Multi-decl-same-marker case (two `defn Foo@(...)` or `defn Foo~<(...)`
+// in one scope): last-wins at this layer. Alias normalization
+// participates in same-marker detection — `defn Foo~<(...)`
+// followed by `defn Foo~chain(...)` counts as two decls of the
+// canonical `~<` marker, last-wins. Semantic checker's job to
+// enforce uniqueness AND alias-form rejection; transpiler emits
+// positive-path only. Source-position emit (DefHookDecl handler
+// below) leaves a trace comment per decl so multi-decl situations
+// are visible in the output.
+//
+// Auto-tag wrapper is `@`-hook-specific: constructor hooks return
+// new instances that need `__ns: <namespace>` attached at runtime
+// so `%` and comprehension dispatch can find the owning namespace.
+// `%` and comprehension hooks operate on already-tagged instances
+// and emit unwrapped — no tagging needed at return.
 //
 // Bare-value namespaces (Lazy@ etc. — values with no hook decl
 // in scope) reach this helper as plain Identifiers in stmts and
@@ -451,6 +477,13 @@ var hoistHooksFromStmts = (stmts, recur, declForm = "var") => {
 	// can concat `hooks + body` directly and get a clean line
 	// break before the body. Empty stmts / no-DefHookDecl-in-
 	// stmts → "" (no trailing `\n`, caller's concat is a no-op).
+	// Alias normalization: `~chain`/`~bind`/`~flatMap` at the AST
+	// level collapse to canonical `~<` for hoist purposes. Other
+	// markers pass through unchanged.
+	var canonicalMarker = m => (
+		(m === "~chain" || m === "~bind" || m === "~flatMap") ? "~<" : m
+	);
+
 	var byName = new Map();
 	for (let s of stmts) {
 		if (s.type !== "DefHookDecl") continue;
@@ -460,14 +493,16 @@ var hoistHooksFromStmts = (stmts, recur, declForm = "var") => {
 			entry = {};
 			byName.set(nsName, entry);
 		}
-		if (s.marker === "@")      entry.at      = s;
-		else if (s.marker === "%") entry.percent = s;
+		// Key by canonical marker string — same key across the
+		// full family. `@`/`%` pass through directly; comprehension
+		// aliases collapse to `~<`.
+		entry[canonicalMarker(s.marker)] = s;
 	}
 	if (byName.size === 0) return "";
 	var out = "";
 	for (let [nsName, hooks] of byName) {
 		let props = [];
-		if (hooks.at) {
+		if (hooks["@"]) {
 			// Wrap the user's `_at` arrow so the return value is
 			// auto-tagged with `__ns: <namespace>`. The tag is what
 			// EffectorCallExpr's `%` dispatch reads to find the
@@ -496,7 +531,7 @@ var hoistHooksFromStmts = (stmts, recur, declForm = "var") => {
 			// for `var`-hoisted and `let` block-scoped namespaces
 			// alike — both are in scope by the time user code
 			// triggers `<ns>._at(...)`.
-			let inner = renderHookFunctionValue(hooks.at, recur);
+			let inner = renderHookFunctionValue(hooks["@"], recur);
 			let wrapped =
 				"((__inner) => (...__a) => { " +
 					"var __r = __inner(...__a); " +
@@ -506,7 +541,15 @@ var hoistHooksFromStmts = (stmts, recur, declForm = "var") => {
 				"})(" + inner + ")";
 			props.push("_at: " + wrapped);
 		}
-		if (hooks.percent) props.push("_percent: " + renderHookFunctionValue(hooks.percent, recur));
+		if (hooks["%"]) props.push("_percent: " + renderHookFunctionValue(hooks["%"], recur));
+		// Comprehension hooks — string-keyed by canonical marker
+		// glyph. Emitted unwrapped (no __ns auto-tag; comprehension
+		// hooks operate on already-tagged instances).
+		for (let marker of Object.keys(hooks)) {
+			if (marker === "@" || marker === "%") continue;
+			let inner = renderHookFunctionValue(hooks[marker], recur);
+			props.push(JSON.stringify(marker) + ": " + inner);
+		}
 		out += declForm + " " + nsName + " = { " + props.join(", ") + " };\n";
 	}
 	return out;
@@ -1317,6 +1360,85 @@ var emitComposeChain = (node, recur) => {
 		inner = "(" + leaf + ")(" + inner + ")";
 	}
 	return "((__v) => " + inner + ")";
+};
+
+
+// =============================================================
+// COMPREHENSION HOOK DISPATCH EMITTER (FlowBinExpr — ComprOp
+// with any op except `~each`)
+//
+// Routes through the LHS's `__ns[<canonical>]` hook. Aliases at
+// call site normalize to canonical at codegen; AST preserves
+// surface glyph (round-trip fidelity), emit uses the canonical
+// key.
+//
+// Emit shape:
+//   ((__lhs, __fn) => __lhs.__ns[<canonical>](__lhs, __fn))(
+//       <lhs>, <rhs-fn>
+//   )
+//
+// Single-eval `__lhs` via IIFE — LHS may be call-bearing
+// (`foo() ~< fn`) that shouldn't re-evaluate.
+//
+// Missing-hook runtime behavior:
+//   - `__lhs.__ns` undefined → TypeError on property access
+//   - `__lhs.__ns[<canonical>]` undefined → TypeError on call
+// Both match Tier 1's design lock. Tier 2 defaults (via a
+// `__ns_defaults` table) land with the runtime shim (deferred).
+//
+// RHS handling — current pass:
+//   - Callable RHS (Identifier / CallExpr / DefFuncExpr /
+//     OpFuncExpr / GroupedExpr / MemberAccessExpr / etc.) →
+//     pass through as-is.
+//   - BlockExpr with simple Identifier defs (no defaults, no
+//     DestructureTarget) → emit as arrow
+//     `(v1, v2, ...) => { <body> }`. Idents become JS param
+//     names; hook binds positional args to them.
+//   - Everything else (BareBlockExpr, BlockExpr with destructure
+//     defs / defaults) → fall back at whole-node granularity.
+//     Block-shaped RHS with these features is a follow-up
+//     (parallel to emitPipelineBlockBody's more elaborate
+//     handling for the pipeline case).
+//
+// `~each` NOT routed through this emit — retained on the
+// emitEachOp path for Tuple/Record iteration until the runtime
+// shim registers hooks on built-in namespaces. `~<<` and `~<*`
+// are grammar-rejected at DefHookDecl per the deferred override
+// interface.
+// =============================================================
+
+var CANONICAL_COMPR_MARKER = {
+	"~chain":   "~<",
+	"~bind":    "~<",
+	"~flatMap": "~<",
+};
+
+var renderComprHookRHS = (rhs, recur) => {
+	if (rhs.type === "BareBlockExpr") return null;
+	if (rhs.type === "BlockExpr") {
+		var entries = rhs.defs.entries;
+		if (entries.length === 0) return null;
+		var params = [];
+		for (let e of entries) {
+			if (e.target.type !== "Identifier") return null;
+			if (e.default) return null;
+			params.push(e.target.name);
+		}
+		var body = emitBlockBody(rhs.body.stmts, recur, true);
+		return "(" + params.join(", ") + ") => { " + body + " }";
+	}
+	// Callable RHS — passthrough.
+	return recur(rhs);
+};
+
+var emitComprHookDispatch = (node, recur) => {
+	var canonical = CANONICAL_COMPR_MARKER[node.op] || node.op;
+	var rhsStr = renderComprHookRHS(node.right, recur);
+	if (rhsStr == null) return null;
+	var lhsStr = recur(node.left);
+	return "((__lhs, __fn) => __lhs.__ns[" +
+		JSON.stringify(canonical) +
+		"](__lhs, __fn))(" + lhsStr + ", " + rhsStr + ")";
 };
 
 
@@ -3167,6 +3289,13 @@ var handlers = {
 		}
 		if (node.op === "~each") {
 			return emitEachOp(node, recur);
+		}
+		// ComprOp hook dispatch — all remaining `~`-prefixed ops
+		// route through the LHS's `__ns[<canonical>]` hook. See
+		// emitComprHookDispatch for shape and RHS handling.
+		if (node.op.startsWith("~")) {
+			let out = emitComprHookDispatch(node, recur);
+			return out == null ? fallback(node) : out;
 		}
 		return fallback(node);
 	},

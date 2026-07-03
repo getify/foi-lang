@@ -2584,19 +2584,35 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 
-	// DefHookDecl := "defn" _ Identifier (At | Percent)
+	// DefHookDecl := "defn" _ Identifier
+	//                (At | Percent | Comprehension | (Tilde OpenAngle))
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
 	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
 	//                _ <FuncBody>;
 	//
 	// Mirrors DefFuncExpr's shape minus the optional `at` flag,
-	// plus a REQUIRED `marker` field carrying "@" or "%".
+	// plus a REQUIRED `marker` field carrying the surface glyph
+	// string ("@", "%", "~map", "~each", "~<", etc.).
 	//
-	// "defn" keyword drops; the marker token (At or Percent) drops
-	// as it's captured into `marker` (parallel to DefFuncExpr's
-	// `at: true` capture). Parens are structural → delims; an
-	// empty paren-pair still synthesizes a zero-content
+	// "defn" keyword drops; marker token(s) drop as their values
+	// accumulate into `marker` (parallel to DefFuncExpr's
+	// `at: true` capture, but preserving surface spelling for
+	// round-trip fidelity — the transpiler normalizes non-canonical
+	// aliases ~chain/~bind/~flatMap to canonical ~< at codegen,
+	// while round-trip re-emits the original glyph). Multi-token
+	// composite markers (Tilde + OpenAngle for ~<) accumulate
+	// their values in source order. Parens are structural →
+	// delims; an empty paren-pair still synthesizes a zero-content
 	// ParameterList (per the empty-merged convention with end:null).
+	//
+	// Marker token disambiguation: within DefHookDecl's direct
+	// frame parts, At/Percent/Comprehension/Tilde/OpenAngle only
+	// appear at the marker slot — At and Percent are exclusive to
+	// this slot, Comprehension has no other position in the
+	// production, and Tilde/OpenAngle nested inside any
+	// subexpression are shielded by nested-production frames
+	// (ParameterList's DestructureTarget, etc.). No position
+	// guard needed.
 	//
 	// Identifier is required by grammar (no anonymous form); the
 	// shaper's name-capture rule (first Identifier-typed node
@@ -2609,7 +2625,8 @@ export const defaultShapers = {
 	//     convention. Normalize with:
 	//       var annotation = as.type === "FuncAsClause" ? as.annotation : as;
 	DefHookDecl(frame,parts) {
-		var name, marker, over, as, body;
+		var name, over, as, body;
+		var marker = "";
 		var paramSets = [];
 		var preconditions = [];
 		var delims = [];
@@ -2620,8 +2637,23 @@ export const defaultShapers = {
 		for (let p of parts) {
 			if (!isNode(p)) {
 				if (p.type === "Keyword" && p.value === "defn") continue;
-				if (p.type === "At")      { marker = "@"; continue; }
-				if (p.type === "Percent") { marker = "%"; continue; }
+				// Marker tokens — accumulate values into `marker`.
+				// Single-token markers: At ("@"), Percent ("%"),
+				// Comprehension ("~map"/"~each"/"~chain"/etc. —
+				// captures the surface spelling, including
+				// non-canonical aliases that semantic layer
+				// rejects). Two-token composite: Tilde + OpenAngle
+				// → "~<". Order-of-appearance concatenation.
+				if (
+					p.type === "At" ||
+					p.type === "Percent" ||
+					p.type === "Comprehension" ||
+					p.type === "Tilde" ||
+					p.type === "OpenAngle"
+				) {
+					marker += p.value;
+					continue;
+				}
 				if (p.type === "OpenParen") {
 					lastOpenParen = p;
 					currentSet = null;

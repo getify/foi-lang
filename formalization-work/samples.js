@@ -828,12 +828,20 @@ export const samples = [
 	{ label: "defn: destructure-with-init + pipeline",
 	  src: "defn foo(<:z> :? src) #> inc;" },
 
-	// DefHookDecl cluster — `defn` + name + marker (@ or %) +
-	// paren-sets + body. Statement-only; expression-position usage
-	// is a parse error (see failSamples in test-parser.js). The
-	// post-marker signature mirrors DefFuncExpr's full feature
+	// DefHookDecl cluster — `defn` + name + marker (@, %, or
+	// comprehension: ~<, ~each, ~map, ~ap, ~filter, ~fold, ~foldR,
+	// ~cata) + paren-sets + body. Statement-only; expression-position
+	// usage is a parse error (see failSamples in test-parser.js).
+	// The post-marker signature mirrors DefFuncExpr's full feature
 	// set — curried paramSets, FuncPrecondList, :over, :as, all
 	// three FuncBody forms.
+	//
+	// Aliases at declaration position (`~chain`, `~bind`, `~flatMap`)
+	// parse cleanly (Comprehension token admits them) but are
+	// semantically rejected at a layer above the parser — parser
+	// tests only verify grammatical admission. `~<<` and `~<*` are
+	// grammar-rejected at declaration position (deferred; see
+	// failSamples).
 	{ label: "DefHookDecl: @ marker + expr body",            src: "defn Foo@(x) ^x;" },
 	{ label: "DefHookDecl: @ marker + block body",           src: "defn fact@(n) { n; };" },
 	{ label: "DefHookDecl: @ marker + empty params",         src: "defn Foo@() ^empty;" },
@@ -849,6 +857,44 @@ export const samples = [
 	{ label: "DefHookDecl: % with FuncPrecond",              src: "defn Bar%(self, env) ?[?empty env]: self ^env;" },
 	{ label: "DefHookDecl: @ destructure param",             src: "defn Foo@(<:a, :b>) ^a + b;" },
 	{ label: "DefHookDecl: % destructure params",            src: "defn Bar%(<:s>, <:e>) ^s;" },
+
+	// Comprehension marker variants — Tier 1 (~<, ~each).
+	{ label: "DefHookDecl: ~< marker (Tilde OpenAngle composite)",
+	  src: "defn Foo~<(inst, fn) ^fn(inst);" },
+	{ label: "DefHookDecl: ~each marker + block body",
+	  src: "defn Foo~each(inst, fn) { fn(inst); };" },
+
+	// Comprehension marker variants — Tier 2 (~map, ~ap, ~filter,
+	// ~fold, ~foldR, ~cata).
+	{ label: "DefHookDecl: ~map marker",
+	  src: "defn Foo~map(inst, fn) ^Foo@ fn(inst);" },
+	{ label: "DefHookDecl: ~ap marker",
+	  src: "defn Foo~ap(mf, mx) ^mf ~< (fn) { mx ~map fn; };" },
+	{ label: "DefHookDecl: ~filter marker",
+	  src: "defn Foo~filter(inst, pred) ^inst;" },
+	{ label: "DefHookDecl: ~fold marker",
+	  src: "defn Foo~fold(inst, init, fn) ^fn(init, inst);" },
+	{ label: "DefHookDecl: ~foldR marker",
+	  src: "defn Foo~foldR(inst, init, fn) ^fn(inst, init);" },
+	{ label: "DefHookDecl: ~cata marker",
+	  src: "defn Foo~cata(inst, defFn, altFn) ^altFn(inst);" },
+
+	// Aliases at declaration position — parse (Comprehension
+	// token admits), semantic layer rejects with "canonical is ~<".
+	{ label: "DefHookDecl: ~chain alias (parses; semantic rejects)",
+	  src: "defn Foo~chain(inst, fn) ^fn(inst);" },
+	{ label: "DefHookDecl: ~bind alias (parses; semantic rejects)",
+	  src: "defn Foo~bind(inst, fn) ^fn(inst);" },
+	{ label: "DefHookDecl: ~flatMap alias (parses; semantic rejects)",
+	  src: "defn Foo~flatMap(inst, fn) ^fn(inst);" },
+
+	// Comprehension markers with other DefHookDecl features.
+	{ label: "DefHookDecl: ~< curried (2 paramSets)",
+	  src: "defn Foo~<(inst)(fn) ^fn(inst);" },
+	{ label: "DefHookDecl: ~map + :over clause",
+	  src: "defn Foo~map(inst, fn) :over(ctx) ^fn(inst);" },
+	{ label: "DefHookDecl: ~< + FuncPrecond",
+	  src: "defn Foo~<(inst, fn) ?[?empty inst]: inst ^fn(inst);" },
 
 
 	// =============================================================

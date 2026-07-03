@@ -1081,8 +1081,8 @@ DefFuncExpr           := "defn" (_ Identifier)?
    from <Expr>. Anonymous hook declarations make no semantic sense
    (no namespace to attach to), so the name is required (no `?`
    on Identifier) and the form is unreachable at expression
-   position. The marker (At or Percent) declares which dispatch
-   operator's hook is being installed on the named namespace:
+   position. The marker declares which dispatch operator's hook is
+   being installed on the named namespace:
 
    - `defn Foo@(...) ...`  installs the constructor hook on Foo,
      invoked by `Foo@` / `Foo@x` (AtCallExpr) and extracted by
@@ -1090,20 +1090,40 @@ DefFuncExpr           := "defn" (_ Identifier)?
    - `defn Foo%(...) ...`  installs the effect hook on Foo,
      invoked by `Foo%` / `Foo%env` when applied to an instance
      (EffectorCallExpr).
+   - `defn Foo~map(...) ...` (and other single-token Comprehension
+     markers: `~each`, `~filter`, `~fold`, `~foldR`, `~cata`, `~ap`,
+     etc.) installs a comprehension hook on Foo, invoked by the
+     corresponding comprehension operator at call sites.
+   - `defn Foo~<(...) ...`  installs the bind (chain) hook on Foo,
+     invoked by `~<` / `~chain` / `~bind` / `~flatMap` at call sites.
+
+   Non-canonical alias spellings for `~<` (`~chain`, `~bind`,
+   `~flatMap`) parse at declaration position but are semantically
+   rejected; the semantic checker directs the author to use `~<`.
+
+   `~<<` (do-comprehension) and `~<*` (looping-do) are NOT admitted at declaration position — user override of these operators requires a per-step-controllable interface not yet designed (leading candidate: generator-based lowering via the yield mechanism, TBD).
 
    Strict no-trivia between the Identifier and the marker (mirrors
-   `Foo@` adjacency at use sites). Trivia is admitted between the
-   marker and the first paren-set (mirrors normal `defn` paren
-   spacing). The post-marker signature is identical to
-   DefFuncExpr's — same paramSet+, optional precondition list,
-   :over clause, :as clause, and FuncBody alternatives.
+   `Foo@` adjacency at use sites). For the `Tilde OpenAngle` marker,
+   strict no-trivia between Tilde and OpenAngle as well (per the
+   `~<` composite operator's adjacency rule at ComprOp use sites).
+   Trivia is admitted between the marker and the first paren-set
+   (mirrors normal `defn` paren spacing).
+
+   The post-marker signature is identical to DefFuncExpr's — same
+   paramSet+, optional precondition list, :over clause, :as clause,
+   and FuncBody alternatives.
 
    At most one hook of each kind per namespace per scope; multiple
    declarations of the same kind in one scope are not rejected at
    the grammar layer (transpiler emits last-wins; semantic checker
-   enforces uniqueness). *)
+   enforces uniqueness). Comprehension-hook decls additionally
+   require an accompanying `@`-hook decl on the same identifier in
+   the same scope (mirrors `%` hook requirement); rejection at
+   semantic layer, not grammar. *)
 
-DefHookDecl           := "defn" _ Identifier (At | Percent)
+DefHookDecl           := "defn" _ Identifier
+                         (At | Percent | Comprehension | (Tilde OpenAngle))
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
                          _ FuncBody;

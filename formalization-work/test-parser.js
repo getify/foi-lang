@@ -292,15 +292,35 @@ var failSamples = [
 	// === DefHookDecl negatives ===
 
 	// Strict no-trivia between Identifier and marker — mirrors
-	// `Foo@` adjacency at use sites in AtCallExpr.
+	// `Foo@` adjacency at use sites in AtCallExpr. Same rule for
+	// all four marker shapes (At, Percent, Comprehension,
+	// Tilde+OpenAngle composite).
 	"defn Foo @(x) ^x;",
 	"defn Foo %(self, env) ^env;",
+	"defn Foo ~map(inst, fn) ^inst;",
+	"defn Foo ~<(inst, fn) ^fn(inst);",
+
+	// Strict no-trivia WITHIN the Tilde OpenAngle composite for ~
+	// — matches the composite operator's own adjacency rule at
+	// ComprOp use sites in §10.
+	"defn Foo~ <(inst, fn) ^fn(inst);",
+
+	// ~<< (do-comprehension) and ~<* (looping-do) are NOT admitted
+	// at declaration position — deferred pending per-step-controllable
+	// override interface (leading candidate: generator-based lowering
+	// via the yield mechanism). Grammar rejection at parse time; the
+	// third token after Tilde+OpenAngle marker leaves the following
+	// paren-slot expecting OpenParen but seeing OpenAngle / Star.
+	"defn Foo~<<(inst, block) ^inst;",
+	"defn Foo~<*(inst, block) ^inst;",
 
 	// Statement-only. At expression position the DefFuncExpr arm
-	// has no `@`/`%` marker (removed in the refactor), so these
-	// fail cleanly at the marker.
+	// has no marker slot (removed in the refactor), so these fail
+	// cleanly at the marker for all four shapes.
 	"def x: defn Foo@(x) ^x;",
 	"def x: defn Bar%(self, env) ^env;",
+	"def x: defn Foo~map(inst, fn) ^inst;",
+	"def x: defn Foo~<(inst, fn) ^fn(inst);",
 
 	// === AtRefTail (.@) trivia negatives ===
 
