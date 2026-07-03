@@ -1630,14 +1630,20 @@ var Op = or(FlowOp, OrOp, AndOp, CompareOp, AsTypeOp, AddOp, MulOp, NamedUnaryOp
 // would be semantically meaningless. See §5's <Expr> PEG note.
 //
 // VarDefInitOpt vs. VarDefInitOptImplIn mirrors this fork at the
-// entry level:
-//   - VarDefInitOpt (strict-optional): Identifier-init optional,
-//     DestructureTarget-init required. Used at DefBlockStmt's
-//     BlockDefsInitOpt where no implicit source exists.
-//   - VarDefInitOptImplIn (lenient): both optional. Used at implicit-
-//     input sites — ParameterList (the positional argument is the
-//     source) and BlockDefsInitOptImplIn (via FlowRHSImplIn /
-//     FuncBodyPipeline body).
+// entry level, carrying both a grammatical distinction (init-
+// requiredness) AND a sigil-semantic distinction (init form):
+//   - VarDefInitOpt (strict): bare `:` init sigil, unconditional
+//     binding. Identifier-init optional, DestructureTarget-init
+//     required. Used at DefBlockStmt's BlockDefsInitOpt where no
+//     implicit source exists.
+//   - VarDefInitOptImplIn (lenient): `:?` init sigil, override-on-
+//     empty binding. Both Identifier-init and DestructureTarget-init
+//     optional. Used at implicit-input sites — ParameterList (the
+//     positional argument is the source) and BlockDefsInitOptImplIn
+//     (via FlowRHSImplIn / FuncBodyPipeline body — the comprehension
+//     element / pipeline topic / function arg is the source).
+//     The `:?` composite is Colon Qmark with no internal trivia,
+//     same convention as AssignmentExpr's `:=`.
 //
 // `:as` reachability:
 //   - BareBlockExpr reaches `:as` via AsExpr-wrap (it's in <AsableExpr>).
@@ -1661,17 +1667,25 @@ export const VarDefInitOpt = production("VarDefInitOpt",
 	)
 );
 
-// VarDefInitOptImplIn := (Identifier        (_ Colon _ ExprNoBlock)?)
-//                      | (DestructureTarget (_ Colon _ ExprNoBlock)?);
+// VarDefInitOptImplIn := (Identifier        (_ Colon Qmark _ ExprNoBlock)?)
+//                      | (DestructureTarget (_ Colon Qmark _ ExprNoBlock)?);
 //
 // Lenient form for implicit-input positions: ParameterList (positional
 // arg is source) and BlockDefsInitOptImplIn (via FlowRHSImplIn /
 // FuncBodyPipeline body — the comprehension/pipeline element / function
 // arg is source).
+//
+// Init sigil is `:?` (Colon Qmark, no internal trivia — the `Colon,
+// Qmark,` in the production body has no `delim()` between them,
+// mirroring AssignmentExpr's `Colon, Equal,`). Semantic is override-
+// on-empty: the init evaluates only when the implicit source at this
+// entry is empty, otherwise the source binds directly and the init
+// is not evaluated. Distinct from VarDefInitOpt (bare `:`,
+// unconditional binding at no-implicit-source positions).
 export const VarDefInitOptImplIn = production("VarDefInitOptImplIn",
 	or(
-		and(Identifier,        optional(and(delim(), Colon, delim(), ExprNoBlock))),
-		and(DestructureTarget, optional(and(delim(), Colon, delim(), ExprNoBlock)))
+		and(Identifier,        optional(and(delim(), Colon, Qmark, delim(), ExprNoBlock))),
+		and(DestructureTarget, optional(and(delim(), Colon, Qmark, delim(), ExprNoBlock)))
 	)
 );
 

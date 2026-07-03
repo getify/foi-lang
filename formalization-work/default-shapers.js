@@ -2024,15 +2024,36 @@ export const defaultShapers = {
 	//     `:as` path.
 	//
 	// VarDefInitOpt vs VarDefInitOptImplIn mirrors the strict /
-	// lenient fork at the entry level:
-	//   - VarDefInitOpt (strict-optional): Identifier-init
-	//     optional, DestructureTarget-init REQUIRED. Used at
-	//     DefBlockStmt's BlockDefsInitOpt — no implicit source.
-	//   - VarDefInitOptImplIn (lenient): both Identifier-init and
+	// lenient fork at the entry level, carrying both a
+	// grammatical distinction (init-requiredness) AND a
+	// sigil-semantic distinction (init form):
+	//   - VarDefInitOpt (strict): bare `:` init sigil,
+	//     unconditional binding. Identifier-init optional,
+	//     DestructureTarget-init REQUIRED. Used at DefBlockStmt's
+	//     BlockDefsInitOpt — no implicit source.
+	//   - VarDefInitOptImplIn (lenient): `:?` init sigil,
+	//     override-on-empty binding. Both Identifier-init and
 	//     DestructureTarget-init optional. Used at implicit-input
 	//     sites — ParameterList (§13, positional arg is source)
 	//     and BlockDefsInitOptImplIn (here, via FlowRHSImplIn /
 	//     FuncBodyPipeline body).
+	//
+	// The two shapers emit the same type tag "VarDefInitOpt" but
+	// distinct field names — `.init` on the strict arm,
+	// `.default` on the lenient arm. Downstream consumers read
+	// `node.init || node.default` to source the expression
+	// regardless of arm. The distinct field names preserve the
+	// sigil-semantic split (unconditional bind vs override-on-
+	// empty) in the AST, keeping the type tag uniform for
+	// downstream walker simplicity.
+	//
+	// The BlockDefsInitOpt / BlockDefsInitOptImplIn wrapper pair
+	// remains aliased at the bottom of this file — the wrapper
+	// shaper doesn't inspect entry sigils. Downstream consumers
+	// still bind no-init entries from the enclosing implicit
+	// source based on parent context, not on a per-entry tag
+	// check. The strict-vs-lenient distinction at the wrapper
+	// level lives entirely at the parser layer.
 	//
 	// Both produce structurally identical AST nodes — the lenient
 	// productions alias to the strict shapers at the bottom of
@@ -2046,9 +2067,12 @@ export const defaultShapers = {
 	// VarDefInitOpt := (Identifier        (_ Colon _ ExprNoBlock)?)
 	//                | (DestructureTarget  _ Colon _ ExprNoBlock);
 	//
-	// Strict-optional form. Colon (when init present) is structural
-	// → delims. Same shaper body handles both arms — count of
-	// nodes determines whether init is present.
+	// Strict form, bare `:` init sigil (unconditional bind).
+	// Colon (when init present) is structural → delims. Same
+	// shaper body handles both arms — count of nodes determines
+	// whether init is present.
+	//
+	// AST field: `.init` (present iff init expression given).
 	VarDefInitOpt(frame,parts) {
 		var nodes = [];
 		var delims = [];
@@ -2059,6 +2083,33 @@ export const defaultShapers = {
 		var [ target, init ] = nodes;
 		var node = { type: "VarDefInitOpt", target };
 		if (init) node.init = init;
+		return withDelims(node, delims);
+	},
+
+	// VarDefInitOptImplIn := (Identifier        (_ Colon Qmark _ ExprNoBlock)?)
+	//                      | (DestructureTarget (_ Colon Qmark _ ExprNoBlock)?);
+	//
+	// Lenient form, `:?` init sigil (override-on-empty). When
+	// init is present, Colon AND Qmark are both structural →
+	// delims (two-token composite mirroring AssignmentExpr's
+	// `:=`). Same shaper body handles both arms — count of
+	// nodes determines whether init is present.
+	//
+	// AST shape: same type tag "VarDefInitOpt" as the strict
+	// shaper, but the init expression (when present) binds to
+	// `.default` instead of `.init`. Downstream consumers read
+	// `node.init || node.default` to source the expression
+	// regardless of arm.
+	VarDefInitOptImplIn(frame,parts) {
+		var nodes = [];
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) nodes.push(p);
+			else delims.push(p); // Colon + Qmark (when init present)
+		}
+		var [ target, defaultExpr ] = nodes;
+		var node = { type: "VarDefInitOpt", target };
+		if (defaultExpr) node.default = defaultExpr;
 		return withDelims(node, delims);
 	},
 
@@ -3229,16 +3280,24 @@ export const defaultShapers = {
 // §11 LENIENT-FORM ALIASES
 // =============================================================
 //
-// The §11 strict/lenient fork at the entry and defs-init levels:
+// The §11 strict/lenient fork at the defs-init container level:
 //
-//   VarDefInitOpt       /  VarDefInitOptImplIn
-//   BlockDefsInitOpt    /  BlockDefsInitOptImplIn
+//   BlockDefsInitOpt / BlockDefsInitOptImplIn
 //
-// produces structurally identical AST nodes — the strict-vs-
-// lenient distinction lives entirely at the parser layer
-// (whether DestructureTarget-no-init is grammatically accepted).
-// All downstream consumers (transpiler, round-trip oracle, future
-// interpreter) treat the two forms uniformly.
+// produces structurally identical AST nodes — the defs-init
+// wrapper doesn't inspect its entries at shape-time, so a single
+// shaper handles both. Alias below.
+//
+// The entry-level fork (VarDefInitOpt / VarDefInitOptImplIn) is
+// NOT aliased under Series 1. The two shapers emit the same type
+// tag "VarDefInitOpt" but distinct field names — `.init` for the
+// strict (bare `:`) arm, `.default` for the lenient (`:?`) arm.
+// Downstream consumers read `node.init || node.default` to
+// source the expression regardless of arm. The distinct field
+// names preserve the sigil-semantic split (unconditional bind vs
+// override-on-empty) in the AST, keeping the type tag uniform
+// for downstream walker simplicity. See the dedicated
+// VarDefInitOptImplIn shaper adjacent to VarDefInitOpt above.
 //
 // (Note: there is no BlockExpr-level counterpart in this alias
 // table. The grammar restructure folded the prior BlockExprImplIn
@@ -3247,12 +3306,11 @@ export const defaultShapers = {
 // These are structurally distinct productions with distinct
 // shapers, not a strict/lenient alias pair.)
 //
-// Reuse the strict-form shaper functions by reference. Each
-// emits its hardcoded `type:` string ("VarDefInitOpt",
-// "BlockDefsInitOpt"), so lenient-production frames shape to
-// the same type tag as their strict counterparts. No `this`
-// dependency in the shaper bodies makes this safe.
-defaultShapers.VarDefInitOptImplIn    = defaultShapers.VarDefInitOpt;
+// The remaining alias below reuses the strict-form BlockDefsInitOpt
+// shaper function by reference — it emits its hardcoded `type:`
+// string ("BlockDefsInitOpt"), so the lenient-production frame
+// shapes to the same type tag. No `this` dependency in the shaper
+// body makes this safe.
 defaultShapers.BlockDefsInitOptImplIn = defaultShapers.BlockDefsInitOpt;
 
 // BlockExprStrict shapes to the same { type: "BlockExpr", defs, body }

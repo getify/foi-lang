@@ -606,7 +606,7 @@ See how the operators are reversed here, but the `'` is what's inverting them?
 To override positional argument->parameter binding at a function call-site, an argument can specify which parameter name it corresponds to (in any order):
 
 ```java
-defn add(x: 0, y) ^x + y;
+defn add(x:? 0, y) ^x + y;
 
 add(x:3, y:4);                  // 7
 add(y:5);                       // 5
@@ -1810,7 +1810,7 @@ def myFn: defn(x,y)^x + y;
 To default a function parameter value:
 
 ```java
-defn add(x: 0, y: 0) ^x + y;
+defn add(x:? 0, y:? 0) ^x + y;
 ```
 
 The default is applied if the corresponding argument supplied has the `empty` value, or if omitted.
@@ -1959,7 +1959,7 @@ factorial(5);                   // 120
 Tail-calls (recursive or not) are automatically optimized by the **Foi** compiler to save call-stack resources:
 
 ```java
-defn factorial(v,tot: 1) ![v ?> 1]: tot {
+defn factorial(v,tot:? 1) ![v ?> 1]: tot {
     ^factorial(v - 1,tot * v);
 };
 
@@ -2146,10 +2146,10 @@ The previous `#>` *pipeline function* form is more powerful/flexible than the `+
 If you declare a function with a `@` suffix on its name (declaration form only), it's referred to as a "unit constructor":
 
 ```java
-defn Double@(x: 0) ^x * 2;
+defn Double@(x:? 0) ^x * 2;
 ```
 
-The `@` must appear in the name (`Double@` above) with no space in it; there can be optional whitespace after the `@` before the parameter list (`(x: 0)` above).
+The `@` must appear in the name (`Double@` above) with no space in it; there can be optional whitespace after the `@` before the parameter list (`(x:? 0)` above).
 
 **NOTE:** This is how various built-ins you've already seen in this guide, such as `Lazy@`, `Left@`, etc, are all declared.
 
@@ -2270,7 +2270,7 @@ defn @(v) ^(@)(v);
 Here's an example of how you might use the identity unit function:
 
 ```java
-defn formatRecord(record,formatFn: (@)) {
+defn formatRecord(record,formatFn:? (@)) {
     // ..
     ^formatFn(record);
 };
@@ -2321,7 +2321,7 @@ The name of this utility (`Function@`) is a nod to the fact that it's a unit con
 Here's an example of how you might use this utility:
 
 ```java
-defn getName(record,getLabel: Function@ "Default") {
+defn getName(record,getLabel:? Function@ "Default") {
     ^(`"`getLabel(record)`: `record.name`");
 };
 ```
@@ -2419,7 +2419,7 @@ Let's start with the typical imperative loop approach. Here's a loop that prints
         // v: 5
         ```
 
-        **Warning:** Beware that initializations of the definition (e.g., `(v: 3)`) *will be* overwritten immediately, as it's assigned per-iteration according to the loop `range` and the iteration-type.
+        **Warning:** Beware that a default initialization expression on the first position (e.g., `(v:? 3)`) will be ignored (unless the value that comes through is `empty`), as it's assigned per-iteration according to the loop `range` and the iteration-type.
 
         If the loop iteration doesn't need any block-scoped definitions, omit the `(    )` block-definitions clause:
 
@@ -3021,7 +3021,7 @@ That approach is often useful if the non-monadic-returning function is already i
 Monadic function returns can also be integrated directly into a function's logic:
 
 ```java
-defn factorialM(v,tot: Id@ 1) ![v ?> 1]: tot {
+defn factorialM(v,tot:? Id@ 1) ![v ?> 1]: tot {
     tot := tot ~map (t) { t * v; };
     ^factorialM(v - 1,tot);
 };

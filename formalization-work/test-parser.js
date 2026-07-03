@@ -35,9 +35,9 @@ var passSamples = [
 
 	defn playlist(
 	    urls,
-	    clear: false,
-	    loop: false,
-	    onNext: onPlayNext
+	    clear:? false,
+	    loop:? false,
+	    onNext:? onPlayNext
 	  )
 	  :over(queue,onPlayNext)
 	{
@@ -133,7 +133,26 @@ var failSamples = [
 	"(x: 1) { x; } :as int;",  // same — BlockExpr not in <AsableExpr> anyway
 	"(x, y) { x; };",          // same
 	"(x: 1, y) { x; };",       // same
+
+	// Series 1: bare `:` at lenient VarDefInitOptImplIn positions
+	// now rejects. The lenient sigil is `:?` (override-on-empty);
+	// bare `:` at these positions retracts the entry's init-optional
+	// and leaves a dangling `:` at the list terminator, failing at
+	// the enclosing `)` match. Covers both Identifier and
+	// DestructureTarget arms, at both ParameterList reach and
+	// BlockDefsInitOptImplIn reach (via FlowRHSImplIn).
+	//
+	// (Note: `:?` at STRICT positions does NOT reject — it parses
+	// as bare `:` init + unary `?...` expression, per the strict
+	// production's `_ Colon _ ExprNoBlock` shape. No strict-side
+	// grammatical rejection to test.)
+	"defn f(x: 3) ^x;",              // bare `:` at ParameterList Identifier entry
+	"defn f(<:a>: src) ^a;",         // bare `:` at ParameterList DestructureTarget source tail
+	"list ~map (x: 3) { x; };",      // bare `:` at BlockDefsInitOptImplIn Identifier entry
+	"list ~map (<:a>: src) { a; };", // bare `:` at BlockDefsInitOptImplIn DestructureTarget source tail
+
 	"10 + x := 5;",
+
 	// Dynamic-pick boundaries — confirm grammar narrowness.
 	//
 	// `&`-in-pick admits PickValue's source alphabet exactly:

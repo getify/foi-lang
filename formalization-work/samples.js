@@ -641,7 +641,7 @@ export const samples = [
 	// BlockExpr (defs-init required) — Identifier entries at implicit-input positions
 	// FlowRHSImplIn → BlockExpr → BlockDefsInitOptImplIn → VarDefInitOptImplIn
 	{ label: "BlockExpr: ~map ident defs",                 src: "list ~map (x) { x; };" },
-	{ label: "BlockExpr: ~map mixed defs",                 src: "list ~map (x: 1, y) { x; };" },
+	{ label: "BlockExpr: ~map mixed defs",                 src: "list ~map (x:? 1, y) { x; };" },
 	{ label: "BlockExpr: #> ident defs",                   src: "data #> (x) { x; };" },
 	{ label: "BlockExpr: defn #> ident defs",              src: "defn f(x) #> (y) { y; };" },
 
@@ -660,11 +660,11 @@ export const samples = [
 	// the with-init arms (and for destructure, the "explicit overrides
 	// implicit" branch of the lenient form).
 	{ label: "BlockExpr: defn #> ident-with-init",
-	  src: "defn foo(x) #> (x: 3) { x + #; };" },
+	  src: "defn foo(x) #> (x:? 3) { x + #; };" },
 	{ label: "BlockExpr: defn #> destructure w/ explicit init",
-	  src: "defn foo(x) #> (<:x>: src) { x + #; };" },
+	  src: "defn foo(x) #> (<:x> :? src) { x + #; };" },
 	{ label: "BlockExpr: #> destructure w/ explicit init",
-	  src: "data #> (<:x>: src) { x + #; };" },
+	  src: "data #> (<:x> :? src) { x + #; };" },
 
 	// Multi-stage FuncBodyPipeline — exercises the `(_ FlowOpAndRHS)*`
 	// chain iter and the FuncBodyPipeline shaper's chainDelims routing
@@ -676,7 +676,7 @@ export const samples = [
 	// both stages using FlowRHSImplIn block arms. Existing
 	// `data #> f +> g` is mixed-op and stage-2 ComposeOp (no block arm).
 	{ label: "FlowBinExpr: #> chain w/ destructure stage-1",
-	  src: "data #> (<:x>: src) { x + #; } #> { #; };" },
+	  src: "data #> (<:x> :? src) { x + #; } #> { #; };" },
 
 	{ label: "FlowBinExpr: #> callable RHS (identifier)",
 	  src: "data #> inc;" },
@@ -798,7 +798,7 @@ export const samples = [
 	{ label: "defn: destructure param (no default)",
 	  src: "defn f(<:a, :b>) ^a + b;" },
 	{ label: "defn: destructure param (with default)",
-	  src: "defn f(<:a, :b>: defs) ^a + b;" },
+	  src: "defn f(<:a, :b> :? defs) ^a + b;" },
 	{ label: "defn: destructure + ident param",
 	  src: "defn f(<:a, :b>, c) ^a + b + c;" },
 
@@ -809,7 +809,7 @@ export const samples = [
 	{ label: "defn: curried destructure + pipeline body",
 	  src: "defn foo(<:x>)(<:y>)(<:z>) #> inc #> { x + y + #; };" },
 	{ label: "defn: destructure-with-init + pipeline",
-	  src: "defn foo(<:z>: src) #> inc;" },
+	  src: "defn foo(<:z> :? src) #> inc;" },
 
 	// DefHookDecl cluster — `defn` + name + marker (@ or %) +
 	// paren-sets + body. Statement-only; expression-position usage
@@ -1220,7 +1220,7 @@ export const samples = [
 	// DefBlockStmt. Standalone (defs){body} is rejected by the
 	// grammar and is not exercised here.
 	{ label: "compound §11: block variants",
-	  src: "{ a; b; }; list ~map { y; }; list ~map (x: 5, y) { x + y; }; def (a: 1) { a; };" },
+	  src: "{ a; b; }; list ~map { y; }; list ~map (x:? 5, y) { x + y; }; def (a: 1) { a; };" },
 
 	// §12 — AssignmentExpr forms
 	{ label: "compound §12: assignment forms",
@@ -1514,10 +1514,10 @@ export const samples = [
 
 	{ label: "CallArgList: leading-skip + WS + arg in PrefixCallSuffix",
 	  src: "foo(, a);" },
-	{ label: "VarDefInitOptList: leading-skip + WS + entry in DefBlockStmt",
-	  src: "def (, x: 5) { x; };" },
 	{ label: "VarDefInitOptImplInList: leading-skip + WS + entry in BlockExpr",
-	  src: "data #> (, x: 5) { x + #; };" },
+	  src: "data #> (, x:? 5) { x + #; };" },
+	{ label: "VarDefInitOptImplInList: leading-skip + WS + entry in BlockExpr",
+	  src: "data #> (, x:? 5) { x + #; };" },
 	{ label: "DoVarDefInitOptList: leading-skip + WS + entry in DoBlockExpr",
 	  src: "Id ~<< (, x:: foo) { x; };" },
 	{ label: "RecordTupleEntryList: leading-skip + WS + entry",

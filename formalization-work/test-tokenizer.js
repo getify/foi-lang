@@ -674,7 +674,7 @@ async function runTests() {
 
 		// :as variants from across the file:
 		"def x: 5 :as int;",                   // :as in def-binding
-		"defn f(x:0) :as Whatever { ^x };",    // :as as FuncAsClause (one token, multi-arg form)
+		"defn f(x:?0) :as Whatever { ^x };",   // :as as FuncAsClause (one token, multi-arg form)
 		"defn add(x)(y) :as Adder { ^x + y };", // currying + :as
 		"x :as int",                           // bare :as on identifier
 		"foo :as List",                        // :as Builtin
@@ -778,7 +778,7 @@ async function runTests() {
 
 		// comprehensions + pipelines spread.
 		"1..3 ~each log",
-		"?[x] ~each (x,y:2) { x }",
+		"?[x] ~each (x,y:?2) { x }",
 		"foo ~map ![x] ~each foo",             // chained named comprehension ops
 		"x . y [3].[1..3] .<a,b,> ~filter { y }",  // access chain + filter
 		"x #> (y(#.y,2) #> z)",                // pipeline chain with topic
@@ -1010,9 +1010,9 @@ async function runTests() {
 
 		defn playlist(
 			urls,
-			clear: false,
-			loop: false,
-			onNext: onPlayNext
+			clear:? false,
+			loop:? false,
+			onNext:? onPlayNext
 		  )
 		  :over(queue,onPlayNext)
 		{

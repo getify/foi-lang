@@ -980,15 +980,29 @@ so `?<=>` matches before `?<=` / `?<>` / etc.
    parses.
 
    VarDefInitOpt vs VarDefInitOptImplIn mirrors this fork at the
-   entry level. VarDefInitOpt is the strict-optional form
-   (Identifier-init optional, DestructureTarget-init required),
-   used at DefBlockStmt's BlockDefsInitOpt where no implicit
-   source exists. VarDefInitOptImplIn is the lenient form
-   (both Identifier-init and DestructureTarget-init optional),
-   used at implicit-input sites: ParameterList (the positional
-   argument is the source) and BlockDefsInitOptImplIn (via
-   FlowRHSImplIn / FuncBodyPipeline, the comprehension element /
-   pipeline topic / function arg is the source).
+   entry level, carrying both a grammatical distinction (init
+   requiredness) AND a sigil-semantic distinction (init form).
+
+   VarDefInitOpt uses the bare `:` init sigil — unconditional
+   binding — with Identifier-init optional and DestructureTarget-
+   init required. Used at DefBlockStmt's BlockDefsInitOpt where
+   no implicit source exists; the init expression, when present,
+   evaluates and binds directly with no override decision.
+
+   VarDefInitOptImplIn uses the `:?` init sigil — conditional
+   override-on-empty — with both Identifier-init and
+   DestructureTarget-init optional. Used at implicit-input sites:
+   ParameterList (the positional argument is the source) and
+   BlockDefsInitOptImplIn (via FlowRHSImplIn / FuncBodyPipeline,
+   the comprehension element / pipeline topic / function arg is
+   the source). When present, the init expression evaluates and
+   overrides only when the implicit source at that entry is empty;
+   for a non-empty source, the init is not evaluated. A no-init
+   entry binds directly from the source.
+
+   The two-token composite `:?` (Colon Qmark, no internal trivia)
+   mirrors AssignmentExpr's `:=` convention — enforcement of
+   adjacency lives at the parser layer, not the lexer.
 
    None of the three productions carries a `:as` tail. BareBlockExpr
    reaches `:as` only via AsExpr-wrap; BlockExpr has no annotation
@@ -1009,9 +1023,9 @@ BlockDefsInitOptImplIn  := OpenParen _ VarDefInitOptImplInList _ CloseParen;
 <VarDefInitOptImplInList>  := (_ Comma)* (_ VarDefInitOptImplIn (_ Comma (_ VarDefInitOptImplIn)?)*)?;
 
 VarDefInitOpt           := (Identifier        (_ Colon _ ExprNoBlock)?)
-                         | (DestructureTarget  _ Colon _ ExprNoBlock);   (* strict: init required *)
-VarDefInitOptImplIn     := (Identifier        (_ Colon _ ExprNoBlock)?)
-                         | (DestructureTarget (_ Colon _ ExprNoBlock)?); (* lenient: init optional *)
+                         | (DestructureTarget  _ Colon _ ExprNoBlock);          (* strict: bare `:` init (unconditional), required on DestructureTarget *)
+VarDefInitOptImplIn     := (Identifier        (_ Colon Qmark _ ExprNoBlock)?)
+                         | (DestructureTarget (_ Colon Qmark _ ExprNoBlock)?);  (* lenient: `:?` init (override-on-empty), optional on both arms *)
 ```
 
 ## §12 Assignment

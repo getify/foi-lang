@@ -144,9 +144,9 @@ var SNIPPETS = [
 
 	defn playlist(
 	    urls,
-	    clear: false,
-	    loop: false,
-	    onNext: onPlayNext
+	    clear:? false,
+	    loop:? false,
+	    onNext:? onPlayNext
 	  )
 	  :over(queue,onPlayNext)
 	{
@@ -721,7 +721,7 @@ var SNIPPETS = [
 	"3 ?as bool",
 	"(?(x){ ?[?as int]: f(#) :as bool; ?: # :as bool }):as bool",
 	"def x: 5 :as int;",
-	"defn f(x:0) :as Whatever { ^x };",
+	"defn f(x:?0) :as Whatever { ^x };",
 	"defn add(x)(y) :as Adder { ^x + y };",
 	"x :as int",
 	"foo :as List",
@@ -802,11 +802,11 @@ var SNIPPETS = [
 	"def /// e: 3;///  f: 4;",
 
 	// kitchen-sink defn
-	"defn add(x)(y,<:z>)\n    ?[x.y]: y(z[2])\n    ![x]: z(3)\n    :over(z, w)\n    :as Whatever\n{\n    z := 2;\n    ?{?: 42;};\n    ?{\n        ?[z]: fn(g);\n        [w]: w;\n        ![x]: { fn(g) };\n        ?[y]: (v, <:z>) { fn(g); }\n        ?: 42\n    };\n    ?( fn(g) ){\n        [?> y]: g;\n        ?[ x, z . y [3] ]: g\n    };\n    ?{ ?[x]: x };\n    ?(x){ ?[x]: x };\n    ?{ ?[x]: x; ?[y]: y };\n    ?(x){ ?[x]: x; ?[y]: y };\n    ?[z]: (g: z) { fn(g) };\n    x.[y..z];\n    y.<first,last>;\n    (+)(1,2,3,...nums);\n    (+')'(1,,3);\n    (')(+)(1,,3);\n    myFn|2,,3|;\n    myFn(3,x:2);\n    myFn'|3,x:2|;\n    ^42\n}",
+	"defn add(x)(y,<:z>)\n    ?[x.y]: y(z[2])\n    ![x]: z(3)\n    :over(z, w)\n    :as Whatever\n{\n    z := 2;\n    ?{?: 42;};\n    ?{\n        ?[z]: fn(g);\n        [w]: w;\n        ![x]: { fn(g) };\n        ?[y]: (v, <:z>) { fn(g); }\n        ?: 42\n    };\n    ?( fn(g) ){\n        [?> y]: g;\n        ?[ x, z . y [3] ]: g\n    };\n    ?{ ?[x]: x };\n    ?(x){ ?[x]: x };\n    ?{ ?[x]: x; ?[y]: y };\n    ?(x){ ?[x]: x; ?[y]: y };\n    ?[z]: (g:? z) { fn(g) };\n    x.[y..z];\n    y.<first,last>;\n    (+)(1,2,3,...nums);\n    (+')'(1,,3);\n    (')(+)(1,,3);\n    myFn|2,,3|;\n    myFn(3,x:2);\n    myFn'|3,x:2|;\n    ^42\n}",
 
 	// comprehensions + pipelines
 	"1..3 ~each log",
-	"?[x] ~each (x,y:2) { x }",
+	"?[x] ~each (x,y:?2) { x }",
 	"foo ~map ![x] ~each foo",
 	"x . y [3].[1..3] .<a,b,> ~filter { y }",
 	"x #> (y(#.y,2) #> z)",

@@ -1058,25 +1058,33 @@ people ~each (< :name, :title >) {
 };
 ```
 
-This construct (`(..) { .. }`) is another variation of the **BlockExpr** form, which appears only at **implicit-input positions**: comprehension RHS, pipeline RHS, and pipeline-bodied function body. The enclosing context supplies an implicit input value.
+This construct (`(..) { .. }`) is another variation of the **BlockExpr** form, which appears only at **implicit-input positions**: comprehension RHS and pipeline RHS. The enclosing context supplies an implicit input value.
 
-It looks like §2.9.3, but a no-init entry may take its value from the context's implicit input rather than defaulting to `empty`. How many implicit inputs the context supplies, and which entries they correspond to, depends on the host construct: a comprehension like `~each` or `~map` supplies one (each element); `~fold` supplies more than one; a pipeline `#>` supplies the topic; a pipeline-bodied function supplies its positional argument.
+It looks like §2.9.3, but every entry's binding participates with the implicit input rather than ignoring it. A no-init entry takes its value from the implicit input directly. An init-bearing entry uses the `:?` sigil (§3.2.2), which reads the implicit input first and evaluates the init expression only when the implicit input is empty, overriding it.
+
+How many implicit inputs the context supplies, and which entries they correspond to, depends on the host construct: a comprehension like `~each` or `~map` supplies one (each element); `~fold` supplies more than one; a pipeline `#>` supplies the topic.
+
+The `:?` sigil is used here instead of the unconditional `:` sigil (§2.9.2, §2.9.3) because this position has an external source -- the implicit input -- that may be empty; the sigil marks the override-on-empty decision explicitly at the surface, matching the parameter default form.
+
+```java
+xs ~map (v:? 0) { v * 2 };          // v = 0 for empty elements
+```
 
 **Abstract execution:**
 
-1. The enclosing context provides an implicit input value `__input`.
+1. The enclosing context provides an implicit input value `__input` for each entry.
 2. Allocate a fresh frame, parent-linked to the current environment.
 3. For each entry in the defs clause, in source order:
-    1. Identifier `name: expr`: allocate the slot, evaluate `expr` in the new frame, store the value.
+    1. Identifier `name:? expr`: allocate the slot. If the entry's implicit input is non-empty, bind that input; otherwise evaluate `expr` in the new frame and store the value, overriding the empty implicit input.
     2. Identifier `name` (no initializer): allocate the slot. If the context supplies an implicit input for this entry, bind that input; otherwise store `empty`.
-    3. Destructure target `<...>: source`: evaluate `source` and destructure per §2.13.
+    3. Destructure target `<...> :? source`: if the entry's implicit input is non-empty, use it as the destructure source; otherwise evaluate `source` in the new frame and use its value as the destructure source, overriding the empty implicit input. Destructure per §2.13.
     4. Destructure target `<...>` (no initializer): destructure the context's implicit input for this entry as the source, per §2.13.6.
 4. Evaluate `body`'s statements in the new frame, in source order.
 5. The block's value is the value of its final value-bearing expression.
 
-**Implicit-or-empty default:** in any defs-init clause, a no-init entry's binding source is the implicit input from the enclosing context if one exists, otherwise `empty`. Identifier-no-init and destructure-no-init follow this same rule. At positions where no implicit input is provided (§2.9.2, §2.9.3), an Identifier-no-init resolves to `empty` and a destructure-no-init is rejected as having no source. At positions where an implicit input is provided (§2.9.4), both forms bind from that input.
+**Implicit-or-override default:** at this position, an entry's primary binding source is the implicit input from the enclosing context. A no-init entry uses that input directly, falling back to `empty` when the context supplies none. A `:?`-init entry uses that input when non-empty and evaluates its init expression only when the input is empty, overriding it. At positions where no implicit input is provided (§2.9.2, §2.9.3), the unconditional `:` sigil is used instead: an Identifier-no-init resolves to `empty`, an Identifier-`:`-init evaluates its expression unconditionally, and a destructure-no-init is rejected as having no source.
 
-**Why four block forms:** the grammar distinguishes (a) bare block, no bindings clause (§2.9.1); (b) `def`-prefixed bindings statement, no implicit source (§2.9.2); (c) bindings expression with no implicit source, host-attached to guards and match consequents (§2.9.3); and (d) bindings expression with an implicit source from the enclosing context: at comprehension RHS, pipeline RHS, or pipeline-bodied function body (§2.9.4).
+**Why four block forms:** the grammar distinguishes (a) bare block, no bindings clause (§2.9.1); (b) `def`-prefixed bindings statement, no implicit source (§2.9.2); (c) bindings expression with no implicit source, host-attached to guards and match consequents (§2.9.3); and (d) bindings expression with an implicit source from the enclosing context, at comprehension RHS or pipeline RHS.
 
 ### §2.10 Module scope
 
@@ -1586,8 +1594,8 @@ A parameter list is a comma-separated sequence of parameter entries enclosed in 
 A parameter entry may take one of the following shapes:
 
 - **Identifier parameter** (§3.2.1): `x`
-- **Default-valued parameter** (§3.2.2): `x: expr`
-- **Destructure parameter** (§3.2.3): `<:a, :b>` (with optional `: source` tail)
+- **Default-valued parameter** (§3.2.2): `x:? expr`
+- **Destructure parameter** (§3.2.3): `<:a, :b>` (with contextually required `: source` tail, where source is otherwise not receivable)
 - **Gather parameter** (§3.2.4): `*args` (single parameter list)
 
 #### §3.2.1 Identifier parameters
@@ -1600,22 +1608,24 @@ At call time, the parameter list opens a fresh frame (§2.11); each identifier p
 
 #### §3.2.2 Default Parameter Values
 
-A parameter may carry a default expression:
+A parameter may carry a default expression, introduced by the `:?` sigil:
 
 ```java
-defn add(x: 0, y: 0) ^x + y;
+defn add(x:? 0, y:? 0) ^x + y;
 ```
+
+The `:?` sigil reads as **conditional definition**: `:` marks the value that binds, and the trailing `?` marks that the binding is a conditional override that fires only when the positional argument at this slot is empty. This joins the family of `:`-anchored sigils -- `:` defines, `:=` re-defines, `:?` conditionally-defines -- with the trailing character marking the role modifier. `:?` is distinct from the unconditional `:` sigil used at `def` statements and other no-external-source binding positions (§2.9.2, §2.9.3, §3.5), where no override decision is meaningful.
 
 **Abstract execution at call time:**
 
 1. For each parameter in source order:
-    1. If the call site supplied a positional argument value at this position, bind the parameter to that value.
-    2. Otherwise, evaluate the default expression **in the frame of the in-progress call** (parameters bound earlier in the same list are visible) and bind the result.
+    1. If the call site supplied a non-empty positional argument value at this position, bind the parameter to that value; the default expression is not evaluated.
+    2. Otherwise, evaluate the default expression **in the frame of the in-progress call** (parameters bound earlier in the same list are visible); its value overrides the empty positional and binds to the parameter.
 
 Default expressions can reference parameters that appear earlier in the same parameter list:
 
 ```java
-defn rect(width, height: width) ^width * height;
+defn rect(width, height:? width) ^width * height;
 
 rect(5);                            // 25
 rect(5, 3);                         // 15
@@ -1624,7 +1634,7 @@ rect(5, 3);                         // 15
 A default expression that references a later parameter is a forward reference: the later parameter has not yet been defined, and this results in an error. However, as with forward references in `def` statements, `Lazy@` (§2.2) can be used to create a deferred resolution:
 
 ```java
-defn rect(width: Lazy@ height, height) ^width * height;
+defn rect(width:? Lazy@ height, height) ^width * height;
 
 rect(5);                            // 25
 rect(5, 3);                         // 15
@@ -1656,6 +1666,35 @@ area(< width: 5, height: 3 >);      // 15
 ```
 
 **Open:** Decide if destructuring should provide a mechanism for defaulting each assignment, such as `< :foo = 2 >`.
+```
+
+### Replace with
+
+```
+#### §3.2.3 Destructure Parameters
+
+A destructure parameter takes the form of a destructure target (§2.13), optionally with an explicit `:? source` fallback tail:
+
+```java
+defn area(<:width, :height>) ^width * height;
+
+area(< width: 5, height: 3 >);      // 15
+```
+
+**Abstract execution at call time:**
+
+1. Bind the positional argument value at this parameter's position to an internal slot.
+2. Apply the destructure target to that internal slot per §2.13, introducing the named bindings into the call frame.
+
+If the parameter carries an explicit `:? source` fallback tail, the source expression is evaluated in the call frame (parameters earlier in the list visible) only when the positional argument at this slot is empty; its value then overrides the empty positional and becomes the destructure source. When the positional argument is non-empty, the source expression is not evaluated and the positional value is used directly as the destructure source. The `:?` sigil is the same conditional-definition sigil used at simple parameter defaults (§3.2.2), applied here to the destructure source instead of a scalar binding.
+
+A destructure parameter without a positional argument receives `empty` as its source value; destructure against `empty` results in an error. A destructure parameter with a `:?` fallback tail avoids this error:
+
+```java
+defn area(<:width, :height> :? <>) ^width * height;
+
+area(< width: 5, height: 3 >);      // 15
+```
 
 #### §3.2.4 Gather Parameter
 
@@ -1928,7 +1967,7 @@ For example:
 
 ```java
 // only valid
-defn factorial(n,res: 1)
+defn factorial(n,res:? 1)
     ?[n ?< 0]: Left@ "Undefined"
     ?[n ?> 1]: factorial(n - 1,n * res)
     ^res;
@@ -1995,17 +2034,17 @@ defn add(x, y) :as AddFunc ^x + y;
 
 ### §3.8 The `@`-Call Operator
 
-Foi has a family of operators that dispatch through user-declared bindings. Each operator's behavior against a value is not fixed at the language level; it is delegated to the binding that value was constructed through. `@` is the first and most fundamental member of this family. It invokes a **type namespace** — a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot — `Maybe`, `IO`, `List`, `Vector` — plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
+Foi has a family of operators that dispatch through user-declared bindings. Each operator's behavior against a value is not fixed at the language level; it is delegated to the binding that value was constructed through. `@` is the first and most fundamental member of this family. It invokes a **type namespace**: a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot (e.g., `Maybe`, `IO`, `List`, `Vector`) plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
 
-The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values — `%` in the next section, and eventually others — read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
+The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values -- `%` in the next section, and eventually others -- read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
 
 The result is an operator-overloading system that behaves as a typeclass in the ad-hoc-polymorphism sense: a type namespace's set of declared hooks IS the set of operations that admit its instances. The namespace is the load-bearing entity; there is no separate class abstraction, no external instance declarations, no orphan installations. A hook is well-defined only against the namespace that declared it; a hook is invoked only against values that identify with that namespace.
 
-The family's operator vocabulary is closed. Additional dispatch operators are added only from the existing language operator set — arithmetic, comparison, comprehension, and shape-transform operators are candidates; flow operators (`#>`, `+>`, `<+`), partial-application brackets, and access operators are not. No user-defined operator symbols, and no changes to an operator's precedence, arity, or operand contract when dispatched through a namespace. Each dispatch operator's behavior against namespaced values is a language-level extension of that operator's existing semantics, not a replacement of them.
+The family's operator vocabulary is closed. Additional dispatch operators are added only from the existing language operator set: arithmetic, comparison, comprehension, and shape-transform operators are candidates; flow operators (`#>`, `+>`, `<+`), partial-application brackets, and access operators are not. No user-defined operator symbols, and no changes to an operator's precedence, arity, or operand contract when dispatched through a namespace. Each dispatch operator's behavior against namespaced values is a language-level extension of that operator's existing semantics, not a replacement of them.
 
 `@` is the constructor-side member of the family. The symbol `@` is a unary call operator with an optional left-hand callee. With a callee, it dispatches a call to that function (subject to an opt-in marker on the function's definition). Without a callee, it has nothing to dispatch to, and the operator passes its right-hand value through unchanged.
 
-This single mechanism underlies both `@`'s call-position use and its value-position use as the unary value-identity function — the latter is the former with the callee slot empty.
+This single mechanism underlies both `@`'s call-position use and its value-position use as the unary value-identity function; the latter is the former with the callee slot empty.
 
 #### §3.8.1 `@` Used Without a Callee
 
@@ -2079,7 +2118,7 @@ If the instance's owning namespace declares no `%` hook, the `%`-call form falls
 
 This fallthrough is **normative**. It admits every `@`-marked namespace's instances to the `%`-call form regardless of whether the namespace defines an effector, preserving pass-through semantics for value-like namespaces (`Lazy@`, `Id@`, etc.) that carry no effect.
 
-Identity fallthrough applies to the dispatch lookup on a namespaced instance whose namespace declares no `%` hook. It does **not** apply to `%` against a value that carries no namespace identity — that case is rejected. `%` requires an instance whose namespace has been established through an `@`-marked construction.
+Identity fallthrough applies to the dispatch lookup on a namespaced instance whose namespace declares no `%` hook. It does **not** apply to `%` against a value that carries no namespace identity; that case is rejected. `%` requires an instance whose namespace has been established through an `@`-marked construction.
 
 #### §3.9.2 Uniformly a Call Form
 
@@ -2141,14 +2180,14 @@ A parameter's default expression is evaluated only when the call provides no val
 Defaults evaluate in the **callee's** frame, after all preceding parameters in the same tier have been bound. A default expression may reference any earlier-bound parameter in the same tier, or any parameter from an outer (already-bound) tier:
 
 ```java
-defn f(x, y: x + 1) ^< :x, :y >;
+defn f(x, y:? x + 1) ^< :x, :y >;
 
 f(5);                                    // < x: 5, y: 6 >
 f(5, 10);                                // < x: 5, y: 10 >
 f(5, empty);                             // < x: 5, y: 6 >
 f(5, );                                  // < x: 5, y: 6 >
 
-defn g(x)(y: x * 2) ^< :x, :y >;
+defn g(x)(y:? x * 2) ^< :x, :y >;
 
 g(3)();                                  // < x: 3, y: 6 >
 g(3)(10);                                // < x: 3, y: 10 >
@@ -2160,7 +2199,7 @@ A default expression may not reference a later parameter in the same tier, nor a
 
 #### §3.10.3 Gather Binding
 
-A `*gather` parameter takes the place of an entire tier — a tier is either all-positional non-gather (§3.10.1) or a single `*gather`; the two shapes do not mix within a tier.
+A `*gather` parameter takes the place of an entire tier; a tier is either all-positional non-gather (§3.10.1) or a single `*gather`. The two shapes do not mix within a tier.
 
 The gather binds all positional arguments at that tier as a Tuple (§3.2.4). Skip slots contribute `empty` entries. If the tier receives no arguments, the gather binds the empty Tuple.
 
@@ -2212,7 +2251,7 @@ f(1, ...mid, 9);                         // 1, 4, 5, 6, 9
 f(1, , ...mid);                          // 1, skip, 4, 5, 6
 ```
 
-Spread is positional-only: it is not admitted in a named-argument call (§3.10.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named — never mixed.
+Spread is positional-only: it is not admitted in a named-argument call (§3.10.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named; they're never mixed.
 
 **Open:** Whether a Record with named slots whose names correspond to parameters may be spread into a call as a named-argument expansion (`f(...rec)`) is undecided. The current spec rejects all Record spread; admitting a named-arg form remains under consideration.
 
@@ -2221,13 +2260,13 @@ Spread is positional-only: it is not admitted in a named-argument call (§3.10.6
 A regular function call (not `@` or `%`) may bind arguments by parameter name instead of position:
 
 ```java
-defn add(x: 0, y) ^x + y;
+defn add(x:? 0, y) ^x + y;
 
 add(x: 3, y: 4);                         // 7
-add(y: 5);                               // 5 — x defaults to 0
+add(y: 5);                               // 5 -- x defaults to 0
 ```
 
-A single call must use either positional arguments (with optional skip slots and spread, per §§3.10.4 and 3.10.5) or named arguments — the two forms cannot be mixed within a single call.
+A single call must use either positional arguments (with optional skip slots and spread, per §§3.10.4 and 3.10.5) or named arguments; the two forms cannot be mixed within a single call.
 
 **Abstract execution:**
 
@@ -2296,8 +2335,8 @@ Preconditions are hoisted to the highest/earliest tier at which their references
 
 A function call evaluates to `empty` when:
 
-1. The body is a concise return `^expr` and `expr` evaluates to `empty` — `empty` flows out normally.
-2. The body is a block body and no `^` statement executed — the block completed without an explicit return.
+1. The body is a concise return `^expr` and `expr` evaluates to `empty`; `empty` flows out normally.
+2. The body is a block body and no `^` statement executed; the block completed without an explicit return.
 3. A precondition matched with `empty` as its consequent (e.g., `?[bad]: empty`).
 
 This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
@@ -2336,11 +2375,11 @@ Partial application is an ahead-of-time argument collection process. It does not
     - A non-`skip` captured arg occupies that position directly.
     - A `skip` captured arg consumes the next final-call arg in order; if none remains, the slot stays `skip`.
 3. Any final-call args not consumed by skip slots append at the end of the captured list.
-4. The combined argument list is passed to `f` per §3.10.1 — at which point parameter binding, default evaluation, skip-to-`empty` binding (§3.10.4), surplus discard, and precondition evaluation occur normally.
+4. The combined argument list is passed to `f` per §3.10.1; at this point, parameter binding, default evaluation, skip-to-`empty` binding (§3.10.4), surplus discard, and precondition evaluation occur normally.
 
 #### §3.11.2 Arity Independence
 
-Partial application is independent of `f`'s arity — capture is syntactic, and arity reconciliation happens at the final call:
+Partial application is independent of `f`'s arity; capture is syntactic, and arity reconciliation happens at the final call:
 
 ```java
 def add37: (+)|6, 12, 19|;
@@ -2373,7 +2412,7 @@ def fn: xyz|...nums|;
 fn();                                    // x: 9, y: 8, z: 7
 ```
 
-Spread sources are evaluated and captured at partial-application time. This preserves "arguments are remembered for later" semantics even when the spread source is itself effectful — e.g., a generator yielding values.
+Spread sources are evaluated and captured at partial-application time. This preserves "arguments are remembered for later" semantics even when the spread source is itself effectful (e.g., a generator yielding values).
 
 #### §3.11.5 Partial Application of Primed Function
 
@@ -2395,24 +2434,27 @@ add|x: 4|(y: 5);                         // 9
 
 Captured named args and final-call named args resolve against `f`'s parameter list as the union of both, per §3.10.6.
 
-The all-positional-or-all-named rule (§3.10.6) is enforced on the *combined* argument list at final-call time, not on either side independently. If the combined list contains a mix of positional and named entries — even when each side is internally uniform — `f` rejects the call:
+The all-positional-or-all-named rule (§3.10.6) is enforced on the *combined* argument list at final-call time, not on either side independently. If the combined list contains a mix of positional and named entries -- even when each side is internally uniform -- `f` rejects the call:
 
 ```java
-add|x: 4|(5);                            // ERROR — combined: < x: 4 > and 5 (mixed)
-add|3|(y: 5);                            // ERROR — combined: 3 and < y: 5 > (mixed)
+add|x: 4|(5);             // ERROR; combined: < x: 4 > and 5 (mixed)
+add|3|(y: 5);             // ERROR; combined: 3 and < y: 5 > (mixed)
 ```
 
 #### §3.11.7 Multi-Tier Callees
 
-Partial application captures against a single tier of function application — the outermost tier of `f`. On final call, the outermost tier is bound per §3.10.1 using the combined argument list; the result is whatever the outermost tier would return — the body result for a single-tier `f`, or the next-tier function value for a multi-tier `f`.
+Partial application captures against a single tier of function application: the outermost tier of `f`. On final call, the outermost tier is bound per §3.10.1 using the combined argument list; the result is whatever the outermost tier would return: the body result for a single-tier `f`, or the next-tier function value for a multi-tier `f`.
 
 ```java
 defn add(x)(y) ^x + y;
 
 def addOuter: add|3|;
 
-addOuter();                              // function value over (y) — outer tier completes with x = 3
-addOuter()(4);                           // 7
+// function value over (y)
+// outer tier completes with x = 3
+addOuter();
+
+addOuter()(4);        // 7
 ```
 
 To partially apply against a deeper tier, complete the outer tiers first and partially apply the resulting function value: `(add(3))|4|`.
@@ -2443,7 +2485,7 @@ rsub(2, 5);                              // 3 :: 5 - 2
 2. Reverse the sequence.
 3. Apply `f` to the reversed sequence.
 
-The reverse is **semantic, not syntactic** — `f'` is a function value carrying a reverse-then-apply behavior, applicable at any later call. The reversal applies to the complete argument sequence delivered at the final call, including when composed with partial application (§3.11) or pipeline topic placement.
+The reverse is **semantic, not syntactic**: `f'` is a function value carrying a reverse-then-apply behavior, applicable at any later call. The reversal applies to the complete argument sequence delivered at the final call, including when composed with partial application (§3.11) or pipeline topic placement.
 
 `f'` preserves `f`'s arity (the language guarantees that arity-introspecting transforms like `/\` and `\/` see `f`'s declared arity through the prime wrapper).
 
@@ -2464,7 +2506,7 @@ parts("https://my.site")("/api/find")("name=getify");
 2. At each call, if total accumulated arguments meet or exceed `f`'s declared arity, apply `f` to the accumulated arguments and produce the result.
 3. Otherwise, return a function value that continues accumulation.
 
-`/\` operates on `f`'s declared arity (the count of its outermost-tier parameters), not on multi-tier curry shape. For a function already declared with multi-tier curry shape, `/\` is idempotent — the wrapper just passes arguments through.
+`/\` operates on `f`'s declared arity (the count of its outermost-tier parameters), not on multi-tier curry shape. For a function already declared with multi-tier curry shape, `/\` is idempotent; the wrapper just passes arguments through.
 
 **Loose-curry compatibility.** Supplying all arguments at once short-circuits the accumulation:
 
@@ -2914,7 +2956,7 @@ Match consequents share the guard consequent forms of §4.3, with the addition t
 <MatchConsequentNoSemi> := Colon _ (BlockExprStrict | Expr)
 ```
 
-Consequent shapes: the same three sub-shapes as guard consequents (§4.3) — expression consequent (§4.3.1), block consequent (§4.3.2, both bare and def-block forms), and assignment consequent (§4.3.3). Semantics are identical to their guard counterparts.
+Consequent shapes: the same three sub-shapes as guard consequents (§4.3): expression consequent (§4.3.1), block consequent (§4.3.2, both bare and def-block forms), and assignment consequent (§4.3.3). Semantics are identical to their guard counterparts.
 
 ```java
 ?(myName){

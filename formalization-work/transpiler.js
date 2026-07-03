@@ -3472,18 +3472,28 @@ var handlers = {
 		return node.params.map(p => recur(p)).join(", ");
 	},
 
-	// VarDefInitOpt { target, init? } — shared between §13
-	// (ParameterList entries: function params with optional
-	// default values) and §11 (BlockDefsInitOpt entries: block-
-	// scope defs with optional initializers). JS default-param
-	// syntax `target = init` happens to be valid in both contexts.
+	// VarDefInitOpt { target, (init | default)? } — shared between
+	// §13 (ParameterList entries: function params with optional
+	// default values) and §11 (BlockDefsInitOpt / BlockDefsInitOptImplIn
+	// entries: block-scope defs with optional initializers).
+	//
+	// The AST field carrying the init expression varies by shaper:
+	// strict (bare `:` sigil, DefBlockStmt / BlockExprStrict) emits
+	// `.init` for unconditional binding; lenient (`:?` sigil,
+	// ParameterList / BlockDefsInitOptImplIn) emits `.default` for
+	// override-on-empty binding. Read `node.init || node.default`
+	// to source the expression regardless of arm. JS default-param
+	// syntax `target = init` happens to be valid at both call-site
+	// and defs-block positions, and both Foi-side semantics collapse
+	// to the same JS output in the bootstrap transpiler.
 	//
 	// DestructureTarget target deferred — falls back. JS-side
 	// destructure synthesis comes with the destructure cluster.
 	VarDefInitOpt(node, recur) {
 		if (node.target.type !== "Identifier") return fallback(node);
 		var out = recur(node.target);
-		if (node.init) out += " = " + recur(node.init);
+		var initExpr = node.init || node.default;
+		if (initExpr) out += " = " + recur(initExpr);
 		return out;
 	},
 
