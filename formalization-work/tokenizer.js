@@ -70,7 +70,7 @@ var isHexDigit   = c => /[0-9a-fA-F]/.test(c);
 var isOctDigit   = c => /[0-7]/.test(c);
 var isBinDigit   = c => /[01]/.test(c);
 var isIdentStart = c => /[a-zA-Z0-9_]/.test(c);
-var isIdentCont  = c => /[a-zA-Z0-9_~]/.test(c);
+var isIdentCont  = c => /[a-zA-Z0-9_]/.test(c);
 var isAlpha      = c => /[a-zA-Z]/.test(c);
 
 
@@ -202,20 +202,17 @@ export const DoubleColon  = production("DoubleColon",  and(ch(C.Colon), ch(C.Col
 export const Mountain = production("Mountain", and(ch(C.ForwardSlash), ch(C.Escape)));
 export const Valley   = production("Valley",   and(ch(C.Escape), ch(C.ForwardSlash)));
 
-// IdentBody: greedy identifier-chars with sawNonDigit gate, plus a
-// tilde-leading variant (so `~foo` parses as one identifier the way
-// the legacy tokenizer's TILDE+GENERAL merge does). The gate rejects
-// pure-digit runs so they fall through to Number.
+// IdentBody: greedy identifier-chars with sawNonDigit gate. The
+// gate rejects pure-digit runs so they fall through to Number.
+// Tilde is NOT in the identifier alphabet (see Lexical-Grammar.md
+// Identifiers section), so `~foo` lexes as Tilde + General("foo")
+// rather than a single identifier — a `~`-prefixed name reaches
+// the Comprehension production first (via the reserved-set gate),
+// or splits to Tilde + <ident> otherwise.
 var IdentBody = and(
-	or(
-		terminal(isIdentStart, (c, f) => {
-			if (!isDigit(c)) f.state.sawNonDigit = true;
-		}),
-		and(
-			terminal(c => c === C.Tilde, (_, f) => { f.state.sawNonDigit = true; }),
-			terminal(isAlpha, (_, f) => { f.state.sawNonDigit = true; })
-		)
-	),
+	terminal(isIdentStart, (c, f) => {
+		if (!isDigit(c)) f.state.sawNonDigit = true;
+	}),
 	any(terminal(isIdentCont, (c, f) => {
 		if (!isDigit(c)) f.state.sawNonDigit = true;
 	})),

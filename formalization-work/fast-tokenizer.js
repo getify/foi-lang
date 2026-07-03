@@ -131,7 +131,7 @@ var isOctDigit   = c => c >= "0" && c <= "7";
 var isBinDigit   = c => c === "0" || c === "1";
 var isAlpha      = c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 var isIdentStart = c => isAlpha(c) || isDigit(c) || c === "_";
-var isIdentCont  = c => isIdentStart(c) || c === "~";
+var isIdentCont  = isIdentStart;
 
 
 // =============================================================
@@ -762,7 +762,14 @@ function scanBareNumber(src, start) {
 
 
 // =============================================================
-// TILDE DISPATCH:  Comprehension | General(~-leading) | Tilde
+// TILDE DISPATCH:  Comprehension | Tilde
+//
+// Tilde is NOT in the identifier alphabet (per Lexical-Grammar.md
+// Identifiers section). `~`-alpha input is either a reserved
+// comprehension (~each, ~map, etc.) or a standalone Tilde
+// followed by whatever token starts at pos+1. Non-comprehension
+// `~`-alpha (e.g. `~foo`) emits Tilde here; the next iteration
+// re-enters at pos+1 to scan `foo` as its own General identifier.
 // =============================================================
 
 function stepTilde(state) {
@@ -771,7 +778,7 @@ function stepTilde(state) {
 	var c1 = src[pos + 1];
 
 	if (c1 && isAlpha(c1)) {
-		// Scan ~ + alpha + identCont*
+		// Peek to check if this is a reserved comprehension name.
 		var end = pos + 2;
 		while (end < src.length && isIdentCont(src[end])) end++;
 		var word = src.slice(pos, end);
@@ -782,13 +789,9 @@ function stepTilde(state) {
 			tryExprEndingTail(state);
 			return true;
 		}
-
-		// Falls through to General (sawNonDigit is implied by
-		// the alpha after `~`).
-		emit(state, "General", word, pos, end - 1);
-		state.pos = end;
-		tryExprEndingTail(state);
-		return true;
+		// Not a comprehension — fall through to standalone Tilde.
+		// The identifier tail (starting at pos+1) is left for the
+		// next iteration to scan as its own General token.
 	}
 
 	// Standalone Tilde.
@@ -1033,32 +1036,21 @@ function stepIdentStart(state) {
 // =============================================================
 // IDENT BODY SCANNERS
 //
-// scanGeneralBody: matches IdentBody's two arms.
-//   - identStart + identCont*
-//   - tilde + alpha + identCont*
+// scanGeneralBody: matches IdentBody per Lexical-Grammar.md
+// Identifiers section: identStart + identCont*. Tilde is NOT in
+// the identifier alphabet — `~`-prefixed input dispatches to
+// stepTilde (Comprehension or standalone Tilde), never through
+// this scanner.
 // Returns end (exclusive) or start on no-match. Applies
 // sawNonDigit gate (requires at least one non-digit char).
 // =============================================================
 
 function scanGeneralBody(src, start) {
 	var c0 = src[start];
-	if (c0 === undefined) return start;
-	var p;
-	var sawNonDigit = false;
+	if (c0 === undefined || !isIdentStart(c0)) return start;
 
-	if (c0 === "~") {
-		var c1 = src[start + 1];
-		if (!c1 || !isAlpha(c1)) return start;
-		p = start + 2;
-		sawNonDigit = true;
-	}
-	else if (isIdentStart(c0)) {
-		p = start + 1;
-		if (!isDigit(c0)) sawNonDigit = true;
-	}
-	else {
-		return start;
-	}
+	var p = start + 1;
+	var sawNonDigit = !isDigit(c0);
 
 	while (p < src.length && isIdentCont(src[p])) {
 		if (!isDigit(src[p])) sawNonDigit = true;

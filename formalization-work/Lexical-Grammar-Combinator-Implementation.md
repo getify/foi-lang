@@ -319,15 +319,9 @@ attached to the character matchers:
 
 ```js
 var IdentBody = and(
-    or(
-        terminal(isIdentStart, (c, f) => {
-            if (!isDigit(c)) f.state.sawNonDigit = true;
-        }),
-        and(
-            terminal(c => c === C.Tilde, (_, f) => { f.state.sawNonDigit = true; }),
-            terminal(isAlpha,             (_, f) => { f.state.sawNonDigit = true; })
-        )
-    ),
+    terminal(isIdentStart, (c, f) => {
+        if (!isDigit(c)) f.state.sawNonDigit = true;
+    }),
     any(terminal(isIdentCont, (c, f) => {
         if (!isDigit(c)) f.state.sawNonDigit = true;
     })),

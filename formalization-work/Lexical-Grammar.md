@@ -103,11 +103,11 @@ Comment                 := BlockComment | LineComment;    (* block first per Not
 
 (*************** Identifiers ***************)
 
-<IdentBody>             := (IdentStart | ("~" Alpha)) IdentCont*;  (* Note 3 *)
+<IdentBody>             := IdentStart IdentCont*;         (* Note 3 *)
 General                 := IdentBody;
 
 <IdentStart>            := #"[a-zA-Z0-9_]";
-<IdentCont>             := #"[a-zA-Z0-9_~]";
+<IdentCont>             := #"[a-zA-Z0-9_]";
 <Alpha>                 := #"[a-zA-Z]";
 <Digit>                 := #"[0-9]";
 

@@ -245,13 +245,12 @@ In **Foi**, identifiers are case-sensitive, and can be comprised of any of these
 * `A` - `Z`, `a` - `Z`
 * `0` - `9`
 * `_`
-* `~`
 
 **Note:** There is no restriction on the first character of identifiers, as in some languages; so `3stars` is a valid identifier name. However, an identifier must have at least one non-digit (`0` - `9`) character somewhere in it. Otherwise, it's just a number.
 
 Identifiers can be any length.
 
-Identifiers cannot conflict with keywords: `def`, `defn`, `deft`, `import`, `export`, etc. They also cannot conflict with named operators: `~each`, `~chain`, `~fold`, etc.
+Identifiers cannot conflict with keywords: `def`, `defn`, `deft`, `import`, `export`, etc.
 
 ## Code Comments
 

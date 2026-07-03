@@ -73,10 +73,6 @@ const KNOWN_DIVERGENT = new Map([
 		"Documented 'Known Divergences': new emits Escape('\\') + General('u') + Hyphen + Number(5); legacy emits Escape('\\u') + Hyphen + Number(5). Same partial-commit asymmetry — when `-` follows `\\u`, General fallback in EscapedNumber fails (`-` not IdentStart), so the whole arm rolls back" ],
 	[ "\\@-",
 		"Documented 'Known Divergences': new emits Escape('\\') + At + Hyphen; legacy emits Escape('\\@') + Number('-'). Same partial-commit asymmetry. Legacy's bare-hyphen-as-Number value is also dubious in its own right" ],
-	[ "123~",
-		"Following the digit-leading-identifier principle, new emits General('123~') as a single identifier. Legacy splits into Number(123) + Tilde, internally inconsistent with its own behavior on bare '1foo' → identifier" ],
-	[ "def 123~: empty;",
-		"Same as bare '123~' — new emits General('123~') per the [0-9]+~ Identifier alternative; legacy splits Number(123) + Tilde. '123~' is intended to be an identifier" ],
 	[ "\\-123_456",
 		"Legacy splits Escape('\\') + Number('-123') + General('_456'); new emits Escape('\\') + Number('-123_456'). Legacy's hyphen branch of EscapePlain+number doesn't carry through underscore-separator support — an internal asymmetry (legacy handles '\\123_456' fine)." ],
 	[ "\\-123_456.78_9",
@@ -123,6 +119,56 @@ const KNOWN_DIVERGENT = new Map([
 		"OpFuncExpr primed Valley `(\\/')`; legacy splits the leading two chars as Escape + ForwardSlash." ],
 	[ "foo/\\bar",
 		"Postfix Mountain followed by identifier — lexer-level: Mountain + General; legacy: ForwardSlash + Escape + General. Parser will reject the input, but lex layer is well-formed." ],
+
+	// =========================================================
+	// TILDE-REMOVED-FROM-IDENTIFIER ALPHABET (Design TODOs (d))
+	//
+	// Tilde is no longer in IdentCont/IdentStart (see
+	// Lexical-Grammar.md Identifiers section). Legacy tokenizer
+	// still treats `~` as identifier-continuation; new splits at
+	// every tilde. `~each`/`~map` etc. still gate as Comprehension
+	// via that production's own leading-Tilde + reserved-set gate.
+	// =========================================================
+	[ "foo~bar",
+		"Legacy emits General('foo~bar'); new splits into General('foo') + Tilde + General('bar')" ],
+	[ "~foo",
+		"Legacy emits General('~foo'); new splits into Tilde + General('foo')" ],
+	[ "~mapp",
+		"Legacy emits General('~mapp'); new: Comprehension gate fails, falls through to Tilde + General('mapp')" ],
+	[ "~maps",
+		"Legacy emits General('~maps'); new: Tilde + General('maps')" ],
+	[ "~fol",
+		"Legacy emits General('~fol'); new: Tilde + General('fol')" ],
+	[ "Value~",
+		"Legacy emits General('Value~'); new: Builtin('Value') + Tilde (Builtin gate now matches on tilde-free span)" ],
+	[ "~Value",
+		"Legacy emits General('~Value'); new: Tilde + Builtin('Value')" ],
+	[ "empty~",
+		"Legacy emits General('empty~'); new: Native('empty') + Tilde" ],
+	[ "~empty",
+		"Legacy emits General('~empty'); new: Tilde + Native('empty')" ],
+	[ "int~",
+		"Legacy emits General('int~'); new: Keyword('int') + Tilde" ],
+	[ "~int",
+		"Legacy emits General('~int'); new: Tilde + Keyword('int')" ],
+	[ "~eachA",
+		"Legacy emits General('~eachA'); new: Comprehension gate fails, falls through to Tilde + General('eachA')" ],
+	[ "~each~",
+		"Legacy emits General('~each~'); new: Comprehension('~each') + Tilde" ],
+	[ "a~each",
+		"Legacy emits General('a~each'); new: General('a') + Comprehension('~each')" ],
+	[ "~Value~",
+		"Legacy emits General('~Value~'); new: Tilde + Builtin('Value') + Tilde" ],
+	[ "~empty~",
+		"Legacy emits General('~empty~'); new: Tilde + Native('empty') + Tilde" ],
+	[ "def Value~: empty;",
+		"Legacy commits 'Value~' to General; new splits into Builtin('Value') + Tilde. Same family as bare 'Value~'" ],
+	[ "def ~empty: empty;",
+		"Legacy commits '~empty' to General; new splits into Tilde + Native('empty'). Same family as bare '~empty'" ],
+	[ "def a~each: empty;",
+		"Legacy commits 'a~each' to General; new splits into General('a') + Comprehension('~each'). Same family as bare 'a~each'" ],
+	[ "defn ~each~() ^empty;",
+		"Legacy commits '~each~' to General; new splits into Comprehension('~each') + Tilde. Same family as bare '~each~'" ],
 ]);
 
 
@@ -482,11 +528,15 @@ async function runTests() {
 		"\\h-Fxyz",                            // negative hex + ident continuation
 		"\\@-5foo",                            // negative monad + ident continuation
 
-		// Identifiers with tilde
-		"~map",
-		"~map foo",
-		"foo~bar",
-		"~foo",
+		// Tilde-adjacent identifier probes. Tilde is NOT in
+		// IdentCont/IdentStart (post-~-removal), so `~`-adjacent
+		// input splits at every tilde. `~each`, `~map`, etc.
+		// still gate through Comprehension via that production's
+		// own leading Tilde.
+		"~map",                                // Comprehension (unchanged)
+		"~map foo",                            // Comprehension + WS + General
+		"foo~bar",                             // General('foo') + Tilde + General('bar')
+		"~foo",                                // Tilde + General('foo')
 
 		// Reserved-set gate boundaries (one char off from membership)
 		"?ands",                               // BooleanOper gate fails → Qmark + General
@@ -494,7 +544,7 @@ async function runTests() {
 		"?empt",                               // Qmark + General
 		":asx",                                // Keyword gate fails → Colon + General
 		":overflow",
-		"~mapp",                               // Comprehension gate fails → General (tilde-leading arm)
+		"~mapp",                               // Comprehension gate fails → Tilde + General
 		"~maps",
 		"~fol",
 		"defx",                                // Keyword gate fails → General
@@ -510,30 +560,37 @@ async function runTests() {
 
 		// Probes the reserved-set gate fallthrough to General when an
 		// IdentBody match's surface shape *almost* matches a reserved
-		// form but the matched span doesn't pass the gate.
+		// form but the matched span doesn't pass the gate. Post-
+		// `~`-removal: trailing/leading tilde no longer participates
+		// in the identifier span, so Value~/empty~/int~ etc. now
+		// pass the reserved-set gate on the tilde-free portion and
+		// emit the reserved token followed by standalone Tilde.
 		"123a",                                // digit-leading General
 		"a123",                                // alpha + digit tail
-		"123~",                                // digit-leading + trailing tilde
-		"~123",                                // tilde + digits — tilde-alpha arm fails (1 not alpha) → Tilde + PositiveIntegerLit
-		"Value~",                              // Builtin-shaped + trailing tilde → gate fails → General
-		"~Value",                              // tilde-alpha start, not a comprehension → General
-		"empty~",                              // Native-shaped + trailing tilde → gate fails → General
-		"~empty",                              // tilde-alpha start, not a comprehension → General (not BooleanOper-shaped either)
-		"int~",                                // Keyword-shaped + trailing tilde → gate fails → General
-		"~int",                                // tilde-alpha start, not a comprehension → General
-		"~eachA",                              // Comprehension-shaped + extra suffix → gate fails → General
-		"~each~",                              // Comprehension-shaped + trailing tilde → gate fails → General
-		"a~each",                              // mid-identifier tilde inside General (IdentCont includes ~)
-		"~Value~",                             // both ends tilded
-		"~empty~",
+		"123~",                                // Number(123) + Tilde (Number's !IdentCont now satisfied by `~`)
+		"~123",                                // Tilde + PositiveIntegerLit
+		"Value~",                              // Builtin('Value') + Tilde
+		"~Value",                              // Tilde + Builtin('Value')
+		"empty~",                              // Native('empty') + Tilde
+		"~empty",                              // Tilde + Native('empty')
+		"int~",                                // Keyword('int') + Tilde
+		"~int",                                // Tilde + Keyword('int')
+		"~eachA",                              // Comprehension gate fails on '~eachA' → Tilde + General('eachA')
+		"~each~",                              // Comprehension('~each') + Tilde
+		"a~each",                              // General('a') + Comprehension('~each')
+		"~Value~",                             // Tilde + Builtin('Value') + Tilde
+		"~empty~",                             // Tilde + Native('empty') + Tilde
 
-		// Same shapes in def/defn context — probes surrounding-token boundaries.
-		"def 123~: empty;",                    // does `~:` split cleanly into Tilde + Colon?
-		"def ~123: empty;",                    // Tilde + PositiveIntegerLit followed by `: empty`
-		"def Value~: empty;",
-		"def ~empty: empty;",                  // first `~empty` → General; second `empty` → Native
-		"def a~each: empty;",                  // single identifier across the tilde
-		"defn ~each~() ^empty;",
+		// Same shapes in def/defn context — probes surrounding-token
+		// boundaries. Post-`~`-removal each tilde produces a clean
+		// token boundary; there is no def-position identifier that
+		// spans a tilde.
+		"def 123~: empty;",                    // Keyword + Number(123) + Tilde + Colon + Native + Semi
+		"def ~123: empty;",                    // Keyword + Tilde + PositiveIntegerLit + Colon + Native + Semi
+		"def Value~: empty;",                  // Keyword + Builtin('Value') + Tilde + Colon + Native + Semi
+		"def ~empty: empty;",                  // Keyword + Tilde + Native('empty') + Colon + Native + Semi (both `empty`s → Native)
+		"def a~each: empty;",                  // Keyword + General('a') + Comprehension('~each') + Colon + Native + Semi
+		"defn ~each~() ^empty;",               // Keyword + Comprehension('~each') + Tilde + Parens + Caret + Native + Semi
 
 		// Specializations
 		"empty",
