@@ -711,11 +711,11 @@ In addition to the definitions-block form just shown, several other expressions 
 
 * A [loop iteration block](#loops) with block-definitions clause:
 
-```java
+    ```java
     0..3 ~each (v) {
         log(`"v: `v`");
     };
-```
+    ```
 
 These host expressions split into two kinds based on whether they supply an *implicit input* to the block:
 
