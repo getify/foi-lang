@@ -51,7 +51,7 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §4 Decisions and guards *(done)*
 - §5 Pattern matching *(done)*
 - §6 Suspension and evaluation control *(done)*
-- §7 Loops and comprehensions *(planned)*
+- §7 Loops and comprehensions *(done)*
 - §8 Modules *(planned)*
 - §9 Type system *(planned)*
 
@@ -143,7 +143,7 @@ An interpolated (structured interleaving of values) string parses the content to
 
 **Open:** the coercion rule for non-string values embedded in interpolations is not yet locked. The bootstrap relies on JS's stringification, which carries the same footgun as §2.12.4's computed-key issue.
 
-#### Delimiter Escaping
+#### §1.4.1 Delimiter Escaping
 
 If a string (either type) includes a sequence of two adjacent `"` characters (`""`), this is escaped as a single raw `"` value inside the string, rather than the end delimiter of the string literal:
 
@@ -159,7 +159,7 @@ In interpolated strings, a double ``` `` ``` backtick is escaped as a single raw
 // In Foi, an interpolated string is prefixed with a single ` character.
 ```
 
-#### Unicode Escape Sequences
+#### §1.4.2 Unicode Escape Sequences
 
 To include a Unicode escape sequence (one or more characters), an interpolated string expression can contain a single `\u..` expression:
 
@@ -185,7 +185,7 @@ Foi does not accept typical escape sequences like `\n`, `\r`, and `\t`. Their eq
 
 **NOTE:** The `\u..` escape sequence is *only* valid as the sole expression in an interpolated string literal expression slot; it **cannot** appear standalone in other expression positions throughout the language.
 
-#### Space-Collapsing Escaped Strings
+#### §1.4.3 Space-Collapsing Escaped Strings
 
 The second characteristic of Foi strings is whether they preserve space or collapse it (similar to how HTML whitespace collapse works).
 
@@ -209,7 +209,7 @@ combined  `\u8`
 
 **NOTE:** Whitespace collapsing spans both string literal and interpolated expressions (after evaluation). In the above example, the `` `\u8` `` (interpolated tab character via Unicode escape sequence), together with surrounding literal whitespace, is collapsed to a single `" "`.
 
-#### Nested Interpolation
+#### §1.4.4 Nested Interpolation
 
 Nesting interpolated string literals inside other interpolated expressions is not common, but it can be necessary in some circumstances.
 
@@ -544,9 +544,9 @@ A `Lazy@ expr` construct is evaluated against the binding state of the enclosing
 1. Identify the free identifiers in `expr`: those names that are referenced but not bound by `expr` itself.
 
 2. For each free identifier, attempt resolution in this order:
-   - If the identifier is already bound in the directly enclosing scope (i.e., an earlier `def` in the same section, or a hoisted `defn`/`deft`), substitute its value into the residual expression (constant folding).
-   - Otherwise, if the identifier appears as a later `def` in the same section, register a listener on the section. The listener fires at the moment that `def` is reached, contributing the new binding's value to the residual expression.
-   - Otherwise, resolve via ordinary lexical lookup against outer scopes. A successful lookup substitutes the value as constant folding. A lookup that finds no binding anywhere is reported as an unresolved forward reference (§2.2.8).
+    - If the identifier is already bound in the directly enclosing scope (i.e., an earlier `def` in the same section, or a hoisted `defn`/`deft`), substitute its value into the residual expression (constant folding).
+    - Otherwise, if the identifier appears as a later `def` in the same section, register a listener on the section. The listener fires at the moment that `def` is reached, contributing the new binding's value to the residual expression.
+    - Otherwise, resolve via ordinary lexical lookup against outer scopes. A successful lookup substitutes the value as constant folding. A lookup that finds no binding anywhere is reported as an unresolved forward reference (§2.2.8).
 
 3. If, after step 2, no free identifiers remain unresolved, the residual expression is fully constant and reduces to its value. The `Lazy@` construct produces this value with no runtime artifact.
 
@@ -2441,7 +2441,7 @@ Each comprehension marker fixes the operand shape supplied at call time and thre
 - `~filter`: one operand, a predicate function. Hook signature: `(inst, pred)`.
 - `~fold`: two operands, an initial value and a folding function of `(accumulator, value)`. Hook signature: `(inst, init, fn)`.
 - `~cata`: two operands, an initial-value thunk and a folding function of `(accumulator, value)`. Hook signature: `(inst, initThunk, fn)`.
-- `~foldR`: two operands, an initial value and a folding function of `(value, accumulator)`. Hook signature: `(inst, init, fn)`.
+- `~foldR`: two operands, an initial value and a folding function of `( accumulator, value)`. Hook signature: `(inst, init, fn)`.
 - `~<<` and `~<*`: block operands per §16's do-comprehension grammar; not user-overridable in this specification revision (§3.1.1.3).
 
 ##### §3.10.9.3 Missing-Hook Behavior
@@ -3945,7 +3945,7 @@ where `T` is a `Gen.`-prefixed type.
 The `ReifyGenBody(body)` steps are:
 
 1. Let `sites` be the ordered list of all `<:: expr` positions in `body`,
-   in evaluation order.
+    in evaluation order.
 
 2. Partition `body` into `segments`:
     - The initial segment is the code from the start of `body` up to
@@ -3975,7 +3975,7 @@ The `ReifyGenBody(body)` steps are:
     - Return the segment's terminal value.
 
 6. Emit the reified generator function whose invocation invokes
-   `ConstructIter` with `__stepper` bound to this stepper.
+    `ConstructIter` with `__stepper` bound to this stepper.
 
 ----
 
@@ -3989,13 +3989,13 @@ The `ConstructIter(genFn, args)` steps are:
 1. Allocate a new `Iter` instance `__iter`.
 
 2. Bind the parameters of `genFn` in `__iter`'s environment from `args`
-   per §3.10 call-args processing. These bindings are visible to the
-   generator body when its `"start"` segment runs.
+    per §3.10 call-args processing. These bindings are visible to the
+    generator body when its `"start"` segment runs.
 
 3. Set `__iter.__s` to `"start"`.
 
 4. Set `__iter.__stepper` to `genFn`'s reified stepper (produced by
-   `ReifyGenBody` at compile time).
+    `ReifyGenBody` at compile time).
 
 5. Set `__iter.__terminal` to `empty` (unset until the iterator reaches its terminal state).
 
@@ -4014,10 +4014,10 @@ form; binary `iter% v` on such Iters is ill-formed.
 The `StepIter(iter, resumeVal)` steps are:
 
 1. If `iter.__s` is `"closed"`: return `iter.__terminal`. Any supplied
-   `resumeVal` is discarded (per §6.6.4 post-terminal boundary).
+    `resumeVal` is discarded (per §6.6.4 post-terminal boundary).
 
 2. Let `outcome` be the result of `iter.__stepper(iter, resumeVal)`. The
-   stepper runs the current segment as follows:
+    stepper runs the current segment as follows:
     - If the segment is `"start"`: `resumeVal` is discarded (per §6.6.4
       pre-start boundary); the segment runs from the top of `body`.
     - Otherwise: `resumeVal` is delivered as the value of the last `<::`
@@ -5684,3 +5684,696 @@ The emit-edge rule of §6.13.2 applies uniformly: a generator whose body perform
 Coverage for `Yield` is discharged by the reification transform's internal `Effect.Yield ~<*` scope (§6.6.6): every yield performed inside a generator body is caught by the transform-installed handler before any escape. Yield never propagates past the generator's own type surface.
 
 Non-Yield effects performed inside a generator body propagate normally: the internal `Effect.Yield ~<*` scope is narrowed to Yield only (per §6.3.1 narrowing), so a `Effect.Ask` perform in the generator body escapes past the scope and follows the standard tracking discipline, resolving at whichever handler in the generator's dynamic call stack catches `Ask`.
+
+### §7 Loops and Comprehensions
+
+The comprehension family -- operators of the form `~<glyph>` -- provides Foi's iteration surface across ordered containers, ranges, and monadic types. Every comprehension operator dispatches via the mechanism specified in §3.10.9: the LHS's owning namespace supplies a hook for the invoked marker; the hook receives the LHS instance as its first argument, and the operand(s) supplied at the call site as subsequent arguments. Declaration syntax for user-defined hooks is specified in §3.1.1.3.
+
+This section specifies the concrete behavior of each comprehension operator when its LHS is a `Tuple`, `Range`, or `List` -- Foi's canonical ordered-container types -- along with the imperative loop form (`~each`) and the shared early-exit sentinel (`Done@`).
+
+Coverage of comprehension behavior for pause-able monadic types (Generator §6.6, State §6.7, Promise §6.8, Channel §6.9, PushStream §6.10, PullStream §6.11, IO §6.12) lives in each type's §6 subsection. The `~<<` (do) and `~<*` (looping-do) comprehensions on those types are specified per-type in §6; §7 covers `~<<` on `List` (§7.2) and `~<*` on `Range` (§7.10) -- the residual arms with ordered-container LHS -- along with `Done@` early-exit integration common to all comprehension consumers (§7.9).
+
+Covered comprehension mechanisms:
+
+- `~each` (§7.1): imperative iteration over an ordered container or range.
+- `~<<` on `List` (§7.2): do-comprehension with `List` as monadic wrapper.
+- `~<` (§7.3): flatMap/bind on ordered containers.
+- `~map` (§7.4): per-element transform, container-preserving.
+- `~filter` (§7.5): predicate selection, container-preserving.
+- `~fold` / `~foldR` (§7.6): left/right catamorphic reduction.
+- `~cata` (§7.7): thunk-initialed catamorphism.
+- `~ap` (§7.8): applicative apply.
+- `Done@` (§7.9): early-exit sentinel behavior across comprehensions.
+- `~<*` on `Range` (§7.10): iterable-drainage arm.
+
+#### §7.1 `~each`
+
+`~each` is the imperative-iteration comprehension: for each element of the LHS in order, evaluate the iteration operand against that element. The `~each` expression's produced value is not an accumulation of per-iteration results; its purpose is side-effect driving over a bounded sequence.
+
+The general form:
+
+```java
+lhs ~each iterOperand;
+```
+
+- `lhs` is an ordered-container LHS: `Tuple`, `Range`, or a `List` instance.
+- `iterOperand` is a function value, an inline function definition, or an inline block with block-definitions clause. In each case, the current iteration element is supplied as the single positional argument (or as the implicit input to the block).
+
+```java
+0..3 ~each (v) {
+    log(`"v: `v`");
+};
+// v: 0
+// v: 1
+// v: 2
+// v: 3
+
+def xs: < "a", "b", "c" >;
+xs ~each log;
+// a
+// b
+// c
+```
+
+**Iteration order.** Left-to-right over Tuple index order; ascending over `Range`. `~each` on an empty container performs no iterations. `~each` on a descending range (`5..0`) iterates in the range's declared order.
+
+**Conditional range (aka "while-loop" form).** In addition to a container/range LHS, `~each` admits a pattern-match conditional as its LHS: `?[cond] ~each { .. }` or `![cond] ~each { .. }`. The conditional is evaluated before each iteration; `true` proceeds, `false` terminates. This is Foi's imperative while-loop mechanism.
+
+```java
+def done: false;
+
+![done] ~each {
+    // body -- sets `done := true` eventually
+};
+```
+
+Early exit via `Done@` still applies (§7.9).
+
+**Iteration-operand shapes.** Consistent with all comprehensions (§3.10.9.2), the operand shape for `~each` is a single-parameter callable:
+
+```java
+0..3 ~each log;                         // function value
+0..3 ~each { log("Hello!"); };          // bare block, no per-iter
+0..3 ~each (v) { log(v); };             // block-defs clause
+pairs ~each (<:k, :v>) { log(k, v); };  // destructure block-defs
+```
+
+**Produced value.** The `~each` expression evaluates to the LHS range itself, enabling chaining: `a ~each b ~each c` loops `b` over `a`, then loops `c` over `a`. For the conditional-range form (above), the produced value is an empty Tuple `<>`.
+
+**Early exit.** Returning a `Done@`-shaped value from the iteration operand terminates the loop before natural completion. For `~each`, the payload of `Done@` is discarded (there is no accumulated result to return); the loop simply stops. See §7.9 for `Done@`'s uniform behavior across comprehensions.
+
+```java
+0..10 ~each (v) {
+    log(`"v: `v`");
+    ?[v ?> 3]: Done@ empty;
+};
+// v: 0
+// v: 1
+// v: 2
+// v: 3
+// v: 4
+```
+
+**Hook dispatch.** `~each` dispatches to the LHS's owning namespace's `~each` hook per §3.10.9. `Tuple`, `Range`, and `List` each declare `~each` hooks in the standard library.
+
+`~each` is a **Tier 1** marker (§3.1.1.3): namespaces that do not declare `~each` cannot serve as `~each` LHS; there is no language-provided default composition.
+
+#### §7.2 `~<<` on `List`
+
+A Tuple value *is* a `List` monadic value directly -- `List` is the monadic type-name for Foi's positional-Tuple shape (§1.5).
+
+There is no wrapping step: `< 2, 4 >` is a `List` value; `List` on the LHS of `~<<` names the type-level namespace whose `~<` and `~map` hooks dispatch the composition.
+
+```java
+def xs: < 2, 4 >;
+def ys: < 7, 8 >;
+
+List ~<< {
+    def x:: xs;
+    def y:: ys;
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+Equivalent form using the block-defs clause:
+
+```java
+List ~<< (x:: xs, y:: ys) {
+    x + y;
+};
+// < 9, 10, 11, 12 >
+```
+
+Inside the block:
+
+- `def x:: expr` binds `x` to each successive value pulled from `expr` (a Tuple/List), iterating the enclosing chain.
+- Multiple `def ::` bindings compose as nested iterations: the second binding runs to completion for each value of the first, producing a cartesian traversal.
+- A bare mid-block statement sequences a step and discards its produced value. Explicit `:: expr;` at this position is legal but redundant.
+- The terminal expression is `~map`-lifted: each iteration's terminal value is collected as one element into the result Tuple.
+- A `::`-prefixed terminal (`::expr`) binds `expr` instead of lifting it, avoiding a nested-Tuple result when the terminal expression is itself already a Tuple.
+
+**Nested-Tuple concern.** Because the terminal `~map` collects each iteration's terminal value as *one element* of the result Tuple, a terminal expression that is itself a Tuple produces a Tuple-of-Tuples. The `::` prefix skips the lift:
+
+```java
+defn tup(x, y) ^< x + y >;
+
+List ~<< (x:: xs, y:: ys) {
+    tup(x, y);      // terminal produces Tuple; nested result
+};
+// < <9>, <10>, <11>, <12> >   -- likely a mistake
+
+List ~<< (x:: xs, y:: ys) {
+    ::tup(x, y);    // ::-prefix binds instead of collecting
+};
+// < 9, 10, 11, 12 >
+```
+
+**Single-source form.** A `~<<` block with only one source binding is equivalent to `~map` on that source:
+
+```java
+def xs: < 2, 4 >;
+
+List ~<< (x:: xs) {
+    x * 10;
+};
+// < 20, 40 >
+
+xs ~map (x) { x * 10; };
+// < 20, 40 >
+```
+
+Prefer `~map` for the single-source case; `~<<` earns its keep when multiple sources need to be accessed in a shared scope.
+
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as that iteration's terminal contribution, dispatched exactly as a normal terminal expression would be. Under the default `~map`-lift, the payload becomes one appended element. Under a `::`-prefixed terminal (which binds/flattens instead), the payload is flattened in via `~<`; in this case both the normal terminal and the `Done@` payload must be shape-compatible with the monad (Tuple-shaped for `List`).
+
+```java
+def xs: < 1, 2, 3, 4 >;
+
+List ~<< {
+    def x:: xs;
+    ?{
+        [x ?> 2]: Done@ 5;
+        : x * 10
+    }
+};
+// < 10, 20, 5 >
+
+List ~<< {
+    def x:: xs;
+    ?{
+        [x ?> 2]: Done@ <5,7>;
+        : x * 10
+    }
+};
+// < 10, 20, <5,7> >
+
+List ~<< {
+    def x:: xs;
+
+    // notice :: on next line
+    ::?{
+        [x ?> 2]: Done@ <5,7>;
+        : < x * 10 >
+    };
+};
+// < 10, 20, 5, 7 >
+```
+
+**Compilation.** Per §6.3.3 do-block-compilation split, `List ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`), dispatching through `List`'s declared `~<` and `~map` hooks.
+
+#### §7.3 `~<`
+
+`~<` (bind, also known as flatMap or chain) applies the iteration operand to each element of the LHS and concatenates the returned containers into a single result. The iteration operand must return an ordered-container-shaped value (Tuple/List) for each element.
+
+```java
+def xs: < 1, 2, 3 >;
+defn pair(v) ^< v, v * 10 >;
+
+xs ~< pair;
+// < 1, 10, 2, 20, 3, 30 >
+```
+
+**NOTE:** `~<` has the following interchangeable named-operator aliases: `~bind`, `~flatMap`, `~chain`.
+
+Contrast with `~map`, which wraps each iteration's result as one element:
+
+```java
+xs ~map pair;
+// < <1, 10>, <2, 20>, <3, 30> >   -- nested
+
+xs ~< pair;
+// < 1, 10, 2, 20, 3, 30 >         -- flattened
+```
+
+The LHS may be a Tuple (`List`) value, including a constructed range (e.g., `2..5` which evaluates to `< 2, 3, 4, 5 >`).
+
+```java
+0..2 ~< (v) { < v, v * v >; };
+// < 0, 0, 1, 1, 2, 4 >
+```
+
+**Iteration-operand shapes.** As with `~each`, the three admitted shapes are:
+
+```java
+xs ~< pair;                             // function value
+xs ~< (v) { < v, v * 10 >; };           // block-defs clause
+pairs ~< (<:k, :v>) { < k, v >; };      // destructure block-defs
+```
+
+**Iteration-operand return.** The operand's returned value must be shape-compatible with the LHS container -- a Tuple/List for a Tuple/List LHS. Non-container return is a shape mismatch. *[verify: compile-time rejection vs. runtime error vs. auto-lift into singleton?]*
+
+**Empty container.** `~<` on an empty container yields an empty container: `<> ~< anyFn` evaluates to `<>`.
+
+**Early exit.** Returning a `Done@`-shaped value terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- spread into the result the same way a normal iteration's returned Tuple is spread:
+
+```java
+def xs: < 1, 2, 3, 4 >;
+
+xs ~< (v) {
+    ?{
+        [v ?> 2]: Done@ < 99 >;
+        : < v, v * 10 >
+    }
+};
+// < 1, 10, 2, 20, 99 >
+```
+
+Because `~<` unconditionally spreads terminals, a scalar `Done@` payload would be a shape mismatch. Payload should always be Tuple-shaped.
+
+**Hook dispatch.** `~<` dispatches to the LHS's owning namespace's `~<` hook per §3.10.9. `Tuple`/`List` and `Range` each declare `~<` hooks in the standard library.
+
+`~<` is a **Tier 1** marker (§3.1.1.3): namespaces that do not declare `~<` cannot serve as `~<` LHS; there is no language-provided default composition.
+
+#### §7.4 `~map`
+
+`~map` is the per-element-transform comprehension: for each element of the LHS in order, evaluate the iteration operand against that element, and collect each returned value as an element of a same-length result List.
+
+```java
+defn double(v) ^v * 2;
+
+def xs: < 1, 2, 3 >;
+xs ~map double;
+// < 2, 4, 6 >
+
+0..5 ~map (v) { v * 2; };
+// < 0, 2, 4, 6, 8, 10 >
+```
+
+**LHS.** A List value. (The `..` range operator produces a List, so `0..5 ~map ...` is List-shaped.)
+
+**Iteration-operand shapes.** As with `~each`, the three admitted shapes are:
+
+```java
+xs ~map double;                         // function value
+xs ~map (v) { v * 2; };                 // block-defs clause
+pairs ~map (<:k, :v>) { <v, k>; };      // destructure block-defs
+```
+
+To access the value *and* index, use the `List.entries@` unit constructor to produce an *entries* list to apply to `~map`, and destructure the iteration value:
+
+```java
+def xs: < 5, 10, 15 >;
+
+(List.entries@ xs) ~map (< i, v >) {
+    (i + 1) * v
+};
+// < 5, 20, 30 >
+```
+
+**NOTE:** `List.entries@` produces a list of `< index, value >` tuples. `List.keys@` produces a list of indicies (`< 0, 1, 2, .. >`).
+
+**Result shape.** `~map` is container-preserving (i.e., functor): the result is a List of the same length as the LHS, with each element the return value of the corresponding iteration.
+
+Returning a List from the iteration produces a List of Lists (the "zip" case):
+
+```java
+defn zip(xs, ys) {
+    ^(List.entries@ xs) ~map (< i, x >) {
+        < x, ys[i] >
+    }
+};
+
+zip(< 1, 2, 3 >, < 4, 5, 6 >);
+// < <1, 4>, <2, 5>, <3, 6> >
+```
+
+To flatten instead of nesting, use `~<` (§7.3).
+
+**Empty LHS.** `~map` on an empty List yields an empty List: `<> ~map anyFn` evaluates to `<>`.
+
+**Composition chaining.** Multiple `~map` steps compose sequentially:
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+< 1, 3, 5, 7, 9 > ~map inc ~map triple ~map half;
+// < 3, 6, 9, 12, 15 >
+```
+
+To avoid multiple sequential `~map` operations, the functions can be composed or pipelined:
+
+```java
+< 1, 3, 5, 7, 9 > ~map (inc +> triple +> half);
+// < 3, 6, 9, 12, 15 >
+
+< 1, 3, 5, 7, 9 > ~map (v) {
+    v #> inc #> triple #> half
+};
+// < 3, 6, 9, 12, 15 >
+```
+
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- collected as one element of the result List:
+
+```java
+def xs: < 1, 2, 3, 4 >;
+
+xs ~map (v) {
+    ?{
+        [v ?> 2]: Done@ 99;
+        : v * 10
+    }
+};
+// < 10, 20, 99 >
+```
+
+A `Done@` with a List payload nests, same as a normal iteration returning a List:
+
+```java
+xs ~map (v) {
+    ?{
+        [v ?> 2]: Done@ < 99, 100 >;
+        : v * 10
+    }
+};
+// < 10, 20, < 99, 100 > >
+```
+
+**Hook dispatch.** `~map` dispatches to the LHS's owning namespace's `~map` hook per §3.10.9. `List` declares a `~map` hook in the standard library.
+
+`~map` is a **Tier 2** marker (§3.1.1.3): if a namespace does not declare `~map`, the language provides a default composition using the namespace's `~<` hook and `@` unit constructor. Namespaces that declare both `~<` and `@` need not declare `~map` explicitly.
+
+#### §7.5 `~filter`
+
+`~filter` is the predicate-selection comprehension: for each element of the LHS in order, evaluate the iteration operand as a predicate against that element; include the element in the result List when the predicate returns `true`, exclude when `false`.
+
+```java
+defn isEven(v) ^mod(v, 2) ?= 0;
+
+def evens: 0..9 ~filter isEven;
+// < 0, 2, 4, 6, 8 >
+
+def odds: 0..9 ~filter !isEven;
+// < 1, 3, 5, 7, 9 >
+```
+
+**NOTE:** `!isEven` is `!` producing a negated predicate function.
+
+**LHS.** A List value.
+
+**Iteration-operand shapes.** As with `~each`, the three admitted shapes are:
+
+```java
+xs ~filter isEven;                         // function value
+xs ~filter (v) { !isEven(v) };             // block-defs clause
+pairs ~filter (<:k, :v>) { k ?> 0 };       // destructure block-defs
+```
+
+**Iteration-operand return.** The operand must return a boolean value. Non-boolean return is a shape mismatch, and will raise a type error (compiler or runtime).
+
+To access the element's index within the LHS, pair with `List.entries@` (as with `~map`):
+
+```java
+def xs: < 10, 20, 30, 40 >;
+
+(List.entries@ xs) ~filter (< i, v >) {
+    ?{
+        [mod(i, 2) ?= 0]: v ?> 15;
+        : false
+    };
+};
+// < <2, 30> >
+```
+
+**Result shape.** `~filter` is container-preserving in type but not length: the result is a List whose elements are a subset of the LHS's elements, in original order.
+
+**Empty LHS.** `~filter` on an empty List yields an empty List: `<> ~filter anyPred` evaluates to `<>`.
+
+**Composition chaining.** Multiple `~filter` steps compose sequentially, each narrowing the result:
+
+```java
+defn isEven(v) ^mod(v, 2) ?= 0;
+defn isPositive(v) ^v ?> 0;
+
+< -4, -3, 0, 1, 2, 3, 4 > ~filter isEven ~filter isPositive;
+// < 2, 4 >
+```
+
+Or combine predicates directly with boolean operators:
+
+```java
+< -4, -3, 0, 1, 2, 3, 4 > ~filter (v) {
+    isEven(v) ?and isPositive(v);
+};
+// < 2, 4 >
+```
+
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- interpreted as the predicate decision for the current element:
+
+```java
+def xs: < 1, 2, 3, 4, 5 >;
+
+xs ~filter (v) {
+    ?{
+        [v ?> 3]: Done@ true;
+        : isEven(v)
+    }
+};
+// < 2, 4 >
+```
+
+Here, `v = 4` triggers `Done@ true`. `4` is included in the result and iteration stops before processing `5`. `Done@ false` would exclude the current element and stop. A non-boolean `Done@` payload is a shape mismatch, same as a normal non-boolean return (type error, compiler or runtime).
+
+**Hook dispatch.** `~filter` dispatches to the LHS's owning namespace's `~filter` hook per §3.10.9. `List` declares a `~filter` hook in the standard library.
+
+`~filter` is a **Tier 2** marker (§3.1.1.3): if a namespace does not declare `~filter`, the language provides a default composition using the namespace's `~<` hook and `@` unit constructor. Namespaces that declare both need not declare `~filter` explicitly.
+
+#### §7.6 `~fold` / `~foldR`
+
+`~fold` (aka "reduce") is the left-associative catamorphic-reduction comprehension: process the LHS elements in order, threading an accumulator through each iteration; the final accumulator value is the result. `~foldR` (aka "reduceRight") is identical except elements are processed right-to-left.
+
+Two admitted forms distinguish whether an explicit initial accumulator is supplied:
+
+**Two-operand inline form** (no explicit initial value). The first element of the LHS serves as the initial accumulator; iteration begins with the second element:
+
+```java
+defn add(x, y) ^x + y;
+defn sub(x, y) ^x - y;
+
+0..4 ~fold add;
+// 10   (0 + 1 + 2 + 3 + 4)
+
+1..5 ~fold sub;
+// -13  (1 - 2 - 3 - 4 - 5)
+
+1..5 ~foldR sub;
+// -5   (5 - 4 - 3 - 2 - 1)
+```
+
+**Three-operand operator-as-function form** (explicit initial value). The initial accumulator is supplied as the second operand; iteration begins with the first element:
+
+```java
+(~fold)(1..5, 100, sub);
+// 85   (100 - 1 - 2 - 3 - 4 - 5)
+```
+
+The three-operand form is available only via the operator-as-function invocation; the binary infix form has no syntactic position for a third operand.
+
+**LHS.** A List value.
+
+**Iteration-operand shapes.** The iteration operand is a two-parameter callable, receiving `(accumulator, currentValue)`:
+
+```java
+xs ~fold add;                           // function value
+xs ~fold (acc, v) { acc + v };          // block-defs clause
+xs ~fold (acc, <:k, :v>) { acc + v };   // destructure on second param
+```
+
+**Empty and single-value behavior.**
+
+- Two-operand form on an empty List: `~fold` is invalid; type error (runtime)
+- Two-operand form on a single-value List: returns that value; the iteration operand is not evaluated.
+- Three-operand form on an empty List: returns the initial value.
+- Three-operand form on a single-value List: iterates once with `(init, xs.0)`; returns that iteration's result.
+
+**Accumulator shape.** The accumulator may be any value type. Building up a List is a common pattern:
+
+```java
+defn onlyOdds(list, v)
+    ?[mod(v, 2) != 1]: list
+    ^list + < v >;
+
+(~fold)(0..9, <>, onlyOdds);
+// < 1, 3, 5, 7, 9 >
+```
+
+**NOTE:** `List` (tuple) is a concatable, so `+` is defined to concatenate lists.
+
+Here, the initial `<>` accumulator grows across iterations by appending values that pass the predicate.
+
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- becomes the final accumulator (result):
+
+```java
+defn add(x, y) ^x + y;
+
+0..9 ~fold (acc, v) {
+    ?{
+        [acc ?> 10]: Done@ acc;
+        : acc + v
+    }
+};
+// 15   (0 + 1 + 2 + 3 + 4 + 5 = 15; then Done@ 15 terminates)
+```
+
+`Done@` in `~fold` accepts any payload shape (matching the accumulator's freedom of shape).
+
+**Hook dispatch.** `~fold` and `~foldR` each dispatch to the LHS's owning namespace's respective hook per §3.10.9. `List` declares both hooks in the standard library.
+
+`~fold` and `~foldR` are **Tier 2** markers (§3.1.1.3): if a namespace does not declare them, the language provides a default composition.
+
+#### §7.7 `~cata`
+
+`~cata` is the catamorphism comprehension: a thunk-initialed variant of the three-operand `~fold`. Where three-operand `~fold` takes an already-computed initial accumulator, `~cata` takes a **thunk** (a zero-arg function) that computes the initial value only when needed. The distinction matters when the initial value is expensive to compute, has deferrable side effects, or is only conditionally required (e.g., on Sum-type LHS where the initial branch may not fire).
+
+Like the three-operand `~fold`, `~cata` has no all-operands binary infix form; the initial-value operand is supplied exclusively via the operator-as-function form:
+
+```java
+defn add(x, y) ^x + y;
+
+(~cata)(0..4, Function@ 0, add);
+// 10
+```
+
+**LHS.** A List value. (`~cata`'s primary utility is on Sum-type LHS -- e.g., Maybe, Either -- where the thunk represents a lazy None-branch handler; those usages are covered in the monad sections.)
+
+**Iteration-operand shapes.** The iteration operand is a two-parameter function, receiving `(accumulator, currentValue)` -- identical to `~fold`:
+
+```java
+(~cata)(xs, initThunk, add);
+```
+
+**Empty and single-value behavior.**
+
+- Empty List: returns the result of invoking `initThunk` (evaluated exactly once).
+- Single-value List: iterates once with `(initThunk(), xs.0)`; returns that iteration's result.
+
+**Mutual-defaulting pair with `~fold`.** Per §3.10.9.3, `~fold` and `~cata` form a mutual-defaulting pair on the same catamorphism, differing only in the initial value's representation (eager value vs. thunk). If a namespace declares one but not the other, dispatch routes through the declared hook with an appropriate wrap or eager invocation:
+
+- Namespace declares `~cata` only: `(~fold)(inst, init, fn)` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
+- Namespace declares `~fold` only: `(~cata)(inst, initThunk, fn)` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
+- Neither declared: rejected at compile time.
+
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- becomes the final accumulator (result), same as in `~fold`:
+
+```java
+(~cata)(0..9, Function@ 0, (acc, v) {
+    ?{
+        [acc ?> 10]: Done@ acc;
+        : acc + v
+    }
+});
+// 15
+```
+
+`Done@` in `~cata` accepts any payload shape.
+
+**Hook dispatch.** `~cata` dispatches to the LHS's owning namespace's `~cata` hook per §3.10.9. `List` declares a `~cata` hook in the standard library.
+
+`~cata` is a **Tier 2** marker (§3.1.1.3), member of the mutual-defaulting pair with `~fold` per §3.10.9.3.
+
+**Prime forms.** `(~cata')` is reserved per §3.10.9.6 (semantic-reject; future activation possible for direction-reversed catamorphism).
+
+#### §7.8 `~ap`
+
+`~ap` is the applicative-apply comprehension. Like `~map`, it performs unary application of a function to an argument, producing a same-namespace result -- but with the polarity of holder and operand reversed. In `~map`, the LHS instance holds the *value* and the operand is a bare function. In `~ap`, the LHS instance holds the *function* and the operand supplies the value.
+
+```java
+defn add(x)(y) ^x + y;
+
+def three: Id@ 3;
+def four: Id@ 4;
+
+(Id@ add) ~ap three ~ap four;
+// Id{7}
+```
+
+For curried functions of multiple arguments, chained `~ap` applications supply arguments one at a time; each application peels one layer of the curry.
+
+The function-held-in-container structure is the intrinsic distinguishing feature of applicative -- what the abstraction is *about*. The operand being a same-namespace instance (rather than a bare value) is a definitional convention of the applicative abstraction, chosen for uniformity across all namespaces: for `Id`, wrapping the operand is ceremony that computes the same result as a bare value would; for `Maybe`, `Either`, `List`, `Promise`, or `IO`, the operand's own context contributes to the outcome, and the wrapping is what makes the composition well-defined.
+
+To illustrate:
+
+```java
+(Maybe@ add) ~ap (Maybe.from@ age);
+```
+
+Here, if `Maybe.from@ age` produces a `None` (because `age` is `empty`), the `~ap` still safely evaluates, but doesn't apply the invalid input to the `add` function; instead, the operation returns the `None`.
+
+**LHS.** An instance whose held value is a function. Per §3.10.9.2, the hook receives the LHS as the function-holder: `(fnInst, valInst)`.
+
+**Operand shape.** A single operand: an instance in the same namespace as the LHS, holding the value to apply. Function-typed value expressions like `Id@ add` and value-typed instances like `Id@ 3` are both instances; `~ap` requires both.
+
+**No block-body operand form.** Because `~ap`'s operand is an instance value (not a per-element function or block), the block-with-defs and destructure-block forms admitted by other comprehensions do not apply. The operand is a plain expression evaluating to an instance.
+
+**List LHS.** For `List ~ap` -- an LHS List of functions applied to an RHS List of values -- the applicative produces the Cartesian product of applications, in functions-outer / values-inner order:
+
+```java
+defn inc(v) ^v + 1;
+defn double(v) ^v * 2;
+
+< inc, double > ~ap < 10, 20, 30 >;
+// < 11, 21, 31, 20, 40, 60 >
+```
+
+Each function is applied to each value in sequence: `inc(10), inc(20), inc(30), double(10), double(20), double(30)`.
+
+**No early exit.** `~ap` performs a single application (or a Cartesian product on List); there is no per-element iteration to exit from. `Done@` has no special interpretation as an `~ap` operand or return; if such a value flows through, it is treated as an ordinary value.
+
+**Hook dispatch.** `~ap` dispatches to the LHS's owning namespace's `~ap` hook per §3.10.9. `List` declares a `~ap` hook in the standard library.
+
+`~ap` is a **Tier 2** marker (§3.1.1.3): if a namespace does not declare `~ap`, the language provides a default composition using the namespace's `~<` hook and `@` unit constructor. Namespaces that declare both need not declare `~ap` explicitly.
+
+Standard Applicative-from-Monad derivation:
+
+```
+fnInst ~ap valInst   ==   fnInst ~< ((fn) { valInst ~map fn })
+```
+
+**Prime forms.** `(~ap')` rejects at the semantic layer per §3.10.9.6 (no direction axis; argument-order-swap not admitted for comprehensions).
+
+#### §7.9 `Done@` Across Comprehensions
+
+`Done@` is the early-exit sentinel for comprehension iterations. §6.4 specifies its full sticky-sentinel semantics and the three call classes (raw-value, comprehension iteration return, effect handler resume). This section covers the "comprehension iteration return" class.
+
+**Uniform framing: comprehensions lift over `Done@`.** Every comprehension can be understood as a product of two orthogonal axes: a *terminal-semantic* (what to do with each iteration's terminal value -- collect, spread, fold, discard, decide) and a *control-flow signal* (whether to continue or stop). `Done@` is the control-flow axis; the payload rides on the data axis and is processed by the comprehension's normal terminal-semantic, unchanged.
+
+Iteration return shape:
+
+```
+iterationReturn :: Terminal | Done@ Terminal
+```
+
+The comprehension's terminal-handler operates on the payload uniformly regardless of which arm delivered it; the `Done@` arm additionally halts the traversal. There is no per-comprehension `Done@` rule to learn -- learn each comprehension's terminal-semantic (§7.1–§7.8), and `Done@` slots in.
+
+**Concrete dispatch.** Applying the uniform framing to each comprehension:
+
+- **`~each` (§7.1).** Terminal-semantic: discard. `Done@` payload: discarded; loop stops.
+- **`~<<` on `List` (§7.2).** Terminal-semantic: `~map`-lift (or `~<`-bind under `::`-prefixed terminal). `Done@` payload: lifted or bound identically, then stop.
+- **`~<` (§7.3).** Terminal-semantic: spread into result. `Done@` payload: spread identically, then stop. Payload must be List-shaped.
+- **`~map` (§7.4).** Terminal-semantic: collect as one element. `Done@` payload: collected as one final element, then stop.
+- **`~filter` (§7.5).** Terminal-semantic: boolean predicate decision. `Done@` payload: decision for the terminating iteration (`Done@ true` includes, `Done@ false` excludes), then stop. Non-boolean payload is a shape mismatch.
+- **`~fold` / `~foldR` (§7.6).** Terminal-semantic: new accumulator. `Done@` payload: becomes final accumulator (result), then stop.
+- **`~cata` (§7.7).** Same as `~fold`.
+- **`~ap` (§7.8).** No per-element iteration; no `Done@` interpretation. A `Done@`-shaped value flowing through is treated as an ordinary value.
+
+**Nested comprehensions.** `Done@` terminates the innermost enclosing comprehension only. To propagate an early exit through multiple nesting levels, each outer comprehension's iteration must inspect its inner result and issue its own `Done@` accordingly.
+
+```java
+def matrix: < <1,2,3,4>, <5,6,7,8> >;
+
+matrix ~map (row) {
+    row ~map (v) {
+        ?{
+            [v ?> 5]: Done@ v;
+            : v * 10
+        }
+    };
+};
+// < <10,20,30,40>, <50,6> >
+```
+
+Row 1's inner `~map` runs to completion; Row 2's inner `~map` hits `v = 6`, returns `Done@ 6`, terminates with `6` as the final element per `~map`'s terminal-semantic. The outer `~map` sees each inner result as an ordinary value.
+
+**Cross-reference.** For `Done@`'s base semantics -- sticky-sentinel behavior, three-call-class taxonomy, raw-value form, and effect-handler-resume interaction -- see §6.4.
