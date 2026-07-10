@@ -3273,11 +3273,23 @@ The remaining pieces this section specifies:
 - Handlers: the operators that establish a handler scope and dispatch perform-events to arms. (§6.3)
 - Sentinel: `Done@` as universal loop-escape. (§6.4)
 - Generators: the compiler-privileged reification transform for functions typed as `deft Gen.`-prefixed, and the `%`-driven iterator surface. (§6.6)
-- Deferred type (State §6.7)
+- Deferred type (State §6.7).
 - Self-hosted pause-able types (Promise §6.8, Channel §6.9, Streams §6.10-§6.11, IO §6.12).
 - Effect signatures in types. (§6.13)
 
 **NOTE:** Effects, handlers, and their signatures reuse existing Foi surface: `deft` (with `Effect.` prefix), the `%` effector operator, `~<*` handler ops, and `:Effects(...)` narrowing. No new operators or keywords are introduced by this section; the mechanisms below specify what compiler-privileged behavior existing surface acquires when the LHS carries effect-kindedness.
+
+**Composition axis (framing for §6.5 onward).** Every type introduced from §6.5 onward composes via one of two do-comprehension operators, distinguished by *who drives the composition*:
+
+- **`~<<`**: the consumer drives. The block body binds successive values from the LHS wrapper; the composition terminates on the wrapper's own signal (exhaustion for iterating outers like `List`, `Iter`, `PullStream`; intrinsic single-shot for composing outers like `IO`, `State`, `Promise`).
+
+- **`~<*`**: an external producer drives. The block body observes emissions that arrive from a source outside the block's control; the composition terminates when the source closes. Applies to `PushStream`, `Channel`, and the effect handler scopes established by §6.3.
+
+Both operators require a *type* on the LHS -- either a bare type name (`Promise`) or a compound type expression (e.g., `List{Promise}`, per §18). A value on the LHS is a static error. Type-LHS resolves the composition's dispatch to a specific hook at compile time, consistent with Foi's other static-first commitments (universal proper tail calls §3.4, mandatory effect tracking §6.13, compile-time precondition dispatch §3.5).
+
+Compound-LHS carries semantic meaning on `~<<`: an inner `Promise` annotation on an iterating outer triggers per-element awaiting behavior (each element is awaited before the block body executes for it); on the composing outer `IO`, the optional `IO{Promise}` annotation documents the native Promise-transformer behavior specified in §6.12.5. Compound-LHS is not admitted on `~<*`; the observer-of-emissions form has no auto-lift semantics.
+
+Per-type behavior for both operators -- which arm applies, what the loop-variable receives per iteration, what terminates the composition -- is specified in each type's subsection.
 
 ### §6.1 Effects
 
@@ -3633,21 +3645,21 @@ is preserved at `~<*` itself.
 
 An Iterator (`Iter`) is a stateful protocol for one-at-a-time value delivery. Unlike `Promise` (single resolution), `Channel` (single-consumer handoff), or the streams (§6.10, §6.11, subscribed sources), an Iter delivers values by direct request from its holder: each step advances the source by one position and returns the next value, or a sticky terminal marker when the source has no more to give.
 
-**NOTE:** `Iter` is not monadic. `~<` and `~map` are not defined on it; `~<*` is defined only as do-loop drainage (§6.5.3, §7), not as a subscription-composition form. `PullStream` (§6.11) is the observable-monad wrapper built over an Iter source; consumers wanting monadic composition should wrap in `PullStream` and compose there.
+**NOTE:** `Iter` is not monadic. Neither `~<` nor `~map` is defined on it; the type participates in the composition axis (§6 opener) only via `~<<` as an iterating outer -- consumer-driven walking to exhaustion, per §6.5.3. `PullStream` (§6.11) is the observable-monad type for consumer-timed reads from an *external* producer via a stdlib-mediated buffer; it is not a wrapper over `Iter` and cannot be constructed from an `Iter` source. Consumers wanting monadic-style transformation over a known-source `Iter` compose the per-value work inside a `~<<` block body; consumers needing a monadic observable over decoupled read/write heads use `PullStream` directly.
 
 **NOTE:** An `Iter` is produced by two paths:
 
-- **Explicit construction** via `Iter@` (§6.5.1) over a Tuple, Range, or another Iter.
+- **Explicit construction** via `Iter@` (§6.5.1) over a Tuple or another Iter.
 - **Generator invocation** via the reification transform (§6.6), which produces an Iter carrying a state machine.
 
 Both paths share the base stepping interface (§6.5.2); generator-produced Iters additionally support the binary-`%` resume-value channel per §6.6.4.
 
 The userland surface is:
 
-- `Iter@ source`: constructor. `source` is a Tuple, a Range, or another Iter. Returns an Iter.
+- `Iter@ source`: constructor. `source` is a Tuple or another Iter. Returns an Iter.
 - Unary `%`: `it%` steps the iterator once, returning `Right@ payload` mid-stream or a sticky `Left@ terminal` once the source has been exhausted (§6.5.2).
 - Binary `%`: `it% v` steps a generator-produced Iter delivering `v` as the resume-value for a waiting `<::` perform site (§6.6.4). Ill-formed on Iters constructed via `Iter@`.
-- `~<*`: do-loop drainage form; consumes the iterator to its terminal (§6.5.3, §7).
+- `~<<`: do-comprehension drainage form; consumes the iterator to its terminal (§6.5.3).
 
 **NOTE:** Iter has no explicit close operation and no closed-state observation. An iterator is either mid-stream (`Right@` on step) or terminal (`Left@` on step, sticky); consumers detect terminal state via return-value pattern-match. Generator Iters whose sources never complete are abandoned by dropping references, or by the author passing in a value via Iter `%` to signal the generator to stop itself.
 
@@ -3725,14 +3737,14 @@ it% 42;    // ill-formed
 
 Ill-formedness is diagnosed statically at the call site when the Iter's construction path is known at compile time; otherwise it is a runtime error on `%`-hook dispatch (§6.2). Non-generator Iters have no perform sites to resolve, and silently discarding the value would mask consumer bugs.
 
-#### §6.5.3 Draining Via `~<*`
+#### §6.5.3 Draining Via `~<<`
 
-An Iter can be eagerly consumed via the `~<*` do-loop-comprehension form:
+An Iter can be eagerly consumed via the `~<<` do-comprehension form, with `Iter` as the type-LHS and the specific iterator supplied via the block-defs clause:
 
 ```java
 def it: Iter@ < 10, 20, 30 >;
 
-def res: it ~<* (v) {
+def res: Iter ~<< (v:: it) {
     log(`"v: `v`");
 };
 // v: 10
@@ -3742,11 +3754,11 @@ def res: it ~<* (v) {
 res;    // Left{"Iterator Exhausted"}
 ```
 
-The comprehension drives the iterator to its terminal by repeated unary stepping. Each `Right@ payload` step binds `payload` to the loop variable and executes the block body; the loop terminates when a step returns `Left@ terminal`. The value of the `~<*` expression is the terminal `Left@`.
+The `::`-init on the block-defs entry supplies the iterator source; `v` binds per-iteration to each `Right@ payload` step's payload. The comprehension drives the iterator to its terminal by repeated unary stepping; the loop terminates when a step returns `Left@ terminal`. The value of the `~<<` expression is the terminal `Left@`.
 
-Full `~<*` do-loop-comprehension semantics -- including its interaction with other iterable types, guard conditions, and `Done@` early termination -- are specified in §7. This section notes only its consumption of Iter instances.
+Under the composition axis (§6 opener), `Iter` sits on `~<<` as an iterating outer: the consumer drives, and termination is the iterator's own exhaustion signal. `Iter` is not admitted on `~<*`; it is not an emission source.
 
-**NOTE:** `~<*` on an Iter is a §7 iterable-drainage form, distinct from the monadic-subscription `~<*` polymorphism of `Effect` (§6.3), `Promise` (§6.8.4), `PushStream` (§6.10.3), and `PullStream` (§6.11.3). An Iter is a §7 iterable, not a §6 monadic subscribable; no `~<` or `~map` operators are defined on it. Consumers wanting monadic composition wrap the Iter in a `PullStream` (§6.11.1) and compose there.
+`Done@` early-exit (§7.9) applies: a block-body value of `Done@ ..` terminates the loop early.
 
 ### §6.6 Generators
 
@@ -3881,14 +3893,12 @@ waiting, the argument is ignored. This case arises at two boundaries:
   has completed, no further code runs; any argument passed to a
   post-terminal `it%` call is likewise dropped.
 
-#### §6.6.5 Draining Iterators Via `~<*`
+#### §6.6.5 Draining Iterators Via `~<<`
 
-A finite generator can be eagerly consumed via the `~<*` do-loop
-comprehension, per §6.5.3's drainage semantics for `Iter` instances
-generally:
+A finite generator can be eagerly consumed via the `~<<` do-comprehension, per §6.5.3's drainage semantics for `Iter` instances generally. The generator invocation supplies the Iter source via the block-defs clause:
 
 ```java
-def res: numbers(1, 3) ~<* (v) {
+def res: Iter ~<< (v:: numbers(1, 3)) {
     log(`"v: `v`");
 };
 // v: 1
@@ -3898,10 +3908,9 @@ def res: numbers(1, 3) ~<* (v) {
 res;      // Left{"Complete"}
 ```
 
-The generator's return value (`"Complete"` in `numbers`) becomes the
-terminal `Left@` payload per §6.6.3. Full drainage semantics --
-interaction with other iterable types, guard conditions, `Done@` early
-termination -- are specified in §7.
+The `::`-init on the block-defs entry supplies the generator-produced iterator; `v` binds per-iteration to each `Right@ payload` step's payload. The generator's return value (`"Complete"` in `numbers`) becomes the terminal `Left@` payload per §6.6.3.
+
+`Done@` early-exit (§7.9) applies: a block-body value of `Done@ ..` terminates the loop early. Full drainage semantics common to all `Iter` sources are specified at §6.5.3.
 
 #### §6.6.6 Non-Yield Effects In Generators
 
@@ -4140,6 +4149,8 @@ Without the `::` on the terminal `State.get@`, the block would produce a `State{
 
 Per §6.3.3 do-block-compilation split, `State ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
 
+Under the composition axis (§6 opener), `State` is a composing outer on `~<<`: successive steps chain via monadic bind, terminating at the block's terminal expression. `State` is not admitted on `~<*`, nor does it admit a compound-LHS -- state computations are synchronous, the state-changer shape (`< value, newState >`) has no async variant, and per-step Promise-lifting is not defined for `State`.
+
 ### §6.8 Promise
 
 A **Promise** is a monadic container for an `Either` value whose resolution may be immediate or deferred. Unlike `State` (§6.7), which is a deferred computation triggered by applying `%`, a `Promise` instance is either already resolved at construction or pending resolution by an external agent -- a **subject** (§6.8.2). Operations composed against a pending promise are automatically deferred until resolution; once resolved, further operations run synchronously.
@@ -4164,8 +4175,6 @@ resolved, `false` if pending.
 - `~<<` do-block composition: sequences promise operations, deferring
 subsequent steps across pending resolutions and short-circuiting on
 `Left`.
-- `~<*` async iteration: loops over a range, awaiting each iteration's
-pending promise before continuing.
 
 #### §6.8.1 Promise Unit Constructors
 
@@ -4304,72 +4313,17 @@ task;
 
 Per §6.3.3 do-block-compilation split, `Promise ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`). The Either-aware behavior of the do-block is inherited from Either-aware `~<` and `~map` hooks on `Promise`: both see through `Right` and pass `Left` unchanged.
 
-#### §6.8.4 Async Iteration Via `~<*`
-
-The `~<*` async-comprehension iterates over a range, awaiting any pending promise produced by each iteration before continuing:
-
-```java
-defn fetch(url) ^Promise.honor@ `"resp for `url`";
-
-def urls: < "https://api/1", "https://api/2", "https://api/3" >;
-
-def task: urls ~<* (url) {
-    ::fetch(url) ~map (resp) {
-        log(`"resp: `resp`");
-    };
-};
-// Promise{..pending..}
-
-// resp: resp for https://api/1
-// resp: resp for https://api/2
-// resp: resp for https://api/3
-```
-
-Each iteration receives the next range value and runs the body; when the body evaluates to a pending promise, the next iteration is deferred until that promise resolves. The comprehension itself evaluates to a `Promise` that resolves once iteration completes.
-
-Bindings via `def ::` inside the loop body follow the same Either-aware rule as `~<<` (§6.8.3): a `Left` short-circuits the current iteration. If the iteration body's terminal expression resolves to `Left`, the loop terminates early -- analogous to `Done@` early-exit in synchronous comprehensions (§6.4, §7).
-
-Non-promise values encountered in the range are automatically lifted to resolved promises for the purposes of iteration handling.
-
-An LHS that is the ambient monadic type itself (`Promise`) rather than a concrete iterable drives an *unbounded* async loop:
-
-```java
-def loop: Promise ~<* {
-    def v:: nextPayload();
-    log(`"Got: `v`");
-};
-// loop runs until nextPayload() resolves with a Left
-```
-
-The block re-runs each time its terminal expression resolves to `Right`, threading through the Either-aware binds of §6.8.3; iteration terminates when the terminal expression resolves to `Left`. The comprehension itself evaluates to a `Promise` that resolves once iteration terminates. This form is the natural consumer surface for open-ended asynchronous sources -- a channel `take` (§6.9), a stream pull (§6.10, §6.11), or any composed sequence whose termination is signaled by `Left`.
-
-**NOTE:** `~<*` polymorphism spans two categories.
-
-**Iterable drainage** (§7): a Range LHS or an `Iter` LHS (§6.5) drives
-one-at-a-time consumption of the source to its terminal. Each delivered
-value binds to the block variable; the loop terminates when the source
-exhausts. See §7 for full drainage semantics.
-
-**Monadic subscription** (§6): four LHS shapes participate. An
-effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3).
-A `Promise` LHS drives unbounded async iteration terminated by a `Left`
-terminal expression (§6.8.4). A `PushStream` LHS drives subscription to
-a producer-broadcast source (§6.10.3). A `PullStream` LHS drives
-subscription to a consumer-triggered delivery source (§6.11.3). The four
-share the "block body runs per emission from the LHS source" pattern;
-they differ in what constitutes an emission, what triggers each
-emission, and what terminates the composition. Across all four, a
-terminal `Left@ ...` unsubscribes the block itself; source-side
-termination conditions vary per LHS (effect-scope end, Promise `Left`,
-source close on streams).
+Under the composition axis (§6 opener), `Promise` is a composing outer on `~<<`: the block sequences a single-shot chain over a single resolution, terminating at the terminal expression (or short-circuiting on a `Left`). `Promise` is not admitted on `~<*` -- open-ended consumption of promise-producing sources routes through the source's own do-comprehension arm (`Channel ~<*` §6.9, `PushStream ~<*` §6.10, `PullStream ~<<` §6.11) rather than through `Promise`. A compound-LHS `Promise{X}` is documentary only; the resolved payload's inner shape is not read into `~<<` dispatch.
 
 ### §6.9 Channel
 
 A **Channel** is a coordination primitive for value transmission between producer and consumer sites, following CSP (Communicating Sequential Processes) semantics. Unlike `Promise` (§6.8), whose composition threads a single resolution through a chain, a `Channel` mediates a stream of value handoffs; unlike `State` (§6.7), which is deferred by construction, a `Channel` is *coordinative* -- each `put` and `take` operation completes only when a corresponding counterpart operation occurs (buffering excepted; see §6.9.1).
 
-**NOTE:** A `Channel` instance is not itself monadic. It has no `~<` or `~map` hook; do-block composition is not defined over `Channel` directly. Instead, every operation on a `Channel` instance produces a `Promise`, and composition proceeds through `Promise`'s do-block (§6.8.3) and async-iteration (§6.8.4) machinery over those returned promises. This delegation is the primary structural difference between `Channel` and the other pause-able types in this section.
+**NOTE:** A `Channel` instance is not itself monadic. It has no `~<` or `~map` hook; single-value do-block composition is not defined over `Channel` directly. Instead, every `put`/`take`/`peek` operation on a `Channel` produces a `Promise`, and single-operation composition proceeds through `Promise ~<<` (§6.8.3) over those returned promises. Repeated consumption uses `Channel ~<*` directly (§6.9.4).
 
-Each operation's returned promise resolves to `Right` on success or `Left` on failure (channel already closed). The Either-aware composition of `Promise ~<<` (§6.8.3) inherits directly -- a `Left` from a channel operation short-circuits the surrounding block; a `Left` from a `take` terminates the surrounding async loop.
+Under the composition axis (§6 opener), `Channel` sits on `~<*` as an observer of external emissions: producers drive by calling `put`; the block observes each successful take. The `~<*` hook internally performs each take between iterations and unwraps the Either-`Right` payload before binding the loop variable -- callers work with the underlying value directly, not with a wrapped `Right@ v`. The loop terminates when the channel closes, and the `~<*` expression resolves to `Promise{Left{"Channel Closed"}}`.
+
+Each operation's returned promise resolves to `Right` on success or `Left` on failure (channel already closed). The Either-aware composition of `Promise ~<<` (§6.8.3) inherits directly -- a `Left` from a channel operation short-circuits the surrounding block.
 
 The userland surface is:
 
@@ -4380,6 +4334,7 @@ The userland surface is:
 - `.close()`: close the channel. Returns `Right@ true` on first invocation; subsequent invocations return `Left@ "Channel Closed"`. Pending `take`s at close time resolve with `Left`.
 - `Channel.alts@`: race combinator over a list of channels. Constructs a one-shot derived `Channel` that receives `< :value, :channel >` for the first source channel to produce a value, then closes.
 - `Channel.every@`: zip combinator over a list of channels. Constructs a one-shot derived `Channel` that receives `< ...values >` (input-order preserved) once every source channel has produced a value, then closes.
+- `~<*` observer composition: observes each successful take on the channel until it closes (§6.9.4).
 
 **NOTE:** Because Foi promises can resolve synchronously (§6.8.2), the coordination promises returned from channel operations carry no inherent race conditions. When a `put` pairs with a pending `take`, or a source channel emits into a derived combinator channel (§6.9.5), the paired operation's promise resolves in-line during the triggering call -- composed observers (via `~<<` binds, `~<*` iteration, or `.resolved()` inspection) see a consistent view with no scheduled-for-later gap admitting interleaved observations of partial state.
 
@@ -4498,7 +4453,7 @@ Once closed:
 - Any subsequent `put` resolves with `Left@ "Channel Closed"`.
 - A `take` on a closed channel whose buffer still contains values resolves those values in FIFO order with `Right`; only once the buffer is drained does subsequent `take` yield `Left@ "Channel Closed"`.
 
-The `Left` from a closed-channel operation composes naturally through `Promise ~<<` -- it short-circuits the surrounding block, and in the async-loop pattern below it terminates iteration.
+The `Left` from a closed-channel operation composes naturally through `Promise ~<<` -- it short-circuits the surrounding block. Under `Channel ~<*` (§6.9.4), a `Left`-resolving take signals iteration termination.
 
 #### §6.9.4 Composition
 
@@ -4515,14 +4470,13 @@ defn relay(chIn, chOut) ^Promise ~<< {
 
 Each `::` bind sees the `Right` payload; a `Left` at any step short-circuits the block with `Promise@ (Left@ "Channel Closed")` -- the natural error path when a channel closes mid-relay.
 
-**Repeated coordination in a `Promise`-driven async loop.** Producer- and consumer-side loops iterate through channel operations until a `Left` terminates:
+**Repeated consumption via `Channel ~<*`.** Consumer-side loops observe each successful take on a channel until it closes:
 
 ```java
 def ch: Channel@;
 
 // consumer
-def consumer: Promise ~<* {
-    def v:: ch.take();
+def consumer: Channel ~<* (v:: ch) {
     log(`"Got: `v`");
 };
 
@@ -4533,12 +4487,12 @@ ch.put(1);       // Got: 1
 ch.put(2);       // Got: 2
 ch.close();      // consumer terminates
 
-consume;         // Promise{Left{"Channel Closed"}}
+consumer;        // Promise{Left{"Channel Closed"}}
 ```
 
-The consumer loop iterates while its terminal expression resolves to `Right`; a `Left` -- produced by `take` on a closed, drained channel -- terminates iteration. Because `take` on an open channel never resolves to `Left`, the consumer runs indefinitely until close, at which point the pending `take` resolves `Left` and the loop exits.
+The `~<*` hook performs each take between iterations; `v` binds to the received payload (the Either-`Right` is unwrapped internally per §6.9's opener). The block runs once per received value; iteration terminates when the channel closes, and the `~<*` expression resolves to `Promise{Left{"Channel Closed"}}`.
 
-Both patterns rely on Promise's Either-aware composition (§6.8.3) -- `Channel` contributes no do-block dispatch of its own, only the promises its operations produce.
+Unlike the `Promise ~<<` relay pattern above, the block does not itself invoke `take`; the channel LHS supplies the take semantics, and the block observes each payload directly. `Channel` is not admitted on `~<<`; single-operation channel work uses `Promise ~<<` (relay pattern above) rather than `Channel ~<<`.
 
 #### §6.9.5 Multi-Channel Combinators
 
@@ -4589,7 +4543,7 @@ A stream is either **open** (accepting pushed values and forwarding them to subs
 
 **NOTE:** `PushStream` is monadic in the sense of the observable monad in reactive-programming literature. `~<` and `~map` are defined directly on it; `~<*` (§6.10.3) is the composition-form operator. Monad laws hold under observable-behavior equivalence: from any subscriber's viewpoint, `(PushStream.subj@).st ~< f` and the stream produced by `f v` (once `v` is pushed) yield emission sequences and close timings indistinguishable to that observer. This is a weaker equivalence than the static-value equalities that hold for `Promise` or `Id`, because a stream has no static value to equate -- only a sequence of emissions observable through subscription.
 
-**NOTE:** Four design commitments frame `PushStream`'s subscription semantics, dual to `PullStream`'s:
+**NOTE:** Four design commitments frame `PushStream`'s subscription semantics:
 
 - **Hot**: producers push independently of subscribers. Values pushed while no subscriber is registered are lost. Cold streams are `PullStream` (§6.11).
 - **Broadcast**: every currently-subscribed observer receives every pushed value. Subscription is fanout, not queued handoff.
@@ -4609,7 +4563,7 @@ The userland surface is:
 - `~<*` subscription form: registers the block body as a subscriber to the source stream; the block body executes per value broadcast from the source; the terminal expression's value emits into a resultant `PushStream`. A terminal `Left@ ...` expression unsubscribes this observer without closing the source (§6.10.3).
 - `PushStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@`: derived-stream constructors for fan-in, predicate filtering, stateful fold, and signal-driven close (§6.10.4).
 
-**NOTE:** `~<<` (single-value do-block, §6.8.3) is not defined on `PushStream`. Streams have no single value to extract; `~<*` is the composition-form operator for multi-emission sources. This mirrors the split for other multi-emission types (§6.3, §6.8.4, §6.11).
+**NOTE:** `~<<` (single-value do-block, §6.8.3) is not defined on `PushStream`. Streams have no single value to extract; `~<*` is the composition-form operator for producer-broadcast sources. This mirrors the split for other `~<*`-consuming types (§6.3, §6.9).
 
 #### §6.10.1 PushStream Unit Constructor
 
@@ -4617,7 +4571,7 @@ A `PushStream` instance is constructed exclusively through a subject; the `PushS
 
 **NOTE:** This reflects the producer-driven nature of push streams: a stream without a producer would be permanently silent, discarding any construction values (since no subscription could exist at construction time).
 
-A subject is created via `PushStream.subj@`. The subject holds the write capability (broadcasting values, closing the stream); the associated stream, exposed via `.st`, holds the read capability (subscription, chain composition). This split mirrors `PullStream`'s capability separation (§6.11.1).
+A subject is created via `PushStream.subj@`. The subject holds the write capability (broadcasting values, closing the stream); the associated stream, exposed via `.st`, holds the read capability (subscription, chain composition). `PullStream` (§6.11) makes an analogous read/write separation with the write side stdlib-privileged rather than userland-visible.
 
 ```java
 def subj: PushStream.subj@;
@@ -4780,27 +4734,9 @@ subj.st ~map (v) {
 };
 ```
 
-**NOTE:** A `~<*` block whose terminal expression evaluates to `Left@ ...` unsubscribes *this observer* from the source stream. The source stream and other subscribers are unaffected; only this block stops receiving values. The resultant stream produced by this `~<*` closes as a consequence (its emission source is gone). The `Left` value is the unsubscribe signal, not itself emitted into the resultant. This convention is uniform across `Promise ~<*` (§6.8.4), `PushStream ~<*`, and `PullStream ~<*` (§6.11.3).
+**NOTE:** A `~<*` block whose terminal expression evaluates to `Left@ ...` unsubscribes *this observer* from the source stream. The source stream and other subscribers are unaffected; only this block stops receiving values. The resultant stream produced by this `~<*` closes as a consequence (its emission source is gone). The `Left` value is the unsubscribe signal, not itself emitted into the resultant. This convention is specific to `PushStream ~<*`; the other `~<*` forms use source-specific termination signals (`Channel ~<*` §6.9.4 terminates on channel close; effect-handler `~<*` §6.3 terminates on handler-scope end).
 
-**NOTE:** `~<*` polymorphism spans two categories.
-
-**Iterable drainage** (§7): a Range LHS or an `Iter` LHS (§6.5) drives
-one-at-a-time consumption of the source to its terminal. Each delivered
-value binds to the block variable; the loop terminates when the source
-exhausts. See §7 for full drainage semantics.
-
-**Monadic subscription** (§6): four LHS shapes participate. An
-effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3).
-A `Promise` LHS drives unbounded async iteration terminated by a `Left`
-terminal expression (§6.8.4). A `PushStream` LHS drives subscription to
-a producer-broadcast source (§6.10.3). A `PullStream` LHS drives
-subscription to a consumer-triggered delivery source (§6.11.3). The four
-share the "block body runs per emission from the LHS source" pattern;
-they differ in what constitutes an emission, what triggers each
-emission, and what terminates the composition. Across all four, a
-terminal `Left@ ...` unsubscribes the block itself; source-side
-termination conditions vary per LHS (effect-scope end, Promise `Left`,
-source close on streams).
+**NOTE:** `~<*` LHS shapes under the composition axis (§6 opener). Three shapes participate: an effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3); a `Channel` LHS observes each successful take until the channel closes (§6.9.4); a `PushStream` LHS (this section) subscribes to a producer-broadcast source. All three share the "block body runs per external emission" pattern; they differ in what constitutes an emission, what triggers each emission, and what terminates the composition. Source-side termination varies per LHS (effect-scope end, channel close, stream close); a `Left@ ...` block-terminal unsubscribes the observer only on `PushStream ~<*`. Consumer-driven drainage lives on `~<<` (Iter §6.5.3, List §7.2, PullStream §6.11), not `~<*`.
 
 #### §6.10.4 PushStream Combinators
 
@@ -4897,342 +4833,300 @@ The signal stream's emitted value is not itself forwarded; only its arrival trig
 
 ### §6.11 PullStream
 
-A **PullStream** is a monadic *pull-driven source* of values -- a source whose emissions are triggered by consumer demand rather than by producer initiative. Unlike `PushStream` (§6.10), whose producer broadcasts values independently of any subscribers, a `PullStream` emits values only when its holder explicitly requests them from a fixed source; between requests, the stream idles without loss.
+A **PullStream** is a monadic *pull-driven source* of values — a source whose emissions arise from consumer demand rather than producer initiative. A `PullStream` sits over a `PullStream.Buffer` filled by an independently-timed external producer; values propagate downstream when a consumer at the tail of the composition chain drives iteration via `~<<`. Between the writer and the reader sits the opaque `PullStream.Buffer`: bounded, policy-governed, stdlib-mediated.
 
-A stream is either **open** (accepting pull requests and delivering values in response) or **closed** (no further values propagate). Close is either explicit (`.close()` on the subject) or automatic on source exhaustion (see §6.11.1). Close signals propagate downstream to any composed observer.
+A stream is either **open** (accepting pulls and delivering values) or **closed** (no further values propagate). Close is stdlib-privileged: the writer signals end-of-values on the buffer, and the runtime propagates termination through any composed observer.
 
-**NOTE:** `PullStream` is monadic in the sense of the observable monad in reactive-programming literature, dual to `PushStream`. `~<` and `~map` are defined directly on it; `~<*` (§6.11.3) is the composition-form operator. Monad laws hold under observable-behavior equivalence: from any subscriber's viewpoint under an equivalent pull schedule, `(PullStream.of@ < v >).st ~< f` and `f v` produce streams indistinguishable in their emission sequence and close timing. As with `PushStream`, this is a weaker equivalence than the static-value equalities that hold for `Promise` or `Id`.
+**NOTE:** `PullStream` is monadic in the sense of the observable monad in reactive-programming literature. `~<` and `~map` compose over it (§6.11.2); `PullStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@` provide structural combinators (§6.11.4). Monad laws hold under observable-behavior equivalence with respect to a fixed drive schedule: from any subscriber's viewpoint under a fixed sequence of pulls at the terminus, `stFromOneValueBuffer ~< f` and `f v` produce streams indistinguishable in their emission sequence and close timing. This mirrors `PushStream`'s equivalence weakening.
 
-**NOTE:** Four design commitments frame `PullStream`'s subscription semantics, dual to `PushStream`'s:
+**NOTE:** `PullStream` differs from `PushStream` in three concrete ways beyond the shared observable-monad shape:
 
-- **Cold**: no values propagate until pulled. A stream whose subject is never triggered emits nothing.
-- **Broadcast**: every currently-subscribed observer receives every emitted value. Subscription is fanout; a single pull-trigger delivers each emission to all current subscribers.
-- **Source-bound**: emissions originate from a fixed source (an `Iter` supplied at construction), not from producer initiative. The subject-holder controls *when* values flow, not *what* values are.
-- **Idempotent subscription**: a subscription is a relationship between subscriber and source, not an accumulating count. Establishing a subscription for a (subscriber, source) pair that already exists is a no-op. This invariant applies uniformly to every operator (`~<`, `~map`, `~<*`, combinators) that establishes subscriptions internally.
-
-These match the cold-observable design well-worn in reactive-programming literature (with idempotent subscription as Foi's language-level addition). They distinguish `PullStream` from `PushStream` (hot, producer-initiated), from `Channel` (single-consumer, back-pressured, one-to-one), and from `Promise` (single-value, replayable via re-observation).
+- **No subject.** `PullStream` has no capability-separated subject counterpart. The write side of the bridge is stdlib-privileged (stdlib functions accept a `PullStream.Buffer` argument); there is no userland-visible write handle. The `PullStream` reader value is the only userland representation.
+- **Consumer-driven emission.** Emissions do not arise from producer initiative alone. The producer fills the buffer independently, but values do not propagate downstream until a consumer at the tail of the composition chain drives iteration via `~<<`. Each drive step pulls one value from the underlying buffer (or suspends awaiting arrival if the buffer is empty), then broadcasts it through the observer tree (`~<` / `~map` / combinator observers) up to the terminus.
+- **Single terminus per underlying buffer.** Chain composition and fan-out are first-class: `~<`, `~map`, and combinators produce derived `PullStream`s, and multiple derived observers may branch off the same source. But exactly one `~<<` may bind any reader ultimately rooted at a given buffer. Multiple `~<<` bindings on readers sharing an underlying buffer is a usage error, because it would multiply drive against a single-source buffer.
 
 The userland surface is:
 
-- `PullStream@ iter`: primitive unit constructor. Takes an `Iter` instance (§6.5) as its value source. Returns a subject.
-- `PullStream.of@ < ... >`: value-ingestion constructor. Takes a Tuple whose elements become the stream's value sequence. Definitionally sugar for `PullStream@ (Iter@ < ... >)`. Returns a subject.
-- `.close()`: close the stream. Available on the subject only. Returns `Right@ true` on first invocation; subsequent invocations return `Left@ "PullStream Closed"`. Close propagates downstream to composed observers.
-- `.closed()`: available on the stream. Returns `true` if the stream is closed, `false` if open.
-- Subject `%`: `subj% n` triggers up to `n` values to be pulled from the source and emitted to subscribers; unary `subj%` defaults to `n = 1`. Returns a Promise (see §6.11.1).
-- `~<` / `~map`: single-step chain operators. Each registers a subscriber on the source stream and produces a derived stream carrying transformed values to that derived stream's own subscribers.
-- `~<*` subscription form: registers the block body as a subscriber to the source stream; the block body executes per value emitted; the terminal expression's value emits into a resultant `PullStream`. A terminal `Left@ ...` expression unsubscribes this observer without closing the source (§6.11.3).
+- `PullStream.withBuffer@ < capacity, overflow >`: fresh construction; returns a `< st, buf >` tuple pairing a `PullStream` reader with a fresh `PullStream.Buffer` handle (§6.11.1).
+- `PullStream.withBuffer@ < buf >`: recycle construction; vends a fresh `PullStream` reader over a previously-used, closed `PullStream.Buffer` handle (§6.11.1). Runtime error if the buffer is not in a ready state.
+- `buf.ready()`: pure predicate on a `PullStream.Buffer`; returns `true` when the buffer is available for use, `false` while it is actively in use (§6.11.1). Sole userland method on the buffer handle.
+- `~<` / `~map`: single-step chain operators. Each registers a subscriber on the source stream and produces a derived `PullStream` carrying transformed values to that derived stream's own subscribers (§6.11.2).
+- `~<<`: consumer-drives do-loop; the sole terminus form on a `PullStream` composition chain (§6.11.3).
 - `PullStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@`: derived-stream constructors for fan-in, predicate filtering, stateful fold, and signal-driven close (§6.11.4).
 
-**NOTE:** `~<<` (single-value do-block, §6.8.3) is not defined on `PullStream`. Streams have no single value to extract; `~<*` is the composition-form operator for multi-emission sources. This mirrors the split for other multi-emission types (§6.3, §6.8.4, §6.10).
+**NOTE:** `~<*` is not defined on `PullStream`. `~<*` is the observer-of-external-emissions operator (§6 opener); its LHS types (`Effect`, `Channel`, `PushStream`) all deliver values when their producers initiate delivery, not when consumers pull. `PullStream` values propagate only under consumer drive, which places it on the `~<<` axis. This mirrors how `Iter` (§6.5) and `List` (§7.2) also use `~<<` for consumer-driven iteration.
 
-#### §6.11.1 PullStream Unit Constructors
+#### §6.11.1 Buffer Construction and Introspection
 
-A `PullStream` instance is constructed through a subject, from an `Iter` (§6.5) source or from a tuple (value-ingestion sugar). The subject holds the write capability (triggering pulls, closing the stream); the associated stream, exposed via `.st`, holds the read capability (subscription, chain composition). This split mirrors `PushStream.subj@`'s capability separation.
+A `PullStream.Buffer` is the opaque handle sitting between an external producer and a `PullStream` reader. Buffers are constructed via `PullStream.withBuffer@`, which comes in two forms.
 
-The base form takes an `Iter`:
+**Fresh construction:**
 
 ```java
-def subj: PullStream@ (Iter@ < 1, 2, 3 >);
+def <st, buf>: PullStream.withBuffer@ <
+    capacity: 128,
+    overflow: PullStream.DROP_OLDEST
+>;
 ```
 
-The value-ingestion form takes a tuple directly:
+The tuple return destructures into the reader (`st`, a `PullStream`) and the buffer handle (`buf`, a `PullStream.Buffer`). The consumer holds `st` and drives it via `~<<`; the handle `buf` is passed to a stdlib I/O function that fills it (§6.11.5).
+
+`capacity` is the maximum count of buffered values held between writer and reader.
+
+`overflow` is one of three named policies governing behavior when the writer attempts to enqueue into a full buffer:
+
+- **`PullStream.DROP_OLDEST`**: the eldest buffered value is discarded to make room for the new arrival.
+- **`PullStream.DROP_NEWEST`**: the incoming value is discarded; existing buffered values are unchanged.
+- **`PullStream.ERROR_ON_OVERFLOW`**: the write fails and the writer surfaces the failure through its own error-return path (see §6.11.5 for how stdlib functions expose this).
+
+`Block@` is not among the policies: Foi's execution model has no cooperative yield points during synchronous evaluation on which a "block until buffer drains" policy could hang, so the option is excluded rather than emulated.
+
+**Recycle construction:**
 
 ```java
-def subj: PullStream.of@ < 1, 2, 3 >;
+def <st, buf>: PullStream.withBuffer@ < buf: prevBuf >;
 ```
 
-`PullStream.of@ < ... >` is definitionally sugar for `PullStream@ (Iter@ < ... >)`. Both return a subject; the tuple form is the ergonomic path for source sequences known at the call site.
+An existing buffer that is in a ready state is passed as the `buf` argument; a fresh `PullStream` reader is vended over it, and the same handle is returned. Runtime error if `prevBuf` is not ready at the call site. Capacity and overflow policy are preserved from the buffer's original fresh construction; they are not overridable at recycle time.
 
-**NOTE:** `PullStream.of@`'s argument is *always* a Tuple; its elements become the value sequence, consumed in tuple order. This eliminates the ambiguity a bare-value form would introduce: `PullStream.of@ < 1, 2, 3 >` unambiguously specifies a stream of three values, never a stream of one three-element tuple. Bare `PullStream.of@ v` with a non-tuple argument is ill-formed and produces a compiler error.
-
-An empty tuple is legitimate:
+**Introspection:**
 
 ```java
-def subj: PullStream.of@ <>;
+buf.ready();
 ```
 
-This yields a subject whose associated stream is already closed at construction (per §6.11.2, an exhausted source produces a closed stream). Any `subj% n` on it returns `Left@ "PullStream Closed"`.
+Returns `true` if `buf` is available for use: either freshly constructed and not yet handed to a producer, or previously used and subsequently closed. Returns `false` while `buf` is actively in use. `ready()` is a pure query on buffer state; it carries no effect signature. It is the sole userland method on `PullStream.Buffer`.
 
-The subject exposes a single field:
+**NOTE:** The `withBuffer@ < buf: ... >` call is the authoritative check for buffer readiness; if `ready()` returned `true` at some prior instant but a stdlib function has since re-taken the buffer, `withBuffer@` will still runtime-error at the recycle site. Users relying on `ready()` for coordination should treat it as a hint, not a lock; the `withBuffer@` error path is the enforceable check.
 
-- `.st`: the associated `PullStream`, open at construction and awaiting subscribers.
+#### §6.11.2 Chain Composition Via `~<` / `~map`
 
-Values are pulled from the source and emitted to subscribers by applying `%` to the subject with a count:
-
-```java
-def subj: PullStream.of@ < 1, 2, 3 >;
-
-PullStream ~<* (v:: subj.st) {
-    log(`"got: `v`");
-    v;
-};
-
-subj% 2;
-// got: 1
-// got: 2
-// Promise{Right{true}}
-
-subj% 1;
-// got: 3
-// Promise{Right{true}}
-
-subj% 1;
-// Promise{Left{"PullStream Exhausted"}}
-```
-
-`subj% n` requests `n` values from the source. Each value pulled is broadcast to every current subscriber of the associated stream, in source order. The returned `Promise` resolves per the outcome:
-
-- **`Right@ true`** if all `n` values were pulled and emitted successfully.
-- **`Left@ "PullStream Exhausted"`** if the source ran out of values before `n` were delivered. The stream auto-closes.
-- **`Left@ "PullStream Closed"`** if the stream was already closed at call time, or `.close()` was invoked on the subject while the pull was in flight (the pull aborts immediately).
-
-Unary `subj%` is equivalent to `subj% 1`.
-
-**NOTE:** Concurrent `subj% n` calls on the same subject are serialized in issue order. A `subj% 3` in flight fully completes (or fails) before a subsequently-issued `subj% 2` begins pulling. This preserves source-order emission as a stable contract; interleaved concurrent batches would produce non-deterministic delivery orderings.
-
-`%` dispatch on the subject is realized via ordinary `_percent`-hook dispatch (§6.2); the hook is stdlib code that drives the pull-and-broadcast loop against the subject's bound `Iter` and current subscriber set.
-
-**NOTE:** The stream is separable from its subject (but not vice versa). `subj.st` is a first-class value: it may be passed, stored, composed, and observed independently. Applying `%` to the subject is the sole path for the subject's holder to trigger pulls; `.close()` on the subject is the sole path to explicit close. Holders of only `.st` are pure observers -- they can subscribe, chain, and check `.closed()`, but cannot trigger emissions or close the source.
-
-#### §6.11.2 Closing
-
-A stream is closed via `.close()` on the subject:
+`~<` and `~map` are single-step chain operators on `PullStream`. Each registers a subscriber on the source stream and produces a derived `PullStream` carrying values to that derived stream's own subscribers.
 
 ```java
-def subj: PullStream.of@ < 1, 2, 3 >;
+def <src, buf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
 
-subj.close();       // Right{true}
-
-subj.close();       // Left{"PullStream Closed"}
-
-subj.st.closed();   // true
-```
-
-Close capability lives on the subject; the observation of closed state lives on the stream. This matches the capability separation established in §6.11.1: subject-holders control the lifetime of the stream; stream-holders (pure observers) inspect it but cannot terminate it.
-
-Closing is a one-time state transition:
-
-- The first invocation of `.close()` returns `Right@ true`.
-- Subsequent invocations return `Left@ "PullStream Closed"`.
-
-Once closed:
-
-- Any subsequent `subj% n` returns `Promise@ Left@ "PullStream Closed"` without pulling from the source.
-- A `subj% n` in flight at the moment of close aborts immediately; its pending Promise resolves to `Left@ "PullStream Closed"`, regardless of how many values had been delivered from the aborted batch.
-- Downstream composed streams close as the close signal propagates. `.closed()` on any downstream observer returns `true`.
-- No further values propagate through the closed stream or its downstream chain.
-
-In addition to explicit close, a `PullStream` auto-closes on source exhaustion: when a `subj% n` batch drains the underlying `Iter` before `n` values have been delivered, the stream transitions to closed as the batch completes, and the returned Promise resolves to `Left@ "PullStream Exhausted"` (§6.11.1). Subsequent `subj% n` calls on the auto-closed stream return `Left@ "PullStream Closed"` in the usual way.
-
-The exhausted-vs-closed distinction is observable only on the batch that first drives the source to exhaustion. A source that is exhausted at construction (an empty `Iter`) produces an already-closed stream; the first `subj% n` returns `Left@ "PullStream Closed"`, not `"PullStream Exhausted"`, because no batch was in flight to observe the transition.
-
-Close propagates downstream, not upstream: closing a downstream observer does not close its source. The subject that owns the source retains control over the lifetime of the propagation chain rooted at it.
-
-**NOTE:** Closing a stream releases stdlib-side memory associated with its subscriber registrations and downstream chain, and drops the reference to the underlying `Iter` source. Long-lived streams should be closed when no longer needed to avoid retention of subscribers and source state.
-
-#### §6.11.3 Subscription Via `~<*`
-
-`PullStream ~<*` is the composition-form operator for pull streams. The block-defs clause (per §16 grammar) binds each value delivered from the source stream, and the block body executes per value:
-
-```java
-def subj: PullStream.of@ < 1, 2, 3 >;
-
-def doubled: PullStream ~<* (v:: subj.st) {
-    log(`"Received: `v`");
-    v * 2;
-};
+def doubled: src ~map (v) { v * 2; };
 // PullStream{}
 
-def observer: doubled ~map (v) {
-    log(`"Doubled: `v`");
+def announced: doubled ~map (v) {
+    log(`"doubled: `v`");
     v;
 };
 // PullStream{}
-
-subj% 2;
-// Received: 1
-// Doubled: 2
-// Received: 2
-// Doubled: 4
-// Promise{Right{true}}
-
-subj% 1;
-// Received: 3
-// Doubled: 6
-// Promise{Right{true}}
 ```
 
-Semantically, `PullStream ~<*` registers the block body as a subscriber to the source stream:
+`~map` on `PullStream` is observation-with-transformation: for each value delivered from the source, the function is invoked and its return value delivered to the derived stream's subscribers.
 
-- `(v:: subj.st)` in the block-defs clause identifies the source stream and binds `v` to each value delivered from it.
-- Body statements run for side effects on each value delivered.
-- The terminal expression's value emits into the resultant stream (`doubled` above), which forwards it to its own subscribers.
-- Multiple `PullStream ~<*` subscriptions on the same source each independently receive every delivered value.
-- When the source stream closes (explicitly via `.close()` on the subject, or automatically on source exhaustion), the subscription terminates and the resultant stream closes; close propagates downstream (§6.11.2).
+`~<` on `PullStream` is monadic bind under observation semantics: for each value delivered from the source, the chained function is invoked to produce an inner `PullStream`; the derived subscribes (idempotently) to that inner and forwards any values the inner emits. Subscription is idempotent: re-subscribing an already-subscribed (derived, inner) pair is a no-op. The derived stream does not drive the inner's emissions — values flow through the derived only when the inner is driven by a terminus rooted somewhere in its own chain. The derived stream closes when the source closes and every subscribed inner has closed.
 
-Per §6.3.3 do-block-compilation split, `PullStream ~<*` compiles via the default route (chain-chain-chain-map): mid-block statements and `::`-binds compile through `~<`; a bare terminal expression compiles through `~map`. `~<` and `~map` on `PullStream` are the primitives; `~<*` is do-block sugar over them.
+**NOTE:** `~<` on `PullStream` is not equivalent to any of the flatmap variants named in reactive-programming literature (mergeMap, switchMap, concatMap, exhaustMap). Those variants all presuppose that the composition operator drives inner emission; they differ only in *how* driving is scheduled. Foi's execution model separates observation from driving: `~<` composes observation, and driving is the responsibility of the terminus at the tail of whichever chain roots the inner. Users seeking driving-strategy patterns compose them explicitly from combinators (§6.11.4) alongside the driver primitives (`IO`, §6.12) that supply timing and iteration.
 
-`~<` on `PullStream` is monadic bind under observation semantics: for each value delivered from the source, the chained function is invoked to produce an inner `PullStream`; the derived stream subscribes to that inner and forwards any values the inner emits. Subscription is idempotent (§6.11 opener): re-subscribing an already-subscribed (derived, inner) pair is a no-op. The derived stream does not drive the inner's emissions -- values flow through the derived only when the inner is driven by its own producer (a subject-holder pulling elsewhere, or another operator that drives streams). The derived stream closes when the source closes and every subscribed inner has closed.
-
-As a consequence of subscription idempotency, composition patterns that would multiply subscriptions under a naïve counting model (e.g., `sourceSt ~< { sharedInnerSt }` with repeated source deliveries) instead maintain a single subscription per pair. The example in the next NOTE illustrates.
-
-**NOTE:** `~<` on `PullStream` is not equivalent to any of the flatmap variants named in reactive-programming literature (mergeMap, switchMap, concatMap, exhaustMap). Those variants all presuppose that the composition operator drives inner emission; they differ only in *how* driving is scheduled. Foi's execution model separates observation from driving: `~<` composes observation, and driving is the responsibility of whatever produced the inner stream. Users seeking driving-strategy patterns compose them explicitly from combinators (§6.11.4) alongside the driver primitives (`IO`, §6.12) that supply timing and iteration.
-
-To illustrate observation-only composition, consider a shared external inner:
+**Fan-out is idempotent-subscription observation.** Multiple derived observers may branch off a single source stream; each receives every value delivered from the source when the terminus at the tail of its chain drives:
 
 ```java
-def su1: PullStream.of@ < 1, 2, 3 >;
-def su2: PullStream.of@ < 10, 20, 30 >;
+def <src, buf>: PullStream.withBuffer@ <
+    capacity: 16, overflow: PullStream.DROP_OLDEST
+>;
 
-def derived: su1.st ~< { su2.st };
+def doubled: src ~map (v) { v * 2; };
+def tripled: src ~map (v) { v * 3; };
 
-PullStream ~<* (v:: derived) {
-    log(`"derived: `v`");
-};
-
-su2%;
-// (nothing -- derived isn't subscribed to su2.st yet)
-
-su1%;
-// (nothing observable downstream; derived now subscribed to su2.st)
-
-su2%;
-// derived: 20
-// (su2 delivers 20; single subscription forwards to derived)
-
-su1%;
-// (idempotent no-op; already subscribed)
-
-su2%;
-// derived: 30
+// exactly one `~<<` at the tail of a chain rooted at `buf`;
+// see §6.11.3
 ```
 
-The first `su2%` delivers `10` before any subscription exists on `su2.st`, so it is lost. The first `su1%` triggers the `~<` block once, which returns `su2.st`, subscribing the derived. The second `su2%` delivers `20`, which the single subscription forwards. The second `su1%` re-attempts subscription to `su2.st` -- idempotent no-op. The third `su2%` still has a single subscription, so `30` forwards once, not twice.
+Both `doubled` and `tripled` observe `src`; when a value is pulled from `buf` through the terminus, both derived streams receive it and transform it independently for their own downstream observers.
 
-`~<` and `~map` remain first-class chain operators and may be used directly for single-step subscription-with-transform:
+#### §6.11.3 Consumption Via `~<<`
+
+A `PullStream` composition chain is consumed by binding its tail as the LHS of a `~<<` do-loop:
 
 ```java
-subj.st ~map (v) {
-    v * 2;
+def <st, buf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
+
+File.readLines@ < "/tmp/log", buf >;
+// stdlib begins filling buf independently; the call
+// returns a completion signal for the read as a whole
+
+PullStream ~<< (line:: st) {
+    log(`"line: `line`");
 };
+// loop iterates as values arrive in buf; terminates when
+// the writer signals close on buf
 ```
 
-**NOTE:** A `~<*` block whose terminal expression evaluates to `Left@ ...` unsubscribes *this observer* from the source stream. The source stream and other subscribers are unaffected; only this block stops receiving values. The resultant stream produced by this `~<*` closes as a consequence (its emission source is gone). The `Left` value is the unsubscribe signal, not itself emitted into the resultant. This convention is uniform across `Promise ~<*` (§6.8.4), `PushStream ~<*` (§6.10.3), and `PullStream ~<*`.
+Semantics:
 
-For `PullStream ~<*` specifically, unsubscribe is immediate: if a `subj% n` batch is in flight and the block returns `Left@ ...` on the k-th delivered value, subsequent values within the same batch (values k+1 through n) are not delivered to this observer, but continue to be delivered to any remaining subscribers. The `subj% n` promise still resolves per its normal contract (§6.11.1), unaffected by any individual subscriber's unsubscribe.
+- `(line:: st)` binds each value delivered from the buffer as `line`. The block body runs once per delivered value.
+- The loop drives its own iteration: when a value is available in the buffer, it is consumed and the block body runs; when the buffer is empty but not closed, the loop suspends awaiting the next arrival.
+- The loop terminates when the writer signals close on the buffer. Because close purges any residual buffered-but-unread values (§6.11.5), close-signal and drain-completion coincide from the reader's perspective: there is no "drain remaining after close" phase.
+- A terminal `Left@ ...` expression in the block body exits the loop early (§7.9). A `Done@` sentinel from within the block also exits the loop (§7.9). Both surface the exit reason through the standard `~<<` return value.
 
-**NOTE:** `~<*` polymorphism spans two categories.
+**Drive cascades through the chain.** When the `~<<` terminus is bound to a derived stream (produced by `~<`, `~map`, or a combinator), each iteration pulls one value from the underlying buffer at the root of the derived's chain, propagates it through the observer tree (running each `~<` / `~map` / combinator transformation along the way), and delivers the final result to the block:
 
-**Iterable drainage** (§7): a Range LHS or an `Iter` LHS (§6.5) drives
-one-at-a-time consumption of the source to its terminal. Each delivered
-value binds to the block variable; the loop terminates when the source
-exhausts. See §7 for full drainage semantics.
+```java
+def <src, buf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
 
-**Monadic subscription** (§6): four LHS shapes participate. An
-effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3).
-A `Promise` LHS drives unbounded async iteration terminated by a `Left`
-terminal expression (§6.8.4). A `PushStream` LHS drives subscription to
-a producer-broadcast source (§6.10.3). A `PullStream` LHS drives
-subscription to a consumer-triggered delivery source (§6.11.3). The four
-share the "block body runs per emission from the LHS source" pattern;
-they differ in what constitutes an emission, what triggers each
-emission, and what terminates the composition. Across all four, a
-terminal `Left@ ...` unsubscribes the block itself; source-side
-termination conditions vary per LHS (effect-scope end, Promise `Left`,
-source close on streams).
+def doubled: src ~map (v) { v * 2; };
+
+File.readInts@ < "/tmp/nums", buf >;
+
+PullStream ~<< (n:: doubled) {
+    log(`"doubled: `n`");
+};
+// each iteration:
+//   1. pulls one int from buf
+//   2. runs `~map` transformation (v * 2)
+//   3. delivers to block as `n`
+```
+
+**NOTE:** Suspension of `~<<` when the buffer is empty but not closed is handled through the same effect-based suspension machinery that supports `~<<` on `Promise`, `Channel`, and `IO`. A `PullStream` `~<<` loop that suspends awaiting a buffer arrival does not block the surrounding thread; it yields via the runtime's suspension protocol and resumes when a value becomes available or when close is signaled.
+
+**Single terminus per underlying buffer.** Every `PullStream` in a composition chain is ultimately rooted at exactly one `PullStream.Buffer` (or, for `merge@`-derived streams, a definite finite set of buffers). Exactly one `~<<` may terminate any chain rooted at a given buffer. Binding two `~<<` loops to readers that share an underlying buffer — either the same reader in two places, or two readers derived from the same source — is a usage error, because the two termini would race for drive against a single-source buffer.
+
+**Closed means closed.** A `PullStream` value whose `~<<` loop has terminated is permanently closed from userland's view. A subsequent cycle on the same underlying buffer is obtained through a fresh `withBuffer@ < buf: ... >` call, which vends a new `PullStream` value; the prior `PullStream` is not resurrected.
 
 #### §6.11.4 PullStream Combinators
 
 Four named constructors on the `PullStream` namespace provide the core primitives that operators alone cannot express. Each `@`-marked constructor takes a single tuple argument (per the unary-`@` convention); multi-material constructions express positional roles through the tuple shape. These four parallel §6.10.4's constructors on `PushStream` and are the substrate for building richer pull-driven patterns in userspace.
 
-Each combinator subscribes to its source stream(s) and produces a derived stream; per §6.11.3, subscription is observation, not driving. Values flow through the derived stream when the sources are driven by their own subject-holders (via `subj% n` on the underlying subjects, per §6.11.1).
+Each combinator subscribes to its source stream(s) and produces a derived `PullStream`; per §6.11.2, subscription is observation, not driving. Values flow through the derived stream when the `~<<` terminus at the tail of the derived's chain pulls.
 
 **`PullStream.merge@ < ...sts >`** fans in a list of source streams into a single derived stream:
 
 ```java
-def su1: PullStream.of@ < 1, 2, 3 >;
-def su2: PullStream.of@ < 10, 20, 30 >;
+def <sA, bufA>: PullStream.withBuffer@ <
+    capacity: 8,
+    overflow: PullStream.DROP_OLDEST
+>;
+def <sB, bufB>: PullStream.withBuffer@ <
+    capacity: 8,
+    overflow: PullStream.DROP_OLDEST
+>;
 
-def merged: PullStream.merge@ < su1.st, su2.st >;
+File.readLines@ < "/tmp/a.log", bufA >;
+File.readLines@ < "/tmp/b.log", bufB >;
 
-PullStream ~<* (v:: merged) {
-    log(`"merged: `v`");
+def merged: PullStream.merge@ < sA, sB >;
+
+PullStream ~<< (line:: merged) {
+    log(`"merged: `line`");
 };
-
-su1%;      // merged: 1
-su2%;      // merged: 10
-su1%;      // merged: 2
 ```
 
-The derived stream emits every value delivered by any source, in the order they arrive across sources; ordering across sources reflects arrival order at the derived stream. The derived stream closes once every source stream has closed.
+Each iteration of the terminus pulls one value: if exactly one source buffer has a value available, that value is delivered; if multiple sources have values available, arbitration follows the input list's left-to-right ordering; if no source has a value, the terminus suspends until any source delivers. The derived stream closes once every source stream has closed.
 
-**NOTE:** Per §6.11.3's idempotent-subscription invariant, listing the same source stream more than once in a `merge@` tuple is not an error but does not multiply delivery. The derived stream holds one subscription per distinct source; a source that appears twice in the input tuple contributes its emissions once.
+**NOTE:** Per §6.11.2's idempotent-subscription invariant, listing the same source stream more than once in a `merge@` tuple is not an error but does not multiply delivery. The derived stream holds one subscription per distinct source; a source that appears twice in the input tuple contributes its emissions once.
+
+**NOTE:** `merge@` widens the "single terminus per underlying buffer" invariant (§6.11.3) to accommodate multi-source composition: a chain terminated by `~<<` on a `merge@`-derived stream may drive multiple upstream buffers (one per distinct source). The invariant still holds against each individual buffer: no other `~<<` may terminate a chain rooted at any of `merge@`'s sources.
 
 **`PullStream.filter@ < sourceSt, pred >`** returns a derived stream that emits only source values passing a predicate:
 
 ```java
-def subj: PullStream.of@ < 1, 2, 3, 4 >;
+def <src, buf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
 
 def evens: PullStream.filter@ <
-    subj.st,
+    src,
     (defn(v) ^(mod(v, 2) ?= 0))
 >;
 
-PullStream ~<* (v:: evens) {
-    log(`"even: `v`");
-};
+File.readInts@ < "/tmp/nums", buf >;
 
-subj% 4;
-// even: 2
-// even: 4
+PullStream ~<< (n:: evens) {
+    log(`"even: `n`");
+};
 ```
 
-`pred` is applied to each source-delivered value; only values for which `pred(v)` returns truthy are forwarded to the derived stream. The derived stream closes when the source closes.
+`pred` is applied to each source emission; values for which `pred(v)` returns truthy are forwarded to the derived's subscribers, values that fail the predicate are silently dropped. The derived stream closes when the source closes.
+
+**NOTE:** `filter@` does not amortize discarded pulls: a filtered-out value still counts as one pull cycle from the terminus's perspective. The terminus pulls one value from the source, `pred` runs, and if the value is dropped, the terminus does not automatically re-pull to satisfy a "one delivery per iteration" contract. Users needing "iterate until N values pass the filter" patterns compose that logic in the `~<<` block body via `Done@` (§7.9).
 
 **`PullStream.scan@ < sourceSt, init, fn >`** returns a derived stream that emits accumulated values from a stateful fold across source emissions:
 
 ```java
-def subj: PullStream.of@ < 1, 2, 3 >;
+def <src, buf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
 
 def totals: PullStream.scan@ <
-    subj.st,
+    src,
     0,
     (defn(acc, v) ^(acc + v))
 >;
 
-PullStream ~<* (t:: totals) {
+File.readInts@ < "/tmp/nums", buf >;
+
+PullStream ~<< (t:: totals) {
     log(`"total: `t`");
 };
-
-subj% 3;
-// total: 1
-// total: 3
-// total: 6
 ```
 
-`fn(acc, v)` is applied with the current accumulator and each source-delivered value; its return value becomes both the new accumulator and the derived stream's emitted value. `init` is the initial accumulator; the derived stream does not emit `init` itself; it emits the first result of `fn(init, v0)` when the first source value is delivered. The derived stream closes when the source closes.
+`fn(acc, v)` is applied with the current accumulator and each source emission; its return value becomes both the new accumulator and the derived stream's emitted value. `init` is the initial accumulator; the derived stream does not emit `init` itself — it emits the first result of `fn(init, v0)` when the first source value arrives. The derived stream closes when the source closes.
 
 **`PullStream.takeUntil@ < sourceSt, signalSt >`** returns a derived stream that forwards from `sourceSt` and closes when `signalSt` emits its first value:
 
 ```java
-def subj: PullStream.of@ < 1, 2, 3, 4 >;
-def stop: PullStream.of@ < true >;
+def <src, srcBuf>: PullStream.withBuffer@ <
+    capacity: 16,
+    overflow: PullStream.DROP_OLDEST
+>;
+def <stop, stopBuf>: PullStream.withBuffer@ <
+    capacity: 1,
+    overflow: PullStream.DROP_NEWEST
+>;
 
-def bounded: PullStream.takeUntil@ < subj.st, stop.st >;
+File.readLines@ < "/tmp/log", srcBuf >;
+Signal.watch@ < "SIGINT", stopBuf >;
 
-PullStream ~<* (v:: bounded) {
-    log(`"bounded: `v`");
+def bounded: PullStream.takeUntil@ < src, stop >;
+
+PullStream ~<< (line:: bounded) {
+    log(`"line: `line`");
 };
-
-subj% 2;      // bounded: 1
-              // bounded: 2
-stop%;        // (bounded closes)
-subj% 1;      // (nothing -- bounded is closed)
 ```
 
 The signal stream's emitted value is not itself forwarded; only its arrival triggers the close of the derived stream. If either the source or signal closes without the signal ever emitting, the derived stream closes at that point.
 
-**NOTE:** These four combinators are the atomic primitives Foi commits to on the `PullStream` namespace. Higher-order patterns familiar from reactive-programming literature -- latest-wins flatmap (`switchMap`), sequential flatmap (`concatMap`), coordinated latest values across sources (`combineLatest`), debouncing, throttling, distinct-value filtering, and so on -- are userspace compositions of these four combinators, the `~<` / `~map` / `~<*` operators, and (for time-based patterns) IO primitives (§6.12). Foi does not commit to those higher-order patterns in spec; libraries provide them.
+**NOTE:** `takeUntil@` observes the signal stream via a stdlib-internal single-take that awaits the signal buffer's first arrival independently of the terminus's drive cycles on `sourceSt`. Users do not need to bind a separate `~<<` to `signalSt`; the combinator handles signal observation internally. Consequently, the "single terminus per underlying buffer" invariant (§6.11.3) applies as expected to `stopBuf` — no user-side `~<<` may bind `stop`.
+
+**NOTE:** These four combinators are the atomic primitives Foi commits to on the `PullStream` namespace. Higher-order patterns (buffering with time windows, deduplication, backpressure-aware throttling, etc.) are userspace compositions of these four combinators, the `~<` / `~map` / `~<<` operators, and (for time-based patterns) IO primitives (§6.12). Foi does not commit to those higher-order patterns in spec; libraries provide them.
+
+#### §6.11.5 Buffer Lifecycle and Stdlib I/O Patterns
+
+Buffer writes, close signaling, and cross-cycle reset are exclusively stdlib-privileged. Userland receives a buffer handle from `withBuffer@`, passes it to a stdlib function, and observes the resulting read stream via `~<<`. The writer side of the bridge has no user-facing API.
+
+**Buffer state machine:**
+
+- **Fresh**: just constructed via `withBuffer@ < capacity, overflow >`; no producer has taken it. `ready()` returns `true`.
+- **In use**: a producer holds the buffer and may be writing to it. `ready()` returns `false`.
+- **Closed**: the producer has signaled end-of-values. The buffer purges any residual buffered values and transitions back to a ready state. `ready()` returns `true`; the buffer may be recycled via `withBuffer@ < buf: ... >`.
+
+Close is destructive: the producer signaling close discards any buffered-but-unread values. This is the semantic that lets close and drain-completion coincide from the reader's perspective; the reader does not observe a "drain remaining" phase after close. Producers that need "no more writes but drain what's buffered" semantics must enqueue their final values before signaling close; the runtime does not provide a two-phase close on the buffer surface.
+
+**Stdlib I/O overloading (non-normative).** Stdlib functions that produce value sequences typically overload on buffer presence:
+
+- **Buffered form** (`File.readLines@ < path, buf >`) routes the read into `buf` and returns a completion signal (a `Promise` or `IO`) for the read as a whole. The consumer observes values through the `PullStream` vended alongside `buf`.
+- **Firehose form** (`File.readLines@ < path >`) returns a bare `PushStream` value. The consumer observes via `PushStream ~<*` (§6.10.3). The producer is stdlib-internal; no subject handle is vended to userland, and no `%` or `.close()` capability is exposed. Stream termination on producer completion cascades through the runtime's subscription lifecycle in the usual way.
+
+**NOTE:** A stdlib-vended `PushStream` returned from a firehose call is a `PushStream` value like any other from userland's perspective; it composes with `~<*`, `~<`, `~map`, and the `PushStream` combinators normally. The distinction between "userland-produced via `PushStream.subj@`" and "stdlib-vended" is not a type-level distinction; it is a lifecycle distinction. Users receive the `.st`-side of the capability split without the `subj` counterpart, which is functionally equivalent to receiving `.st` from a subject whose write capability has been retained elsewhere.
+
+**Push→Pull bridging.** A `PullStream.Buffer` and a `PushStream` are composed only through stdlib functions that accept both as arguments. Users cannot subscribe a buffer to a push stream directly at the userland surface. The bridge is stdlib-privileged because the resource-lifetime and backpressure-signaling concerns of the coupling are stdlib-internal machinery. The userland API for consumer-timed buffered reads is `withBuffer@` plus `~<<`, and the subset of stdlib functions that accept the buffer argument handle the producer wiring.
+
+Backpressure at the userland level is not surfaced beyond the overflow policy: `PullStream.ERROR_ON_OVERFLOW` on a full buffer causes the writing stdlib function to fail its completion signal (typically as `Left@ "Buffer Full"` on the returned `Promise` or `IO`). `PullStream.DROP_OLDEST` and `PullStream.DROP_NEWEST` do not surface backpressure at all; values are silently discarded per policy. Users needing finer-grained backpressure coordination compose it at the stdlib-function level, not through the buffer directly.
 
 ### §6.12 IO
 
@@ -5691,7 +5585,7 @@ The comprehension family -- operators of the form `~<glyph>` -- provides Foi's i
 
 This section specifies the concrete behavior of each comprehension operator when its LHS is a `Tuple`, `Range`, or `List` -- Foi's canonical ordered-container types -- along with the imperative loop form (`~each`) and the shared early-exit sentinel (`Done@`).
 
-Coverage of comprehension behavior for pause-able monadic types (Generator §6.6, State §6.7, Promise §6.8, Channel §6.9, PushStream §6.10, PullStream §6.11, IO §6.12) lives in each type's §6 subsection. The `~<<` (do) and `~<*` (looping-do) comprehensions on those types are specified per-type in §6; §7 covers `~<<` on `List` (§7.2) and `~<*` on `Range` (§7.10) -- the residual arms with ordered-container LHS -- along with `Done@` early-exit integration common to all comprehension consumers (§7.9).
+Coverage of comprehension behavior for pause-able monadic types (Generator §6.6, State §6.7, Promise §6.8, Channel §6.9, PushStream §6.10, PullStream §6.11, IO §6.12) lives in each type's §6 subsection. The `~<<` (do) and `~<*` (looping-do) comprehensions on those types are specified per-type in §6; §7 covers `~<<` on `List` (§7.2) -- the residual arm with ordered-container LHS, applying uniformly to range-literal-produced Lists -- along with `Done@` early-exit integration common to all comprehension consumers (§7.9).
 
 Covered comprehension mechanisms:
 
@@ -5704,7 +5598,6 @@ Covered comprehension mechanisms:
 - `~cata` (§7.7): thunk-initialed catamorphism.
 - `~ap` (§7.8): applicative apply.
 - `Done@` (§7.9): early-exit sentinel behavior across comprehensions.
-- `~<*` on `Range` (§7.10): iterable-drainage arm.
 
 #### §7.1 `~each`
 
