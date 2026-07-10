@@ -86,7 +86,16 @@ If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, 
     - [Task](#task)
     - [Reader](#reader)
     - [Transforming Over Concurrency](#transforming-over-concurrency)
-* [Generator Monad](#generator-monad)
+* [Iterators](#iterators)
+    - [Constructing An Iterator](#constructing-an-iterator)
+    - [Stepping](#stepping)
+    - [Draining An Iterator](#draining-an-iterator)
+* [Generators](#generators)
+    - [Declaring a Generator](#declaring-a-generator)
+    - [Generator Invocation](#generator-invocation)
+    - [Yielding Values](#yielding-values)
+    - [The Terminal Value](#the-terminal-value)
+    - [Two-Way Value Flow](#two-way-value-flow)
 * [Type Annotations](#type-annotations)
 
 ## Primitive Values
@@ -4654,129 +4663,261 @@ In other words, we can resolve a singular-value promise from `getValue()` for ea
 
 It's not common that you'll want to mix/compose promises and streams in the same `IO` *do comprehension* -- usually just one or the other -- so this kind of confusing nuance won't be encountered very often.
 
-## Generator Monad
+## Iterators
 
-Generators are a specialization of `IO`, which behaves somewhat like a CSP `Channel`.
+An **Iterator** (`Iter`) is a stateful protocol for lazily pulling values from a *source* one at a time.
 
-Generators are useful for expressing "lazy" computations, meaning that they step through producing a single value at a time, and only compute the next value after the previous value has been requested.
+Unlike a `Promise` (which resolves once and permanently) or a `PushStream` (whose producer initiates delivery), an `Iter` delivers values only when its holder explicitly asks for the next one -- each *step* advances the source by one position.
 
-The `Gen@` unit constructor expects a single argument: a function that will receive the Reader value (`env` below), and a function (`yield` below) to produce values from the generator. Calling `yield()` queues up a value to send through the iterator, and produces a `Promise` instance that will resolve once the value has been taken from the iterator. If successful, the resolved value with be a `Right`, and `Left` otherwise.
+`Iter` is similar to `PullStream`, in that it's consumer driven; what you pull is what you get.
+
+However, iterators connect to a fixed source (tuple) or control a [generator invocation](#generator-invocation); `PullStream` only connects opaquely to a buffer (fed by a `PushStream`). Iterators are also non-monadic: there's no `~<` or `~map` defined on them. That said, iterator composition re-uses the `~<<` do-form (borrowed from monadic structures), to drain the iterator.
+
+Iterators may be explicitly constructed via `Iter@`, or are returned from invoking a generator. Both share the same stepping interface; generators additionally allow two-way value flow via a resume-value channel.
+
+### Constructing An Iterator
+
+The `Iter@` constructor takes a single source argument, which must be either a Tuple (`List`) or another `Iter`.
 
 ```java
-def genIO: Gen@ (defn(env,yield){
-    def pr: yield(42);
-    // ..
-});
+def it: Iter@ < 10, 20, 30 >;
 ```
 
-Calling the unit constructor produces an `IO` instance (`genIO` above); when `%` is applied against the `IO`, the generator function starts running, and an iterator is returned to retrieve the generator instance's value(s).
-
-The iterator holds two functions: `next()` for retrieving values, and `close()` for closing the iterator (and thus stopping the `IO` instance of the generator).
-
-The most classic example of a generator is computing the Fibonacci sequence:
+The Tuple's elements become the value sequence, delivered in order. A range literal (which produces a Tuple) also works:
 
 ```java
-def fib: Gen@ (defn(env,yield){
-    def a: 0;
-    def b: 1;
-    ^Promise ~<* {
-        def cur: a;
-        def res:: yield(cur);
-        a := b;
-        b := cur + a;
-    };
-});
+def it: Iter@ 1..5;
+```
 
-def it: fib%;
+Passing an existing `Iter` to `Iter@` returns the same instance -- no new state, no wrapper:
 
+```java
+def existing: Iter@ < 10, 20, 30 >;
+def same: Iter@ existing;    // `same` IS `existing`
+```
 
-// print the first 10 Fibonacci numbers
-0..9 ~<* {
-    def ev:: it.next();
-    (~cata)(ev, Left@, log);
+This *identity form* is what lets generic consumers accept "anything iterable" -- they can call `Iter@` on their input to normalize it, and pay no penalty if the caller already gave them an Iter.
+
+Any argument other than a Tuple or an existing Iter is ill-formed.
+
+Two Iters constructed from the same (non-`Iter`) source have independent state:
+
+```java
+def nums: < 1, 2, 3 >;
+def a: Iter@ nums;
+def b: Iter@ nums;
+
+a%;    // Right{1}
+a%;    // Right{2}
+b%;    // Right{1}     -- independent
+```
+
+### Stepping
+
+Applying `%` to an iterator -- the unary form, `it%` -- steps it once, returning one of two shapes:
+
+* `Right@ payload` -- the next value from the source.
+* `Left@ terminal` -- the source has been exhausted; no further values.
+
+```java
+def it: Iter@ < 1, 2 >;
+
+it%;    // Right{1}
+it%;    // Right{2}
+it%;    // Left{"Iterator Exhausted"}
+```
+
+Once the iterator reaches its terminal, the terminal is **sticky**: subsequent `it%` invocations return the same `Left` value, forever. Iterators are not one-shot; they idempotently report their terminal on every inspection.
+
+```java
+def it: Iter@ < 1, 2 >;
+
+it%;    // Right{1}
+it%;    // Right{2}
+it%;    // Left{"Iterator Exhausted"}
+it%;    // Left{"Iterator Exhausted"}    -- sticky
+```
+
+For any `Iter@`-constructed iterator, the terminal payload is `"Iterator Exhausted"`. For [generator-produced iterators](#generator-invocation), the terminal payload is the generator's own return value.
+
+**Note:** Iterators have no `close()` method and no way to observe closed-state directly. If you don't want to keep pulling from an iterator, stop pulling; the iterator will be garbage-collected along with its source. Generator-sourced iterators additionally allow you to send a signal into the generator (via the binary form, `it% signalVal`) to have the generator stop itself -- but that's a generator-side concern, covered in the next section.
+
+### Draining An Iterator
+
+For eager consumption, `Iter` supports the `~<<` *do comprehension* form:
+
+```java
+def it: Iter@ < 10, 20, 30 >;
+
+def res: Iter ~<< (v:: it) {
+    log(`"v: `v`");
 };
-// 0
-// 1
+// v: 10
+// v: 20
+// v: 30
+
+res;    // Left{"Iterator Exhausted"}
+```
+
+Notice the `Iter` on the LHS: this is a *type-LHS*, not a value. The particular iterator to
+
+## Generators
+
+Generators are functions whose execution can pause mid-body and resume on demand. Each pause point yields a value out through an attached iterator; each resume hands control back into the function to run until the next pause.
+
+Where iterators are the *interface* for one-at-a-time value delivery (see [Iterators](#iterators)), generators are the primary way to create such a data source. A generator's body reads like ordinary imperative code -- loops, branches, local variables -- with the `<::` yield operator marking each point where the function should pause and hand a value out.
+
+Neither generators nor the iterators they produce are monadic; there's no `~<` or `~map` defined on either. Their value is in expressive authoring of stateful producers, not composition algebra.
+
+### Declaring a Generator
+
+A generator is declared with a `Gen.`-prefixed type (via `deft`) and a function (via `defn`) whose `:as` annotation attaches to that type:
+
+```java
+deft Gen.Numbers(int, int) ^Iter;
+
+defn numbers(start, end) :as Gen.Numbers {
+    start..end ~each (v) {
+        <:: v
+    };
+    ^"Complete"
+};
+```
+
+The `Gen.` prefix on the type is a compiler signal: functions attached to a `Gen.`-prefixed type are transformed internally into state machines rather than run straight through. The return type is `^Iter` because invocation yields an iterator, not the final value; the final value emerges via the iterator's terminal, covered below.
+
+Only the type-specialized declaration is handled by the compiler transform; the runtime yield machinery (`<::`) is built on top of the standard effect system (see [Effects](#effects) for details).
+
+### Generator Invocation
+
+Calling a generator function returns an `Iter`. The body does not run at call time; no code inside the generator has executed yet:
+
+```java
+def nums: numbers(1, 3);
+// nums is an Iter; the body has not run
+```
+
+The first `%` step drives the body forward until it reaches its first `<::`:
+
+```java
+nums%;    // Right{1}
+```
+
+Subsequent steps resume at the last `<::`, run forward to the next one, and yield:
+
+```java
+nums%;    // Right{2}
+nums%;    // Right{3}
+```
+
+When the body reaches its natural end (or an explicit `^` return), the iterator produces a sticky `Left@ terminal` on that step and every subsequent step (see [Stepping](#stepping)):
+
+```java
+nums%;    // Left{"Complete"}
+nums%;    // Left{"Complete"}     -- sticky
+```
+
+Because invocation returns an ordinary `Iter`, everything from the [Iterators](#iterators) section applies immediately -- unary stepping, sticky terminal, and drainage via `Iter ~<<`:
+
+```java
+Iter ~<< (n:: numbers(1, 3)) {
+    log(n)
+};
 // 1
 // 2
 // 3
-// 5
-// 8
-// 13
-// 21
-// 34
 ```
 
-**Warning:** The above generator is designed to run perpetually (doesn't stop itself), and without any delay, so be careful about using an unbounded looping to consume values from it; such a loop will also run synchronously, forever. The `0..9 ~<* {    }` approach above limits how many values to *take* from the iterator.
+### Yielding Values
 
-Even though the iterator interface (`yield()` and `next()`, above) responds with Promises, this Fibonacci generator is fully synchronous; remember that **Foi** `Promise` instances are not inherently asynchronous (as in some other languages).
-
-Here's another example, of a generator that only produces a fixed number of values through its iterator (and then closes it):
+Inside a generator body, `<:: v` yields `v` out to the current step and pauses execution at that expression. Generator state -- local variables, loop counters, anything the body has bound -- persists across suspensions:
 
 ```java
-def someNums: Gen@ (defn(env,yield){
-    ^((env.start..env.end) ~<* yield)
-        ~map { "Complete." };
-});
+deft Gen.RunningTotal(int) ^Iter;
 
-def it: someNums % < start: 4, end: 7 >;
-
-
-// consume all the values from this
-// iterator
-def pr: it ~<* (ev) {
-    (~cata)(ev, Left@, log);
-};
-// Promise{..pending..}
-// 4
-// 5
-// 6
-// 7
-
-pr ~map log;
-// Left{"Complete."}
-```
-
-**Note:** The `~<*` knows how to consume an iterator. It calls `next()` under the covers, which produces a promise. When unwrapped, this value is a `Right` or `Left`; if it's a `Left`, the looping will terminate. Above, we unwrap the `Right` with `~cata`, but in the next snippet, we'll use an `Either` *do comprehension* to process `ev`.
-
-You can also manually terminate an iteration early by closing the iterator:
-
-```java
-def someNums: Gen@ (defn(env,yield){
-    ^((env.start..env.end) ~<* yield)
-        ~map { "Complete." };
-});
-
-def it: someNums % < start: 1, end: 10 >;
-
-
-// consume all the values from this
-// iterator
-def pr: it ~<* (ev) {
-    Either ~<< (v:: ev) {
-        log(v);
-
-        // shall we terminate early?
-        ::?[v ?= 3]: {
-            it.close();
-            Left@ "Terminated.";
-        };
+defn runningTotal(count) :as Gen.RunningTotal {
+    def total: 0;
+    1..count ~each (i) {
+        total := total + i;
+        <:: total
     };
+    ^"done"
 };
-// Promise{..pending..}
-// 1
-// 2
-// 3
 
-pr ~map log;
-// Left{"Terminated."}
+def rt: runningTotal(4);
+rt%;    // Right{1}      -- 0+1
+rt%;    // Right{3}      -- 1+2
+rt%;    // Right{6}      -- 3+3
+rt%;    // Right{10}     -- 6+4
+rt%;    // Left{"done"}
 ```
 
-**Note:** The `Either ~<< {    }` *do comprehension* block is nested inside the outer `Promise ~<* {    }` *looping do comprehension* block. This allows us to ergonomically unwrap the Either value (`ev`) that came back from `next()`. If the `v:: ev` unwrapping encounters a `Left`, it short-circuits to skip the `Either` comprehension block.
+**Note:** A `<::` yield can appear anywhere an expression is admitted, not just as a standalone statement. Its evaluation-site value is whatever the consumer supplies when resuming (see [Two-Way Value Flow](#two-way-value-flow) below); when the consumer resumes with plain unary `%`, that value is `empty`.
 
-The manually produced `Left@ "Terminated."` value forcibly terminates first the inner `Either ~<< {    }` block, and then the outer `Promise ~<* {    }` loop.
+### The Terminal Value
 
-However, if that value were omitted (but the iterator was still closed), the loop would normally start a next (final) iteration, yet the `next()` call would immediately fail with a `Left@ "Complete."` -- from the final `"Complete."` return value of the generator -- and that would terminate the loop.
+When a generator's body reaches its natural end, the `^`-returned value becomes the iterator's sticky terminal payload, wrapped in `Left@`. If the body has no explicit `^`, the terminal payload is `empty`.
+
+A generator body can also short-circuit its own iterator early with `Done@`:
+
+```java
+deft Gen.SquaresUntil(int, int) ^Iter;
+
+defn squaresUntil(count, ceiling) :as Gen.SquaresUntil {
+    def res: "complete";
+    (1..count) ~each (i) {
+        def sq: i * i;
+        ?{
+            [sq ?> ceiling]: {
+                res := `"exceeded at `i`";
+                Done@ res
+            }
+            : <:: sq;
+        }
+    };
+    ^res;
+};
+
+def sq: squaresUntil(10, 20);
+sq%;    // Right{1}
+sq%;    // Right{4}
+sq%;    // Right{9}
+sq%;    // Right{16}
+sq%;    // Left{"exceeded at 5"}    -- 25 > 20
+```
+
+The `Done@` behavior inside a generator matches its behavior at any comprehension body: the payload becomes the terminal (wrapped in `Left@`), and execution stops.
+
+### Two-Way Value Flow
+
+The unary step form `it%` treats the generator as a pure producer -- values flow out, nothing flows in. The **binary** form `it% v` sends `v` back into the generator as the value of the waiting (most recent) `<::` yield expression:
+
+```java
+deft Gen.Accumulator() ^Iter;
+
+defn accumulator() :as Gen.Accumulator {
+    def total: 0;
+    ?[total ?< 1000] ~each {
+        // yield total, receive delta
+        total := total + (<:: total)
+    };
+    ^total
+};
+
+def acc: accumulator();
+acc%;         // Right{0}    -- initial yield
+acc% 5;       // Right{5}    -- delta=5, total becomes 5, yields 5
+acc% 10;      // Right{15}   -- delta=10, total becomes 15, yields 15
+acc% 3;       // Right{18}   -- delta=3, total becomes 18, yields 18
+```
+
+Notice `total + (<:: total)` -- the `<:: total` expression yields `total`, pauses, and on resume evaluates to the value supplied to the next `it% v`. That value then flows into the `+` expression.
+
+Binary `%` is only defined on generator-produced iterators; using it on an `Iter@`-constructed iterator is ill-formed, since there's no `<::` yield expression to receive that value.
+
+The first step is a special case: there's no `<::` waiting yet, so any value passed to the first step is discarded, and the generator runs from its start to its first `<::`.
+
+Once the generator stops -- above, the `~each` loop exits once the `total` reaches or exceeds `1000` -- and the iterator reaches its terminal, further binary steps also discard the sent value and return the sticky `Left`.
 
 ## Type Annotations
 
