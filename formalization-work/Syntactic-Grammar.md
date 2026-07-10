@@ -39,9 +39,9 @@ token type plus a `value` field constraint.
     `"float"`, `"bool"`, `"boolean"`, `"string"`
   - `Native` values: `"true"`, `"false"`, `"empty"`
   - `Builtin` values: `"Id"`, `"None"`, `"Maybe"`, `"Left"`, `"Right"`,
-  `"Either"`, `"Promise"`, `"PromiseSubject"`, `"PushStream"`,
-  `"PushSubject"`, `"PullStream"`, `"PullSubject"`, `"Channel"`,
-  `"Gen"`, `"IO"`, `"Value"`, `"Number"`, `"List"`
+  `"Either"`, `"Done"`, `"Promise"`, `"PushStream"`, `"PullStream"`,
+  `"Channel"`, `"Iter"`, `"Gen"`, `"Effect"`, `"IO"`, `"Value"`,
+  `"Function"`, `"Number"`, `"List"`
   - `BooleanOper` values: `"?and"`, `"!and"`, `"?or"`, `"!or"`,
     `"?as"`, `"!as"`, `"?in"`, `"!in"`, `"?has"`, `"!has"`,
     `"?empty"`, `"!empty"`
@@ -1273,7 +1273,9 @@ or use the def-block form directly.
 ## §16 Do-Comprehensions
 
 ```ebnf
-DoComprExpr             := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
+<DoComprLHS>            := Identifier | BuiltIn;
+
+DoComprExpr             := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 
 DoBlockExpr             := DoBlockDefsInitOpt? _ DoBareBlockExpr;
 <DoBareBlockExpr>       := OpenBrace _ DoBlockStmts _ CloseBrace;
@@ -1290,13 +1292,22 @@ DoStmtSemi              := DoStmt? (_ Semicolon)+;
 DoStmtSemiOpt           := DoStmt? (_ Semicolon)*;
 DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
 
-DoLoopComprExpr         := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
-<DoLoopIterationExpr>   := DoBlockExpr | DoLoopIterNoBlockExpr;
-<DoLoopIterNoBlockExpr> := CallExpr | BareIdentifier | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
+DoLoopComprExpr         := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 ```
 
-Note: `<DoLoopIterNoBlockExpr>` lists `BareIdentifier` directly (no
-`Expr` dispatch path). `:as` on an iter function (`range ~<* foo :as Maybe`) is therefore a parse error — wrap in parens (`range ~<* (foo :as Maybe)`) to annotate. Consistent with the "use parens" rule.
+Note: `DoComprExpr` and `DoLoopComprExpr` share the LHS (a bare type
+name via `<DoComprLHS>`) and the RHS shape (`DoBlockExpr` — an
+optional defs-init followed by a block body). They differ only in
+the operator (`~<<` vs `~<*`). Per §6 opener's composition-axis
+framing, type-LHS is mandatory on both operators: the dispatch to a
+specific hook resolves at compile time.
+
+`~<*` no longer admits a value-LHS with a fn-RHS iter form (e.g.,
+`xs ~<* fn`). Iterable drainage over `List`, `Iter`, and `PullStream`
+moved to `~<<` under Slot 15's axis lock; `~<*` retains only its
+producer-broadcast admissions (`Channel`, `PushStream`, and effect
+handler scopes) — all of which supply the source through the
+DoBlockDefsInit clause (e.g., `Channel ~<* (v:: ch) { ... }`).
 
 ## §17 Data Structure Literals
 

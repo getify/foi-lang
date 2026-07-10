@@ -35,10 +35,10 @@ export const KEYWORDS = [
 ];
 
 export const BUILTINS = [
-	"Id", "None", "Maybe", "Left", "Right", "Either",
-	"Promise", "PromiseSubject", "PushStream", "PushSubject",
-	"PullStream", "PullSubject", "Channel", "Gen", "IO",
-	"Value", "Function", "Number", "List",
+	"Id", "None", "Maybe", "Left", "Right", "Either", "Done",
+	"Promise", "PushStream", "PullStream", "Channel",
+	"Iter", "Gen", "Effect", "IO", "Value", "Function",
+	"Number", "List",
 ];
 
 export const COMPREHENSIONS = [

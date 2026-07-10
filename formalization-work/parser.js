@@ -2402,13 +2402,22 @@ export const DoBlockExpr = production("DoBlockExpr",
 	{ preserveInnerDelim: true }
 );
 
-// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
+// <DoComprLHS> := Identifier | BuiltIn;
+//
+// Shared LHS shape for DoComprExpr and DoLoopComprExpr. Type-LHS only
+// per Slot 15's axis lock — the dispatch to a specific hook resolves
+// at compile time. Iterable drainage over List/Iter/PullStream moved
+// to `~<<`; `~<*` retains producer-broadcast admissions (Channel,
+// PushStream, effect handler scopes).
+var DoComprLHS = or(Identifier, BuiltIn);
+
+// DoComprExpr := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 //
 // `~<<` is Tilde + OpenAngle + OpenAngle — three adjacent single-char
 // tokens at the syn layer.
 export const DoComprExpr = production("DoComprExpr",
 	and(
-		or(Identifier, BuiltIn),
+		DoComprLHS,
 		delim(),
 		Tilde, OpenAngle, OpenAngle,
 		delim(),
@@ -2416,38 +2425,21 @@ export const DoComprExpr = production("DoComprExpr",
 	)
 );
 
-// <DoLoopIterNoBlockExpr> := CallExpr | BareIdentifier | (OpenParen _ DoLoopIterNoBlockExpr _ CloseParen);
-//
-// PEG: CallExpr first so `foo()` reaches the call form rather than
-// BareIdentifier with dangling `(...)`.
-var DoLoopIterNoBlockExpr = or(
-	CallExpr,
-	BareIdentifier,
-	and(OpenParen, delim(), lazy(() => DoLoopIterNoBlockExpr), delim(), CloseParen)
-);
-
-// <DoLoopIterationExpr> := DoBlockExpr | DoLoopIterNoBlockExpr;
-//
-// PEG: DoBlockExpr opens with `(` or `{`; DoLoopIterNoBlockExpr
-// opens with anything-else (CallExpr/BareIdentifier/`(`).
-// Same shape as §5/§13 ordering.
-var DoLoopIterationExpr = or(DoBlockExpr, DoLoopIterNoBlockExpr);
-
-// DoLoopComprExpr := ExprNoBlock _ Tilde OpenAngle Star _ DoLoopIterationExpr;
+// DoLoopComprExpr := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 //
 // `~<*` is Tilde + OpenAngle + Star — three adjacent single-char
-// tokens.
+// tokens. Shares LHS (DoComprLHS) and RHS (DoBlockExpr) shape with
+// DoComprExpr; differs only in the operator.
 //
-// Range is ExprNoBlock only — paren-wrapped BareBlockExpr, DoComprExpr,
-// and DoLoopComprExpr cannot serve as the loop range. Bind to a name
-// first to use those forms as a range.
+// Value-LHS-with-fn-RHS iter form (`xs ~<* fn`) is gone under Slot 15.
+// Source enters via DoBlockDefsInit clause (`Channel ~<* (v:: ch) {...}`).
 export const DoLoopComprExpr = production("DoLoopComprExpr",
 	and(
-		ExprNoBlock,
+		DoComprLHS,
 		delim(),
 		Tilde, OpenAngle, Star,
 		delim(),
-		DoLoopIterationExpr
+		DoBlockExpr
 	)
 );
 

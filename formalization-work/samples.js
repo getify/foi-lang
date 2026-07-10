@@ -1007,20 +1007,20 @@ export const samples = [
 	// DoFinalUnwrapExpr — minimal
 	{ label: "DoFinalUnwrapExpr: Foo ~<< { ::42 }",              src: "Foo ~<< { ::42 };" },
 
-	// DoLoopComprExpr — non-block iter (Identifier)
-	{ label: "DoLoopComprExpr (ident iter): xs ~<* fn",          src: "xs ~<* fn;" },
+	// DoLoopComprExpr — bare body, no defs
+	{ label: "DoLoopComprExpr: Foo ~<* { y }",                       src: "Foo ~<* { y };" },
 
-	// DoLoopComprExpr — non-block iter (chain)
-	{ label: "DoLoopComprExpr (chain iter): xs ~<* foo.bar",     src: "xs ~<* foo.bar;" },
+	// DoLoopComprExpr — with defs
+	{ label: "DoLoopComprExpr w/defs: Foo ~<* (v:: src) { v }",      src: "Foo ~<* (v:: src) { v };" },
 
-	// DoLoopComprExpr — block iter, no defs
-	{ label: "DoLoopComprExpr (block, no defs): xs ~<* { y }",   src: "xs ~<* { y };" },
+	// DoLoopComprExpr — final unwrap
+	{ label: "DoLoopComprExpr w/final: Foo ~<* (v:: src) { ::v }",   src: "Foo ~<* (v:: src) { ::v };" },
 
-	// DoLoopComprExpr — block iter, with defs
-	{ label: "DoLoopComprExpr (block + defs): xs ~<* (r) { r }", src: "xs ~<* (r) { r };" },
+	// DoLoopComprExpr — full: defs + body stmts + final unwrap
+	{ label: "DoLoopComprExpr full",                                 src: "Foo ~<* (v:: src) { def y:: getY(); ::y; };" },
 
-	// DoLoopComprExpr — block iter, with final unwrap
-	{ label: "DoLoopComprExpr (block + final): xs ~<* (r) { ::r }", src: "xs ~<* (r) { ::r };" },
+	// DoLoopComprExpr — BuiltIn targetType
+	{ label: "DoLoopComprExpr (BuiltIn): PushStream ~<* (v:: subj.st) { v }", src: "PushStream ~<* (v:: subj.st) { v };" },
 
 
 	// =============================================================
@@ -1321,12 +1321,12 @@ export const samples = [
 		"Id ~<< { def x:: foo(); ::bar(x); }; " +
 		"Promise ~<* { def r:: get(); };" },
 	{ label: "compound §16: do-compr paren-wrap + chain + :as",
-	  src: "(1..3 ~<* yield) ~map { \"done\" };" +
+	  src: "(PushStream ~<* (v:: src) { v }) ~map { \"done\" };" +
 		"(Id ~<< { ::42; }) ~< g;" +
-		"(env.start..env.end ~<* yield) ~map { \"Complete.\" };" +
+		"(Channel ~<* (v:: ch) { v }) ~map { \"Complete.\" };" +
 		"(x + 1) ~map f;" +
-		"def x: (1..3 ~<* yield) :as Foo;" +
-		"(1..3 ~<* yield) :as Foo ~map f;" },
+		"def x: (PushStream ~<* (v:: src) { v }) :as Foo;" +
+		"(PushStream ~<* (v:: src) { v }) :as Foo ~map f;" },
 
 	// §17 — RecordTupleLit / SetLit / nested compound
 	{ label: "compound §17: record/tuple/set/nested",

@@ -1140,14 +1140,14 @@ async function runTests() {
 		  ^defn() ^player.removeEventListener("ended", cb)
 		};`,
 
-		// Sample Foi source: Promise/PromiseSubject sketch (~150 lines).
+		// Sample Foi source: Promise/Deferred sketch (~150 lines).
 		// Denser than the audio player — exercises deft type definitions
 		// in realistic positions, :over clauses, +> composition with
 		// partial-call inside, ?and chains in match clauses, nested
 		// defn returns after ^publicAPI, and :as annotations across
 		// function definitions.
 		`///
-		NOTE: this is a sketch of how Promise/PromiseSubject,
+		NOTE: this is a sketch of how Promise/Deferred,
 		and some associated utilities (all, race) can be
 		written in Foi. It's included here because it
 		demonstrates a broad cross-section of Foi's various
@@ -1170,8 +1170,8 @@ async function runTests() {
 		deft Resolved() ^bool;
 		deft Race(List{Promise}) ^Promise;
 		deft All(List{Promise}) ^Promise;
-		deft PromiseSubjectUnitConstructor() ^PromiseSubject;
-		deft PromiseSubject <
+		deft DeferredUnitConstructor() ^Deferred;
+		deft Deferred <
 			pr: Promise,
 			resolve: Resolve,
 		>;
@@ -1208,7 +1208,7 @@ async function runTests() {
 			![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
 			:as Race
 		{
-			def subj: PromiseSubject@;
+			def subj: Deferred@;
 			prs ~each (pr) {
 				pr ~map subj.resolve;
 			};
@@ -1219,7 +1219,7 @@ async function runTests() {
 			![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
 			:as All
 		{
-			def subj: PromiseSubject@;
+			def subj: Deferred@;
 			def resCount: 0;
 			def res: <>;
 			prs ~each (pr,idx) {
@@ -1234,8 +1234,8 @@ async function runTests() {
 			^subj.pr;
 		};
 
-		defn PromiseSubject@()
-			:as PromiseSubjectUnitConstructor
+		defn Deferred@()
+			:as DeferredUnitConstructor
 		{
 			def resolve: empty;
 			def pr: Promise(
@@ -1248,7 +1248,7 @@ async function runTests() {
 			?[?empty v]: Promise()
 			:as PromiseUnitConstructor
 		{
-			def subj: PromiseSubject@;
+			def subj: Deferred@;
 			subj.resolve(v);
 			^subj.pr;
 		};
@@ -1283,7 +1283,7 @@ async function runTests() {
 				![pending]: fn(value)
 				:as Chain
 			{
-				def subj: PromiseSubject@;
+				def subj: Deferred@;
 				subscribe(publicAPI,fn +> |~map ,subj.resolve|);
 				^subj.pr;
 			};
@@ -1292,7 +1292,7 @@ async function runTests() {
 				![pending]: Promise@ fn(value)
 				:as Map
 			{
-				def subj: PromiseSubject@;
+				def subj: Deferred@;
 				subscribe(publicAPI,fn +> subj.resolve);
 				^subj.pr;
 			};

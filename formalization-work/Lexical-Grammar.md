@@ -125,10 +125,11 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
      KEYWORDS                 = { "def", "defn", "deft", "import", "export",
                                   ":as", ":over", "int", "integer", "float",
                                   "bool", "boolean", "string" }
-     BUILTINS                 = { "Id", "None", "Maybe", "Left", "Right", "Either",
-                                  "Promise", "PromiseSubject", "PushStream",
-                                  "PushSubject", "PullStream", "PullSubject",
-                                  "Channel", "Gen", "IO", "Value", "Number", "List" }
+     BUILTINS                 = { "Id", "None", "Maybe", "Left", "Right",
+                                  "Either", "Done", "Promise",
+                                  "PushStream", "PullStream", "Channel",
+                                  "Iter", "Gen", "Effect", "IO", "Value",
+                                  "Function", "Number", "List" }
      COMPREHENSIONS           = { "~each", "~map", "~filter", "~fold", "~foldR",
                                   "~cata", "~chain", "~bind", "~flatMap", "~ap",
                                   "~foldMap" }

@@ -2984,29 +2984,15 @@ export const defaultShapers = {
 		return { type: "DoComprExpr", targetType, body };
 	},
 
-	// DoLoopComprExpr := ExprNoBlock _ Tilde OpenAngle Star _ <DoLoopIterationExpr>;
+	// DoLoopComprExpr := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 	//
 	// `~<*` tokens (Tilde + OpenAngle + Star) are the loop
-	// operator — anchored in type tag, drop as operator-class.
-	// The paren-recursive arm of <DoLoopIterNoBlockExpr> is
-	// hidden — its OpenParen/CloseParen tokens splice up to this
-	// level. Per Rule 1, those parens are structural → delims.
+	// operator — anchored in type tag, drop as operator-class
+	// per Rule 1. Shares shape with DoComprExpr: two node children
+	// (targetType, body) and no external delims.
 	DoLoopComprExpr(frame,parts) {
-		var nodes = [];
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) nodes.push(p);
-			else if (
-				p.type === "Tilde" ||
-				p.type === "OpenAngle" ||
-				p.type === "Star"
-			) {
-				// `~<*` operator — anchored in type tag, drop
-			}
-			else delims.push(p); // OpenParen, CloseParen from paren-recursive arm
-		}
-		var [ range, iter ] = nodes;
-		return withDelims({ type: "DoLoopComprExpr", range, iter }, delims);
+		var [ targetType, body ] = parts.filter(isNode);
+		return { type: "DoLoopComprExpr", targetType, body };
 	},
 
 

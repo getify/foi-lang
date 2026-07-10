@@ -362,6 +362,12 @@ var failSamples = [
 	"?(x){ [?in]: a };",          // bare containment op without RHS
 	"?(x){ [?has]: a };",         // same
 	"?(x){ [?and]: a };",         // bare AndOp without RHS
+
+	// === DoLoopComprExpr negatives — Slot 15 axis lock: type-LHS only, RHS is DoBlockExpr only ===
+
+	// Non-block RHS: `~<*` no longer admits fn-RHS iter form
+	"xs ~<* fn;",
+	"xs ~<* foo.bar;",
 ];
 
 var passed = 0;
