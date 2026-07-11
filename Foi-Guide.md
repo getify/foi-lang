@@ -4982,7 +4982,7 @@ Once the generator stops -- above, the `~each` loop exits once the `total` reach
 
 ## Effects
 
-An **effect** (aka, "algebraic effects") in **Foi** is a suspension point in a computation; the running code pauses, propagates a payload up the call stack to whichever handler catches it, and then resumes with whatever value the handler returns. Where an exception `throw` (in other languages) abandons the current work, an effect *pauses* it, so the computation *may* pick up right where it left off (the handler decides).
+An **effect** (aka, "algebraic effects") in **Foi** is a suspension point in a computation; the running code pauses, propagates a payload up the call stack to whichever handler catches it, and then resumes with whatever value the handler chooses to send back. Where an exception `throw` (in other languages) abandons the current work, an effect *pauses* it, so the computation *may* pick up right where it left off (the handler decides).
 
 You've already met an effect in disguise. The `<:: v` yield inside a generator body is a perform site for `Effect.Yield`; the surrounding generator machinery is the handler. Generators are the one built-in that sits directly on the effects system.
 
@@ -4998,7 +4998,7 @@ deft Effect.Log(string) ^empty;
 deft Effect.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
-The parameter position declares the **payload type**: the shape of the value a perform site supplies. The return position declares the **resume type**: the shape of the value the handler returns and the perform-site expression evaluates to. `^empty` marks a fire-and-forget effect where the caller ignores the resume.
+The parameter position declares the **payload type**: the shape of the value a perform site supplies. The return position declares the **resume type**: the shape of the value the handler passes to its resumption callable, which becomes the perform-site expression's value. `^empty` marks a fire-and-forget effect where the caller ignores the resume.
 
 The `Effect.` prefix is not decorative; it signals to the compiler that this `deft` names an effect kind, not a plain type alias. Only `Effect.`-prefixed names may appear on the LHS of a perform site, on the LHS of a `~<*` handler operator, or in an `:Effects(..)` clause on a function's type declaration.
 
@@ -5010,25 +5010,25 @@ A **perform site** signals that the enclosing computation is producing an effect
 Effect.Ask% "What is your name?";
 ```
 
-The expression's value is whatever the handler returns: for `Effect.Ask` above, a `string`. Until a handler catches the perform and then affirmatively resumes it, the surrounding computation is suspended.
+The expression's value is whatever the handler resumes with: for `Effect.Ask` above, a `string`. Until a handler catches the perform and then affirmatively resumes it, the surrounding computation is suspended.
 
 A **handler scope** is established (via call-stack, not lexical scope) with the `~<*` operator against an `Effect.` prefixed effect type:
 
 ```java
-def result: Effect.Ask ~<* (eff:: greetUser()) {
+def result: Effect.Ask ~<* (eff:: greetUser(), ret) {
     :: ?(eff){
-        [?as Effect.Ask]: "Kyle";
+        [?as Effect.Ask]: ret("Kyle");
     };
 };
 ```
 
-The block definition `(eff:: greetUser())` binds each perform-event dispatched to this handler to `eff`, with `greetUser()` as the computation to monitor for effects. The block body is a pattern-match over `eff`; each arm's return value is the **resume-value** delivered back to the perform site. Inside a matched arm, the topic reference `#` is the effect's payload -- in the above code, the string the perform site supplied.
+The block definition `(eff:: greetUser(), ret)` binds each perform-event dispatched to this handler to `eff`, with `greetUser()` as the computation whose performs are caught, and binds `ret` as a **resumption callable** for use inside arms. The block body is a pattern-match over `eff`; each arm may invoke `ret(v)` to resume the perform site with `v` as its value. Inside a matched arm, the topic reference `#` is the effect's payload -- in the above code, the string the perform site supplied.
 
 `~<*` catches every perform of the LHS's effect kind (or set of kinds) reachable from `comp`, not just at the top level. If `greetUser()` calls `askName()` which in turn performs `Effect.Ask`, this handler catches it just the same. The effect walks the call-stack *dynamically*, like a `try`/`catch`, not lexically.
 
-The whole `~<*` expression's value is `comp`'s natural return; `result` above holds whatever `greetUser()` produced.
+The whole `~<*` expression's value is the arm's terminal at scope termination. In the common case where every perform arm invokes `ret` and `comp` reaches natural completion, `ret`'s return value flows back to the arm as `comp`'s natural return; the arm's terminal expression then becomes the handler expression's value. In the example above, `result` holds whatever `greetUser()` returned once resumed with `"Kyle"`.
 
-An arm may also return `Done@` in place of a resume-value; this signals "don't resume." The handler scope terminates, the computation is abandoned at the perform point, and the handler expression itself produces no value; the same shape as an uncaught effect propagating past. This is the escape hatch for cancellation, fatal errors, and other effects the handler decides shouldn't continue.
+An arm may skip `ret` entirely and evaluate to `Done@` instead; this signals "don't resume." The handler scope terminates, the computation is abandoned at the perform point, and the handler expression's value is the `Done@` payload -- passed through as an ordinary value the surrounding code can inspect. This is the escape hatch for cancellation, fatal errors, and other effects the handler decides shouldn't continue.
 
 ----
 

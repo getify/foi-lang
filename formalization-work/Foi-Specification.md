@@ -3,7 +3,7 @@
 **Version:** draft (design phase)
 **Status:** §0 + §1 + §2 first draft
 
-This document is the mid-level semantic specification for the Foi language. It sits between `Foi-Guide.md` (user-facing tutorial) and `Syntactic-Grammar.md` (pure syntactic spec). Its job is to describe **how Foi programs behave** at the level of an abstract machine: evaluation order, scope rules, frame contents, lookup semantics, and the operational meaning of each construct.
+This document is the mid-level semantic specification for the Foi language. It sits between `Foi-Guide.md` (user-facing tutorial) and the grammar files -- `Lexical-Grammar.md` (token-level grammar) and `Syntactic-Grammar.md` (production-level grammar). Its job is to describe **how Foi programs behave** at the level of an abstract machine: evaluation order, scope rules, frame contents, lookup semantics, and the operational meaning of each construct.
 
 It is not a formal operational semantics in the academic sense. There are no judgment trees, no Greek-letter inference rules. The register is the WebAssembly specification or R7RS -- algorithmically described execution, expressed as steps a reader can mentally perform.
 
@@ -17,13 +17,33 @@ It is also not a complete specification of Foi today. The language is still in d
 
 A Foi program is described as evaluation against an abstract machine. The machine is built from a small number of structures:
 
-A **value** is anything a Foi expression evaluates to: a primitive, a Record, a Tuple, a function, a monadic value, a sentinel like `Done@...`, or a suspended computation. Values are immutable at the language level; the only mutability in Foi is reassignment of the binding slots that hold values.
+A **value** is anything a Foi expression evaluates to. The value categories are:
+
+- **Primitives:** `empty`, booleans (`true`, `false`), numbers (integers and floats), strings.
+- **Records** and **Tuples**: the two forms of composite value (§1).
+- **Functions:** first-class function values, including anonymous forms.
+- **Namespace instances:** values constructed via a namespace's `@`-marked constructor, carrying that namespace as their identity for hook dispatch (§3.10.9). Includes stdlib monadic instances (`Id`, `Maybe`, `Left`, `Right`, `Either`, `Promise`, `IO`, `Channel`, `PushStream`, `PullStream`), iterator instances (`Iter`), and user-declared namespace instances.
+- **Effect kinds:** `Effect.`-prefixed names declared via `deft` (§6.1). An effect kind is a namespace-shaped value that participates in perform-site dispatch (§6.2) and handler-scope narrowing (§6.3.1).
+- **Perform-event objects:** the value bound to a handler arm's head parameter (`eff` in `Effect.Ask ~<* (eff:: comp) { .. }`), carrying the performed effect's kind and payload (§6.3.2).
+- **Sentinels:** `Done@` (§6.4) and other marker-application values whose behavior arises at consumer sites that inspect for them.
+- **Suspended computations, userland-visible:** `Lazy@`-produced thunks (§2.2), carrying deferred evaluation of an expression with a scope-locality discipline. Thunks flow through record fields, tuple slots, closure captures, and call arguments like any other value; they resolve at end-of-section per §2.2.5.
+- **Suspended computations, internal:** the intermediate representations used by generator reification (§6.6) and effect handling (§6.1). Not directly surfaced as userland values.
+
+Values are immutable at the language level; the only mutability in Foi is reassignment of the binding slots that hold values.
 
 A **slot** is a mutable cell holding a value. Slots exist so that reassignment (`:=`) has somewhere to write. Each binding introduces a slot.
 
-A **frame** is a mapping from names to slots, plus a link to a parent frame. Frames form a chain along the lexical scope hierarchy. Looking up a name walks the chain from innermost frame outward until the name resolves; if no frame holds the name, the program is ill-formed.
+**Slot sharing.** Slots are per-binding, not per-value. Two names bound to the same value hold two distinct slots; mutating one does not affect the other. Closures capture slots, not values: a nested function that references an outer binding shares the slot with the outer scope, which is how `:over`-declared closure mutation (§3) makes an outer-scope reassignment visible to the closure and vice versa. Destructure-into-name (§2.13) introduces fresh slots holding copies of the extracted values; the destructure source's slots are not shared.
+
+A **frame** is a mapping from names to slots, plus a link to a parent frame. Frames form a chain along the lexical scope hierarchy. Looking up a name (Syntactic-Grammar `IdentifierRef`) walks the chain from innermost frame outward until the name resolves; if no frame holds the name, the program is ill-formed.
+
+**Frame-creating constructs.** A fresh frame is created on entry to: a function call body, a block-defs clause's block body (via `::`), a match-arm consequent block, a guard-consequent block, an effect-handler-arm block body, and a comprehension iteration body. Nested blocks under any of the above create nested frames. Bare-expression positions and function-body statements not enclosed by a nested block do not create frames on their own; they evaluate in the enclosing frame.
 
 An **environment** at a point in execution is the current innermost frame; via its parent links it implicitly references the full chain. Every expression evaluates in some environment.
+
+A **call stack** is a stack of **call frames**, one per active function invocation. Each call frame carries: an environment (per above), the function being executed, the arguments bound at call entry, and a link to the caller's call frame. A function call pushes a new call frame; a function return pops it. Universal proper tail calls (§3.4) is the discipline under which a call at a tail position replaces the current call frame rather than pushing a new one.
+
+A **handler chain** is a chain of **handler-scope frames**, one per active effect-handler scope established by a `~<*` invocation (§6.3). Each handler-scope frame carries: a caught-set (the effect-kind narrowing per §6.3.1), an arm dispatch table (per §6.3.2), the call frame in which the `~<*` was invoked, and a link to the next outer handler-scope frame. Entering a `~<*` scope pushes a handler-scope frame; exiting -- whether by natural completion, by an arm returning `Done@` (§6.4.1), or by an uncaught effect propagating past -- pops it. When a perform site executes (§6.2), the runtime walks the handler chain from innermost outward looking for the first handler-scope frame whose caught-set includes the performed effect's kind (§6.1.2); this walk is orthogonal to but temporally interleaved with the call stack.
 
 ### §0.2 Notation
 
@@ -33,11 +53,13 @@ When the spec needs to refer to fresh internal names (temporaries the interprete
 
 When this document shows a JS lowering, it reflects what the bootstrap transpiler emits. JS lowerings are illustrative of the operational meaning but are not normative: a future native interpreter is free to implement the same semantics differently.
 
+**Foi code examples are illustrative; the prose that accompanies an example is normative.** A code example demonstrates a behavior; the prose (or numbered abstract-execution steps) stating that behavior is what the spec commits to. Where an example shows a result via inline comment (`// Right{25}`, `// Left{"Complete"}`), the result reflects what the accompanying prose specifies. If a behavior is demonstrated only by an example and not stated in prose, that is a spec gap, not a settled point.
+
 ### §0.3 Conventions for open territory
 
-A region of the spec is **settled** when its operational behavior is fixed by the language design, the bootstrap transpiler, and the round-trip and parser oracles in agreement.
+A region of the spec is **settled** when its operational behavior is fixed by the language design as stated in this document. The bootstrap transpiler and its oracle suites are useful evidence of design-behavior alignment during the design phase but are not themselves part of the settled definition; the spec is the authoritative record.
 
-A region is **open** when at least one of the following holds: the design has multiple candidate semantics under active consideration; the transpiler punted on the construct; the construct depends on a yet-to-be-decided cross-cutting feature (type system lifecycle, monad runtime contract, effect tracking, module semantics).
+A region is **open** when at least one of the following holds: the design has multiple candidate semantics under active consideration; the construct depends on a yet-to-be-decided cross-cutting feature (type-system lifecycle, module semantics, or hook-dispatch runtime-table finalization per §3.10.9).
 
 Open regions appear inline under an **Open** heading within the relevant section.
 
@@ -63,24 +85,26 @@ This section catalogues the value categories a Foi program manipulates. It speci
 
 ### §1.1 The `empty` value
 
-`empty` is a first-class value denoting "no value." It is a reserved keyword; it cannot be used as a binding name, parameter name, record field name, or any other identifier site.
+`empty` (Lexical-Grammar `EmptyLit`) is a first-class value denoting "no value." It is a reserved keyword; it cannot be used as a binding name, parameter name, record field name, or any other identifier site.
 
 ```java
-def age: empty;                 // age's slot holds the empty value
-empty;                          // the empty value
-log(empty);                     // doesn't print anything
+def age: empty;         // age's slot holds the empty value
+empty;                  // the empty value
+log(empty);             // doesn't print anything
 ```
 
-`empty` is the value produced by:
+`empty` is Foi's bottom value: it is what a Foi program produces wherever a value is needed and no other value has been specified. It can be assigned explicitly, and it is the value implicit contexts fall back to. Non-exhaustive examples of contexts that produce `empty`:
 
 - A failed guard expression (§4).
 - A function parameter (with no default value) whose call omits an argument at that position.
 - An implicit initializer at a defs-init clause without an explicit value (§2.9.2).
-- Property reads against a missing slot (§2.12).
+- Property reads against a missing slot (§2.12), including any intermediate missing slot along an access path.
+- A destructure entry (§2.13) whose source slot is missing and which carries no `:? default`.
+- The value of a `~<*` handler expression that exits via a `Done@`-returning arm (§6.4.1) or by an effect propagating past uncaught (§6.3.3).
 
 ### §1.2 Booleans
 
-`true` and `false` are reserved keywords denoting the two boolean values. All decision making forms (guards, pattern matching, etc) expect these boolean values.
+`true` and `false` (Lexical-Grammar `BooleanLit`) are reserved keywords denoting the two boolean values. All decision making forms (guards, pattern matching, etc) expect these boolean values.
 
 ```java
 def str: "Hello";
@@ -101,9 +125,13 @@ No implicit coercion exists, at the language level, from any other value type to
 ?[num]: log(num);           // disallowed
 ```
 
+Explicit boolean coercion from other value types is available via the unary `?` and `!` operators (§3.9): `?x` produces the boolean coercion of `x`; `!x` produces its negation (or predicate inversion in the case of function values). These are the only routes from a non-boolean value to a boolean, and they must be written explicitly.
+
 ### §1.3 Numbers
 
-Foi numeric literals cover integers (`42`, `-3`) and decimals (`3.14`, `-0.001`). They may also be expressed in typed radixes: octal (`\o755`, `\o-755`), hexadecimal (`\hA3`, `\h-ff`), and binary (`\b01011101`, `\b-1100`). All typed-radix forms admit an optional leading sign inside the escape body.
+Foi numeric literals (Lexical-Grammar `NumberLit`) cover integers (`42`, `-3`) and decimals (`3.14`, `-0.001`). They may also be expressed in typed radixes: octal (`\o755`, `\o-755`), hexadecimal (`\hA3`, `\h-ff`), and binary (`\b01011101`, `\b-1100`). All typed-radix forms admit an optional leading sign inside the escape body.
+
+**Negative zero.** Foi preserves IEEE-754 negative zero as a value distinct from positive zero. `0 / -3` produces `-0`; `0 ?= -0` is `false`. Structural equality treats `0` and `-0` as unequal; arithmetic identities that produce `-0` in IEEE-754 produce `-0` in Foi.
 
 Numeric literals may also carry underscore separators for readability, but only via an explicit `\` escape:
 
@@ -121,7 +149,7 @@ Arithmetic operations (`+`, `/`, etc) produce numeric values.
 
 ### §1.4 Strings
 
-Foi strings have two major characteristics that define their various forms: interpolation (or not) and whitespace preserving (or collapsing).
+Foi strings have two major characteristics that define their various forms: interpolation (or not) and whitespace preserving (or collapsing). The four combinations correspond to four lexical productions: `PlainStr`, `InterpStr`, and their space-collapsing counterparts (Lexical-Grammar; §1.4.3 covers the space-collapsing forms).
 
 For the first characteristic:
 
@@ -130,9 +158,9 @@ def plain: "hello world";           // "hello world"
 def interp: `"hello `name`!";       // "hello Kyle"
 ```
 
-A plain string has no special content parsing. It's delimited on either end by `"` double-quote characters.
+A plain string (`PlainStr`) has no special content parsing. It's delimited on either end by `"` double-quote characters.
 
-An interpolated (structured interleaving of values) string parses the content to replace delimited expressions with their evaluated values. This literal form opens with backtick+quote `` `" ``, closes with a bare quote `"`, and embeds interpolated expressions in the string contents delimited by pairs of backticks (`` `expr` ``).
+An interpolated string (`InterpStr`; structured interleaving of values) parses the content to replace delimited expressions with their evaluated values. This literal form opens with backtick+quote `` `" ``, closes with a bare quote `"`, and embeds interpolated expressions in the string contents delimited by pairs of backticks (`` `expr` ``).
 
 **Abstract execution of an interpolated string:**
 
@@ -170,7 +198,7 @@ To include a Unicode escape sequence (one or more characters), an interpolated s
 
 After the `\u`, any number of hexadecimal digits specify the codepoint of the Unicode character. `\u263a` (`"☺"` smiley face) is the character at codepoint `263a` (hexadecimal), which is 9786 in decimal base-10.
 
-Unicode's code-point range is currently `\u0000` to `\u10FFFF` (six hexadecimal digits). Foi does not limit how many digits you can specify, but if you specify a value not recognized by Unicode, or outside this range, the expression will fail with a runtime error.
+Unicode's code-point range is currently `\u0000` to `\u10FFFF` (six hexadecimal digits). Foi does not limit how many digits you can specify at the lexical level, but a value not recognized by Unicode, or outside this range, is ill-formed and rejected at parse. The digits are static in the source (the `\u` escape does not admit computed expressions), so the check is decidable without evaluation.
 
 Foi does not accept typical escape sequences like `\n`, `\r`, and `\t`. Their equivalents can be specified with Unicode though:
 
@@ -222,7 +250,7 @@ Consider this (broken) example:
 
 The `` `" `` at the start of the first argument to the `uppercase(..)` call is ambiguous grammatically; it could be delimiting the end of the expression (albeit an invalid expression) and then the end of the string literal itself, or it could be starting a nested interpolated string literal as the function-call argument.
 
-To avoid such ambiguity, the grammar/parser rejects when encountering *that* bare `` `" `` sequence inside any interpolated expression.
+To avoid such ambiguity, `InterpStr`'s slot production (Lexical-Grammar) rejects a bare `` `" `` opener inside an interpolated expression slot; the space-collapsing opener `` \`" `` is admitted since it is unambiguous.
 
 By contrast, `` \`" `` is unambiguously the beginning of an interpolated (and space-collapsing escaped) string literal; so that's the form nested interpolated strings must take:
 
@@ -241,7 +269,7 @@ def bookTitle: `"*`title`* by `author`";
 
 ### §1.5 Structured Values: Tuples and Records
 
-Foi has two structured value categories -- Tuples and Records -- that share a single literal syntax. The form is an angle-bracketed comma-separated list of entries:
+Foi has two structured value categories -- Tuples and Records -- that share a single literal syntax (Syntactic-Grammar `RecordTupleLit`). The form is an angle-bracketed comma-separated list of entries:
 
 ```java
 < entry, entry, ..., entry >
@@ -317,6 +345,10 @@ The `ResolveStructureValue(value)` steps are:
 
 2. Return `value`
 
+----
+
+`AllocateStructure("Record", entries)` reduces the entries list to a Record value applying rightmost-wins deduplication on colliding named keys per §1.5.3: each named key retains the value of its last-appearing entry in the input list, and positional keys are preserved by their integer identity. `AllocateStructure("Tuple", entries)` retains all entries in input order without deduplication.
+
 #### §1.5.2 Tuple-Form Literals
 
 When non-keyed entries are the only entries in a structure, it's interpreted as a Tuple:
@@ -328,7 +360,16 @@ def nested: < < 1, 2 >, < 3, 4 > >;
 def single: < 42 >;
 ```
 
-Trailing commas are permitted and contribute nothing.
+Commas delimit entry positions. A position with no explicit entry -- between two commas, between `<` and the first comma, or between the last comma and `>` -- holds `empty`. A single terminating comma immediately before `>` is a permissive terminator and does not open an additional position; a second (or subsequent) trailing comma each opens an `empty` position. This rule applies uniformly at both Tuple-form and Record-form literals.
+
+```java
+< , 1, 2 >;         // < empty, 1, 2 >
+< 1, , 2 >;         // < 1, empty, 2 >
+< 1, 2, >;          // < 1, 2 >
+< 1, 2, , >;        // < 1, 2, empty >
+```
+
+The comma rules here are applied irrespective of trivia (whitespace, comments, etc).
 
 #### §1.5.3 Record-Form Literals
 
@@ -401,15 +442,16 @@ Function values are first-class: they may be stored in slots, passed as argument
 
 ### §1.7 Other Value Categories
 
-Foi also has monadic values (`Id`, `None`, `Maybe`, `Either`, `List`, `Promise`, `IO`, etc), suspended-computation values (`Lazy@`, `Gen.`), and tagged sentinels (`Done@`). These are catalogued briefly here as members of the value universe; their construction, extraction, and monadic operations are specified in later sections:
+§0.1 catalogues the full value universe. The non-primitive categories Foi programs manipulate -- namespace instances (`Id`, `None`, `Maybe`, `Either`, `List`, `Promise`, `IO`, `Iter`, `Channel`, `PushStream`, `PullStream`, and user-declared namespaces), effect kinds (`Effect.`-prefixed), perform-event objects, sentinels (`Done@`), and userland-visible suspended computations (`Lazy@` thunks) -- are enumerated there.
 
-- Suspension and evaluation control: §6
-- `Done@` and the loop lifecycle: §7
-- Monadic value constructors and the runtime contract: §7
+Their construction, extraction, and operations are specified in later sections:
+
+- Bindings, forward references, and thunk lifecycle: §2 (including `Lazy@` in §2.2).
+- Suspension, effects, generators, and pause-able types: §6.
+- `Done@` sentinel and comprehension lifecycle: §6.4 and §7.
+- Monadic-value constructors and the runtime contract for hook dispatch: §3.10.9 and §7.
 
 For §2's purposes it suffices that all of these are values: they can be stored in slots, bound to names, picked from Records, and passed around like any other value.
-
----
 
 ## §2 Bindings & Data Access
 
@@ -417,7 +459,7 @@ This section specifies how names come into existence, how they are reassigned, h
 
 ### §2.1 The `def` Statement
 
-A `def` statement introduces a new name in the current frame, allocates a slot for it, and initializes the slot with a value:
+A `def` statement (Syntactic-Grammar `DefVarStmt`) introduces a new name in the current frame, allocates a slot for it, and initializes the slot with a value:
 
 ```java
 def age: 42;
@@ -433,7 +475,11 @@ A `def` slot persists for the lifetime of its frame. When the frame is exited, t
 
 #### §2.1.1 `def` Placement: Top Of Scope
 
-`def` statements must appear at the top of their scope. Specifically: within any scope (module, function body, or block), `def` statements must precede all other statements except other definitional forms (`defn`, `deft`, and `import`) which may interleave freely with `def` at the top.
+`def` statements must appear at the top of their scope. Specifically: within any scope (module, function body, or block), `def` statements must precede all other statements except other definitional forms (`defn`, `deft`) which may interleave freely with `def` at the top.
+
+This contiguous top-of-scope run of definitional statements is the scope's **`def` section**. §2.2's `Lazy@` resolution operates within this region; references to "the section" throughout §2.2 refer to it.
+
+**Do-comprehension blocks are exempt.** Inside a `~<<` or `~<*` block (§7), each statement conceptually acts as its own `~<` chain step, and thus its own scope (nested in the scope ahead of it). As such, single-colon `def x: expr` statements may appear anywhere; they introduce a local binding but do not participate in the block's monadic composition. §7 specifies do-block statement categories and placement rules in full.
 
 ```java
 def x: 1;
@@ -482,11 +528,13 @@ def x: {
 };
 ```
 
-You'd rarely have a block with only `def` statement(s) in it and no evaluated statements/expressions below them. But in this example, the `def y: 42` statement has `42` as a completion value, and that same `42` value is adopted by the `{ }` block expression. Then, the same `42` value is assigned to `x`. Finally, this also means the completion value of `def x: ..` is also `42`.
+You'd rarely have a block with only `def` statement(s) in it and no evaluated statements/expressions below them. But in this example, the `def y: 42` statement has `42` as a completion value, and that same `42` value is adopted by the `{ }` block expression per §2.9.1's block-completion rule. Then, the same `42` value is assigned to `x`. Finally, this also means the completion value of `def x: ..` is also `42`.
+
+**Do-comprehension exception.** Inside a `~<<` or `~<*` block (§7), a single-colon `def x: expr` statement is a local binding whose completion value does not participate in the block's monadic composition; it is neither `~<`-chained nor collected as a terminal value. To bind a name to a monadic step's unwrapped result, use the double-colon form `def x:: expr` instead. See §7 for the do-block's statement categories in full.
 
 ### §2.2 The `Lazy@` Construct
 
-A `Lazy@` expression defers the resolution of one or more identifier references until those identifiers have been bound in the current scope's `def` statement(s) section. It is the mechanism by which a definitional initializer may refer to bindings that exist alongside it -- generally after, but can appear before, too -- in the same section, including the binding itself being defined.
+A `Lazy@` expression (Syntactic-Grammar `AtCallExpr` against the `Lazy` name, with compile-time-privileged semantics) defers the resolution of one or more identifier references until those identifiers have been bound in the current scope's `def` section.
 
 ```java
 def life: <
@@ -533,7 +581,7 @@ life := <
 >;
 ```
 
-This pattern produces an intermediate record that exists only as a scaffold for the corrected version. Beyond the wasted construction, the `:=` introduces consequences that the program did not actually intend: the binding becomes reassignable, any enclosing function must declare `:over (life)` (§2.6) to acknowledge the non-constancy, and local reasoning about `life` weakens because the name now refers to different values at different points in the scope. None of these costs reflect the program's intent, which was to construct a single value with a self-referential field.
+This pattern produces an intermediate record that exists only as a scaffold for the corrected version. Beyond the wasted construction, the `:=` introduces consequences that the program did not actually intend: the binding becomes reassignable, any enclosing function must declare `:over (life)` (§3.6) to acknowledge the non-constancy, and local reasoning about `life` weakens because the name now refers to different values at different points in the scope. None of these costs reflect the program's intent, which was to construct a single value with a self-referential field.
 
 `Lazy@` expresses the construction directly. The binding is defined exactly once, no intermediate value is produced, no reassignability is implied, and no `:over` annotation is required. The construct exists so that ordinary self-referential and mutually-referential value construction does not require mutability-flavored workarounds.
 
@@ -612,6 +660,8 @@ A `Lazy@` participates only in the `def` statement(s) section of its directly en
 
 A `Lazy@` written inside a nested block (function body's `def` statement(s) section, nested block expression's `def` statement(s) section, or any inner scope) belongs to that inner scope's section and resolves under that scope's rules. It is invisible to the outer scope's resolution and does not interact with the enclosing scope's section timing.
 
+**Do-comprehension blocks: `Lazy@` prohibited.** `Lazy@` is not permitted inside a `~<<` or `~<*` block (§7). Each do-block statement is its own single-statement scope (§2.1.1); there are no sibling `def` bindings within a statement scope for `Lazy@` to forward-reference, so the construct has no valid role. A `Lazy@` appearing at any position inside a do-block is rejected at the semantic-check layer.
+
 #### §2.2.7 Cross-Scope Restriction
 
 A `Lazy@`-produced thunk may be forced only within the scope in which it was constructed. While the thunk remains unresolved, a force attempt from a different scope is reported as an error at the force point.
@@ -638,7 +688,7 @@ def answer: compute();           // error: `seed` is not resolved yet
 def scale: 3;
 ```
 
-This is a runtime error (not detectable at compile time). It's reported at the unresolved name (i.e., in `seed * 2`) inside the other scope's executing body; the function body is attempting to force a thunk from a scope it doesn't own, which is not permitted.
+The language does not commit to compile-time detection of cross-scope thunk escape; the error is reported at the force point, inside the other scope's executing body at the unresolved name (in this example, `seed` inside `seed * 2`). The function body is attempting to force a thunk from a scope it doesn't own, which is not permitted. An implementation is free to detect some escape cases earlier via static analysis, but is not required to.
 
 **NOTE:** This rhymes with the temporal dead zone (TDZ) semantics that other languages apply to bindings accessed before their declared scope state allows.
 
@@ -676,9 +726,9 @@ Reference-shaped cycles -- where identifiers reference each other through struct
 
 Conceptually, a `Lazy@` thunk is a syntactically-simplified deferred value (e.g., IO, State).
 
-The `%` effector operator dispatches to such deferred value's effect-evaluation hook (if present); when a value has no such hook, `%` acts as the identity on the value.
+The `%` effector operator dispatches to the LHS's `_percent` hook (§3.10.9). Applying `%` to a value whose namespace defines no `_percent` hook is a type error.
 
-A `Lazy@` thunk exposes no such hook. Resolution is performed exclusively by the carry-and-force machinery (§2.2.3 through §2.2.5), which is not user-callable. So `x%` for a `Lazy@`-bound name behaves as identity, the same as a bare `x` read.
+The `Lazy@` namespace defines a `_percent` hook that is identity: `x%` for a `Lazy@`-bound name resolves to the same value a bare `x` read produces. Resolution of the deferred reference is performed exclusively by the carry-and-force machinery (§2.2.3 through §2.2.5), which is not user-callable; the identity hook exists so that `%` remains well-typed on a `Lazy@`-bound name without introducing a special-cased resolution path.
 
 `%` may be useful stylistically as a marker on a thunk-bound name, to create a visual "compute this result" connection back to the `Lazy@` deferral, even though it has no operational effect.
 
@@ -748,7 +798,7 @@ log(pi * pi);
 // pi is never reassigned; it is constant for the scope's lifetime.
 ```
 
-The language treats observably-constant bindings as candidates for the type system's constancy annotation (the `:over` form, §9) and for optimizations that depend on immutability.
+Observably-constant bindings need no `:over` annotation on functions that close over them (§3.6). The language treats such bindings as candidates for optimizations that depend on immutability, and their constancy may be carried through inferred types, though `:over` itself is a closure-capture declaration, not a type annotation.
 
 A `def` binding with any reassignment (§2.4) in scope is **mutable**:
 
@@ -793,7 +843,7 @@ The name `birthday`, created by `defn`, is enforced-constant, meaning re-assignm
 
 ### §2.4 Reassignment With `:=`
 
-The `:=` operator reassigns the slot of an existing binding:
+The `:=` operator (Syntactic-Grammar `AssignmentExpr`) reassigns the slot of an existing binding:
 
 ```java
 def age: 41;
@@ -950,7 +1000,7 @@ The inner `x` and outer `x` are distinct slots in distinct frames. Inner-frame l
 
 ### §2.7 `deft` (see §9)
 
-`deft` introduces a named type:
+`deft` (Syntactic-Grammar `DefTypeStmt`) introduces a named type:
 
 ```java
 deft Age: int;
@@ -960,7 +1010,7 @@ deft Age: int;
 
 ### §2.8 `defn` (see §3)
 
-`defn` introduces a named function binding:
+`defn` (Syntactic-Grammar `DefFuncExpr`) introduces a named function binding:
 
 ```java
 defn double(v) ^v * 2;
@@ -972,11 +1022,11 @@ For §2's purposes only: `defn` introduces a binding (like `def` does), it hoist
 
 ### §2.9 Block Scoping
 
-Foi has three syntactic block forms. They all introduce a new frame whose parent is the enclosing environment.
+Foi has four syntactic block forms. They all introduce a new frame whose parent is the enclosing environment.
 
 #### §2.9.1 Bare Block Expression: `{ stmts }`
 
-A bare block expression introduces a new frame and evaluates its statements in sequence.
+A bare block expression (Syntactic-Grammar `BareBlockExpr`) introduces a new frame and evaluates its statements in sequence.
 
 ```java
 {
@@ -1004,7 +1054,7 @@ def (tmp: 42) {
 };
 ```
 
-This is the **DefBlockStmt** form. The leading `def` keyword anchors the binding region; the parenthesized clause lists the bindings that exist in the block's frame from the top of `body`.
+This is the `DefBlockStmt` form (Syntactic-Grammar §11). The leading `def` keyword anchors the binding region; the parenthesized clause lists the bindings that exist in the block's frame from the top of `body`.
 
 **Abstract execution:**
 
@@ -1027,7 +1077,7 @@ The defs-init clause uses the **strict-optional** binding form: Identifier entri
 ?[x ?< 3]: (y: 3) { log(x + y); };
 ```
 
-This construct (`(..) { .. }`) is the first variation of the **BlockExpr** form.
+This construct (`(..) { .. }`) is the `BlockExprStrict` form (Syntactic-Grammar §11).
 
 It looks like the §2.9.2 form, minus the `def` keyword. As such, it's dependent on, and must be attached to, other constructs: pattern matching clause (match consequent) and guard expression consequent (as above).
 
@@ -1068,7 +1118,7 @@ people ~each (< :name, :title >) {
 };
 ```
 
-This construct (`(..) { .. }`) is another variation of the **BlockExpr** form, which appears only at **implicit-input positions**: comprehension RHS and pipeline RHS. The enclosing context supplies an implicit input value.
+This construct (`(..) { .. }`) is the `BlockExpr` form (Syntactic-Grammar §11), which appears only at **implicit-input positions**: comprehension RHS and pipeline RHS. The enclosing context supplies an implicit input value.
 
 It looks like §2.9.3, but every entry's binding participates with the implicit input rather than ignoring it. A no-init entry takes its value from the implicit input directly. An init-bearing entry uses the `:?` sigil (§3.2.2), which reads the implicit input first and evaluates the init expression only when the implicit input is empty, overriding it.
 
@@ -1098,7 +1148,7 @@ xs ~map (v:? 0) { v * 2 };          // v = 0 for empty elements
 
 ### §2.10 Module scope
 
-The outermost scope of a module follows the same `def`-at-top rule as a bare block: `def`, `defn`, and `deft` may interleave at the top of the scope, and general statements follow. The module's frame is the root of the frame chain for all expressions evaluated within the module.
+The outermost scope of a module has an unmarked (implicit) **`def` section** at its top (§2.1.1): `def`, `defn`, and `deft` may interleave with no enclosing syntactic delimiter, and general statements follow. The module's frame is the root of the frame chain for all expressions evaluated within the module.
 
 Modules additionally admit `import` -- which appears only as an initializer value on a top-of-scope `def` (e.g., `def Std: import "#Std";`) -- and `export` -- a statement form unique to module scope. Both are detailed in §8.
 
@@ -1156,7 +1206,7 @@ Each closure captures the frame in which its iteration ran; that frame is distin
 
 ### §2.12 Pick Expressions
 
-A pick reads one or more values from a Record or Tuple. The single-access forms produce one value; the multi-pick forms produce a new Record containing the picked entries.
+A pick reads one or more values from a Record or Tuple. The single-access forms (Syntactic-Grammar `SingleAccessExpr` / `MultiAccessExpr` at §6, with segment productions `DotIdentifier`, `BracketExpr`, `DotBracketExpr`, `DotAngleExpr`) produce one value; the multi-pick forms produce a new Record containing the picked entries.
 
 #### §2.12.1 Single Property Access: `.name`
 
@@ -1343,7 +1393,7 @@ rec.<x, &extras>;           // < x: 1, y: 2, z: 3 >
 
 ### §2.13 Destructured Bindings
 
-A destructured binding extracts one or more values from a Record or Tuple and binds them to names in the current frame. Destructure targets appear at four positions: `def` statements, the defs-init clause of `def (...) {...}` and `(...) {...}` blocks, function parameter lists, and pattern-match clauses (§5).
+A destructured binding (Syntactic-Grammar `DestructureTarget` at §4) extracts one or more values from a Record or Tuple and binds them to names in the current frame. Destructure targets appear at four positions: `def` statements, the defs-init clause of `def (...) {...}` and `(...) {...}` blocks, function parameter lists, and pattern-match clauses (§5).
 
 The target shapes are:
 
@@ -1351,7 +1401,7 @@ The target shapes are:
 - `:source.name`: concise-tail (i.e., `name: source.name`)
 - `name: source.other`: renamed
 - `#name`: full-context capture
-- `name: [sourceExpr]`: dynamic source
+- `name: [sourceExpr]`: computed source
 
 Any non-capture form additionally admits an optional `:? default` tail: if the entry's extraction resolves to `empty`, the `default` expression is evaluated and its value overrides the empty read. Default expressions may reference names bound by earlier entries in the same destructure.
 
@@ -1492,7 +1542,7 @@ The `~each` block receives each element of `people` as its implicit input; the d
 
 #### §2.14.1 The `:as` type annotation
 
-A `def` binding (and many other expressions) may carry a `:as` tail specifying a type:
+A `def` binding (and many other expressions) may carry a `:as` tail (Syntactic-Grammar `AsExpr` / `AsAnnotationExpr` at §5) specifying a type:
 
 ```java
 def age: 42 :as int;
@@ -1504,15 +1554,15 @@ Open: whether the annotation is checked at parse time, at a separate elaboration
 
 #### §2.14.2 `:over` and constancy
 
-Per §2.3, the operational condition for constancy is "no `:=` reassignment in scope." The full `:over` semantics -- its interaction with type inference, with mutable substructures held by constant bindings, with cross-module re-export -- is covered in §9.
+Per §2.3, the operational condition for constancy is "no `:=` reassignment in scope." The `:over` operational semantics -- when it must appear on a function that closes over a mutable binding, and its interaction with nested closures -- are specified in §3.6. Its interaction with type inference (whether inferred types carry `:over`-derived constancy metadata, cross-module re-export behavior) is covered in §9.
 
 #### §2.14.3 Effect tracking on bindings
 
-Whether a `def` binding carries effect metadata in the elaborated AST is unsettled. Part of the broader effect-tracking design question.
+Effect tracking on function signatures is settled and mandatory per §6.13. For `def` bindings specifically: effects performed by a binding's initializer contribute to the enclosing scope's effect-coverage obligation per §6.13.4. Whether the elaborated AST represents this by tagging the `def` node with an explicit effect-metadata slot, or by deriving the initializer's effect set on demand during coverage-check traversal, is an implementation choice for the type-elaboration layer and is not further constrained here.
 
 #### §2.14.4 Computed-key dispatch
 
-Per §2.12.5, the intended Foi semantic for computed-name picks with non-string keys is structural-equality keyed dispatch. Implementation lives at the runtime layer; migration path from bootstrap behavior is unspecified.
+Per §2.12.5, the intended Foi semantic for computed-name picks with non-string keys is structural-equality keyed dispatch. Implementation lives at the runtime layer; the native backend's dispatch table shape for structural-equality Map dispatch is pending native-backend design and is not further constrained here.
 
 #### §2.14.5 Empty `< >` typing
 
@@ -1526,7 +1576,7 @@ This section specifies function values: how they are introduced, what their para
 
 ### §3.1 Function Literal Forms
 
-A function literal has three surface forms. All produce a function value; they differ in what name (if any) is bound, and where.
+A function literal (Syntactic-Grammar `DefFuncExpr` at §13) has three surface forms. All produce a function value; they differ in what name (if any) is bound, and where.
 
 #### §3.1.1 Declaration Form
 
@@ -1540,15 +1590,16 @@ A declaration `defn` is a statement, not an expression: it cannot appear in oper
 
 ##### §3.1.1.1 `@`-Suffix Declaration Form
 
-A function literal may declare itself with a `@` marker at the end of its name:
+A function literal may be declared with a `@` marker at the end of its name (Syntactic-Grammar `DefHookDecl` at §13; this production covers §3.1.1.1, §3.1.1.2, and §3.1.1.3):
 
 ```java
-defn None@() ^empty;
-defn Id@(v) ^v;
-defn Value@(v) ^v;
+defn Nothing@() ^empty;
+defn Identity@(v) ^v;
 ```
 
-The `@` marker is **not part of the function's name as a binding**; `Value` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Value` and `Value@` cannot coexist as separate bindings in the same scope.
+**NOTE:** These are commonly referred to as "unit constructors". Foi has a number of them built in, such as `Left@`, `Done@`, `IO.of@`, etc.
+
+The `@` marker is **not part of the function's name as a binding**; `Nothing` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Nothing` and `Nothing@` cannot coexist as separate bindings in the same scope.
 
 `@`-marked functions may only have zero parameters, or one parameter; that single parameter (if any) may *not* be a gather parameter.
 
@@ -1557,14 +1608,14 @@ The marker opts the function value into the `@`-call operator (§3.8) at call si
 Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
 
 ```java
-Value@42;        // call: passes 42
-Value @ 42;
-Value@ 42;
-Value @42;
-Value@(42);      // ( ) is expression grouping, not arg list
+Id@42;        // call: passes 42
+Id @ 42;
+Id@ 42;
+Id @42;
+Id@(42);      // ( ) is expression grouping, not arg list
 ```
 
-A function defined *without* the `@` marker cannot be invoked via the `@`-call operator; `regular@ x` is a semantic error against a `regular` that was not declared `@`-callable. The marker is the function value's opt-in.
+A function defined *without* the `@` marker cannot be invoked via the `@`-call operator; `Nothing@ x` is a semantic error against a `Nothing` that was not declared `@`-callable. The marker is the function value's opt-in.
 
 The full `@`-call dispatch mechanism is specified in §3.8.
 
@@ -1597,7 +1648,7 @@ inst%(env);        // ( ) is expression grouping, not arg list
 
 A function defined *without* the `%` marker cannot be invoked via the `%`-call operator; `regular%` is a semantic error against a `regular` that was not declared `%`-callable. The marker is the function value's opt-in.
 
-The full `%`-call dispatch mechanism -- how `inst%` routes to its owning namespace's `%` hook, and the identity-fallthrough behavior when no `%` hook is declared -- is specified in §3.9.
+The full `%`-call dispatch mechanism -- how `inst%` routes to its owning namespace's `%` hook, and the no-hook rejection rule when no `%` hook is declared -- is specified in §3.9.
 
 ##### §3.1.1.3 Comprehension-Suffix Declaration Form
 
@@ -1617,20 +1668,26 @@ A comprehension-marked `defn` installs a comprehension hook on the namespace nam
 
 A comprehension-marked `defn` is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; a comprehension-only declaration is rejected at compile time. This mirrors the `%` hook requirement (§3.1.1.2).
 
-**Admitted markers.** The comprehension markers admitted at declaration position are:
+**Admitted markers.** The comprehension markers admitted at declaration position fall into three categories:
 
-- Tier 1 (no language-provided default): `~<`, `~each`
-- Tier 2 (language-provided default composition at call sites): `~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`
+- **Tier 1** (no language-provided default): `~<`, `~each`
+- **Tier 2** (language-provided default composition at call sites): `~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`
+- **Do-comprehension** (per-namespace override of the do-block compilation): `~<<`, `~<*`
 
-Both tiers use identical declaration syntax; the tier difference affects call-site behavior when the hook is absent from a namespace (below).
+All three categories use identical declaration syntax. Tier 1 and Tier 2 markers install hooks dispatched by their same-name comprehension-call operators; do-comprehension markers install hooks that override the do-block compilation for LHS instances in the declaring namespace.
 
-The `~<<` (do) and `~<*` (looping-do) comprehensions are not admitted at declaration position pending design of a per-step-controllable override interface for these operators. Their call-site behavior stands independently -- nested `~<` / `~map` composition per each namespace's declared primitives (§3.10.9) -- and does not depend on the override interface's shape. The override interface is deferred as its own design question; the yield mechanism (TBD) is the current leading candidate. Call-site use of `~<<` / `~<*` continues to dispatch via the composition machinery over declared primitives; these operators are simply not user-overridable in this specification revision.
+**Do-comprehension calling convention.** The `~<<` and `~<*` markers install hooks of signature `(comp, ty)`:
+
+- `comp` is the compiled effect-performing form of the do-block body, invoked as a unary callable whose parameter is discarded at the outermost invocation and filled by the resumption callable's argument at each subsequent invocation from within an arm body. Full mechanism at §3.10.9.4.
+- `ty` is the dispatch-type introspection value per §3.10.9.7; hooks that do not specialize on compound-LHS shape may omit this trailing parameter (surplus-argument-discard rule of §3.10.1 drops it silently).
+
+The composite marker forms are `Tilde OpenAngle OpenAngle` (`~<<`) and `Tilde OpenAngle Star` (`~<*`); strict no-trivia between the composing tokens, matching the composite-operator adjacency rule at call sites (§10).
 
 **Canonical markers.** The `~<` (bind) hook has surface aliases at call sites: `~chain`, `~bind`, `~flatMap`. At declaration position, only the canonical `~<` form is admitted. `defn Foo~chain(..)`, `defn Foo~bind(..)`, and `defn Foo~flatMap(..)` are rejected at compile time with a message directing the author to declare the hook as `defn Foo~<(..)`. All four spellings continue to dispatch to the `~<` hook at call sites (§3.10.9).
 
 **Adjacency.** Strict no-trivia between the identifier and the marker, mirroring `Foo@` and `Foo%` at their declaration positions. Trivia is admitted between the marker and the first paren-set (mirrors normal `defn` paren spacing).
 
-**Missing hook at call site.** Tier 1 markers (`~<`, `~each`) have no default; a comprehension expression against a namespace that has not declared the corresponding hook is rejected at compile time. Tier 2 markers have language-provided defaults; missing-hook call sites expand to a composition over the namespace's declared primitives (§3.10.9). Where a Tier 2 default's precondition does not structurally fit the namespace shape (e.g., `~foldR` on an infinite structure), the type checker rejects the expression at compile time.
+**Missing hook at call site.** Tier 1 markers (`~<`, `~each`) have no default; a comprehension expression against a namespace that has not declared the corresponding hook is rejected at compile time. Tier 2 markers have language-provided defaults; missing-hook call sites expand to a composition over the namespace's declared primitives (§3.10.9). Do-comprehension markers (`~<<`, `~<*`) fall through to the default compilation route specified at §3.10.9.4 when the hook is absent.
 
 **Multi-decl uniqueness.** At most one hook per marker per namespace per scope; multiple declarations of the same marker on the same namespace are rejected at compile time.
 
@@ -1676,7 +1733,7 @@ def factorial: defn(n) {
 
 ### §3.2 Parameter Lists
 
-A parameter list is a comma-separated sequence of parameter entries enclosed in `( )`. A function literal carries one or more parameter lists; multiple lists indicate a multi-tier (curried) shape (§3.2.5).
+A parameter list (Syntactic-Grammar `ParameterList` and `GatherParameter` at §13) is a comma-separated sequence of parameter entries enclosed in `( )`. A function literal carries one or more parameter lists; multiple lists indicate a multi-tier (curried) shape (§3.2.5).
 
 A parameter entry may take one of the following shapes:
 
@@ -1830,13 +1887,13 @@ buildURL\/("https://my.site", "/api/find", "name=getify");
 ```
 
 Tier-shape constraints:
-- A gather parameter `*args` may appear only in a single-tier `defn`. **Grammar permits multi-tier with gather; semantics reject. Open: enforcement location** (grammar tightening vs. shaper/interpreter rejection).
+- A gather parameter `*args` may appear only in a single-tier `defn`. Grammar admits the multi-tier-with-gather shape (`defn f(x)(*args) ^..`); rejection lives at the semantic layer's shape-check pass, not at the grammar layer.
 - Destructure parameters may appear at any tier.
 - Defaults may appear at any tier.
 
 ### §3.3 Function Body Forms
 
-A function body has one of three surface shapes. All three produce a single return value; multi-exit selection is expressed by pattern matching inside the body, not by multiple return statements (see §3.4 for the single-`^` rule).
+A function body (Syntactic-Grammar `FuncBody` at §13) has one of three surface shapes. All three produce a single return value; multi-exit selection is expressed by pattern matching inside the body, not by multiple return statements (see §3.4 for the single-`^` rule).
 
 #### §3.3.1 Concise return: `^expr`
 
@@ -1865,17 +1922,17 @@ defn process(v) {
 1. Allocate the body's frame (parent: the call frame; see §2.9.1).
 2. Evaluate each statement in source order.
 3. If a `^expr;` statement executes, evaluate `expr` and immediately return that value as the function's return value.
-4. If the block completes without executing any `^`, the function returns `empty` (§3.10.9).
+4. If the block completes without executing any `^`, the function returns `empty` (§3.10.11).
 
-**Single-`^` Rule:** A block body may contain **at most one** `^` return statement, and if present it must be the body's final statement (aside from `defn` function declaration statements. Multiple exit values are expressed by placing a pattern match or guard inside that single `^`:
+**Single-`^` Rule:** A block body may contain **at most one** `^` return statement, and if present it must be the body's final statement (aside from `defn` function declaration statements or `deft` type annotations). Alternate exit values are expressed by placing a pattern match or guard inside that single `^`:
 
 ```java
 defn classify(n) {
-    ^ ?{
+    ^?{
         [n ?< 0]: "negative";
         [n ?= 0]: "zero";
         : "positive";
-    };
+    }
 };
 ```
 
@@ -1892,7 +1949,7 @@ This function body is sugar for `^(x #> add(1) #> triple #> half)`, where `x` is
 **Abstract execution at call time** (after parameter binding):
 
 1. The seed value is the binding held by **the outermost parameter list's first positional parameter**, regardless of how many tiers the function declares.
-2. The pipeline chain is evaluated per §??? (pipeline semantics) with the seed as initial topic.
+2. The pipeline chain is evaluated per §3.10.12 with the seed as initial topic.
 3. The function's return value is the chain's final stage result.
 
 **Outermost-seeds rule rationale.** A multi-tier function like `defn f(x)(y) #> stage` seeds the chain with `x`, not `y`. Paren-grouping designates only call shape; the function still presents one logical parameter list, and "the first positional" means the first positional.
@@ -1910,7 +1967,7 @@ Foi ensures **proper tail calls (PTC)**: evaluation of a chain of tail calls con
 
 #### §3.4.1 Tail-Position Eligibility
 
-A position in a function body is **tail-position-eligible** if it's another function call whose result value can flow out without further computation; `n * fact(n - 1)` is NOT a tail call, but `fact(n - 1,curTotal)` could be.
+A position in a function body is **tail-position-eligible** if the expression at that position is a function call whose result value can flow out of the enclosing function without further computation. This applies to *any* function call at such a position -- not only self-recursive calls. Mutual recursion, indirect dispatch, and calls to unrelated functions all qualify equally. For example, `n * fact(n - 1)` is NOT a tail call (the `*` operator consumes the call's result before it can flow out); `fact(n - 1, curTotal)` at a return position is a tail call.
 
 Eligible positions (presuming the expression itself is a function call), defined structurally:
 
@@ -1932,8 +1989,8 @@ These positions are generally *NOT* tail-call eligible:
 
     **NOTE:** This is the same reasoning as `x #> f #> h`, which makes `h(..)` eligible but not `f(..)`.
 - Statement-level positions: In `{ f(x); ^42; }`, the value of `f(x)` is not in a return position.
-- Binding initializers: In `{ def y: f(x); ^y; }`, `f(x)` is consumed by the binding, not the return. See §3.4.1.1.
-- Inside a bare block expression used as `^`'s operand: In `^{ stmts; lastExpr; }`, `lastExpr` is the bare block's completion value (§2.9.1), not a return path -- the block itself is in the return path. See §3.4.1.1.
+- Binding initializers: In `{ def y: f(x); ^y; }`, `f(x)` is consumed by the binding, not the return. See §3.4.1.2.
+- Inside a bare block expression used as `^`'s operand: In `^{ stmts; lastExpr; }`, `lastExpr` is the bare block's completion value (§2.9.1), not a return path -- the block itself is in the return path. See §3.4.1.2.
 
 ##### §3.4.1.2 Position Transformation
 
@@ -1946,6 +2003,7 @@ defn recur(n) {
     // ..
 
     def res: recur(n - 1);      // not tail call eligible
+
     ^res;                       // not a function call
 };
 ```
@@ -1977,28 +2035,33 @@ defn check(x) ^?[x ?> 0]: process(x);  // tail call (guard consequent)
 defn pipeline(x) #> stageA #> stageB #> stageC;
 // Only `stageC` invocation at chain end is a tail call.
 
-defn add1(x) ^f(x) + 1;                // NOT a tail call (operator consumes)
-defn nested(x) ^h(f(x));               // f is NOT tail; h IS tail
+defn add1(x) ^f(x) + 1;       // NOT a tail call (operator consumes)
+
+defn nested(x) ^h(f(x));      // f is NOT tail; h IS tail
 ```
 
-#### §3.4.4 Single-`^` and PTC
+#### §3.4.3 Single-`^` and PTC
 
 The single-`^` rule (§3.3.2) is what allows tail-position eligibility to be a purely structural property of the AST. Because a function has at most one explicit return statement, multiple exit *values* must come from pattern-matching or guarding inside that one return; those constructs propagate eligibility to their consequents per §3.4.1. This is the design choice that lets PTC be specified without control-flow analysis.
 
 ### §3.5 Preconditions
 
-A function definition may carry one or more **preconditions** between the parameter lists and the body:
+A function definition may carry one or more **preconditions** (Syntactic-Grammar `FuncPrecondList` at §13) between the parameter lists and the body:
 
 ```java
-defn safeDiv(x, y) ?[y != 0]: empty ^x / y;
-defn clamp(x) ?[x ?< 0]: 0 ?[x ?> 100]: 100 ^x;
+defn safeDiv(x, y)
+    ?[y != 0]: empty        // precondition
+    ^x / y;
+
+defn clamp(x)
+    ?[x ?< 0]: 0            // precondition
+    ?[x ?> 100]: 100        // precondition
+    ^x;
 ```
 
 A precondition is syntactically the same as a guard-expression: `?[cond]: consequent` or `![cond]: consequent`.
 
 **Preconditions are call-site guards, not part of function body proper.** They are evaluated *after* the arguments have been resolved and name-bound, but *before* the function itself is invoked. Preconditions may reference only formal parameters; neither bindings from the function body's own scope nor closure-captured bindings from the enclosing scope are visible inside a precondition expression.
-
-The function frame is provisionally allocated, and parameters are bound (preconditions may reference parameters). But if a precondition matches, the function is not invoked. Instead, the resulting value is set to the precondition's consequent value.
 
 **Abstract execution at call time:**
 
@@ -2016,7 +2079,7 @@ Preconditions may reference *only* formal parameters. Closure-captured bindings 
 
 ### §3.5.1 Multi-Parameter Function Preconditions
 
-For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest function that can fully satisfy the precondition with the provided parameter(s).
+For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest tier at which all lexical references in the precondition -- both those in the guard and those in the consequent -- are reachable. That is, every parameter referenced anywhere in the precondition must be bound at or before the tier where the precondition fires.
 
 Consider these two function definitions:
 
@@ -2064,7 +2127,7 @@ In this example, both the `Left@` call and the `factorial(..)` recursive call ar
 
 ### §3.6 Mutable Closure-Capture Declaration: `:over`
 
-A function literal may carry a `:over (name, name, ...)` clause between the function's preconditions (if any) and its body (but before any `:as`):
+A function literal may carry a `:over (name, name, ...)` clause (Syntactic-Grammar `FuncOverClause` at §13) between the function's preconditions (if any) and its body (but before any `:as`):
 
 ```java
 defn lookup(id) :over (cache) {
@@ -2073,7 +2136,7 @@ defn lookup(id) :over (cache) {
 };
 ```
 
-**Mutability and closure-capture rule.** A binding (`def`) is internally flagged as **mutable** if it is the target of any `:=` reassignment anywhere in a scope it's accessible within (§2.5). A function literal that closes over a mutable binding from its enclosing scope **MUST** list that binding in its `:over` clause. Constant bindings (those never reassigned) may be referenced freely; they need not appear in `:over`.
+**Mutability and closure-capture rule.** A binding (`def`) is internally flagged as **mutable** if it is the target of any `:=` reassignment anywhere in a scope it's accessible within (§2.3). A function literal that closes over a mutable binding from its enclosing scope **MUST** list that binding in its `:over` clause.
 
 **Direct closure only.** `:over` declares **direct** closure references within the function itself.
 
@@ -2106,7 +2169,7 @@ defn area(r) ^pi * r * r;               // no :over needed
 
 ### §3.7 Type Annotation: `:as`
 
-A function literal may carry a `:as Type` clause:
+A function literal may carry a `:as Type` clause (Syntactic-Grammar `FuncAsClause` at §13):
 
 ```java
 // deft AddFunc (int,int) ^int
@@ -2118,10 +2181,15 @@ defn add(x, y) :as AddFunc ^x + y;
 
 - `:as Type` is transparent at runtime; it imposes no behavior beyond what §9 specifies.
 - `:as` appears once, after any `:over` clause and before the body.
+- The type slot admits only a bare `Identifier`, not the broader `NamedType` production used in `AsAnnotationExpr` (§5). This narrowing is intentional: the `defn` declaration grammar is already substantially complex, and confining `FuncAsClause` to an identifier reference to a `deft`-declared function type keeps the function-signature surface tractable. To annotate with a compound type expression, declare a `deft` binding for that type and reference it by name.
 
 ### §3.8 The `@`-Call Operator
 
-Foi has a family of operators that dispatch through user-declared bindings. Each operator's behavior against a value is not fixed at the language level; it is delegated to the binding that value was constructed through. `@` is the first and most fundamental member of this family. It invokes a **type namespace**: a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot (e.g., `Maybe`, `IO`, `List`, `Vector`) plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
+The `@` operator (Syntactic-Grammar `AtCallExpr` at §7 for the call form; `AtRefTail` at §7 for the reference-extraction form `Foo.@`) is Foi's constructor dispatch. Foi has a family of operators that dispatch through user-declared bindings.
+
+Each operator's behavior against a value is not fixed at the language level; it is delegated to the binding that value was constructed through.`@` is the first and most fundamental member of this family.
+
+It invokes a **type namespace**: a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot (e.g., `Maybe`, `IO`, `List`, `Vector`) plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
 
 The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values -- `%` in the next section, and eventually others -- read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
 
@@ -2171,14 +2239,34 @@ The `@` operator returns a runtime error if called with 3+ arguments.
 
 The prime form `(@')` reverses argument order for the 2-argument arity: swaps to `(arg, callee)` order -- semantically equivalent to invoking the second against the first.
 
-#### §3.8.2 Reference vs. Call Semantics For `@`-Marked Functions
+#### §3.8.2 Reference Extraction Via `.@`
 
-The argument-trail expectation differs by the function's declared arity:
+`Foo@` alone is uniformly a call form regardless of the constructor's declared arity (§3.10.7): with an argument trail (`Foo@x`) or without (`Foo@`), the `@`-call form dispatches the constructor. There is no arity-based ref-vs-call distinction on the `Foo@` shape.
 
-- A function declared with `@` and expecting one parameter: `Foo@` *alone* (no argument trail) is a **reference** to the function value, not a call. `Foo@ 42` is a call.
-- A function declared with `@` and expecting zero parameters: `Foo@` *alone* is a **call** (a no-arg call). There is no argument trail to wait for; the `@`-call operator dispatches immediately. `None@` is a call producing the function's return value, not a reference to `None`.
+To extract the constructor as a first-class function value, use the reference form `Foo.@`:
 
-This asymmetry exists because the call shape `Name@` has no syntactic continuation when arity is zero, so it must commit; for non-zero arity it can wait for the argument trail.
+```java
+def doub: Double.@;       // reference to Double's constructor
+```
+
+The extracted value is a **marker-preserving function reference**: it carries the `@`-marker flag through to the binding it lands in. Calling the extracted reference re-enters the `@`-call dispatch machinery via the binding's name:
+
+```java
+doub@ 42;                 // 84
+```
+
+Passing the extracted reference as a callback works the same way: the marker travels with the value, and any receiver that dispatches through it does so via the `@`-call form.
+
+**Adjacency.** The `.@` form is strict no-trivia on both sides: `Foo. @`, `Foo .@`, and `Foo . @` are all parse errors. This stricter rule (versus the trivia-tolerant `Foo@`) matches the form's chain-terminator semantics — there should be no variance around where the access chain ends.
+
+**No trailing forms.** `Foo.@` admits no chained tail. `Foo.@(x)`, `Foo.@%`, `Foo.@'`, and `Foo.@.bar` are all rejected. To use the extracted reference in any of those roles, first bind it into a name:
+
+```java
+def cons: Foo.@;
+cons@x;                                  // call the extracted reference
+```
+
+**Operator-as-function alternative.** For the specific case of two-argument application `(callee, arg)`, the operator-as-function form `(@)(Foo, x)` (§3.8.1, §3.13) is available. Where `Foo.@` extracts the reference into a value, `(@)` lifts the operator into a callable that performs the dispatch inline.
 
 #### §3.8.3 The Two Roles Are One Operator
 
@@ -2188,28 +2276,73 @@ The value-position and call-position uses of `@` are not two separate facts but 
 
 The value-identity behavior in value position is what the operator does when there is no callee to call. The call behavior in call position is what the operator does when there is one. The marker requirement on `@`-marked function definitions is a contract on the callee side; it does not affect the LHS-less use form `@v`, which always behaves as identity.
 
+#### §3.8.4 Namespace-Value Identity
+
+A namespace name is a first-class value (per §3.8's four-way collapse: identity, constructor, dispatch target, plus value-position use). At value position, a namespace value participates in `?=` structural-equality comparison with identity semantics: two namespace values are `?=`-equal exactly when they name the same namespace.
+
+```java
+List ?= List;                    // true
+List ?= Maybe;                   // false
+Maybe ?= Either;                 // false
+```
+
+The comparison is between **namespace values themselves**, not between instances constructed through those namespaces. `?as`/`:as` (§5) already handle namespace-identity checks *on instances*; `?=` on namespace values handles namespace-identity checks *on the namespaces as values*. The two mechanisms are distinct and non-overlapping.
+
+Namespace values are equal to themselves only. They are not `?=`-equal to any non-namespace value, regardless of coincidental shape: a namespace value is never `?=`-equal to a Record, Tuple, function value, or any primitive.
+
+**Use in Tuple literals.** Because namespace values are first-class, a Tuple literal may hold namespace values as entries, and pattern-match `?=` atoms may test against such Tuple literals:
+
+```java
+def ty: < List, Promise >;
+
+?(ty){
+    [< List, Promise >]:    // matches: both entries ?=-equal
+        "list of promises";
+    [< Maybe, Either >]:    // does not match
+        "unreachable here";
+    :
+        "other shape";
+};
+```
+
+**NOTE:** The dependent match atoms in the above snippet rely on implicit `?=` -- matching `ty` to `< List, Promise >`, for example -- but `?=` could have been explicitly added: `[?= < List, Promise >]`.
+
+The primary consumer of this mechanism is the dispatch-type introspection surface (§3.10.9.7), where hooks receive a Tuple of namespace values reflecting compound-LHS shape and dispatch on it via pattern match.
+
 ### §3.9 The `%` Effector Call Operator
 
-The symbol `%` is an effector call operator against an instance value, with an optional right-hand environment operand. It dispatches an effector call through the instance's owning namespace, subject to an opt-in `%`-marked hook (§3.1.1.2) on that namespace. If the namespace declares no such hook, the operator passes the instance through unchanged.
+The symbol `%` (Syntactic-Grammar `EffectorTail` at §7) is an effector call operator against an instance value, with an optional right-hand environment operand.
+
+It dispatches an effector call through the instance's owning namespace, subject to an opt-in `%`-marked hook (§3.1.1.2) on that namespace. If the namespace declares no such hook, the `%`-call is a type error. Value-like namespaces that want their instances to admit `%` calls without an effect declare an explicit identity `%` hook (per the `Lazy@` pattern at §2.2.9; see §3.9.1).
 
 Where `@` invokes a namespace as a constructor (§3.8), `%` invokes an instance's namespace as an effector. An instance carries its namespace identity as a runtime contract, established at construction; `%` reads that identity to route dispatch.
 
 The full dispatch routing is specified with the call form in §3.10.8.
 
-#### §3.9.1 Identity Fallthrough
+#### §3.9.1 No-Hook Rejection
 
-If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity:
+If the instance's owning namespace declares no `%` hook, the `%`-call form is a type error:
 
-- `inst%` evaluates to `inst`.
-- `inst % env` evaluates to `inst`; the `env` operand is discarded.
+- `inst%` where `inst`'s namespace defines no `%` hook is rejected.
+- `inst % env` where `inst`'s namespace defines no `%` hook is rejected.
 
-This fallthrough is **normative**. It admits every `@`-marked namespace's instances to the `%`-call form regardless of whether the namespace defines an effector, preserving pass-through semantics for value-like namespaces (`Lazy@`, `Id@`, etc.) that carry no effect.
+The rejection is **normative**. `%` requires a `%` hook to dispatch to.
 
-Identity fallthrough applies to the dispatch lookup on a namespaced instance whose namespace declares no `%` hook. It does **not** apply to `%` against a value that carries no namespace identity; that case is rejected. `%` requires an instance whose namespace has been established through an `@`-marked construction.
+Value-like namespaces (`Lazy@`, `Id@`, `None@`, etc.) that carry no effect but want to admit `%` calls MUST declare an explicit identity `%` hook:
+
+```java
+defn Identity@(v) ^v;
+
+defn Identity%(inst) ^inst;      // explicit identity hook
+```
+
+This is the pattern established for `Lazy@` at §2.2.9. The identity hook exists so that `%` remains well-typed on the namespace's instances without requiring a language-level special case for value-like namespaces.
+
+Note that this rejection is distinct from the rejection of `%` against a value with no namespace identity at all (e.g., a bare primitive `42%`); that case is diagnosed at §3.9's "`%` requires an instance whose namespace has been established through an `@`-marked construction" rule, not at the "no hook declared" rule here.
 
 #### §3.9.2 Uniformly a Call Form
 
-`%` admits no reference-extraction form. Unlike `@`, which supports `Foo.@` to extract the constructor as a first-class function value (§3.8), there is no `inst.%` form. Every syntactic use of `%` against an instance LHS is a call: it either dispatches to the effector hook or falls through to identity per §3.9.1.
+`%` admits no reference-extraction form. Unlike `@`, which supports `Foo.@` to extract the constructor as a first-class function value (§3.8), there is no `inst.%` form. Every syntactic use of `%` against an instance LHS is a call: it either dispatches to the effector hook, or is a type error if the instance's namespace declares no `%` hook (§3.9.1).
 
 `%` also admits no LHS-less use form. `%v` is not a valid expression; `%` requires an instance LHS.
 
@@ -2221,17 +2354,17 @@ The `%` operator lifts to a function value via the standard operator-as-function
 
 `(%)` is arity-polymorphic. It dispatches at call time on the number of arguments supplied, mirroring the `%`-call operator's LHS+RHS shape at the lifted-function layer:
 
-- **1-arg:** `(%)(inst)` is semantically equivalent to `inst%`. If `inst`'s owning namespace declares a `%` hook, dispatch fires with `inst` as the sole argument; otherwise identity fallthrough returns `inst` unchanged.
+- **1-arg:** `(%)(inst)` is semantically equivalent to `inst%`. If `inst`'s owning namespace declares a `%` hook, dispatch fires with `inst` as the sole argument; otherwise the call is a type error per §3.9.1.
 
-```java
+    ```java
     (%)(taskInst);           // taskInst%
-```
+    ```
 
-- **2-arg:** `(%)(inst, env)` is semantically equivalent to `inst % env`. If dispatch fires, the hook receives `(inst, env)`; otherwise identity fallthrough returns `inst` (discarding `env`).
+- **2-arg:** `(%)(inst, env)` is semantically equivalent to `inst % env`. If dispatch fires, the hook receives `(inst, env)`; otherwise the call is a type error per §3.9.1.
 
-```java
+    ```java
     (%)(taskInst, myEnv);    // taskInst % myEnv
-```
+    ```
 
 The `%` operator returns a runtime error if `(%)` is called with zero arguments or with 3+ arguments.
 
@@ -2239,7 +2372,7 @@ The prime form `(%')` reverses the 2-argument order to `(env, inst)`; semantical
 
 ### §3.10 Call Semantics
 
-This section specifies what happens when a function value is invoked. It covers the regular `foo(..)` call form and the alternate `@`-call and `%`-call forms.
+This section specifies what happens when a function value is invoked (Syntactic-Grammar `PrefixCallSuffix`, `AtCallExpr`, `EffectorTail` at §7). It covers the regular `foo(..)` call form and the alternate `@`-call and `%`-call forms.
 
 #### §3.10.1 Argument Binding
 
@@ -2338,9 +2471,17 @@ f(1, ...mid, 9);                         // 1, 4, 5, 6, 9
 f(1, , ...mid);                          // 1, skip, 4, 5, 6
 ```
 
-Spread is positional-only: it is not admitted in a named-argument call (§3.10.6). A call's argument list is either entirely positional (with optional skip slots and spreads) or entirely named; they're never mixed.
+Tuple / List spread is positional-only: it is not admitted in a named-argument call (§3.10.6).
 
-**Open:** Whether a Record with named slots whose names correspond to parameters may be spread into a call as a named-argument expansion (`f(...rec)`) is undecided. The current spec rejects all Record spread; admitting a named-arg form remains under consideration.
+**Record spread as named-argument expansion.** A `...expr` slot whose `expr` evaluates to a Record with named slots expands each named entry `name: val` as a named-argument binding at the call site. Named-argument calls are subject to §3.10.6's rules for parameter-name resolution.
+
+```java
+def mid: < x: 4 >;
+
+f(z: 6, ...mid, y: 5);            // x: 4, y: 5, z: 6
+```
+
+The all-positional-or-all-named non-mixing rule extends uniformly: a call whose argument list contains a Record spread is a named-argument call, and cannot contain positional arguments, skip slots, or Tuple / List spreads. A call whose argument list contains positional arguments, skip slots, or Tuple / List spreads is a positional call, and cannot contain named arguments or Record spreads. The two shapes remain disjoint within a single call.
 
 #### §3.10.6 Named Arguments
 
@@ -2378,7 +2519,7 @@ The `@`-call form admits exactly zero or one operand. Spread arguments and named
 
 **NOTE:** Parentheses following `@` are not call syntax; they are expression-grouping for the operand. `Foo@(x + 1)` is `Foo` applied to the value of `x + 1`, not a parenthesized argument list.
 
-To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.12).
+To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.13).
 
 The `@` operator, including how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity, is specified in full in §3.8.
 
@@ -2391,7 +2532,7 @@ An instance constructed through an `@`-marked namespace that also declares a `%`
 
 Dispatch resolves the effector hook through the instance's owning namespace, carried as a runtime contract on the instance. Whitespace around `%` is optional.
 
-If the instance's owning namespace declares no `%` hook, the `%`-call form falls through to identity per §3.9.1.
+If the instance's owning namespace declares no `%` hook, the `%`-call form is a type error per §3.9.1.
 
 The `%`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
 
@@ -2409,7 +2550,7 @@ inst ~map fn;
 inst ~fold init fn;
 ```
 
-The general shape is `LHS ~<glyph> operands...`, where `~<glyph>` is one of the comprehension markers admitted at §3.1.1.3 -- Tier 1 (`~<`, `~each`), Tier 2 (`~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`), the deferred `~<<` / `~<*`, or one of the `~<` surface aliases (`~chain`, `~bind`, `~flatMap`).
+The general shape is `LHS ~<glyph> operands...`, where `~<glyph>` is one of the comprehension markers admitted at §3.1.1.3 -- Tier 1 (`~<`, `~each`), Tier 2 (`~map`, `~ap`, `~filter`, `~fold`, `~cata`, `~foldR`), Do-comprehension (`~<<`, `~<*`), or one of the `~<` surface aliases (`~chain`, `~bind`, `~flatMap`).
 
 Dispatch resolves the corresponding hook through the LHS's owning namespace, carried as a runtime contract on the instance (same mechanism as the `%`-call form, §3.10.8). The hook is invoked with the LHS as its first argument, followed by the operands the comprehension supplies (§3.10.9.2 fixes the operand shape per marker).
 
@@ -2442,7 +2583,7 @@ Each comprehension marker fixes the operand shape supplied at call time and thre
 - `~fold`: two operands, an initial value and a folding function of `(accumulator, value)`. Hook signature: `(inst, init, fn)`.
 - `~cata`: two operands, an initial-value thunk and a folding function of `(accumulator, value)`. Hook signature: `(inst, initThunk, fn)`.
 - `~foldR`: two operands, an initial value and a folding function of `( accumulator, value)`. Hook signature: `(inst, init, fn)`.
-- `~<<` and `~<*`: block operands per §16's do-comprehension grammar; not user-overridable in this specification revision (§3.1.1.3).
+- `~<<` and `~<*`: block operands per §16's do-comprehension grammar. Operand shape is fixed by the grammar; user override of the composition mechanism is via namespace-declared `~<<` or `~<*` hook per §3.10.9.4, with declaration-position admittance specified at §3.1.1.3.
 
 ##### §3.10.9.3 Missing-Hook Behavior
 
@@ -2456,15 +2597,121 @@ The `~fold` and `~cata` markers form a **mutual-defaulting pair**: they express 
 - `~cata` missing, `~fold` present: `inst ~cata initThunk fn` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
 - Both missing: rejected at compile time.
 
-For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the default composition expands over the namespace's declared `~<` primitive and its `@` constructor hook. Where the composition's structural precondition does not fit the namespace's shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an "empty of shape"), the expansion is rejected at compile time.
+For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the default composition expands over the namespace's declared `~<` primitive and its `@` constructor hook. Where the composition's structural precondition does not fit the namespace's shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an "empty of shape"), the expansion is rejected at compile time. Exact per-marker default-composition formulas are specified at each marker's §7 subsection.
 
-**Open:** exact default-composition formulas per Tier 2 marker are pending the `__ns_defaults` runtime table design. The bootstrap transpiler currently emits direct dispatch at all comprehension-call sites and produces a runtime error on a missing Tier 2 hook; the default-composition wiring lands as follow-on work and does not affect declaration or call-site grammar.
+##### §3.10.9.4 The `~<<` and `~<*` Do-Block Compilation Split
 
-##### §3.10.9.4 `~<<` and `~<*` Call-Site Expansion
+Do-block comprehensions (`~<<` consumer-do, `~<*` producer-do) compile via one of two routes at each call site, selected by whether the LHS's owning type-class namespace has declared a `~<<` hook.
 
-At call sites, `~<<` (do) and `~<*` (looping-do) expand to nested `~<` / `~map` composition over the LHS's owning namespace's declared primitives, per §16's do-comprehension semantics. These operators are not admitted at declaration position and cannot be user-overridden in this specification revision (§3.1.1.3); their call-site expansion is fixed to the composition machinery.
+**Default route (no `~<<` hook declared).** The do-block body expands at compile time to a nested `~<` / `~map` composition over the namespace's declared primitives, per §16's do-comprehension semantics. Each `def x:: expr` statement lowers to a `~<` bind; a bare mid-block statement lowers to `~<` with the produced value discarded; the terminal expression lowers to `~map` (or, for a `::`-prefixed terminal, to `~<`). No effect is performed at compile-time-expanded sites; the expansion is direct composition.
 
-The override interface for `~<<` and `~<*` is deferred as its own design question (yield mechanism candidate, TBD).
+**Override route (namespace declares a `~<<` hook).** The do-block
+body compiles to an **effect-performing form** -- a computation that
+performs designated per-namespace effect kinds at each block
+statement, dispatched to a `~<*` handler scope installed by the hook.
+The hook receives the effect-performing form as its first argument
+and walks it under handler control, one statement at a time.
+
+The hook signature is:
+
+```java
+defn Name~<<(comp, ty) { .. };
+```
+
+- `comp` is the compiled effect-performing form of the do-block body
+(below).
+- `ty` is the dispatch-type introspection value per §3.10.9.7; hooks
+that do not specialize on compound-LHS shape may omit this trailing
+parameter (the surplus-argument-discard rule of §3.10.1 drops it
+silently).
+
+**Compilation of the do-block body.** The block body is lowered
+statement-by-statement to a unary callable `defn(_) { <lowered-body> }`,
+where the leading parameter is discarded (uniform-shape convention;
+see below). Each statement lowers per this table:
+
+- `def x:: expr` -> `def x: Effect.Bind% expr` (perform `Effect.Bind`
+with `expr` as payload; the resume-value binds into `x`).
+- Mid-block bare `:: expr;` -> `Effect.Bind% expr` (perform Bind and
+discard the resume-value).
+- Mid-block non-`::` statement -> executed as raw code inside `comp`;
+no perform is emitted.
+- Bare terminal expression `expr` -> `Effect.Map% expr` (perform
+`Effect.Map` with `expr` as payload; signals a raw-to-wrapped lift to
+the hook).
+- `::`-prefixed terminal `:: expr` -> `Effect.Return% expr` (perform
+`Effect.Return` with `expr` as payload; signals an already-wrapped
+identity to the hook).
+
+The lowering is uniform: every `::` in source becomes a `Bind`, and
+exactly one terminal perform (`Map` or `Return`) fires per full-path
+completion.
+
+**The three internal effect kinds** (`Effect.Bind`, `Effect.Map`,
+`Effect.Return`) are a closed language-provided set, not
+user-declarable. They exist as the compilation contract between the
+do-block-body lowering and the `~<<` hook's handler scope; they carry
+no admissible signature for `deft` declaration and cannot appear in
+user-authored `:Effects(...)` narrowings.
+
+**Discarded first parameter of `comp`.** `comp` is invoked as a unary
+callable; its parameter is discarded at the outermost invocation and
+filled by the resumption callable's argument (`ret`, §6.3.2) at each
+subsequent invocation from within an arm body. The uniform-shape rule
+keeps the hook's dispatch surface consistent across the initial call
+and all recursive resumptions.
+
+**Hook body pattern.** The hook opens a `~<*` scope over
+`Effect.<Bind, Map, Return>`, running `comp(v)` where `v` is the
+value driving the current iteration:
+
+```java
+Effect.<Bind, Map, Return> ~<* (eff:: comp(v), ret) {
+    :: ?(eff){
+        [?as Effect.Bind]:   /* handle Bind: recurse on # under ret */;
+        [?as Effect.Map]:    /* handle Map: lift # into namespace shape */;
+        [?as Effect.Return]: /* handle Return: pass # through */;
+    };
+};
+```
+
+The arms dispatch by effect kind. The **Bind** arm's payload
+(accessed as `#`) is the bound expression's value; the arm typically
+opens a fresh `~<*` scope over `ret(v')` for each `v'` drawn from `#`,
+gathering results, and its terminal is the accumulated result. The
+**Map** arm's payload is a raw terminal value; the arm terminal is
+the payload lifted into the namespace's canonical wrap shape. The
+**Return** arm's payload is already namespace-shaped; the arm
+terminal is the payload passed through unchanged.
+
+Under §6.3.2's arm-terminal-as-scope-contribution model, the Map and
+Return arms do not invoke `ret` at their terminal path; their arm
+terminals directly become the scope-value contributions. The Bind
+arm invokes `ret` internally (via sub-scope openings on `ret(v')`)
+and its arm terminal is the accumulated result across those sub-scope
+values.
+
+Concrete realization of this pattern for `List~<<` is worked out at
+§7.2.
+
+**Effect-tracking surface.** The three internal effect kinds are
+performed inside `comp` and caught by the hook's own `~<*` scope,
+satisfying §6.13's tracking rule at the hook boundary. They do not
+appear in the do-block expression's effect signature exposed to the
+caller: the compiler emits them at lowering time and the hook consumes
+them at dispatch time, so the round-trip is opaque to the surrounding
+effect surface. User effects performed by mid-block statements (from
+called functions' `:Effects(...)` clauses, or from explicit
+`%`-performs on other effect kinds) propagate past the hook per
+§6.3.1's non-narrowed-effect rule and are tracked normally.
+
+Effect-tracking cost applies only when the override route is
+selected; namespaces that do not declare a `~<<` hook incur no effect
+surface from do-block usage.
+
+The choice between routes is made at compile time from the presence or absence of a `~<<` hook declaration on the LHS's owning namespace. Both routes produce identical observable results at the do-block-expression level; the override route is available for namespaces that need per-step control (e.g., short-circuiting, resource management, non-default sequencing) that the default nested composition cannot express.
+
+Declaration-position admittance of `~<<` and `~<*` as hook markers is specified at §3.1.1.3; the calling convention there matches this section's `(comp, ty)` shape.
 
 ##### §3.10.9.5 Semantic Error Taxonomy
 
@@ -2489,7 +2736,7 @@ Each comprehension operator lifts to a function value via the standard operator-
 
 The lifted function dispatches at call time on the LHS argument's owning namespace, exactly as the corresponding infix comprehension-call form does. Alias spellings (`~chain`, `~bind`, `~flatMap`) normalize to the canonical `~<` marker at lift time; a namespace's hook table sees only the canonical key (§3.10.9.1).
 
-The `~<<` and `~<*` comprehensions do not lift to function values in this specification revision. Their RHS is a block (§16), not a value expression; there is no first-class function-call shape that supplies a block operand. Consistent with the deferral in §3.1.1.3, override of these operators awaits a per-step-controllable interface.
+The `~<<` and `~<*` comprehensions do not lift to function values in this specification revision. Their RHS is a block (§16), not a value expression; there is no first-class function-call shape that supplies a block operand.
 
 **Arity.** Each lifted comprehension has a fixed arity matching the operand shape declared at §3.10.9.2:
 
@@ -2535,6 +2782,75 @@ Comprehension primes fall into three categories:
 - **Reserved prime form**: `(~each')`, `(~map')`, or `(~cata')` appears in an expression. Diagnostic directs the author to use the base marker pending semantic definition of the prime form in a future spec revision.
 - **Prime not admitted**: `(~<')`, `(~ap')`, or `(~filter')` appears in an expression. These markers carry no direction axis, and arg-swap prime is not part of the comprehension family. Diagnostic directs the author to partial application (§3.11) for the operand-fixed, instance-flows-through pattern arg-swap would have served: `(~filter)|, pred|`, `(~<)|, fn|`, `(~ap)|, valInst|`.
 
+##### §3.10.9.7 Dispatch-Type Introspection
+
+Every hook invocation receives, as its trailing positional argument, a value that describes the dispatch type against which the hook was invoked. This value (`ty`) is emitted at every call site across all hook markers: constructor `@` (§3.8), effector `%` (§3.9), and every comprehension marker (§3.10.9). A hook that does not specialize on `ty` declares no parameter for it; the surplus-argument-discard rule (§3.10.1) drops the trailing value silently at hook-body entry.
+
+**`ty` shape.** The dispatch-type value is a Tuple of namespace values reflecting the compound-LHS nesting depth of the LHS at the call site:
+
+- Plain-LHS: `xs ~map fn`, where `xs` is a `List` instance, emits `< List >` (a 1-tuple).
+- Single-level compound: `List{Promise} ~<< {..}` emits `< List, Promise >` (a 2-tuple).
+- Nested compound: `List{Promise{Int}} ~<< {..}` emits `< List, < Promise, Int > >` (the second entry is itself a 2-tuple).
+
+The tuple's length signals nesting depth; the shape is always a tuple, uniformly, including at plain-LHS sites. Entries are namespace values themselves; per §3.8's four-way collapse, a namespace name is a first-class value, and namespace-value identity comparison via `?=` is specified at §3.8.
+
+**Emission source.** For static-LHS call sites (a bare namespace name or a compound-LHS type expression at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS type expression. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's owning-namespace tag; the tag was established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
+
+**Hook declaration.** A hook that specializes on `ty` declares a trailing parameter to receive it:
+
+```java
+defn Foo~map(inst, fn, ty) {
+    // hook body may inspect `ty` for compound-LHS specialization
+};
+```
+
+A hook that does not specialize declares only its operand parameters:
+
+```java
+defn Maybe~map(inst, fn) {
+    // `ty` is emitted at the call site; discarded silently per §3.10.1
+};
+```
+
+Both declarations are well-formed under identical call-site emission (`Name~map(inst, fn, ty)`). The surplus-argument-discard rule (§3.10.1) drops the trailing `ty` at any hook declaration that does not receive it. Stdlib migration to `ty`-receiving forms is opt-in per hook; existing declarations remain valid without change.
+
+**Runtime specialization.** A hook body that specializes uses dependent pattern-match with `?=` atoms against Tuple literals of namespace values:
+
+```java
+defn Foo~map(inst, fn, ty) {
+    ?(ty){
+        [?= < Foo, Bar >]:
+            fooBarMap(inst, fn);
+        [?= < Foo, < Bar, Int > >]:
+            fooBarIntMap(inst, fn);
+        :
+            fooPlainMap(inst, fn);
+    }
+};
+```
+
+Each arm matches a specific compound-LHS shape; the tuple's structural equality resolves the branch.
+
+Wildcard or partial-shape matching uses destructure-then-match:
+
+```java
+defn Foo~map(inst, fn, ty) {
+    def < outer, inner >: ty;
+    ?{
+        [outer ?= Foo ?and ?empty inner]:
+            fooPlainMap(inst, fn);
+        :
+            fooCompoundMap(inst, fn, inner);
+    };
+};
+```
+
+Both idioms rely on namespace-value `?=` identity equality per §3.8.
+
+**No parallel declaration surfaces.** A namespace declares at most one hook per operator (§3.1.1). Compound-LHS specialization is entirely a runtime-reflection concern inside the hook body: dispatch on `ty` inside the single declared hook.
+
+**Rationale.** A single hook declaration with runtime `ty` dispatch collapses what would otherwise be an N-fold surface (one hook per compound-LHS shape) into one hook that self-hosts its own specialization. This is the same collapse pattern as the four-way namespace collapse at §3.8, applied to the specialization axis: what appear to be N distinct hooks are one hook plus a dispatch value. The primary consumer of this mechanism is the `~<<` override route (§3.10.9.4); `List{Promise} ~<<` (§7.2's eager-async-iteration form) is self-hosted as a compound-LHS specialization arm of the single `List~<<` hook, via `?(ty)` dispatch inside the hook body.
+
 #### §3.10.10 Multi-Tier Function Call
 
 A call against a function value with multiple parameter tiers binds the outermost tier per §3.10.1. The body of a non-innermost tier evaluates to a function value over the next tier; that value is the result of the tier call.
@@ -2564,11 +2880,158 @@ A function call evaluates to `empty` when:
 
 This is consistent with §1.1's enumeration of `empty`-producing positions. Callers that need to distinguish "no return path taken" from "explicit `empty` return" must wrap the return at the function's signature level with `Maybe`, `Either`, or a comparable monadic carrier.
 
----
+#### §3.10.12 The Pipeline-Call Form
+
+The pipeline-call form `topic #> stage #> stage ...` (Syntactic-Grammar `PipelineOp` at §10) evaluates a seed topic, then threads it left-to-right through a sequence of stages: each stage's evaluated value becomes the topic delivered to the next stage.
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+11 #> inc #> triple #> half;             // 18
+```
+
+Left-associative at the Flow tier (§9): `a #> f #> g` is `(a #> f) #> g`.
+
+**Abstract execution:**
+
+1. Evaluate the leftmost operand (the seed) in the caller's environment; let `topic` be its value.
+2. For each stage in source order, evaluate the stage per the stage-shape rules below with `topic` as its implicit input, then rebind `topic` to the stage's evaluated value.
+3. The pipeline-call's value is `topic` after the final stage.
+
+**Stage shapes.** The PipelineOp RHS admits three shapes (Syntactic-Grammar `<FlowRHSImplIn>` at §9):
+
+- **Expression stage** (`OrDispatch` arm). A value-expression evaluated in the caller's environment, with one of two topic-delivery rules selected by whether the expression contains the topic-reference sigil `#` (Syntactic-Grammar `PipelineTopic` at §6):
+
+    - **Explicit topic (expression contains `#`).** Each `#` reference within the expression evaluates to `topic`. The expression's evaluated value is the stage's result; the topic is not additionally appended.
+
+        ```java
+        defn add(x, y) ^x + y;
+
+        11 #> add(1, #);
+        // add(1, 11) → 12
+        ```
+
+    - **Implicit topic (expression contains no `#`).** The expression's value must be a function value; it is called with `topic` as its sole positional argument, and the call's result is the stage's result.
+
+        ```java
+        11 #> inc #> triple #> half;
+        // inc(11) → 12 → triple(12) → 36 → half(36) → 18
+        ```
+
+    An expression stage whose expression contains no `#` and does not evaluate to a callable is a type error at that stage.
+
+    Multi-tier callables (§3.10.10) at implicit-topic expression stages bind only the outermost tier; a curried callable's outer-tier result becomes the new topic:
+
+    ```java
+    defn add(x)(y) ^x + y;
+    11 #> add(1) #> triple #> half;
+    // (add(1))(11) → 12 → ...
+    ```
+
+- **Def-block stage** (`BlockExpr` arm). A `(defs) { body }` form (§2.9.4) whose defs-init clause binds against `topic` as its implicit input. The topic is destructured or bound per §2.9.4's abstract execution; the body evaluates in the resulting frame; the block's final value-bearing expression is the stage's result.
+
+    ```java
+    person #> (< :name, :title >) {
+        log(`"`name` is our `title`");
+    };
+    ```
+
+- **Bare-block stage** (`BareBlockExpr` arm). A `{ body }` form with no defs-init clause. The topic is not implicitly bound to any name; reference it via `#` within the body. The block's final value-bearing expression is the stage's result.
+
+    ```java
+    person #> { log("visiting"); # };
+    ```
+
+Def-block and bare-block stages do not admit the implicit-topic behavior of expression stages: their form is a block, not a value-expression evaluating to a callable. Topic delivery is via the defs-init clause (def-block) or explicit `#` references (bare-block).
+
+**Operator-as-function form.** `(#>)` lifts to a variadic function value per §3.13; the first argument is the seed topic and subsequent arguments are stages:
+
+```java
+(#>)(11, inc, triple, half);              // 18
+```
+
+The primed form `(#>')` reverses the argument order per §3.12.1 semantics (stages first, seed last):
+
+```java
+(#>')(half, triple, inc, 11);             // 18
+```
+
+Both lifted forms require at least two arguments (seed + at least one stage). The lifted form treats every stage argument as an implicit-topic stage (each stage argument is called with the current topic); the `#`-in-stage explicit-topic rule of the infix form has no analogue in the lifted form. To thread a topic through a `#`-substitution position with a lifted-form composition, wrap that step in a curried callable and pass the curried value as a stage argument.
+
+**Function-body sugar.** A function declared with a `#>`-prefixed body (§3.3.3) is sugar for `^ x #> ...`, where `x` is the outermost parameter tier's first positional parameter. See §3.3.3 for the parameter-shape constraints on that form.
+
+**Chain-mixing with other Flow-tier operators.** The pipeline operator lives at the Flow tier alongside comprehension operators (§3.10.9) and compose operators (§3.10.13); a single Flow-tier chain may mix these operators without parenthesization. Chain evaluation proceeds left-to-right per the tier's left-associativity; there is no operator-precedence relationship among `#>`, `~<glyph>`, `+>`, and `<+` inside the same tier.
+
+#### §3.10.13 The Compose-Call Form
+
+The compose-call form `f +> g +> h` (and its reverse-order sibling `f <+ g <+ h`) produces a unary function value that runs its operand functions in a fixed order (Syntactic-Grammar `ComposeOp` at §10):
+
+- `+>` compose-left-to-right: the leftmost operand runs first / innermost.
+- `<+` compose-right-to-left: the leftmost operand runs last / outermost.
+
+```java
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+def compute1: inc +> triple +> half;      // half(triple(inc(v)))
+def compute2: half <+ triple <+ inc;      // half(triple(inc(v)))
+
+compute1(11);                             // 18
+compute2(11);                             // 18
+```
+
+Left-associative at the Flow tier (§9): `f +> g +> h` is `(f +> g) +> h`.
+
+**Abstract execution at compose time:**
+
+1. Evaluate each operand in source order in the caller's environment. Each operand must evaluate to a function value; a non-callable operand is a type error at compose time.
+2. Allocate a new unary function value whose call-time behavior is defined below.
+3. The compose expression's value is the allocated function.
+
+**Abstract execution at call to the composed function (`+>` form):**
+
+1. Bind `x` to the first positional argument of the call; discard all other arguments.
+2. Apply the first operand to `x`; feed each operand's result as input to the next operand in source order.
+3. The final operand's result is the call's return value.
+
+**Abstract execution at call to the composed function (`<+` form):** as `+>` above but with the operand chain traversed right-to-left.
+
+`<+` is equivalent to `+>` with reversed operand order, and further equivalent to `(+>')` per §3.12.1's semantic-reverse rule:
+
+```
+f <+ g <+ h   ≡   h +> g +> f   ≡   (+>')(f, g, h)
+```
+
+**Unary result.** The composed function's signature is fixed to `(x) -> result`; additional positional arguments at call time are discarded, regardless of the first operand's declared arity. To thread more than one value through a composition, wrap the values in a Tuple or Record at the composition's entry point.
+
+**Operand shape.** Compose operands must be function-value expressions. The ComposeOp RHS narrowing (Syntactic-Grammar `<FlowRHSStrict>` at §9) excludes block-body arms: unlike pipeline stages (§3.10.12), compose operands are lifted at compose time from function-valued expressions and receive no runtime topic to consume — a block operand would have no source to bind an implicit input against. Any operand whose behavior depends on a topic must be wrapped in a function value first.
+
+Compose operands compose freely with §3.11 partial application and §3.12 shape transforms; the operand slot is a general function-value expression:
+
+```java
+def add10:   (+)|10|;
+def compute: add10 +> triple +> half;
+```
+
+**Operator-as-function form.** `(+>)` and `(<+)` lift to variadic function values per §3.13; each operand argument must be a callable, and the result is a unary composed function:
+
+```java
+def compute1: (+>)(inc, triple, half);    // half(triple(inc(v)))
+def compute2: (<+)(half, triple, inc);    // half(triple(inc(v)))
+```
+
+Zero-operand and single-operand calls to the lifted forms are type errors: composition requires at least two operands.
+
+The prime forms `(+>')` and `(<+')` reverse the operand list per §3.12.1: `(+>')(f, g, h)` is equivalent to `(+>)(h, g, f)`, and analogously for `(<+')`. These are semantic reversals of the operand list, not new directions of composition.
+
+**Chain-mixing with other Flow-tier operators.** Compose lives at the Flow tier alongside pipeline (§3.10.12) and comprehension operators (§3.10.9); mixing within a single Flow-tier chain is admitted per §3.10.12's chain-mixing note.
 
 ## §3.11 Partial Application: `f|arg,arg,..|`
 
-The `f|arg,arg,..|` form produces a partially-applied function value:
+The `f|arg,arg,..|` form (Syntactic-Grammar `PartialCallSuffix` at §7) produces a partially-applied function value:
 
 ```java
 def add6: (+)|6|;
@@ -2690,7 +3153,7 @@ Partial application is exclusive to standard call-form functions; a namespace de
 
 ### §3.12 Function-Shape Transforms
 
-Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position. All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.13.
+Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position (Syntactic-Grammar `PostfixCallTail` at §7). All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.13.
 
 #### §3.12.1 Reverse: `f'`
 
@@ -2769,7 +3232,7 @@ The primed forms exist for language consistency (every operator admits a primed 
 
 ### §3.13 Operator-as-Function
 
-Any operator can be lifted to a function value by parenthesizing it: `(+)`, `(?and)`, `(.)`, `(.<a, b>)`. The `@` operator lifts the same way: `(@)` evaluates to the unary value-identity function (the `@`-call operator with no LHS callee; see §3.8.1).
+Any operator can be lifted to a function value by parenthesizing it (Syntactic-Grammar `OpFuncExpr` at §7): `(+)`, `(?and)`, `(.)`, `(.<a, b>)`. The `@` operator lifts the same way: `(@)` evaluates to the unary value-identity function (the `@`-call operator with no LHS callee; see §3.8.1).
 
 The lifted value is a callable function whose application invokes the operator on the supplied arguments. The prime form `(+')` produces the reverse of the lifted operator (§3.12.1).
 
@@ -2778,7 +3241,7 @@ The per-operator argument arity, argument types, and semantic behavior of each l
 1. The parenthesized operator-symbol expression produces a function value.
 2. Calling that function value evaluates the operator against the supplied arguments.
 3. The prime `'` form applies §3.12.1 reverse semantics to the lifted function value.
-4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §???), and `#>` (pipelines, §???).
+4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §3.10.13), and `#>` (pipelines, §3.10.12).
 
 ## §4 Decisions and Guards
 
@@ -3154,7 +3617,7 @@ def myName: "Kyle";
 
 The topic is already the implicit left-hand operand of each atom's operator (for operator-led atoms) or the implicit equality target (for bare expression atoms); there is no additional need to write `#`, and no binding is provided at that position.
 
-A `#` written inside an atom does not refer to the match topic; it either resolves to an enclosing pipeline topic (per §???, if the match itself sits inside a `#>` pipeline body) or is otherwise a stale reference.
+A `#` written inside an atom does not refer to the match topic; it either resolves to an enclosing pipeline topic (per §3.10.12, if the match itself sits inside a `#>` pipeline body) or is otherwise a stale reference.
 
 ##### §5.2.2.2 Nested Dependent Match
 
@@ -3263,7 +3726,7 @@ Foi programs express suspension and control-flow through three interlocking mech
 
 Effects and handlers are the substrate; generators are a specialized surface built on the same substrate. All three mechanisms share a common shape: a *computation* runs, some position in that computation *suspends* the current work and hands a value to an outer scope, and the outer scope decides what value flows back in as the suspension's result.
 
-The mechanisms differ in **who observes the suspension**. Effects performed inside a handler resume with the arm's return value invisibly. From userland's point of view, the perform site is an ordinary expression that produces a value; no userland code between perform and resume can run. Generators are the opposite: each yield is a perform whose resume waits until *some external agent calls `.next()`*, which means arbitrary userland code can execute between suspend and resume. Generators are the sole userland-observable pause point; every other effect is asynchronous only in the invisible-to-userland sense.
+The mechanisms differ in **who observes the suspension**. Effects performed inside a handler resume via the arm's `ret(...)` invocation invisibly. From userland's point of view, the perform site is an ordinary expression that produces a value; no userland code between perform and resume can run. Generators are the opposite: each yield is a perform whose resume waits until *some external agent calls `.next()`*, which means arbitrary userland code can execute between suspend and resume. Generators are the sole userland-observable pause point; every other effect is asynchronous only in the invisible-to-userland sense.
 
 This observability distinction motivates why generators (and only generators) receive dedicated surface sugar (`<::` for Yield). Every other effect uses the general perform form because there is no ergonomic pull toward a shortened perform-site: userland cannot observe the pause, so no idiom needs to make it visually terse.
 
@@ -3298,8 +3761,8 @@ An **effect** is a suspension point that yields control to whatever handler dyna
 Effects have three moving parts:
 
 - An **effect kind**: a namespace declaring an operation's payload and resume shape. `Effect.Yield`, `Effect.IO`, and any user-declared effect kind are namespaces of this variety.
-- A **perform site**: a source position where an effect of some kind is signaled. The perform site's expression value is set by the handler's arm return.
-- A **handler scope**: established by `~<*` applied to an effect kind or set of kinds (§6.3), containing arms that inspect the perform payload and return a resume-value.
+- A **perform site**: a source position where an effect of some kind is signaled. The perform site's expression value is set by the handler's `ret` invocation (§6.3.2).
+- A **handler scope**: established by `~<*` applied to an effect kind or set of kinds (§6.3), containing arms that inspect the perform payload and may resume the perform site via `ret` (§6.3.2).
 
 An effect kind may be performed anywhere reachable from a handler scope of that kind. If no handler scope for the kind is in effect at the perform site (dynamic through the call stack, not lexical), the perform is ill-formed under the effect-tracking discipline of §6.13; every reachable perform must be either declared upward in the caller's effect signature or caught by an enclosing handler.
 
@@ -3308,10 +3771,10 @@ An effect kind may be performed anywhere reachable from a handler scope of that 
 Effects superficially resemble exceptions: perform suspends the current computation and hands control up the call stack, just as `throw` does. The critical differences:
 
 - **The computation is resumed, not abandoned.** An effect handler's
-arm returns a value, and that value is the value of the original
-perform-site expression; the computation continues from the perform
-point with the arm-supplied result. Exceptions unwind the stack;
-effects do not.
+arm may invoke `ret(v)` to resume with `v` as the value of the
+original perform-site expression; the computation continues from the
+perform point with the arm-supplied result. Exceptions unwind the
+stack; effects do not.
 - **Effects are tracked in the type signature.** A function that
 performs some effect declares that fact in its `:Effects(...)` clause
 (§6.13). A function that raises exceptions carries no such surface
@@ -3365,9 +3828,9 @@ deft Effect.Retry(<attempt: int, cause: string>) ^bool;
 
 The parameter position declares the **payload type**: the shape of the
 value a perform-site supplies. The return position declares the **resume
-type**: the shape of the value the handler's arm returns and the
-perform-site expression evaluates to. `empty` in return position marks a
-fire-and-forget effect (perform-site expression is `empty`).
+type**: the shape of the value the handler's `ret` invocation supplies
+and the perform-site expression evaluates to. `empty` in return position
+marks a fire-and-forget effect (perform-site expression is `empty`).
 
 The `Effect.` prefix is normative. A `deft` whose name lacks the prefix
 is a plain type alias (§18), not an effect kind: its name cannot appear
@@ -3402,9 +3865,15 @@ the innermost handler scope whose caught-set (§6.3.1) includes the
 perform's effect kind. Per §6.1, an unhandled perform is rejected at
 compile time under §6.13; no runtime search failure path exists.
 4. Deliver the payload value to the located handler's arm (§6.3).
-5. The arm evaluates in its own scope and produces a **resume-value**.
-6. The suspended computation resumes at the perform site. The
-perform-site expression's value is the resume-value.
+5. The arm evaluates in its own scope. If the arm invokes `ret(v)`,
+the suspended computation resumes at the perform site with `v` as the
+perform-site expression's value, runs forward until natural completion
+or its next perform under the same handler scope, and `ret(v)` returns
+the resulting value up to the arm. If the arm never invokes `ret`,
+the handler scope terminates at this dispatch; the suspended
+computation is not resumed.
+6. The arm terminal at scope termination is the handler expression's
+value (§6.3.3).
 
 The suspension is not visible in the perform-site's source form. From
 the perform-site expression's point of view, `Effect.Ask% "prompt"` is
@@ -3463,26 +3932,29 @@ execution.
 
 The `~<*` operator establishes a **handler scope**: a lexical region
 within which effect performs of specified kinds are caught by
-user-supplied arms. The wrapped computation runs to natural completion
-inside the scope; every perform of a caught kind (not merely the first)
-is dispatched to a matching arm, which returns the resume-value threaded
-back to the perform site.
+user-supplied arms. Each perform of a caught kind (not merely the
+first) is dispatched to a matching arm; the arm may resume the perform
+site by invoking a **resumption callable** bound in the handler head,
+or may terminate the scope by finishing without resuming.
 
 The general handler form:
 
 ```java
-Effect.KindA ~<* (eff:: comp) { .. };
+Effect.KindA ~<* (eff:: comp, ret) { .. };
 ```
 
 - The **LHS** is an effect-kind narrowing (§6.3.1): the set of kinds
 this handler catches.
 - The **head parens** bind `eff` to each perform-event dispatched to
-this handler, and specify `comp` as the computation to run in the
-handler scope.
-- The **body block** contains **arms**: pattern-match clauses over `eff`
-(§6.3.2). Each arm's return value is the resume-value delivered back to
-the perform site inside `comp`.
-- The whole form's value is `comp`'s natural return value (§6.3.3).
+this handler, specify `comp` as the computation to run in the handler
+scope, and bind `ret` as the resumption callable available inside arm
+bodies (§6.3.2).
+- The **body block** contains **arms**: pattern-match clauses over
+`eff` (§6.3.2). Each arm's body may invoke `ret(v)` to resume with `v`
+as the perform-site expression's value; the arm's terminal expression
+is the handler scope's value contribution at this dispatch.
+- The whole form's value is the arm terminal at scope termination
+(§6.3.3).
 
 Effect kinds *not matching* the LHS's narrowed set propagate past the
 handler and continue up the dynamic call stack per §6.1.2, subject to
@@ -3507,7 +3979,7 @@ Effect.<Ask, Log, &Effect.IO>   // combined
 ```
 
 - **Bare form**: `Effect.Name` names a single effect kind. `Effect.Ask
-~<* (eff:: comp) { ... }` catches only performs of `Effect.Ask`.
+~<* (eff:: comp, ret) { ... }` catches only performs of `Effect.Ask`.
 - **Brace form**: `Effect.<A, B, ...>` names an enumerated subset. Each
 element is either a bare kind name (`Ask`) or a prefix-inclusion
 form (`&Effect.IO`).
@@ -3526,39 +3998,99 @@ outside the narrowing propagates past.
 DSL, three sites; §6.3.1's specification of the DSL shape governs all
 three.
 
-#### §6.3.2 Arms and Resume-Values
+#### §6.3.2 Arms
 
-The body of a `~<*` handler is a **do-block** (§16): a sequence of statements terminating in a final unwrap expression `:: <expr>`. On each perform-event dispatched to this handler, the do-block runs, and `<expr>` produces the **resume-value** threaded back to the perform site inside `comp`.
+The body of a `~<*` handler is a **do-block** (§16): a sequence of
+statements terminating in a final unwrap expression `:: <expr>`. On
+each perform-event dispatched to this handler, the do-block runs, and
+`<expr>` produces the **scope-value contribution** for that dispatch.
+Resumption of the perform site is separate: an arm invokes `ret(v)` at
+any point during its evaluation to resume with `v` as the perform-site
+expression's value. An arm that never invokes `ret` terminates the
+handler scope at that dispatch.
 
 The canonical arm shape is a dependent match against `eff`:
 
 ```java
-Effect.<Ask, Log> ~<* (eff:: producer()) {
+Effect.<Ask, Log> ~<* (eff:: producer(), ret) {
     :: ?(eff){
-        [?as Effect.Ask]: readLine(#);
-        [?as Effect.Log]: log(#);
+        [?as Effect.Ask]: ret(readLine(#));
+        [?as Effect.Log]: ret(log(#));
     };
 };
 ```
 
-- **`(eff:: producer())`**: the DoBlockDefsInit-shaped head (§16) binds `eff` to each perform-event dispatched to this handler; the RHS is the computation whose performs are caught.
-- **`:: ?(eff){ ... }`**: the do-block's final unwrap position (§16). Its value on each dispatch is the resume-value.
-- **Arms**: the dependent-match clauses of `?(eff){ ... }`. Each arm's pattern is `?as Effect.KindName`, matching the perform-event's effect kind. The arm's consequent value is the resume-value.
-- **Payload access via `#`**: inside an arm consequent matched by `?as Effect.KindName`, the topic reference `#` refers to the effect's declared payload value (§6.1.3), not to the perform-event wrapper. For a record-shape payload (e.g., `Effect.Retry(<attempt: int, cause: string>) ^bool`), fields are accessed as `#.attempt`, `#.cause`.
+- **`(eff:: producer(), ret)`**: the DoBlockDefsInit-shaped head (§16)
+binds `eff` to each perform-event dispatched to this handler, specifies
+`producer()` as the computation whose performs are caught, and binds
+`ret` as the resumption callable for the current perform-event.
 
-**Type check on arm consequent.** Each arm consequent must produce a value of the matched effect kind's declared resume type. `Effect.Ask` declares `^String`; its arm must produce a `String`. `Effect.Log` declares `^empty`; its arm must produce `empty`. Compile-time obligation of §6.13.
+- **`ret`**: a callable of shape `(v) -> scopeValue`. Invoked with a
+value `v`, it resumes the suspended computation at the perform site
+with `v` as the perform-site expression's value; the computation runs
+forward until it reaches natural completion (in which case `ret(v)`
+returns `comp`'s natural return value) or its next perform under the
+same handler scope (in which case `ret(v)` returns the scope value at
+that resumption's completion). Each `ret` value is bound to a specific
+perform-event; invoking it more than once per perform-event is a
+runtime error (delimited-one-shot semantics). Arms that never invoke
+`ret` terminate the handler scope at that dispatch.
 
-**Exhaustiveness.** The arms must cover every effect kind admitted by the LHS narrowing. `Effect.<Ask, Log>` requires arms for both `Effect.Ask` and `Effect.Log`; missing coverage is a compile-time error. A default `?:` arm (§5.4) catches otherwise-unmatched kinds, which is the ergonomic pairing for prefix-inclusion narrowings (`&Effect.IO`).
+- **`:: ?(eff){ ... }`**: the do-block's final unwrap position (§16).
+Its value on each dispatch is the **scope-value contribution** for
+that dispatch.
+
+- **Arms**: the dependent-match clauses of `?(eff){ ... }`. Each arm's
+pattern is `?as Effect.KindName`, matching the perform-event's effect
+kind. The arm's consequent is the scope-value contribution.
+
+- **Payload access via `#`**: inside an arm consequent matched by
+`?as Effect.KindName`, the topic reference `#` refers to the effect's
+declared payload value (§6.1.3), not to the perform-event wrapper. For
+a record-shape payload (e.g., `Effect.Retry(<attempt: int, cause: string>) ^bool`),
+fields are accessed as `#.attempt`, `#.cause`.
+
+**Type check on `ret` argument.** Each `ret(v)` invocation must supply
+a value of the matched effect kind's declared resume type. `Effect.Ask`
+declares `^String`; a `ret(v)` inside its arm must supply a `String`.
+`Effect.Log` declares `^empty`; a `ret(v)` inside its arm must supply
+`empty`. Compile-time obligation of §6.13.
+
+**Arm terminal type.** The arm terminal type contributes to the handler
+expression's return type at scope termination; see §6.3.3.
+
+**Exhaustiveness.** The arms must cover every effect kind admitted by
+the LHS narrowing. `Effect.<Ask, Log>` requires arms for both
+`Effect.Ask` and `Effect.Log`; missing coverage is a compile-time error.
+A default `?:` arm (§5.4) catches otherwise-unmatched kinds, which is
+the ergonomic pairing for prefix-inclusion narrowings (`&Effect.IO`).
 
 #### §6.3.3 Handler Expression Value
 
-A `~<*` handler expression's value is `comp`'s natural return value. The handler op is transparent with respect to comp's return. The machinery wraps comp with effect-catching arms, but does not itself produce a value; whatever comp evaluates to at natural completion flows out as the handler expression's value.
+A `~<*` handler expression's value is the arm terminal at **scope
+termination**. Scope termination occurs in three shapes:
 
-If `comp` propagates an uncaught effect past this handler (a perform whose kind is outside the LHS narrowing, §6.3.1), the handler expression does not produce a value; the propagation is the exit path, and the effect continues up the dynamic call stack per §6.1.2.
+- **Natural completion**: `comp` runs to natural completion without
+further perform. If any arm has previously invoked `ret` on the
+last-dispatched perform, that `ret` returns `comp`'s natural return
+value up to the arm; the arm's terminal is then the handler
+expression's value. If no perform ever reached this scope (`comp`
+completed without performing a caught kind), `comp`'s natural return
+is the handler expression's value directly.
 
-Arms do not contribute to the handler expression's value. An arm's consequent is the **resume-value** delivered to the perform site inside `comp` (§6.3.2); it flows into comp's continuing execution, not out of the handler.
+- **Arm-terminates without resume**: an arm dispatches, evaluates its
+body without invoking `ret` (or invokes `ret` and continues past),
+and reaches its terminal. The arm terminal is the handler expression's
+value; `comp` is not resumed from the dispatched perform site.
 
-Value-shaping wrappers built on top of `~<*` (e.g., `Gen%` returning a Promise, IO's runner returning Either) are runner-layer concerns and live in §6.6 and §6.12. `~<*` itself carries no such wrapping.
+- **Uncaught-effect propagation**: `comp` performs an effect whose
+kind is outside the LHS narrowing (§6.3.1). The handler expression
+does not produce a value; the propagation is the exit path, and the
+effect continues up the dynamic call stack per §6.1.2.
+
+Value-shaping wrappers built on top of `~<*` (e.g., `Gen%` returning a
+Promise, IO's runner returning Either) are runner-layer concerns and
+live in §6.6 and §6.12. `~<*` itself carries no such wrapping.
 
 ### §6.4 The `Done@` Sentinel
 
@@ -3596,50 +4128,55 @@ Three classes of position inspect a return value for `Done@`:
   it; `~map` treats it as the terminal element; `~fold` treats it as the
   terminal accumulator. Full per-primitive semantics are specified in §7.
 
-- **Handler arm return** (§6.3): a `~<*` arm may return `Done@` in place
-  of a resume-value; the handler scope terminates and the wrapped
-  computation is not resumed. See §6.4.1.
+- **Handler arm terminal** (§6.3): a `~<*` arm may evaluate to
+  `Done@` as its terminal expression; the arm does not invoke `ret`
+  at that path, the handler scope terminates, and the handler
+  expression's value is the `Done@` payload. See §6.4.1.
 
-- **Wrapped computation natural return** (§6.3.3): `Done@` returned as
-  `comp`'s natural return value flows out per the transparent-return
-  semantic -- the handler expression evaluates to that `Done@` value,
-  which the outer context may inspect under its own discipline. This is
-  not a special path; it is ordinary transparent-return.
+- **Wrapped computation natural return** (§6.3.3): `Done@` returned
+  from `comp` at natural completion propagates to the handler expression
+  value per §6.3.3's natural-completion path. If no perform-event
+  dispatched to an arm, `comp`'s return is the handler expression's
+  value directly; if perform-events did dispatch, `Done@` from `comp`
+  flows into whichever `ret` invocation reads it and continues per the
+  arm's onward handling.
 
 #### §6.4.1 `Done@` in a `~<*` Arm
 
-When a `~<*` arm evaluates to `Done@`, the handler scope terminates
-immediately. The perform site inside `comp` that triggered the arm does
-not receive a resume-value; the computation is abandoned at the perform
-point, and control returns to the handler operator's continuation.
-
-The handler expression itself has **no value** in this case. This is the
-same exit-path shape as an uncaught effect propagating past the handler
-(§6.3.3): the handler expression does not evaluate to a value; the
-enclosing context does not see a return from the handler expression's slot.
+An arm whose terminal expression is a `Done@`-shaped value terminates
+the handler scope: the arm does not invoke `ret` at its terminal (or
+if it did invoke `ret` earlier, that resume already completed and
+control has returned to the arm), and the scope-termination path fires
+with the `Done@` payload as the handler expression's value.
 
 ```java
-Effect.<Ask, Cancel> ~<* (eff:: producer()) {
+Effect.<Ask, Cancel> ~<* (eff:: producer(), ret) {
     :: ?(eff){
         [?as Effect.Cancel]: Done@ empty;
-        [?as Effect.Ask]:    getResponse(#);
+        [?as Effect.Ask]:    ret(getResponse(#));
     };
 };
 ```
 
-If `producer()` performs `Effect.Cancel`, that arm evaluates to
-`Done@ empty`, the handler scope terminates, and the surrounding handler
-expression does not produce a value. If `producer()` performs
-`Effect.Ask`, that arm returns `getResponse(#)` as the resume-value and
-its computation continues from the perform point.
+If `producer()` performs `Effect.Cancel`, that arm's terminal is
+`Done@ empty`; the arm does not invoke `ret`, the handler scope
+terminates, and the handler expression evaluates to `Done@ empty`.
+If `producer()` performs `Effect.Ask`, the arm invokes
+`ret(getResponse(#))` to resume `producer`; the arm's terminal is
+`ret(...)`'s return, which flows outward per §6.3.3.
 
-**NOTE:** The `Done@` payload is not intrinsically inspected on the
-arm-exit path. Runner layers built on top of `~<*` (§6.6, §6.12) may
-inspect the arm's `Done@` payload for their own value-shaping -- e.g.,
-a `Gen%` runner may treat `Done@ payload` from an arm as the terminal
-value of its `.next()` surface -- but such inspection is a runner-layer
-concern, not intrinsic to `~<*`. The uniform exit-path shape (no value)
-is preserved at `~<*` itself.
+The perform site inside `comp` that triggered the `Effect.Cancel`
+dispatch does not receive a resume-value; `producer()` is abandoned
+at that perform point. This is intentional: `Done@` in the arm
+terminal is the mechanism by which a handler signals 'stop resuming
+this computation, and take my payload as the scope's result.'
+
+**NOTE:** Runner layers built on top of `~<*` (§6.6, §6.12) may
+inspect the `Done@` payload for their own value-shaping (e.g., a `Gen%`
+runner may treat `Done@ payload` from an arm as the terminal value of
+its `.next()` surface). Such inspection reads the handler expression's
+value under the natural pass-through semantic; no runner-layer
+machinery is required to extract the payload from a special exit path.
 
 ### §6.5 Iterators
 
@@ -4045,7 +4582,7 @@ The userland surface is:
 
 - `State@`: unit constructor over a state-changer function.
 - Binary `%`: applies an initial state and runs the computation, evaluating to a `< value, finalState >` tuple.
-- `~<<` do-block composition: sequences state operations, threading the state through each step (per §6.3.3 do-block-compilation split).
+- `~<<` do-block composition: sequences state operations, threading the state through each step (per §3.10.9.4 do-block-compilation split).
 
 #### §6.7.1 State Unit Constructor
 
@@ -4143,7 +4680,7 @@ compute% 5;    // < 18, 18 >
 
 Without the `::` on the terminal `State.get@`, the block would produce a `State{ State{...} }`: the terminal map lifting an already-`State` value into another `State` layer. The `::` prefix binds first, so `State.get@` lands at the correct monadic level.
 
-Per §6.3.3 do-block-compilation split, `State ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
+Per §3.10.9.4 do-block-compilation split, `State ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
 
 Under the composition axis (§6 opener), `State` is a composing outer on `~<<`: successive steps chain via monadic bind, terminating at the block's terminal expression. `State` is not admitted on `~<*`, nor does it admit a compound-LHS -- state computations are synchronous, the state-changer shape (`< value, newState >`) has no async variant, and per-step Promise-lifting is not defined for `State`.
 
@@ -4314,7 +4851,7 @@ task;
 // Promise{Left{"user not found"}}
 ```
 
-Per §6.3.3 do-block-compilation split, `Promise ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`). The Either-aware behavior of the do-block is inherited from Either-aware `~<` and `~map` hooks on `Promise`: both see through `Right` and pass `Left` unchanged.
+Per §3.10.9.4 do-block-compilation split, `Promise ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`). The Either-aware behavior of the do-block is inherited from Either-aware `~<` and `~map` hooks on `Promise`: both see through `Right` and pass `Left` unchanged.
 
 Under the composition axis (§6 opener), `Promise` is a composing outer on `~<<`: the block sequences a single-shot chain over a single resolution, terminating at the terminal expression (or short-circuiting on a `Left`). `Promise` is not admitted on `~<*` -- open-ended consumption of promise-producing sources routes through the source's own do-comprehension arm (`Channel ~<*` §6.9, `PushStream ~<*` §6.10, `PullStream ~<<` §6.11) rather than through `Promise`. A compound-LHS `Promise{X}` is documentary only; the resolved payload's inner shape is not read into `~<<` dispatch.
 
@@ -5199,7 +5736,7 @@ The userland surface is:
 - `IO.of@`: named unit constructor over a bare value (equivalent to `IO@ (defn() ^value)`).
 - Unary `%`: runs the executor with no Reader environment.
 - Binary `%`: runs the executor with the supplied Reader environment.
-- `~<<` do-block composition: sequences IO operations, threading the Reader environment through each step, per §6.3.3 do-block-compilation split.
+- `~<<` do-block composition: sequences IO operations, threading the Reader environment through each step, per §3.10.9.4 do-block-compilation split.
 
 #### §6.12.1 IO Unit Constructors
 
@@ -5295,7 +5832,7 @@ Inside the block:
 
 The Reader environment supplied at `%`-application time is threaded implicitly through every composed step's executor -- each step sees the same environment (see §6.12.4).
 
-Per §6.3.3 do-block-compilation split, `IO ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
+Per §3.10.9.4 do-block-compilation split, `IO ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
 
 #### §6.12.4 Reader Value Access
 
@@ -5570,14 +6107,14 @@ Coverage is **per-call-stack, not per-function**. A given intermediate function 
 deft AskName(int) :Effects(Ask) ^String;
 defn askName(id) :as AskName ^Effect.Ask% id;
 
-def result: (Effect.Ask ~<* (eff:: greetUser(42)) {
-    ::?(eff.__kind){
-        ?[Effect.Ask]: `"user-`eff.payload`";
+def result: (Effect.Ask ~<* (eff:: greetUser(42), ret) {
+    ::?(eff){
+        [?as Effect.Ask]: ret(`"user-`#`");
     };
 })%;
 ```
 
-The `Effect.Ask ~<* (eff:: ...) { ... }` handler encloses the call to `greetUser`, which transitively performs `Effect.Ask`. Coverage is satisfied; the outermost `%` invocation is well-formed.
+The `Effect.Ask ~<* (eff:: ..., ret) { ... }` handler encloses the call to `greetUser`, which transitively performs `Effect.Ask`. Coverage is satisfied; the outermost `%` invocation is well-formed.
 
 If no such handler exists on any path from a perform-site to the outermost `%` boundary, the compile error includes the call stack from the perform-site (naming the effect kind) to the outermost `%` invocation, indicating which effect escaped without handling.
 
@@ -5596,9 +6133,9 @@ Ambient effects are handled by a runtime-installed handler scope wrapping every 
 A user may shadow the ambient handler for a bounded region by establishing a `~<*` scope for that effect kind lexically above a perform site. Standard dynamic lookup (§6.1.2) finds the user's handler before the outermost handler provided by the runtime, handling the effect (and stopping propagation):
 
 ```java
-Effect.Log ~<* (eff:: doWork()) {
-    ::?(eff.__kind){
-        ?[Effect.Log]: captureForTest(eff.payload);
+Effect.Log ~<* (eff:: doWork(), ret) {
+    ::?(eff){
+        [?as Effect.Log]: ret(captureForTest(#));
     };
 };
 ```
@@ -5753,13 +6290,34 @@ List ~<< (x:: xs, y:: ys) {
 // < 9, 10, 11, 12 >
 ```
 
-Inside the block:
+Under the do-block compilation split (§3.10.9.4), each `::` binding lowers to a `~<` (flatMap/bind) call on the LHS's owning namespace, and the terminal expression lowers to a `~map` call (or a `~<` call for a `::`-prefixed terminal). The two-binding block above lowers as:
 
-- `def x:: expr` binds `x` to each successive value pulled from `expr` (a Tuple/List), iterating the enclosing chain.
-- Multiple `def ::` bindings compose as nested iterations: the second binding runs to completion for each value of the first, producing a cartesian traversal.
-- A bare mid-block statement sequences a step and discards its produced value. Explicit `:: expr;` at this position is legal but redundant.
-- The terminal expression is `~map`-lifted: each iteration's terminal value is collected as one element into the result Tuple.
-- A `::`-prefixed terminal (`::expr`) binds `expr` instead of lifting it, avoiding a nested-Tuple result when the terminal expression is itself already a Tuple.
+```java
+List ~<< {
+    def x:: xs;
+    def y:: ys;
+    x + y;
+};
+
+// lowers to:
+
+xs ~< (x) {
+    ys ~map (y) {
+        x + y;
+    };
+};
+// < 9, 10, 11, 12 >
+```
+
+Iteration behavior at `~<<` on `List` is **emergent from `List`'s `~<` and `~map` hooks** (§7.3, §7.4), not intrinsic to the do-block form. `~<<` on `List` has no loop construct of its own; the block body is a callback that `List.~<` invokes once per source element, and each inner block runs the next binding's `~<` inside that outer callback.
+
+The observable behaviors follow directly from this lowering:
+
+- **Successive-value binding.** `def x:: expr` binds `x` to each successive value pulled from `expr` because `List.~<` invokes the callback per element; each invocation binds one element.
+- **Cartesian composition.** Multiple `def ::` bindings compose as nested iterations because the inner `~<` sits INSIDE the outer `~<`'s callback: for each outer element, the inner traversal runs to completion, producing a cartesian traversal.
+- **Terminal collection.** Each iteration's terminal value is collected as one element into the result Tuple because `~map` sits at the innermost position of the nested lowering, collecting one element per innermost invocation.
+- **Bare mid-block statement.** A bare mid-block statement lowers to a `~<` call that discards its produced value; it sequences a step without threading its result. Explicit `:: expr;` at this position is legal but redundant.
+- **`::`-prefixed terminal.** A `::`-prefixed terminal (`::expr`) lowers to `~<` instead of `~map`, binding `expr`'s produced Tuple into the enclosing chain rather than collecting `expr` as one element. Use this when the terminal expression is itself already a Tuple to avoid a nested-Tuple result.
 
 **Nested-Tuple concern.** Because the terminal `~map` collects each iteration's terminal value as *one element* of the result Tuple, a terminal expression that is itself a Tuple produces a Tuple-of-Tuples. The `::` prefix skips the lift:
 
@@ -5821,6 +6379,8 @@ If any element's promise resolves with `Left@ reason`, the composition short-cir
 
 For the parallel case -- fire every request concurrently and wait for the full batch -- use `Promise.all@` (§6.8.4) instead.
 
+**Not a separate hook.** `List{Promise} ~<<` shares the single `List~<<` hook (per §3.1.1's one-hook-per-operator-per-namespace rule); the hook's per-shape behavior is selected via the trailing dispatch-type value `ty` (§3.10.9.7). At a `List` call site, `ty` is `< List >` and the hook's plain arm handles ordinary iteration; at a `List{Promise}` call site, `ty` is `< List, Promise >` and the hook's compound-LHS arm handles per-element awaiting. There is no grammar surface for a `List{Promise}~<<` declaration; the compound-LHS specialization is authored as a `?(ty)` arm inside `List~<<`'s body.
+
 **Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as that iteration's terminal contribution, dispatched exactly as a normal terminal expression would be. Under the default `~map`-lift, the payload becomes one appended element. Under a `::`-prefixed terminal (which binds/flattens instead), the payload is flattened in via `~<`; in this case both the normal terminal and the `Done@` payload must be shape-compatible with the monad (Tuple-shaped for `List`).
 
 ```java
@@ -5856,7 +6416,7 @@ List ~<< {
 // < 10, 20, 5, 7 >
 ```
 
-**Compilation.** Per §6.3.3 do-block-compilation split, `List ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`), dispatching through `List`'s declared `~<` and `~map` hooks.
+**Compilation.** Per §3.10.9.4 do-block-compilation split, `List ~<<` dispatches through `List`'s stdlib-declared `~<<` hook (§3.1.1.3); the hook's observable behavior at plain-`List` matches the nested `~<` / `~map` lowering shown above.
 
 #### §7.3 `~<`
 
