@@ -4227,12 +4227,13 @@ When the stream's job is done, close the subject:
 ```java
 def subj: PushStream.subj@;
 
-subj.close();          // Right{true}
-subj.close();          // Left{"PushStream Closed"}
+subj.close();        // Right{true}
+subj.close();        // Left{"PushStream Closed"}
 
-subj.st.closed();      // true
+subj.st.closed();               // Promise{Right{empty}}
+subj.st.closed().resolved();    // true
 
-subj% 10;              // Promise{Left{"PushStream Closed"}}
+subj% 10;            // Promise{Left{"PushStream Closed"}}
 ```
 
 Closing is one-way and propagates downstream: any observer chained from a closed source also becomes closed. It doesn't propagate upstream -- closing a downstream observer doesn't close its source.

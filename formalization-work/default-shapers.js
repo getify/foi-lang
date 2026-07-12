@@ -2585,7 +2585,13 @@ export const defaultShapers = {
 	},
 
 	// DefHookDecl := "defn" _ Identifier
-	//                (At | Percent | Comprehension | (Tilde OpenAngle))
+	//                ( At
+	//                | Percent
+	//                | Comprehension
+	//                | (Tilde OpenAngle OpenAngle)
+	//                | (Tilde OpenAngle Star)
+	//                | (Tilde OpenAngle)
+	//                )
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
 	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
 	//                _ <FuncBody>;
@@ -2600,19 +2606,18 @@ export const defaultShapers = {
 	// round-trip fidelity — the transpiler normalizes non-canonical
 	// aliases ~chain/~bind/~flatMap to canonical ~< at codegen,
 	// while round-trip re-emits the original glyph). Multi-token
-	// composite markers (Tilde + OpenAngle for ~<) accumulate
-	// their values in source order. Parens are structural →
-	// delims; an empty paren-pair still synthesizes a zero-content
-	// ParameterList (per the empty-merged convention with end:null).
+	// composite markers — Tilde + OpenAngle for ~<, Tilde +
+	// OpenAngle + OpenAngle for ~<<, Tilde + OpenAngle + Star for
+	// ~<* — accumulate their values in source order.
 	//
 	// Marker token disambiguation: within DefHookDecl's direct
-	// frame parts, At/Percent/Comprehension/Tilde/OpenAngle only
-	// appear at the marker slot — At and Percent are exclusive to
-	// this slot, Comprehension has no other position in the
-	// production, and Tilde/OpenAngle nested inside any
+	// frame parts, At/Percent/Comprehension/Tilde/OpenAngle/Star
+	// only appear at the marker slot — At and Percent are exclusive
+	// to this slot, Comprehension has no other position in the
+	// production, and Tilde/OpenAngle/Star nested inside any
 	// subexpression are shielded by nested-production frames
-	// (ParameterList's DestructureTarget, etc.). No position
-	// guard needed.
+	// (ParameterList's DestructureTarget, GatherParameter's Star,
+	// etc.). No position guard needed.
 	//
 	// Identifier is required by grammar (no anonymous form); the
 	// shaper's name-capture rule (first Identifier-typed node
@@ -2649,7 +2654,8 @@ export const defaultShapers = {
 					p.type === "Percent" ||
 					p.type === "Comprehension" ||
 					p.type === "Tilde" ||
-					p.type === "OpenAngle"
+					p.type === "OpenAngle" ||
+					p.type === "Star"
 				) {
 					marker += p.value;
 					continue;

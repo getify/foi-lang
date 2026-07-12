@@ -830,11 +830,16 @@ export const samples = [
 
 	// DefHookDecl cluster — `defn` + name + marker (@, %, or
 	// comprehension: ~<, ~each, ~map, ~ap, ~filter, ~fold, ~foldR,
-	// ~cata) + paren-sets + body. Statement-only; expression-position
-	// usage is a parse error (see failSamples in test-parser.js).
-	// The post-marker signature mirrors DefFuncExpr's full feature
-	// set — curried paramSets, FuncPrecondList, :over, :as, all
-	// three FuncBody forms.
+	// ~cata, ~<<, ~<*) + paren-sets + body. Statement-only;
+	// expression-position usage is a parse error (see failSamples
+	// in test-parser.js). The post-marker signature mirrors
+	// DefFuncExpr's full feature set — curried paramSets,
+	// FuncPrecondList, :over, :as, all three FuncBody forms.
+	//
+	// Aliases at declaration position (`~chain`, `~bind`, `~flatMap`)
+	// parse cleanly (Comprehension token admits them) but are
+	// semantically rejected at a layer above the parser — parser
+	// tests only verify grammatical admission.
 	//
 	// Aliases at declaration position (`~chain`, `~bind`, `~flatMap`)
 	// parse cleanly (Comprehension token admits them) but are
@@ -878,6 +883,19 @@ export const samples = [
 	  src: "defn Foo~foldR(inst, init, fn) ^fn(inst, init);" },
 	{ label: "DefHookDecl: ~cata marker",
 	  src: "defn Foo~cata(inst, defFn, altFn) ^altFn(inst);" },
+
+	// Do-comprehension marker variants (~<<, ~<*).
+	// Three-token composites: Tilde + OpenAngle + OpenAngle for ~<<,
+	// Tilde + OpenAngle + Star for ~<*. Calling convention (comp, ty)
+	// per Foi-Specification.md §3.1.1.3 and §3.10.9.4.
+	{ label: "DefHookDecl: ~<< marker (Tilde OpenAngle OpenAngle composite)",
+	  src: "defn Foo~<<(comp, ty) ^comp;" },
+	{ label: "DefHookDecl: ~<* marker (Tilde OpenAngle Star composite)",
+	  src: "defn Foo~<*(comp, ty) ^comp;" },
+	{ label: "DefHookDecl: ~<< ty-omitted (surplus-arg discard)",
+	  src: "defn Foo~<<(comp) ^comp;" },
+	{ label: "DefHookDecl: ~<< block body",
+	  src: "defn Foo~<<(comp, ty) { comp; };" },
 
 	// Aliases at declaration position — parse (Comprehension
 	// token admits), semantic layer rejects with "canonical is ~<".

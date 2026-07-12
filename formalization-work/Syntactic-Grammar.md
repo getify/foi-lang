@@ -1096,19 +1096,25 @@ DefFuncExpr           := "defn" (_ Identifier)?
      corresponding comprehension operator at call sites.
    - `defn Foo~<(...) ...`  installs the bind (chain) hook on Foo,
      invoked by `~<` / `~chain` / `~bind` / `~flatMap` at call sites.
+   - `defn Foo~<<(comp, ty) ...`  installs the do-comprehension
+     override hook on Foo, invoked by `Foo ~<< {..}` do-blocks
+     whose LHS is Foo. Calling convention `(comp, ty)` per
+     Foi-Specification.md §3.1.1.3 and §3.10.9.4.
+   - `defn Foo~<*(comp, ty) ...`  installs the looping-do override
+     hook on Foo, invoked by `Foo ~<* (..) {..}` observer forms
+     whose LHS is Foo. Same `(comp, ty)` calling convention per
+     Foi-Specification.md §3.1.1.3.
 
    Non-canonical alias spellings for `~<` (`~chain`, `~bind`,
    `~flatMap`) parse at declaration position but are semantically
    rejected; the semantic checker directs the author to use `~<`.
 
-   `~<<` (do-comprehension) and `~<*` (looping-do) are NOT admitted at declaration position — user override of these operators requires a per-step-controllable interface not yet designed (leading candidate: generator-based lowering via the yield mechanism, TBD).
-
    Strict no-trivia between the Identifier and the marker (mirrors
-   `Foo@` adjacency at use sites). For the `Tilde OpenAngle` marker,
-   strict no-trivia between Tilde and OpenAngle as well (per the
-   `~<` composite operator's adjacency rule at ComprOp use sites).
-   Trivia is admitted between the marker and the first paren-set
-   (mirrors normal `defn` paren spacing).
+   `Foo@` adjacency at use sites). For the `Tilde OpenAngle` composite
+   markers (`~<`, `~<<`, `~<*`), strict no-trivia within the composite
+   as well (per the composite operators' adjacency rules at their
+   respective use sites). Trivia is admitted between the marker and
+   the first paren-set (mirrors normal `defn` paren spacing).
 
    The post-marker signature is identical to DefFuncExpr's — same
    paramSet+, optional precondition list, :over clause, :as clause,
@@ -1123,7 +1129,13 @@ DefFuncExpr           := "defn" (_ Identifier)?
    semantic layer, not grammar. *)
 
 DefHookDecl           := "defn" _ Identifier
-                         (At | Percent | Comprehension | (Tilde OpenAngle))
+                         ( At
+                         | Percent
+                         | Comprehension
+                         | (Tilde OpenAngle OpenAngle)
+                         | (Tilde OpenAngle Star)
+                         | (Tilde OpenAngle)
+                         )
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
                          _ FuncBody;

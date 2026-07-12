@@ -4085,7 +4085,7 @@ value; `comp` is not resumed from the dispatched perform site.
 
 - **Uncaught-effect propagation**: `comp` performs an effect whose
 kind is outside the LHS narrowing (§6.3.1). The handler expression
-does not produce a value; the propagation is the exit path, and the
+evaluates to `empty`; the propagation is the exit path, and the
 effect continues up the dynamic call stack per §6.1.2.
 
 Value-shaping wrappers built on top of `~<*` (e.g., `Gen%` returning a
@@ -5103,6 +5103,8 @@ The `~<*` hook performs each take between iterations; `v` binds to the received 
 
 Unlike the `Promise ~<<` relay pattern above, the block does not itself invoke `take`; the channel LHS supplies the take semantics, and the block observes each payload directly. `Channel` is not admitted on `~<<`; single-operation channel work uses `Promise ~<<` (relay pattern above) rather than `Channel ~<<`.
 
+**NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.<Bind, Map, Return> ~<*` scope over `comp` (§6.3), dispatches on `Effect.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
+
 #### §6.9.5 Multi-Channel Combinators
 
 Two named constructors coordinate across a list of channels, each producing a one-shot derived `Channel` that receives the coordination outcome and closes.
@@ -5165,8 +5167,8 @@ The userland surface is:
 
 - `PushStream@`: this unit constructor form exists for definitional completeness, but its use is always ill-formed and will produce a compiler error.
 - `PushStream.subj@`: subject constructor. Exposes `.st` (the associated `PushStream`) as its sole field. Returns a subject.
-- `.close()`: close the stream. Available on the subject only. Returns `Right@ true` on first invocation; subsequent invocations return `Left@ "PushStream Closed"`. Close propagates downstream to composed observers.
-- `.closed()`: available on the stream. Returns `true` if the stream is closed, `false` if open.
+- `subj.close()`: close the stream. Available on the subject only. Returns `Right@ true` on first invocation; subsequent invocations return `Left@ "PushStream Closed"`. Close propagates downstream to composed observers.
+- `stream.closed()`: available on the stream. Returns a `Promise` that resolves to `Right@ empty` once the stream closes. For sync inspection of current state, use `.closed().resolved()` (per §6.8).
 - Subject `%`: `subj% v` broadcasts `v` to all current subscribers of the associated stream. Returns a Promise (see §6.10.1).
 - `~<` / `~map`: single-step chain operators. Each registers a subscriber on the source stream and produces a derived stream carrying transformed values to that derived stream's own subscribers.
 `~<*` subscription form: registers the block body as a subscriber to the source stream; the block body executes per value broadcast from the source. Resolves to `Promise{Left{"PushStream Closed"}}` when the source closes, or `Promise{Left{payload}}` when a terminal `Left@ payload` in the block body signals early unsubscribe (§6.10.3). The block's terminal expression is otherwise discarded.
@@ -5238,7 +5240,8 @@ subj.close();       // Right{true}
 
 subj.close();       // Left{"PushStream Closed"}
 
-subj.st.closed();   // true
+subj.st.closed();               // Promise{Right{empty}}
+subj.st.closed().resolved();    // true
 ```
 
 Close capability lives on the subject; the observation of closed state lives on the stream. This matches the capability separation established in §6.10.1: subject-holders control the lifetime of the stream; stream-holders (pure observers) inspect it but cannot terminate it.
@@ -5251,7 +5254,7 @@ Closing is a one-time state transition:
 Once closed:
 
 - Any subsequent `subj% v` returns `Promise@ Left@ "PushStream Closed"` without broadcasting.
-- Downstream composed streams close as the close signal propagates. `.closed()` on any downstream observer returns `true`.
+- Downstream composed streams close as the close signal propagates. `.closed()` on any downstream observer resolves to `Right@ empty` (or reports resolved via `.resolved()`).
 - No further values propagate through the closed stream or its downstream chain.
 
 Close propagates downstream, not upstream: closing a downstream observer does not close its source. The subject that owns the source retains control over the lifetime of the propagation chain rooted at it.
@@ -5337,6 +5340,8 @@ subj.st ~map (v) {
 **NOTE:** A `~<*` block whose terminal expression evaluates to `Left@ payload` unsubscribes *this observer* from the source stream and resolves the observer's completion Promise to `Promise{Left{payload}}`. The source stream and other subscribers are unaffected; only this block stops receiving values. Source-side termination varies per LHS type: `Channel ~<*` (§6.9.4) resolves on channel close; `PushStream ~<*` (this section) resolves on source close; effect-handler `~<*` (§6.3) terminates on handler-scope end (see §6.3 for its resolution shape).
 
 **NOTE:** `~<*` LHS shapes under the composition axis (§6 opener). Three shapes participate: an effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3); a `Channel` LHS observes each successful take until the channel closes (§6.9.4); a `PushStream` LHS (this section) subscribes to a producer-broadcast source. All three share the "block body runs per external emission" pattern; they differ in what constitutes an emission, what triggers each emission, and what terminates the composition. Source-side termination varies per LHS (effect-scope end, channel close, stream close); a `Left@ ...` block-terminal unsubscribes the observer only on `PushStream ~<*`. Consumer-driven drainage lives on `~<<` (Iter §6.5.3, List §7.2, PullStream §6.11), not `~<*`.
+
+**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.<Bind, Map, Return> ~<*` scope over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Bind` dispatch's `ret` on the payload, wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
 
 #### §6.10.4 PushStream Combinators
 

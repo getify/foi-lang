@@ -293,26 +293,24 @@ var failSamples = [
 
 	// Strict no-trivia between Identifier and marker — mirrors
 	// `Foo@` adjacency at use sites in AtCallExpr. Same rule for
-	// all four marker shapes (At, Percent, Comprehension,
-	// Tilde+OpenAngle composite).
+	// all six marker shapes (At, Percent, Comprehension, and the
+	// three Tilde-led composites: Tilde+OpenAngle, Tilde+OpenAngle+
+	// OpenAngle, Tilde+OpenAngle+Star).
 	"defn Foo @(x) ^x;",
 	"defn Foo %(self, env) ^env;",
 	"defn Foo ~map(inst, fn) ^inst;",
 	"defn Foo ~<(inst, fn) ^fn(inst);",
+	"defn Foo ~<<(comp, ty) ^comp;",
+	"defn Foo ~<*(comp, ty) ^comp;",
 
-	// Strict no-trivia WITHIN the Tilde OpenAngle composite for ~
-	// — matches the composite operator's own adjacency rule at
-	// ComprOp use sites in §10.
+	// Strict no-trivia WITHIN the Tilde-led composite markers
+	// (`~<`, `~<<`, `~<*`) — matches the composite operators' own
+	// adjacency rules at their respective use sites in §10.
 	"defn Foo~ <(inst, fn) ^fn(inst);",
-
-	// ~<< (do-comprehension) and ~<* (looping-do) are NOT admitted
-	// at declaration position — deferred pending per-step-controllable
-	// override interface (leading candidate: generator-based lowering
-	// via the yield mechanism). Grammar rejection at parse time; the
-	// third token after Tilde+OpenAngle marker leaves the following
-	// paren-slot expecting OpenParen but seeing OpenAngle / Star.
-	"defn Foo~<<(inst, block) ^inst;",
-	"defn Foo~<*(inst, block) ^inst;",
+	"defn Foo~ <<(comp, ty) ^comp;",
+	"defn Foo~< <(comp, ty) ^comp;",
+	"defn Foo~ <*(comp, ty) ^comp;",
+	"defn Foo~< *(comp, ty) ^comp;",
 
 	// Statement-only. At expression position the DefFuncExpr arm
 	// has no marker slot (removed in the refactor), so these fail

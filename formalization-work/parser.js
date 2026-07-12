@@ -2047,28 +2047,32 @@ export const DefFuncExpr = production("DefFuncExpr",
 // to attach to), so Identifier is required (no `optional()` on it,
 // distinct from DefFuncExpr's anonymous-admissible form).
 //
-// Marker admits four disjoint shapes:
-//   - At (@)              — constructor hook (§3.1.1.1)
-//   - Percent (%)         — effect hook (§3.1.1.2)
-//   - Comprehension       — single-token comprehension hook: ~map,
-//                           ~each, ~filter, ~fold, ~foldR, ~cata, ~ap
-//                           (and the lexed aliases ~chain/~bind/
-//                           ~flatMap, which parse here but semantic-
-//                           reject as aliases of ~<) (§3.1.1.3)
-//   - Tilde OpenAngle     — two-token composite for the bind hook ~
-//                           (§3.1.1.3)
-//
-// `~<<` (Tilde OpenAngle OpenAngle) and `~<*` (Tilde OpenAngle Star)
-// are NOT admitted at declaration position — grammar rejection at
-// parse time. User override of these operators requires a per-step-
-// controllable interface not yet designed; leading candidate is
-// generator-based lowering via the yield mechanism (TBD).
+// Marker admits six disjoint shapes:
+//   - At (@)                          — constructor hook (§3.1.1.1)
+//   - Percent (%)                     — effect hook (§3.1.1.2)
+//   - Comprehension                   — single-token comprehension
+//                                       hook: ~map, ~each, ~filter,
+//                                       ~fold, ~foldR, ~cata, ~ap
+//                                       (and the lexed aliases
+//                                       ~chain/~bind/~flatMap, which
+//                                       parse here but semantic-
+//                                       reject as aliases of ~<)
+//                                       (§3.1.1.3)
+//   - Tilde OpenAngle OpenAngle       — three-token composite for
+//                                       the do-comprehension hook
+//                                       ~<< (§3.1.1.3, §3.10.9.4)
+//   - Tilde OpenAngle Star            — three-token composite for
+//                                       the looping-do hook ~<*
+//                                       (§3.1.1.3)
+//   - Tilde OpenAngle                 — two-token composite for
+//                                       the bind hook ~< (§3.1.1.3)
 //
 // Strict no-trivia between Identifier and the marker (mirrors the
 // `Foo@` adjacency at use sites in AtCallExpr, and same rule for
-// `Foo%` and `Foo~<glyph>`). For the Tilde OpenAngle composite,
-// strict no-trivia between Tilde and OpenAngle as well — matches
-// `~<`'s adjacency rule at ComprOp use sites in §10. Trivia IS
+// `Foo%` and `Foo~<glyph>`). For the Tilde OpenAngle composite
+// markers (`~<`, `~<<`, `~<*`), strict no-trivia within the composite
+// as well — matches the composite operators' adjacency rules at
+// their respective use sites in §10. Trivia IS
 // admitted between the marker and the first paren-set (mirrors
 // normal `defn` paren spacing).
 //
@@ -2085,15 +2089,26 @@ export const DefFuncExpr = production("DefFuncExpr",
 // Identifier in the and(...) sequence — no `delim()` between — to
 // enforce the no-trivia rule.
 //
-// PEG ordering of the marker disjunction: all four arms are disjoint
-// at token-type level (At, Percent, Comprehension, Tilde), so order
-// is mechanical. Listed extension-first: At, Percent (existing
-// markers) before Comprehension and Tilde+OpenAngle composite.
+// PEG ordering of the marker disjunction: At, Percent, and
+// Comprehension arms are disjoint at token-type level, so their
+// order is mechanical. The three Tilde-led composite arms all share
+// the Tilde OpenAngle prefix; they MUST be ordered longest-match-
+// first — (Tilde OpenAngle OpenAngle) and (Tilde OpenAngle Star)
+// before (Tilde OpenAngle), otherwise the shorter arm would greedily
+// match the leading two tokens of ~<< / ~<* and leave the third
+// (OpenAngle / Star) dangling into the paren-slot.
 export const DefHookDecl = production("DefHookDecl",
 	and(
 		KwDefn, delim(),
 		Identifier,
-		or(At, Percent, ComprehensionTok, and(Tilde, OpenAngle)),
+		or(
+			At,
+			Percent,
+			ComprehensionTok,
+			and(Tilde, OpenAngle, OpenAngle),
+			and(Tilde, OpenAngle, Star),
+			and(Tilde, OpenAngle)
+		),
 		many(and(
 			delim(), OpenParen, delim(),
 			optional(or(ParameterList, GatherParameter)),
