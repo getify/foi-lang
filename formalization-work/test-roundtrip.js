@@ -51,11 +51,15 @@ var SKIP_KEYS = new Set([ "type", "start", "end", "delims" ]);
 // Collect child nodes from enumerable properties (skipping SKIP_KEYS)
 // plus this node's delim tokens, sorted by source position.
 //
-// Synthetic ImpliedEmpty nodes (from PrefixCallSuffix skip slots)
-// are filtered — they carry the "implied empty value" semantic for
-// downstream consumers but have no source representation. Null
-// entries in arrays (PartialCallSuffix skip slots) are filtered
-// implicitly by isNode (which rejects null).
+// Synthetic nodes with no source representation are filtered:
+//   - ImpliedEmpty (from PrefixCallSuffix skip slots) — carries the
+//     "implied empty value" semantic for downstream consumers.
+//   - DestructureSkipSlot (from tuple-mode DestructureTarget skip
+//     positions per Foi-Specification.md §2.13.6) — carries the
+//     "empty position, no binding" semantic for downstream
+//     consumers.
+// Null entries in arrays (PartialCallSuffix skip slots) are
+// filtered implicitly by isNode (which rejects null).
 var collectPieces = node => {
 	var pieces = [];
 	for (let key of Object.keys(node)) {
@@ -63,12 +67,20 @@ var collectPieces = node => {
 		let v = node[key];
 		if (Array.isArray(v)) {
 			for (let item of v) {
-				if (isNode(item) && item.type !== "ImpliedEmpty") {
+				if (
+					isNode(item) &&
+					item.type !== "ImpliedEmpty" &&
+					item.type !== "DestructureSkipSlot"
+				) {
 					pieces.push(item);
 				}
 			}
 		}
-		else if (isNode(v) && v.type !== "ImpliedEmpty") {
+		else if (
+			isNode(v) &&
+			v.type !== "ImpliedEmpty" &&
+			v.type !== "DestructureSkipSlot"
+		) {
 			pieces.push(v);
 		}
 	}

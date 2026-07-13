@@ -1138,7 +1138,7 @@ xs ~map (v:? 0) { v * 2 };          // v = 0 for empty elements
     1. Identifier `name:? expr`: allocate the slot. If the entry's implicit input is non-empty, bind that input; otherwise evaluate `expr` in the new frame and store the value, overriding the empty implicit input.
     2. Identifier `name` (no initializer): allocate the slot. If the context supplies an implicit input for this entry, bind that input; otherwise store `empty`.
     3. Destructure target `<...> :? source`: if the entry's implicit input is non-empty, use it as the destructure source; otherwise evaluate `source` in the new frame and use its value as the destructure source, overriding the empty implicit input. Destructure per §2.13.
-    4. Destructure target `<...>` (no initializer): destructure the context's implicit input for this entry as the source, per §2.13.6.
+    4. Destructure target `<...>` (no initializer): destructure the context's implicit input for this entry as the source, per §2.13.7.
 4. Evaluate `body`'s statements in the new frame, in source order.
 5. The block's value is the value of its final value-bearing expression.
 
@@ -1395,13 +1395,26 @@ rec.<x, &extras>;           // < x: 1, y: 2, z: 3 >
 
 A destructured binding (Syntactic-Grammar `DestructureTarget` at §4) extracts one or more values from a Record or Tuple and binds them to names in the current frame. Destructure targets appear at four positions: `def` statements, the defs-init clause of `def (...) {...}` and `(...) {...}` blocks, function parameter lists, and pattern-match clauses (§5).
 
-The target shapes are:
+Destructure operates in one of two **modes**:
+
+- **Record-mode** (§2.13.1–§2.13.5) reads slots by name.
+- **Tuple-mode** (§2.13.6) reads slots by position.
+
+A single target commits to one mode; the two modes do not mix. Mode is selected at the grammar level by the first non-capture entry: a `:name` or `name:` opener commits to record-mode; a bare identifier or leading comma commits to tuple-mode. The `#name` capture form is admitted in both modes; an all-capture target (`< #whole >`) is semantically identical under either mode and resolves as record-mode by grammar ordering.
+
+The record-mode target shapes are:
 
 - `:name`: concise (i.e., `name: name`)
 - `:source.name`: concise-tail (i.e., `name: source.name`)
 - `name: source.other`: renamed
 - `#name`: full-context capture
 - `name: [sourceExpr]`: computed source
+
+The tuple-mode target shapes are:
+
+- `name`: positional entry, binds the source at the entry's list position
+- (empty comma position): skip slot, consumes a position without binding
+- `#name`: full-context capture
 
 Any non-capture form additionally admits an optional `:? default` tail: if the entry's extraction resolves to `empty`, the `default` expression is evaluated and its value overrides the empty read. Default expressions may reference names bound by earlier entries in the same destructure.
 
@@ -1494,9 +1507,9 @@ If the computed slot resolves to `empty`, the entry binds `lastItem` to the defa
 
 The `[expr]` may also appear as the *root* of a longer path: `def < deepest: [k].sub.0 >: items;` evaluates `k`, picks `[k]` from the source, then reads through `.sub.0`. See §2.13's target shapes list and the grammar's `DestructureNamedDef` base-of-`BracketExpr` option.
 
-#### §2.13.5 Mixed Destructure
+#### §2.13.5 Mixed Record-Mode Destructure
 
-A destructure target may mix any combination of the entry forms from §2.13.1 through §2.13.4:
+A record-mode destructure target may mix any combination of the entry forms from §2.13.1 through §2.13.4:
 
 ```java
 def <
@@ -1520,7 +1533,65 @@ def <
 
 The single-evaluation of the source is important: a side-effecting source is observed exactly once regardless of how many entries extract from it, and all entries see a consistent snapshot of the source (immutable Records and Tuples make "consistent snapshot" trivial in practice, but the rule holds regardless).
 
-#### §2.13.6 Implicit Source
+#### §2.13.6 Tuple-Mode Destructure
+
+A tuple-mode destructure target binds by position. Entries open with a bare identifier (positional), an empty comma position (skip slot), or `#name` (full-context capture).
+
+```java
+def < first, second, third >: coords;
+```
+
+Each positional entry reads the source at the entry's list position: `first` binds `coords.0`, `second` binds `coords.1`, `third` binds `coords.2`. Comma rules mirror §1.5.2 tuple-form literal counting.
+
+##### Skip Slots
+
+Empty comma positions consume a source position without binding:
+
+```java
+def < , second, third >: coords;    // second binds coords.1, third binds coords.2
+def < first, , third >: coords;     // first binds coords.0, third binds coords.2
+def < , , third >: coords;          // third binds coords.2
+```
+
+Leading and interior empty positions consume a slot per §1.5.2. Trailing empty positions have no effect: an unbound trailing slot performs no read and no binding, and is treated as a no-op.
+
+##### Capture in Tuple-Mode
+
+The capture form `#name` binds the entire source value and is **position-neutral**: its placement in the entries list does not affect other entries' position counting:
+
+```java
+def < a, #whole, b >: coords;       // a binds coords.0, whole binds coords, b binds coords.1
+def < #whole, a, b >: coords;       // whole binds coords, a binds coords.0, b binds coords.1
+def < a, b, #whole >: coords;       // a binds coords.0, b binds coords.1, whole binds coords
+```
+
+All three targets above bind identical values. Multiple `#`-entries are permitted and produce aliases of the source.
+
+##### Per-Entry Defaults
+
+Positional entries admit the `:? default` tail. Semantics parallel §2.13.1:
+
+```java
+def < a:? 0, b:? 1, c:? 2 >: coords;
+```
+
+If `coords.0` resolves to `empty`, `a` binds to `0`; likewise for `b` and `c`. Capture entries do not admit defaults (a destructure against an empty source errors before per-entry procedures proceed, so a capture-with-default is unreachable per §2.13.3).
+
+##### Per-Entry Abstract Execution
+
+For a tuple-mode destructure (against the destructure source `__src` established per the source-binding step of §2.13.5, which applies uniformly to both modes):
+
+1. Initialize an interpreter-internal position counter `__pos` to 0.
+2. For each entry in source order:
+    1. **Positional entry** (`name`):
+        1. Read the value at slot `__pos` from `__src`. Per §2.12.1, a missing slot resolves to `empty`.
+        2. If the read value is `empty` and a `:? default` tail is present, evaluate `default` in the current environment; the resulting value overrides the empty read.
+        3. Allocate a slot in the current frame for `name` and store the value into it.
+        4. Increment `__pos`.
+    2. **Skip slot** (empty comma position): increment `__pos` without binding.
+    3. **Capture entry** (`#name`): allocate a slot in the current frame for `name` and store `__src` directly. Do not increment `__pos`.
+
+#### §2.13.7 Implicit Source
 
 At certain positions, a destructure target appears without its `: source` tail. The enclosing context supplies the source implicitly. The three positions admitting this form:
 
@@ -1536,7 +1607,7 @@ people ~each (< :name, :age >) {
 
 The `~each` block receives each element of `people` as its implicit input; the destructure binds `name` and `age` from that element.
 
-**Abstract execution:** identical to §2.13.5, except that step 1 is supplied by the enclosing context rather than evaluated from a `: source` tail. The implicit input takes the role of `__src`; per-entry dispatch proceeds against it.
+**Abstract execution:** identical to the umbrella procedure of the target's mode (§2.13.5 for record-mode, §2.13.6 for tuple-mode), except that step 1 is supplied by the enclosing context rather than evaluated from a `: source` tail. The implicit input takes the role of `__src`; per-entry dispatch proceeds against it.
 
 ### §2.14 Open extensions
 

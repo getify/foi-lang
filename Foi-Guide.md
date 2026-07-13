@@ -845,11 +845,62 @@ These various destructuring forms are also allowed in a block-definitions clause
 def (< :items.0.price >: getOrder(123)) {
     price;          // 29.97
 };
-
-order.items ~each (< itemPrice: price >) {
-    itemPrice;      // 29.97
-};
 ```
+
+**Tuple destructuring.** The forms above read entries by name: the source is a Record whose slots you want to pull out by identifier. When the source is a Tuple (or a Record whose entries you want positionally), Foi provides a *Tuple form* of destructuring that reads by position:
+
+```java
+def < first, second, third >: coords;
+
+first;      // coords.0
+second;     // coords.1
+third;      // coords.2
+```
+
+Bare identifiers (no `:` prefix, no `:` suffix) mark *positional* entries. Each name binds the value at its list-position in the source: `first` gets index `0`, `second` gets `1`, `third` gets `2`. Coming from JS, this is the Foi equivalent of `const [first, second, third] = coords;`.
+
+Destructuring forms don't mix: a single target is either all Record-form entries or all Tuple-form entries. Combinations like `< :name, position >` or `< position, name: alt >` are rejected. If your source is a Record whose entries you want positionally, use their integer keys in Record form (e.g., `< first: [0], second: [1] >`) instead.
+
+**Skip slots.** Not every position needs a binding. An empty comma position consumes a source position without introducing a name:
+
+```java
+def < , second, third >: coords;    // skips 0; second binds coords.1
+def < first, , third >: coords;     // skips 1
+def < , , third >: coords;          // third binds coords.2
+```
+
+The comma rules mirror Tuple *literal* construction from [Structured Values](#records-and-tuples): leading and interior commas open positions; a single trailing comma is a permissive terminator. So `def < a, b, >: src;` binds two entries, not three. Trailing empty positions after all bindings are no-ops, as they neither bind variables nor *skip* any position.
+
+**Capture is position-neutral.** The `#name` capture works in the Tuple form too, binding the whole source without consuming a position:
+
+```java
+def < a, #whole, b >: coords;
+// a binds coords.0, whole binds coords, b binds coords.1
+```
+
+Wherever `#whole` sits in the entry list, positional entries advance around it as if it weren't there. Multiple captures are permitted; they all alias the same source value.
+
+**Per-entry defaults.** Positional entries admit the same `:?` default form as Record entries:
+
+```java
+def < x :? 0, y :? 0, z :? 0 >: point;
+```
+
+If a position in the source resolves to `empty` (missing or explicitly `empty`), the default expression evaluates and its value binds instead.
+
+**Function parameters.** Both destructuring modes work everywhere destructuring appears: `def` statements, function parameters, block-definition clauses, pattern-match clauses. A common use for the Tuple form is picking apart a paired value:
+
+```java
+defn translateXY(
+    < x1 :? 0, y1 :? 0 > :? <>,
+    < x2 :? 0, y2 :? 0 > :? <>
+)
+    ^< x1 + x2, y1 + y2 >;
+
+translateXY(< 1, 2 >, < 3, 4 >);      // < 4, 6 >
+```
+
+Two Tuple parameters, each destructured positionally.
 
 ### Lazy Forward References
 

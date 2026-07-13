@@ -314,8 +314,8 @@ var DestructureCapture = production("DestructureCapture",
 	and(Hash, Identifier)
 );
 
-// DestructureDef       := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
-// <DestructureDefList> := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
+// DestructureDef              := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
+// <RecordDestructureDefList>  := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
 //
 // [SERIES 2] `:?` per-entry default tail. The `Colon Qmark`
 // two-token composite is the same sigil introduced in §11 for
@@ -355,13 +355,128 @@ var DestructureDef = production("DestructureDef",
 	)
 );
 
-var DestructureDefList = and(
+var RecordDestructureDefList = and(
 	DestructureDef,
 	any(and(delim(), Comma, delim(), DestructureDef)),
 	optional(and(delim(), Comma))
 );
 
-// DestructureTarget := OpenAngle _ DestructureDefList _ CloseAngle;
+// DestructurePositionalDef  := Identifier (_ Colon Qmark _ ExprNoBlock)?;
+// <TupleDestructureEntry>   := DestructurePositionalDef | DestructureCapture;
+// <TupleDestructureDefList> := (_ Comma)* (_ <TupleDestructureEntry> (_ Comma (_ <TupleDestructureEntry>)?)*)?;
+//
+// [DESTRUCTURE MODE SPLIT] Tuple-mode admits bare Identifier as
+// a positional entry (list position → source position, per
+// Foi-Specification.md §2.13.6) alongside DestructureCapture.
+// The per-entry `:?` default tail (same `Colon Qmark` composite
+// as record-side) attaches directly to the positional-def leaf
+// — no dispatcher needed given a single grammatical arm.
+// DestructurePositionalDef is visible so its shaper produces a
+// dedicated positional-entry node with `.target` (the Identifier)
+// and optional `.default` (the tail's `ExprNoBlock`), plus the
+// sigil tokens in `delims`.
+//
+// The list combinator mirrors RecordTupleEntryList (§17) to
+// preserve §1.5.2 tuple-form comma-counting rules: leading
+// `any(and(delim(), Comma))` admits leading skip positions;
+// the inner `any(and(delim(), Comma, optional(and(delim(),
+// TupleDestructureEntry))))` admits interior skips as empty
+// entries between commas; a lone trailing comma is permissive;
+// additional trailing commas admit trailing skip positions.
+// The DestructureTarget shaper walks the flattened parts,
+// producing DestructureSkipSlot sentinel nodes in `.entries`
+// for empty positions (Foi-Specification.md §2.13.6 abstract
+// execution consumes leading + interior skips; trailing skips
+// are grammatically admitted but semantically no-op — preserved
+// in `.entries` for round-trip fidelity, ignored at emit).
+//
+// PEG: DestructurePositionalDef first (opens with Identifier);
+// DestructureCapture second (opens with Hash). Disjoint openers.
+var DestructurePositionalDef = production("DestructurePositionalDef",
+	and(
+		Identifier,
+		optional(and(delim(), Colon, Qmark, delim(), lazy(() => ExprNoBlock))),
+		// Positive lookahead — the entry must terminate at a
+		// tuple-list boundary (Comma or CloseAngle). Prevents
+		// tuple-mode from greedily consuming a bare Identifier
+		// that opens a record-side Named form (`<a: src>`):
+		// after Identifier matches `a`, the optional `:?` tail
+		// fails on the bare `:` (Qmark absent), and this
+		// lookahead then fails on `:` (neither Comma nor
+		// CloseAngle), causing DestructurePositionalDef to fail
+		// cleanly. TupleDestructureEntry falls through to
+		// DestructureCapture (also fails), TupleDestructureEntry
+		// fails, tuple's list fails, and PEG's ordered choice at
+		// DestructureDefList falls through to RecordDestructureDefList
+		// which parses the input correctly.
+		//
+		// Without this assertion, PEG would commit to tuple's
+		// arm after PositionalDef succeeds on a bare `a`, then
+		// fail at the outer DestructureTarget's CloseAngle
+		// expectation — with no backtrack path to record.
+		lookahead(and(delim(), or(Comma, CloseAngle)))
+	)
+);
+
+var TupleDestructureEntry = or(DestructurePositionalDef, DestructureCapture);
+
+// Non-nullable — two alternatives:
+//   Alt 1: (_ Comma)* _ <TupleDestructureEntry> (_ Comma (_ <TupleDestructureEntry>)?)*
+//          — at least one entry, with optional leading + interior + trailing skips
+//   Alt 2: (_ Comma)+
+//          — leading commas only, no entries (skip-only target)
+// The non-nullability is load-bearing at DestructureDefList's PEG
+// ordered choice — see the note below on tuple-first ordering.
+var TupleDestructureDefList = or(
+	// Alt 1: ≥1 entry, optional skips
+	and(
+		any(and(delim(), Comma)),
+		delim(),
+		TupleDestructureEntry,
+		any(and(delim(), Comma, optional(and(delim(), TupleDestructureEntry))))
+	),
+	// Alt 2: ≥1 leading comma, no entries
+	and(delim(), Comma, any(and(delim(), Comma)))
+);
+
+// <DestructureDefList> := <TupleDestructureDefList> | <RecordDestructureDefList>;
+//
+// PEG ordered choice — tuple-mode tried first. Non-nullability
+// of tuple's list is load-bearing: without it, record-mode
+// inputs like `<:a>` would trigger tuple's empty-match, commit
+// via ordered choice, and fail at the outer CloseAngle without
+// falling through to record. With non-nullability, tuple fails
+// cleanly on record-opener inputs (`:name`, `name:`) → record
+// arm fires. Conversely, tuple-first ordering avoids record's
+// greedy-consumption-then-outer-fail issue (record's list
+// `DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?`
+// would over-consume on `<#whole, a, b>`: match `#whole` +
+// permissive trailing comma, then outer CloseAngle fails on
+// `a`, with no PEG backtrack to alternative arm).
+//
+// All-capture targets (`< #whole >`) parse under tuple-mode's
+// grammar arm by ordering; the DestructureTarget shaper still
+// labels mode as "record" via its Pass 1 default (no positional
+// entry → mode null → "record"). Grammar arm chosen is an
+// implementation detail; semantic mode is determined by entry
+// types.
+//
+// Empty `<>` fails under both arms (both non-nullable) —
+// destructure-to-nothing is semantically vacuous and
+// grammatically rejected.
+//
+// Mixed openings (`<:a, b>`, `<a, :b>`) fail under both arms
+// → whole target rejected.
+//
+// The DestructureTarget shaper reads mode from the parts:
+// presence of DestructurePositionalDef → tuple; presence of
+// Named/Concise → record; else (all-capture / skip-only) →
+// record by shaper default. Skip-slot sentinels are inserted
+// at tuple-mode shaping time based on comma-vs-node
+// interleaving in the parts stream.
+var DestructureDefList = or(TupleDestructureDefList, RecordDestructureDefList);
+
+// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
 export const DestructureTarget = production("DestructureTarget",
 	and(OpenAngle, delim(), DestructureDefList, delim(), CloseAngle)
 );

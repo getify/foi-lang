@@ -315,41 +315,111 @@ ExportConciseBinding  := Colon Identifier SingleAccessExpr?;
 ## §4 Variable Definitions / Destructuring
 
 ```ebnf
-DefVarStmt            := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+DefVarStmt                    := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
 
-DestructureTarget     := OpenAngle _ DestructureDefList _ CloseAngle;
-<DestructureDefList>  := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
-DestructureDef        := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
-DestructureNamedDef   := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
-DestructureConciseDef := Colon Identifier SingleAccessExpr?;
-DestructureCapture    := Hash Identifier;
+DestructureTarget             := OpenAngle _ <DestructureDefList> _ CloseAngle;
+<DestructureDefList>          := <RecordDestructureDefList> | <TupleDestructureDefList>;
+
+<RecordDestructureDefList>    := DestructureDef (_ Comma _ DestructureDef)* (_ Comma)?;
+DestructureDef                := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
+
+<TupleDestructureDefList>     := (_ Comma)* _ <TupleDestructureEntry> (_ Comma (_ <TupleDestructureEntry>)?)*
+                               | (_ Comma)+;
+<TupleDestructureEntry>       := DestructurePositionalDef | DestructureCapture;
+DestructurePositionalDef      := Identifier (_ Colon Qmark _ ExprNoBlock)? &(_ (Comma | CloseAngle));
+
+DestructureNamedDef           := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
+DestructureConciseDef         := Colon Identifier SingleAccessExpr?;
+DestructureCapture            := Hash Identifier;
 ```
 
-The `(_ Colon Qmark _ ExprNoBlock)?` tail on `DestructureDef` is the
-per-entry default form (Foi-Specification.md §2.13.1, §2.13.2, §2.13.4).
-The `Colon Qmark` composite is the same two-token sigil introduced in
-§11's `VarDefInitOptImplIn` (Series 1) — trivia insignificant around
-the composite, but the `Qmark` must immediately follow the `Colon`
-with no intervening trivia (mirrors the `Colon Equal` convention of
-`AssignmentExpr` in §12).
+`<DestructureDefList>` dispatches between two mutually-exclusive modes
+via PEG ordered choice: tuple-mode (`<TupleDestructureDefList>`, tried
+first) or record-mode (`<RecordDestructureDefList>`, fallback). Two
+mechanisms combine to make the ordering robust:
 
-`DestructureDef` was previously a hidden dispatcher; it becomes visible
-here to host the default tail without scattering the concern across
-consumers. Its shaper subsumes — the returned node is the inner
-`DestructureNamedDef` or `DestructureConciseDef` (or `DestructureCapture`
-unmodified), with the tail's `ExprNoBlock` folded onto the inner
-node's `.default` slot and the tail's `Colon Qmark` pushed to the
-inner node's `delims`. No `DestructureDef` node appears in the AST;
-downstream consumers see the same three node types they always have,
-now optionally carrying a `.default` field on the two non-capture arms.
-This mirrors §11's split of `.init` (bare `:`, strict positions) from
-`.default` (`:?`, lenient positions) — the sigil-teaches-semantics
-lock extends per-entry.
+1. Tuple-mode's list is non-nullable — it requires either a leading
+   comma sequence or at least one entry — so an empty `<>` target
+   fails both arms and is grammatically rejected.
 
-The tail is grammatically excluded from the `DestructureCapture` arm.
-Per Foi-Specification.md §2.13.3, capture reads the entire source; a
-destructure-against-empty errors before per-entry procedures proceed
-(§3.2.3), so a capture-with-default entry is unreachable.
+2. `DestructurePositionalDef` carries a positive-lookahead assertion
+   `&(_ (Comma | CloseAngle))` requiring the entry to terminate at
+   a tuple-list boundary. This prevents tuple-mode from greedily
+   consuming a bare identifier that opens a record-side Named form
+   (`<a: src>`): after matching `a`, the optional `:?` tail fails
+   on bare `:`, the lookahead then fails on `:` (neither Comma nor
+   CloseAngle), and tuple's list fails cleanly. PEG's ordered
+   choice falls through to record-mode which parses correctly.
+
+All-capture targets (`< #whole >`) parse under tuple-mode's grammar arm
+by ordering, but the DestructureTarget shaper still labels mode as
+`"record"` because no positional entry is present — the grammar arm
+chosen is an implementation detail; the semantic mode is determined
+by entry types. The two modes do not mix within a single target — a
+`<:a, b>` or `<a, :b>` combination fails to parse under both arms.
+See Foi-Specification.md §2.13 opener for the mode framing.
+
+Record-mode entries (`DestructureDef`) admit `DestructureNamedDef`,
+`DestructureConciseDef`, or `DestructureCapture`. Tuple-mode entries
+(`<TupleDestructureEntry>`) admit `DestructurePositionalDef` or
+`DestructureCapture`. The shared `DestructureCapture` production is
+position-neutral within a tuple list (does not consume a source
+position); positional-vs-capture position semantics are handled by
+the shaper against the `.entries` array. See Foi-Specification.md §2.13.6.
+
+The `(_ Colon Qmark _ ExprNoBlock)?` per-entry default tail
+(Foi-Specification.md §2.13.1, §2.13.2, §2.13.4, §2.13.6) appears on
+the record-side `DestructureDef` and the tuple-side
+`DestructurePositionalDef`. The `Colon Qmark` composite is the same
+two-token sigil introduced in §11's `VarDefInitOptImplIn` (Series 1) —
+trivia insignificant around the composite, but the `Qmark` must
+immediately follow the `Colon` with no intervening trivia (mirrors the
+`Colon Equal` convention of `AssignmentExpr` in §12).
+
+`DestructureDef` (record-side) was previously a hidden dispatcher; it
+becomes visible to host the default tail without scattering the
+concern across consumers. Its shaper subsumes — the returned node is
+the inner `DestructureNamedDef` or `DestructureConciseDef` (or
+`DestructureCapture` unmodified), with the tail's `ExprNoBlock` folded
+onto the inner node's `.default` slot and the tail's `Colon Qmark`
+pushed to the inner node's `delims`. No `DestructureDef` node appears
+in the AST; downstream consumers see the same three record-side node
+types they always have, now optionally carrying a `.default` field on
+the two non-capture arms.
+
+`DestructurePositionalDef` (tuple-side) hosts its default tail directly
+— no subsuming dispatcher needed given the single grammatical arm. Its
+shaper produces a `DestructurePositionalDef` node with `.target` (the
+Identifier) and optional `.default` (the tail's `ExprNoBlock`), plus
+the sigil tokens in `delims`. This mirrors `DestructureCapture`'s
+Identifier-wrapping node shape.
+
+The tail is grammatically excluded from the `DestructureCapture` arm
+in both modes. Per Foi-Specification.md §2.13.3, capture reads the
+entire source; a destructure-against-empty errors before per-entry
+procedures proceed (§3.2.3), so a capture-with-default entry is
+unreachable.
+
+`<TupleDestructureDefList>` adapts the `<RecordTupleEntryList>` shape
+(§17) to preserve §1.5.2 tuple-form comma-counting rules while
+remaining non-nullable. Two alternatives: the first requires at least
+one entry (with any number of leading skip commas + optional interior
+skips + optional trailing skip commas); the second requires at least
+one leading comma with no entries (rare edge case — allows a skip-only
+target like `<,>` to parse for grammatical symmetry with §1.5.2).
+Leading and interior skips consume source positions per §2.13.6's
+abstract execution; trailing skips are grammatically admitted but
+semantically no-op. The shaper produces `DestructureSkipSlot`
+sentinel nodes in the `.entries` array for empty positions,
+preserving round-trip fidelity; downstream consumers (transpiler,
+semantic analyzer) treat trailing skip sentinels as no-ops.
+
+The `DestructureTarget` node carries an explicit `.mode` field
+(`"record"` or `"tuple"`) set by the shaper based on which sub-list
+matched. Downstream consumers dispatch on `.mode` rather than
+inspecting `.entries[0].type`. An empty `<>` target parses under
+tuple-mode (record's list requires at least one entry) with an empty
+`.entries` array.
 
 ## §5 Expression Scaffolding
 

@@ -891,8 +891,26 @@ var renderRecordEntry = (entry, recur, position) => {
 // Renders a DestructureTarget's entries as a comma-separated
 // init-list suitable for embedding inside `var <tempName> = init, ...`.
 // Returns null when any entry can't be lowered — caller falls
-// back at the container level.
+// back at the container level. Returns "" for empty-entries
+// targets (`<>`, all-skip); callers must guard against the
+// empty case since embedding "" after `, ` produces malformed JS.
+//
+// Mode dispatch on target.mode (set by the DestructureTarget
+// shaper per Foi-Specification.md §2.13):
+//   - record: entries dispatched via renderDestructureEntry
+//     against a fixed set of node types (Named, Concise,
+//     Capture). Path emission via renderDestructurePath.
+//   - tuple: entries dispatched via renderTupleDestructure
+//     against PositionalDef, Capture, and SkipSlot sentinel
+//     per §2.13.6. Position counter advances on PositionalDef
+//     and SkipSlot; Capture is position-neutral. Bracket-index
+//     access on <tempName> (`__t[0]`, `__t[1]`, ...) — Foi
+//     Tuples lower to JS arrays at bootstrap, so positional
+//     access maps to native array indexing.
 var renderDestructure = (target, recur, tempName) => {
+	if (target.mode === "tuple") {
+		return renderTupleDestructure(target, recur, tempName);
+	}
 	var parts = [];
 	for (let entry of target.entries) {
 		let rendered = renderDestructureEntry(entry, recur, tempName);
@@ -921,6 +939,39 @@ var renderDestructureEntry = (entry, recur, tempName) => {
 		return bindName + " = " + renderEntryRHS(pathStr, entry.default, recur);
 	}
 	return null;
+};
+
+// Tuple-mode entry dispatch per Foi-Specification.md §2.13.6.
+// PositionalDef reads <tempName>[pos] and advances pos; SkipSlot
+// advances pos with no binding; Capture binds <tempName> whole
+// without advancing pos (position-neutral). Trailing SkipSlots
+// are grammatically admitted but produce no JS output — the spec
+// treats them as no-ops. All-skip / empty entries returns "";
+// callers guard. Reuses renderEntryRHS for the `:? default` IIFE
+// (same shape as record-mode).
+var renderTupleDestructure = (target, recur, tempName) => {
+	var parts = [];
+	var pos = 0;
+	for (let entry of target.entries) {
+		if (entry.type === "DestructureSkipSlot") {
+			pos++;
+			continue;
+		}
+		if (entry.type === "DestructureCapture") {
+			// Position-neutral per §2.13.6 — no pos++.
+			// No `.default` on capture (grammatically excluded).
+			parts.push(entry.target.name + " = " + tempName);
+			continue;
+		}
+		if (entry.type === "DestructurePositionalDef") {
+			let pathStr = tempName + "[" + pos + "]";
+			parts.push(entry.target.name + " = " + renderEntryRHS(pathStr, entry.default, recur));
+			pos++;
+			continue;
+		}
+		return null;
+	}
+	return parts.join(", ");
 };
 
 // Shared RHS emitter for the two non-capture arms. When the entry
@@ -1144,7 +1195,10 @@ var renderTierParams = (paramSet, tierIdx, recur) => {
 			}
 			let entries = renderDestructure(p.target, recur, pname);
 			if (entries == null) return null;
-			preludeDecls.push("var " + entries + ";");
+			// Empty destructure (`defn f(<>) ^body;` or all-skip
+			// tuple param) introduces no bindings — skip the
+			// otherwise-malformed `var ;` decl.
+			if (entries !== "") preludeDecls.push("var " + entries + ";");
 			continue;
 		}
 		return null;
@@ -2059,6 +2113,10 @@ var handlers = {
 		}
 		var entries = renderDestructure(node.target, recur, "__t");
 		if (entries == null) return fallback(node);
+		// Empty destructure (`def <>: src;` or all-skip tuple)
+		// evaluates src for side effects but introduces no
+		// bindings — emit the temp bind alone.
+		if (entries === "") return "var __t = " + recur(node.init);
 		return "var __t = " + recur(node.init) + ", " + entries;
 	},
 

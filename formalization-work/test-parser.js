@@ -34,10 +34,10 @@ var passSamples = [
 	defn nextLoop() ^playlist(queue, false, true, onPlayNext);
 
 	defn playlist(
-	    urls,
-	    clear:? false,
-	    loop:? false,
-	    onNext:? onPlayNext
+		urls,
+		clear:? false,
+		loop:? false,
+		onNext:? onPlayNext
 	  )
 	  :over(queue,onPlayNext)
 	{
@@ -48,18 +48,18 @@ var passSamples = [
 	  ?[clear]: queue := < &urls >;
 
 	  ?{
-	    ?[size(queue) ?= 0]: {
-	      def upcoming: queue.[1..];
-	      ?[loop]: queue := < &queue, upcoming >;
+		?[size(queue) ?= 0]: {
+		  def upcoming: queue.[1..];
+		  ?[loop]: queue := < &queue, upcoming >;
 
-	      player.src(upcoming);
-	      player.removeEventListener("ended", cb);
-	      player.addEventListener("ended", cb);
-	      player.play();
-	      ?[size(queue) ?> 0]: onNext(upcoming)
-	    };
-	    ?:
-	      player.removeEventListener("ended", cb)
+		  player.src(upcoming);
+		  player.removeEventListener("ended", cb);
+		  player.addEventListener("ended", cb);
+		  player.play();
+		  ?[size(queue) ?> 0]: onNext(upcoming)
+		};
+		?:
+		  player.removeEventListener("ended", cb)
 	  }
 	};
 
@@ -150,6 +150,20 @@ var failSamples = [
 	"defn f(<:a>: src) ^a;",         // bare `:` at ParameterList DestructureTarget source tail
 	"list ~map (x: 3) { x; };",      // bare `:` at BlockDefsInitOptImplIn Identifier entry
 	"list ~map (<:a>: src) { a; };", // bare `:` at BlockDefsInitOptImplIn DestructureTarget source tail
+
+	// [DESTRUCTURE MODE SPLIT] Cross-mode mixing rejected —
+	// record-mode entries (`:name`, `name:`, `#name`) and
+	// tuple-mode entries (bare `name`) cannot appear in the same
+	// destructure target. Both grammar arms fail cleanly, so the
+	// whole DestructureTarget is rejected. Per Foi-Specification.md
+	// §2.13 opener.
+	"def <:a, b>: t;",               // record concise + tuple positional
+	"def <a, :b>: t;",               // tuple positional + record concise
+	"def <a: src, b>: t;",           // record named + tuple positional
+	"def <a, b: src>: t;",           // tuple positional + record named
+	"def <:a, b: src, c>: t;",       // record concise + record named + tuple positional
+	"def <a, b, :c>: t;",            // tuple positional + tuple positional + record concise
+	"def <>: t;",                    // empty destructure — semantically vacuous, grammatically rejected (both arms non-nullable)
 
 	// Series 2: per-entry `:?` default tail negatives —
 	// (i) capture arm grammatically excludes the tail (per

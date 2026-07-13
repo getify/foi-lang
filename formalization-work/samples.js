@@ -198,7 +198,46 @@ export const samples = [
 	{ label: "Destructure computed source + default",      src: "def < byKey: [k] :? <> >: payload;" },
 	{ label: "Destructure default references earlier",     src: "def < :first, :second:? first >: payload;" },
 	{ label: "Destructure mixed with default + capture",   src: "def < :a, :b:? 5, #whole >: payload;" },
-	{ label: "Destructure multi-default",                  src: "def < :x:? 1, :y:? 2 >: payload;" },
+		{ label: "Destructure multi-default",                  src: "def < :x:? 1, :y:? 2 >: payload;" },
+
+
+	// [DESTRUCTURE MODE SPLIT] Tuple-Mode Destructure — positional
+	// entries, skip slots (§1.5.2 comma rules), position-neutral
+	// capture, per-entry defaults. Per Foi-Specification.md §2.13.6.
+
+	// Basic positional
+	{ label: "Tuple destructure: basic positional",         src: "def <a, b, c>: t;" },
+	{ label: "Tuple destructure: single positional",        src: "def <a>: t;" },
+
+	// Skip slots
+	{ label: "Tuple destructure: leading skip",             src: "def <, b, c>: t;" },
+	{ label: "Tuple destructure: multi leading skip",       src: "def <, , c>: t;" },
+	{ label: "Tuple destructure: interior skip",            src: "def <a, , c>: t;" },
+	{ label: "Tuple destructure: multi interior skip",      src: "def <a, , , d>: t;" },
+	{ label: "Tuple destructure: mixed leading + interior", src: "def <, a, , b>: t;" },
+	{ label: "Tuple destructure: trailing permissive comma",src: "def <a, b, >: t;" },
+	{ label: "Tuple destructure: trailing skip",            src: "def <a, b, , >: t;" },
+
+	// Capture (position-neutral in tuple mode)
+	{ label: "Tuple destructure: capture leading",          src: "def <#whole, a, b>: t;" },
+	{ label: "Tuple destructure: capture interior",         src: "def <a, #whole, b>: t;" },
+	{ label: "Tuple destructure: capture trailing",         src: "def <a, b, #whole>: t;" },
+	{ label: "Tuple destructure: multiple captures",        src: "def <a, #first, #second, b>: t;" },
+
+	// Per-entry `:?` defaults on positional entries
+	{ label: "Tuple destructure: single default",           src: "def <a:? 0>: t;" },
+	{ label: "Tuple destructure: multiple defaults",        src: "def <a:? 1, b:? 2>: t;" },
+	{ label: "Tuple destructure: mixed default + no-default",src: "def <a, b:? 5, c>: t;" },
+	{ label: "Tuple destructure: default with leading skip",src: "def <, a:? 1, b>: t;" },
+	{ label: "Tuple destructure: default references earlier",src: "def <first, second:? first>: t;" },
+	{ label: "Tuple destructure: default + capture",        src: "def <a:? 0, #whole, b>: t;" },
+
+	// Tuple-mode at non-`def` positions
+	{ label: "Tuple destructure: function parameter",       src: "defn area(<w, h>) ^w * h;" },
+	{ label: "Tuple destructure: ~each block-defs",         src: "list ~each (<a, b>) { a + b; };" },
+	{ label: "Tuple destructure: ~map block-defs",          src: "list ~map (<a, b>) { a + b; };" },
+	{ label: "Tuple destructure: #> pipeline block-defs",   src: "data #> (<a, b>) { a + b; };" },
+	{ label: "Tuple destructure: :? source-tail lenient",   src: "defn foo(x) #> (<a, b> :? src) { a + b; };" },
 
 
 	// =============================================================

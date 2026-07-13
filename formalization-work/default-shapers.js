@@ -1004,7 +1004,10 @@ export const defaultShapers = {
 	// DestructureCapture := Hash Identifier;
 	//
 	// Binds the WHOLE source value to a fresh name. Hash sigil is
-	// structural → delims.
+	// structural → delims. Shared between record-mode and
+	// tuple-mode destructure targets — the capture form is
+	// mode-agnostic (position-neutral in tuple-mode per
+	// Foi-Specification.md §2.13.6).
 	DestructureCapture(frame,parts) {
 		var target;
 		var delims = [];
@@ -1013,6 +1016,33 @@ export const defaultShapers = {
 			else delims.push(p); // Hash
 		}
 		return withDelims({ type: "DestructureCapture", target }, delims);
+	},
+
+	// DestructurePositionalDef := Identifier (_ Colon Qmark _ ExprNoBlock)?;
+	//
+	// [DESTRUCTURE MODE SPLIT] Tuple-mode positional entry — binds
+	// the source at the entry's list-position slot (position
+	// tracking happens at the DestructureTarget shaper against the
+	// `.entries` array; the per-entry node itself carries no
+	// position field). Optional per-entry `:?` default tail sits
+	// directly on the leaf (no dispatcher — single grammatical
+	// arm); shaper folds the tail's ExprNoBlock onto `.default`
+	// and pushes Colon+Qmark tokens to `delims`.
+	//
+	// Node shape parallels DestructureCapture — Identifier wrapped
+	// as a dedicated positional-entry type distinct from the
+	// record-side three (Named/Concise/Capture).
+	DestructurePositionalDef(frame,parts) {
+		var nodes = [];
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) nodes.push(p);
+			else delims.push(p); // Colon, Qmark (absent when no tail)
+		}
+		var [ target, defaultExpr ] = nodes;
+		var node = { type: "DestructurePositionalDef", target };
+		if (defaultExpr) node.default = defaultExpr;
+		return withDelims(node, delims);
 	},
 
 	// DestructureDef := (DestructureNamedDef | DestructureConciseDef) (_ Colon Qmark _ ExprNoBlock)? | DestructureCapture;
@@ -1071,15 +1101,79 @@ export const defaultShapers = {
 
 	// DestructureTarget := OpenAngle _ <DestructureDefList> _ CloseAngle;
 	//
-	// Angle brackets and commas are structural → delims.
+	// [DESTRUCTURE MODE SPLIT] Two-pass shaper — mode detection
+	// then entries assembly.
+	//
+	// Pass 1: mode detection by scanning nodes in parts. Presence
+	// of DestructurePositionalDef → tuple-mode; presence of
+	// DestructureNamedDef or DestructureConciseDef → record-mode;
+	// else (all-capture / empty) → record-mode by PEG ordering
+	// convention (Foi-Specification.md §2.13 opener). Delims
+	// (OpenAngle, CloseAngle, Comma) collected in this pass too.
+	//
+	// Pass 2: entries assembly.
+	//   - Record mode: entries = all node children in source order.
+	//     Skip logic does not apply — record-mode has no skip slots.
+	//   - Tuple mode: walk parts in source order, tracking whether
+	//     a Node has been seen since the last Comma. Each Comma
+	//     flushes a slot — the pending Node if one was buffered,
+	//     otherwise a DestructureSkipSlot sentinel (for leading /
+	//     interior empty positions per §1.5.2 / §2.13.6). Final
+	//     unflushed Node (if any) is pushed as the last slot.
+	//     Trailing SkipSlots ARE preserved in entries per Q1
+	//     round-trip fidelity; downstream consumers (transpiler,
+	//     semantic analyzer) treat trailing-position SkipSlots
+	//     as semantic no-ops.
+	//
+	// The `.mode` field is set explicitly on the returned node so
+	// downstream consumers dispatch on `.mode` rather than
+	// inspecting `.entries[0].type`.
 	DestructureTarget(frame,parts) {
-		var entries = [];
+		var mode = null;
 		var delims = [];
+		// Pass 1: mode detection + delims collection.
 		for (let p of parts) {
-			if (isNode(p)) entries.push(p);
-			else delims.push(p); // OpenAngle, CloseAngle, Comma
+			if (isNode(p)) {
+				if (p.type === "DestructurePositionalDef") {
+					mode = "tuple";
+				}
+				else if (
+					p.type === "DestructureNamedDef" ||
+					p.type === "DestructureConciseDef"
+				) {
+					mode = "record";
+				}
+				// DestructureCapture: leaves mode null (mode-agnostic)
+			}
+			else {
+				delims.push(p); // OpenAngle, CloseAngle, Comma
+			}
 		}
-		return withDelims({ type: "DestructureTarget", entries }, delims);
+		if (mode === null) mode = "record"; // Default per PEG ordering.
+
+		// Pass 2: entries assembly.
+		var entries;
+		if (mode === "tuple") {
+			entries = [];
+			var pending = null;
+			for (let p of parts) {
+				if (isNode(p)) {
+					pending = p;
+				}
+				else if (p.type === "Comma") {
+					if (pending) entries.push(pending);
+					else         entries.push({ type: "DestructureSkipSlot" });
+					pending = null;
+				}
+				// OpenAngle, CloseAngle: no action for slot logic.
+			}
+			if (pending) entries.push(pending);
+		}
+		else {
+			entries = parts.filter(isNode);
+		}
+
+		return withDelims({ type: "DestructureTarget", mode, entries }, delims);
 	},
 
 
@@ -1954,7 +2048,7 @@ export const defaultShapers = {
 				var wrapperType = (
 					p.type === "SingleQuote" ? "PrimedExpr"   :
 					p.type === "Mountain"    ? "CurriedExpr"  :
-					                           "UncurriedExpr"
+											   "UncurriedExpr"
 				);
 				node = {
 					type: wrapperType,
