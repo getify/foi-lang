@@ -3038,8 +3038,7 @@ export const defaultShapers = {
 	//
 	// α-claim via shapeStmtSemi. See §1. DoFinalUnwrapExpr is
 	// not a member of this family — it's a typed node carrying
-	// its own DoubleColon/Semicolons; flows through
-	// collectStmtList unchanged.
+	// its own Semicolons; flows through collectStmtList unchanged.
 	DoStmtSemi   (frame,parts) { return shapeStmtSemi(parts); },
 	DoStmtSemiOpt(frame,parts) { return shapeStmtSemi(parts); },
 
@@ -3060,19 +3059,32 @@ export const defaultShapers = {
 		return withDelims({ type: "DoDefVarStmt", target, init }, delims);
 	},
 
-	// DoFinalUnwrapExpr := DoubleColon _ ExprNoBlock (_ Semicolon)*;
-	//
-	// DoubleColon (opener; anchored in type tag) and trailing
-	// Semicolons → delims.
-	DoFinalUnwrapExpr(frame,parts) {
-		var expr;
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) expr = p;
-			else delims.push(p); // DoubleColon, Semicolon
-		}
-		return withDelims({ type: "DoFinalUnwrapExpr", expr }, delims);
-	},
+	// DoFinalUnwrapExpr := Dollar _ ExprNoBlock (_ Semicolon)*;
+    //
+    // Dollar (opener; anchored in type tag) and trailing
+    // Semicolons → delims.
+    DoFinalUnwrapExpr(frame,parts) {
+        var expr;
+        var delims = [];
+        for (let p of parts) {
+            if (isNode(p)) expr = p;
+            else delims.push(p); // Dollar, Semicolon
+        }
+        return withDelims({ type: "DoFinalUnwrapExpr", expr }, delims);
+    },
+
+    // DoNonReceivingBindStmt := Dollar _ ExprNoBlock;
+    //
+    // Dollar (opener; anchored in type tag) → delim.
+    DoNonReceivingBindStmt(frame,parts) {
+        var expr;
+        var delims = [];
+        for (let p of parts) {
+            if (isNode(p)) expr = p;
+            else delims.push(p); // Dollar
+        }
+        return withDelims({ type: "DoNonReceivingBindStmt", expr }, delims);
+    },
 
 	// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 	//

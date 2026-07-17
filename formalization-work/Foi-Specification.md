@@ -311,7 +311,7 @@ The `GetEntries(structure,startIndex)` algorithm are:
 
     - If `isNull(e.key)`: let `key` be `i`; let `value` be `ResolveStructureValue(e)`; let `i` be `i + 1`
 
-    - If `isComputed(e.key)`: let `key` be the result of `computeKey(e.key)`; let `value` be the result of `ResolveStructureValue(e.value)`; let `hasKeyed` be `true`
+    - If `isComputed(e.key)`: let `key` be the result of `computeKey(e.key)`; let `value` be the result of `ResolveStructureValue(e.value)`
 
     - If `isSpread(e.value)`:
 
@@ -329,9 +329,11 @@ The `GetEntries(structure,startIndex)` algorithm are:
 
         * Continue (4)
 
-    - If `isConcise(e)`: let `key` be `e.name`; let `value` be the result of `ResolveStructureValue(e.value)`; let `hasKeyed` be `true`
+    - If `isConcise(e)`: let `key` be `e.name`; let `value` be the result of `ResolveStructureValue(e.value)`
 
-    - Otherwise: let `key` be `e.key`; let `value` be `ResolveStructureValue(e.value)`; let `hasKeyed` be `true`
+    - Otherwise: let `key` be `e.key`; let `value` be `ResolveStructureValue(e.value)`
+
+    - If `key` is not a positive integer: let `hasKeyed` be `true`
 
     - Append `[ key, value ]` to `entries`
 
@@ -373,7 +375,7 @@ The comma rules here are applied irrespective of trivia (whitespace, comments, e
 
 #### §1.5.3 Record-Form Literals
 
-If there are any keyed entries present, the structure is interpreted as a Record. Any non-keyed entries in an otherwise Record are keyed as their numeric index (as in Tuples).
+If there are any entries with non-positive-integer keys present, the structure is interpreted as a Record. Positional and positive-integer-keyed entries in an otherwise Record retain their integer-index identity (as in Tuples).
 
 ```java
 def point: < x: 10, y: 20 >;
@@ -384,7 +386,7 @@ def order: < id: 123, items: < < price: 29.97 > > >;
 
 - `name: expr`: explicit name, explicit value.
 - `:name`: concise form. The entry name is `name` (a string), and its value is the result of evaluating the identifier `name` in the current environment (i.e., `<:name>` is shorthand for `<name: name>`). To name an entry from a chained source, use `&` spread instead: `<&name.path>` (see §1.5.4).
-- `%expr: value`: computed entry name (evaluating `expr`).
+- `%expr: value`: computed entry key (evaluating `expr`). If `expr` evaluates to a positive integer, the entry occupies that positional slot without forcing Record type; any other key value forces Record type.
 
 Records are **unordered** by name: the result Record exposes its entries by name, not by source position. Named-entry source order is irrelevant for value identity (two Records with the same name→value pairs in different source orders are equal). Positional entries within a Record do retain their integer-index identity (a `0` entry is the same slot regardless of source position).
 
@@ -2132,7 +2134,7 @@ defn clamp(x)
 
 A precondition is syntactically the same as a guard-expression: `?[cond]: consequent` or `![cond]: consequent`.
 
-**Preconditions are call-site guards, not part of function body proper.** They are evaluated *after* the arguments have been resolved and name-bound, but *before* the function itself is invoked. Preconditions may reference only formal parameters; neither bindings from the function body's own scope nor closure-captured bindings from the enclosing scope are visible inside a precondition expression.
+**Preconditions are call-site guards, not part of function body proper.** They are evaluated *after* the arguments have been resolved and name-bound, but *before* the function itself is invoked. Preconditions may reference formal parameters and any binding closure-captured from the callable's defining scope; bindings from the function body's own scope are not visible (the body has not been entered).
 
 **Abstract execution at call time:**
 
@@ -2146,11 +2148,13 @@ A precondition is syntactically the same as a guard-expression: `?[cond]: conseq
     3. If the clause does not match, proceed to the next precondition.
 3. If no precondition matches, execute the body per §3.3.
 
-Preconditions may reference *only* formal parameters. Closure-captured bindings from the enclosing scope are not visible inside a precondition expression; preconditions are self-contained predicates over the call's arguments.
+**Runtime dispatch.** A callable declaring one or more preconditions carries a `pcheck` slot alongside its body. The `pcheck` value is a callable compiled from the precondition chain, closing over the same defining scope as the body. At each call site, the compiler emits a dispatch shape: if the callee carries a `pcheck`, `pcheck` is invoked first with the argument list; a matching precondition short-circuits to the matched consequent value, which occupies the call site's return position; no-match tail-calls the body with the same arguments. Callables without preconditions carry no `pcheck` slot; call sites at those callees skip the dispatch and invoke the body directly. This dispatch is uniformly emitted at every call site, so first-class function values and higher-order dispatch inherit the pcheck-carrying property transparently.
+
+**No effect perform-sites in preconditions.** A precondition's guard expression and its consequent expression may not syntactically contain the `%` effect-perform operator (or its `<::` sugar); the compiler statically rejects any perform-site inside a `FuncPrecondList` clause. Effects reached indirectly through called functions follow standard §6.13 tracking against the outer callable's call site.
 
 ### §3.5.1 Multi-Parameter Function Preconditions
 
-For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest tier at which all lexical references in the precondition -- both those in the guard and those in the consequent -- are reachable. That is, every parameter referenced anywhere in the precondition must be bound at or before the tier where the precondition fires.
+For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest tier at which all *parameter* references in the precondition -- both those in the guard and those in the consequent -- are bound. Closure-captured references from the defining scope are reachable at every tier (they are bound before any tier fires) and do not gate lifting; only parameter references do.
 
 Consider these two function definitions:
 
@@ -2674,7 +2678,7 @@ For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the defau
 
 Do-block comprehensions (`~<<` consumer-do, `~<*` producer-do) compile via one of two routes at each call site, selected by whether the LHS's owning type-class namespace has declared a `~<<` hook.
 
-**Default route (no `~<<` hook declared).** The do-block body expands at compile time to a nested `~<` / `~map` composition over the namespace's declared primitives, per §16's do-comprehension semantics. Each `def x:: expr` statement lowers to a `~<` bind; a bare mid-block statement lowers to `~<` with the produced value discarded; the terminal expression lowers to `~map` (or, for a `::`-prefixed terminal, to `~<`). No effect is performed at compile-time-expanded sites; the expansion is direct composition.
+**Default route (no `~<<` hook declared).** The do-block body expands at compile time to a nested `~<` / `~map` composition over the namespace's declared primitives, per §16's do-comprehension semantics. Each `def x:: expr` statement lowers to a `~<` bind; a bare mid-block statement lowers to `~<` with the produced value discarded; the terminal expression lowers to `~map` (or, for a `$`-prefixed terminal, to `~<`). No effect is performed at compile-time-expanded sites; the expansion is direct composition.
 
 **Override route (namespace declares a `~<<` hook).** The do-block
 body compiles to an **effect-performing form** -- a computation that
@@ -2701,29 +2705,33 @@ statement-by-statement to a unary callable `defn(_) { <lowered-body> }`,
 where the leading parameter is discarded (uniform-shape convention;
 see below). Each statement lowers per this table:
 
-- `def x:: expr` -> `def x: Effect.Bind% expr` (perform `Effect.Bind`
-with `expr` as payload; the resume-value binds into `x`).
-- Mid-block bare `:: expr;` -> `Effect.Bind% expr` (perform Bind and
-discard the resume-value).
-- Mid-block non-`::` statement -> executed as raw code inside `comp`;
-no perform is emitted.
-- Bare terminal expression `expr` -> `Effect.Map% expr` (perform
-`Effect.Map` with `expr` as payload; signals a raw-to-wrapped lift to
-the hook).
-- `::`-prefixed terminal `:: expr` -> `Effect.Return% expr` (perform
-`Effect.Return` with `expr` as payload; signals an already-wrapped
-identity to the hook).
+- `def x:: expr` -> `def x: Effect.Do.Bind% expr` (perform
+`Effect.Do.Bind` with `expr` as payload; the resume-value binds into
+`x`).
+- Mid-block `$expr;` -> `Effect.Do.Bind% expr` (perform Bind
+non-receivingly; no slot receives the resume-value).
+- Mid-block bare statement (non-`::`, non-`$`) -> executed as raw code
+inside `comp`; no perform is emitted.
+- Bare terminal expression `expr` -> `Effect.Do.Map% expr` (perform
+`Effect.Do.Map` with `expr` as payload; signals a raw-to-wrapped lift
+to the hook).
+- Terminal `$expr` -> `def _r: Effect.Do.Bind% expr; Effect.Do.Map% _r`
+(compiler-synthesized receiver and Map tail; Bind first, then lift).
+The synthesis satisfies the compilation contract that every full path
+through `comp` reach a Map arm.
 
-The lowering is uniform: every `::` in source becomes a `Bind`, and
-exactly one terminal perform (`Map` or `Return`) fires per full-path
-completion.
+The lowering is uniform: every `::` binding and every `$` sigil in
+source becomes an `Effect.Do.Bind%` perform, and exactly one
+`Effect.Do.Map%` perform fires per full-path completion (either
+directly at a bare terminal, or synthesized at a `$`-terminal's Map
+tail).
 
-**The three internal effect kinds** (`Effect.Bind`, `Effect.Map`,
-`Effect.Return`) are a closed language-provided set, not
-user-declarable. They exist as the compilation contract between the
-do-block-body lowering and the `~<<` hook's handler scope; they carry
-no admissible signature for `deft` declaration and cannot appear in
-user-authored `:Effects(...)` narrowings.
+**The two internal effect kinds** (`Effect.Do.Bind`, `Effect.Do.Map`)
+are a closed language-provided set, not user-declarable. They exist
+as the compilation contract between the do-block-body lowering and
+the `~<<` hook's handler scope; they carry no admissible signature
+for `deft` declaration and cannot appear in user-authored
+`:Effects(...)` narrowings.
 
 **Discarded first parameter of `comp`.** `comp` is invoked as a unary
 callable; its parameter is discarded at the outermost invocation and
@@ -2732,40 +2740,51 @@ subsequent invocation from within an arm body. The uniform-shape rule
 keeps the hook's dispatch surface consistent across the initial call
 and all recursive resumptions.
 
-**Hook body pattern.** The hook opens a `~<*` scope over
-`Effect.<Bind, Map, Return>`, running `comp(v)` where `v` is the
-value driving the current iteration:
+**Hook body pattern.** The hook opens a `~<*` scope narrowed to the
+`Effect.Do` prefix (per §6.1.4 hierarchical namespaces and §6.3.1
+prefix-match narrowing; catches `Effect.Do.Bind` and `Effect.Do.Map`),
+running `comp(v)` where `v` is the value driving the current
+iteration:
 
 ```java
-Effect.<Bind, Map, Return> ~<* (eff:: comp(v), ret) {
+Effect.Do ~<* (eff:: comp(v), ret) {
     :: ?(eff){
-        [?as Effect.Bind]:   /* handle Bind: recurse on # under ret */;
-        [?as Effect.Map]:    /* handle Map: lift # into namespace shape */;
-        [?as Effect.Return]: /* handle Return: pass # through */;
+        [?as Effect.Do.Bind]: /* handle Bind: gather sub-scopes over ret; Done@ accumulated */;
+        [?as Effect.Do.Map]:  /* handle Map: Done@ (#.value lifted into namespace shape) */;
     };
 };
 ```
 
-The arms dispatch by effect kind. The **Bind** arm's payload
-(accessed as `#`) is the bound expression's value; the arm typically
-opens a fresh `~<*` scope over `ret(v')` for each `v'` drawn from `#`,
-gathering results, and its terminal is the accumulated result. The
-**Map** arm's payload is a raw terminal value; the arm terminal is
-the payload lifted into the namespace's canonical wrap shape. The
-**Return** arm's payload is already namespace-shaped; the arm
-terminal is the payload passed through unchanged.
+The arms dispatch by sub-effect kind. Payload is accessed as `#.value`
+per §6.3.2 (the arm-head `#` is the perform-event object, not the
+payload directly).
 
-Under §6.3.2's arm-terminal-as-scope-contribution model, the Map and
-Return arms do not invoke `ret` at their terminal path; their arm
-terminals directly become the scope-value contributions. The Bind
-arm invokes `ret` internally (via sub-scope openings on `ret(v')`)
-and its arm terminal is the accumulated result across those sub-scope
-values.
+- The **Bind** arm's payload `#.value` is the bound expression's
+  value. To drive cartesian iteration, the arm typically opens a fresh
+  `~<*` scope over `ret(v')` for each `v'` drawn from `#.value`, and
+  gathers each sub-scope's terminal via that sub-scope's own handler-
+  expression Promise (§6.3.3). Ret is fire-and-forget per §6.3.2; the
+  Bind arm does not observe ret's return -- state communication with
+  sub-scopes flows through the sub-scope handler-expression Promises,
+  not through ret. The Bind arm's arm-terminal is `Done@ accumulated`,
+  where `accumulated` is the gathered result across sub-scopes;
+  §6.4.1 natural pass-through resolves the enclosing scope's handler
+  expression to that payload.
+- The **Map** arm's payload is a raw terminal value; the arm-terminal
+  is `Done@ (payload lifted into the namespace's canonical wrap
+  shape)`, resolving the enclosing scope's handler expression per
+  §6.4.1.
+
+Both arms terminate the scope via `Done@` (§6.4). Arm terminals
+without `Done@` would leave the scope live per §6.3.2's arm-without-
+ret semantic; the do-block-compilation contract requires each
+full-path completion of `comp` to reach the Map arm whose `Done@`
+resolves the handler expression.
 
 Concrete realization of this pattern for `List~<<` is worked out at
 §7.2.
 
-**Effect-tracking surface.** The three internal effect kinds are
+**Effect-tracking surface.** The two internal effect kinds are
 performed inside `comp` and caught by the hook's own `~<*` scope,
 satisfying §6.13's tracking rule at the hook boundary. They do not
 appear in the do-block expression's effect signature exposed to the
@@ -3831,7 +3850,7 @@ An **effect** is a suspension point that yields control to whatever handler dyna
 
 Effects have three moving parts:
 
-- An **effect kind**: a namespace declaring an operation's payload and resume shape. `Effect.Yield`, `Effect.IO`, and any user-declared effect kind are namespaces of this variety.
+- An **effect kind**: a namespace declaring an operation's payload and resume shape. `Effect.Ask`, `Effect.IO`, and any user-declared effect kind are namespaces of this variety.
 - A **perform site**: a source position where an effect of some kind is signaled. The perform site's expression value is set by the handler's `ret` invocation (§6.3.2).
 - A **handler scope**: established by `~<*` applied to an effect kind or set of kinds (§6.3), containing arms that inspect the perform payload and may resume the perform site via `ret` (§6.3.2).
 
@@ -3898,10 +3917,12 @@ deft Effect.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
 The parameter position declares the **payload type**: the shape of the
-value a perform-site supplies. The return position declares the **resume
-type**: the shape of the value the handler's `ret` invocation supplies
-and the perform-site expression evaluates to. `empty` in return position
-marks a fire-and-forget effect (perform-site expression is `empty`).
+value a perform-site supplies. Inside a handler arm, this payload is
+accessed as `.value` on the perform-event object (§6.3.2). The return
+position declares the **resume type**: the shape of the value the
+handler's `ret` invocation supplies and the perform-site expression
+evaluates to. `empty` in return position marks a fire-and-forget
+effect (perform-site expression is `empty`).
 
 The `Effect.` prefix is normative. A `deft` whose name lacks the prefix
 is a plain type alias (§18), not an effect kind: its name cannot appear
@@ -3916,12 +3937,86 @@ The top-level of the effect namespace is always `Effect.`, but
 underneath that, any dotted identifiers (of any depth) may be specified,
 such as `Effect.MyModule.CustomOp`.
 
+#### §6.1.4 Namespace Hierarchy
+
+Effect kinds form a hierarchy via dot-separated identifiers. §6.1.3
+admits any-depth dotted names at the `deft` name position;
+`Effect.IO.Read`, `Effect.MyModule.Sub`, and `Effect.System.Sleep` are
+all valid effect-kind names. Each dotted segment introduces a level of
+the hierarchy.
+
+**Prefix-match discipline.** Every effect-kind name that appears in a
+handler-narrowing (§6.3.1), an arm pattern (§6.3.2), or an effect
+declaration (§6.13.1) is a **prefix**. Naming `Effect.Foo` catches or
+declares `Effect.Foo` and every declared kind whose fully-qualified
+name begins with `Effect.Foo.` -- direct children and all descendants.
+The match rule is a prefix-check on the effect kind's namespace path:
+the tested kind's segment list must start with the named prefix's
+segment list.
+
+For an effect kind with no declared sub-namespaces, prefix-check
+reduces to exact-check. Single-kind names (`Effect.Ask`, when no
+`Effect.Ask.*` is declared) behave as exact matches in practice --
+the wildcarding surface is invisible until sub-kinds are introduced.
+
+There is no exact-match-only mechanism. To narrow beyond a broad
+prefix, name more-specific paths: `Effect.IO.Read` narrows further
+than `Effect.IO`. To catch a set of disjoint subtrees in one handler,
+use brace form (§6.3.1) to enumerate multiple prefix roots.
+
+**Arm-level `?as`.** Inside handler-arm patterns (§6.3.2), `?as
+Effect.Kind` applies the same prefix-check. `[?as Effect.IO]` matches
+any perform-event whose kind is `Effect.IO` or under it; `[?as
+Effect.IO.Read]` matches only the `Read` subtree. When arms have a
+parent/child prefix relationship, order matters: match dispatch is
+first-match-wins (§5), so list child arms before their parent arms if
+you want the child to fire specifically rather than being subsumed by
+the parent.
+
+**Compiler-privileged partitions.** Three top-level sub-namespaces of
+`Effect.` are reserved for compiler-emitted lowering patterns and are
+walled off from user code:
+
+- **`Effect.Compiler.*`** -- instrumentation and metadata effects
+  inserted by compiler passes.
+- **`Effect.Gen.*`** -- generator substrate. `Effect.Gen.Yield` is the
+  perform site of the `<::` sugar (§6.2.2) inside `Gen.`-prefixed
+  bodies (§6.6); `Effect.Gen.Return` is a compiler-injected perform at
+  tail positions of `Gen.`-prefixed bodies (§6.6.7).
+- **`Effect.Do.*`** -- do-comprehension substrate. `Effect.Do.Bind`
+  and `Effect.Do.Map` are the perform sites of the do-block-body
+  lowering under a `~<<` hook's OVERRIDE route (§3.10.9.4).
+
+User source is rejected by the parser at all four effect sites for
+names that prefix-match any of these three partitions:
+
+- `deft` declaration into a compiler-privileged partition is a compile
+  error.
+- `%` perform-site with a compiler-privileged effect-kind LHS is a
+  compile error.
+- `~<*` handler-narrowing at a compiler-privileged effect kind (bare
+  form or as an entry inside brace) is a compile error.
+- `:Effects(...)` narrowing that references a compiler-privileged
+  effect kind is a compile error.
+
+The compiler emits into these partitions natively during lowering; user
+source is guaranteed partition-clean by parser construction. The
+rejection applies only to user source: compiler-generated code that
+establishes handler scopes for these partitions (e.g., the stdlib
+`Gen.runner@` handler at §6.6.7, or the `~<<` hook body compiled from
+a user's `Name~<<` declaration at §3.10.9.4) is a compiler-authored
+code path, not user source.
+
+User-declared effect kinds live under `Effect.*` outside these three
+reserved prefixes: `deft Effect.Ask`, `deft Effect.Retry`, and
+`deft Effect.MyModule.Sub` all remain admissible.
+
 ### §6.2 Performing Effects
 
 A **perform site** signals that the enclosing computation is producing
 an effect of some kind. Two surface forms serve as perform sites: the
 general `%` effector operator applied to an effect-kinded LHS, and the
-`<::` sugar specific to `Effect.Yield` (in a Generator). Both are
+`<::` sugar specific to `Effect.Gen.Yield` (in a Generator). Both are
 value-bearing expressions; the value the perform-site expression
 evaluates to is set by the handler that catches the perform.
 
@@ -3935,16 +4030,19 @@ payload is supplied); when no payload is supplied, the payload is
 the innermost handler scope whose caught-set (§6.3.1) includes the
 perform's effect kind. Per §6.1, an unhandled perform is rejected at
 compile time under §6.13; no runtime search failure path exists.
-4. Deliver the payload value to the located handler's arm (§6.3).
+4. Deliver the payload value to the located handler's arm (§6.3),
+wrapped in a perform-event object (§6.3.2) with the payload at
+`.value`.
 5. The arm evaluates in its own scope. If the arm invokes `ret(v)`,
 the suspended computation resumes at the perform site with `v` as the
-perform-site expression's value, runs forward until natural completion
-or its next perform under the same handler scope, and `ret(v)` returns
-the resulting value up to the arm. If the arm never invokes `ret`,
-the handler scope terminates at this dispatch; the suspended
-computation is not resumed.
-6. The arm terminal at scope termination is the handler expression's
-value (§6.3.3).
+perform-site expression's value, running forward until natural
+completion or its next perform under the same handler scope. If the
+arm never invokes `ret` and does not produce a `Done@` arm-terminal
+(§6.4.1), the perform site remains suspended; a captured `ret`
+(§6.3.2) may resume it later from a different dynamic context.
+6. Handler-scope termination and the value of the enclosing `~<*`
+expression are specified in §6.3.3; the handler expression evaluates
+to a `Promise` that resolves at scope termination.
 
 The suspension is not visible in the perform-site's source form. From
 the perform-site expression's point of view, `Effect.Ask% "prompt"` is
@@ -3980,24 +4078,26 @@ kind's declared payload type (§6.1.3). The perform-site expression's
 type is the effect kind's declared resume type. Both are compile-time
 obligations of §6.13's effect-tracking discipline.
 
-#### §6.2.2 The `<::` Sugar for `Effect.Yield`
+#### §6.2.2 The `<::` Sugar for `Effect.Gen.Yield`
 
-The composite token `<::` is surface sugar for performing `Effect.Yield`
-specifically:
+The composite token `<::` is surface sugar for a compiler-emitted
+`Effect.Gen.Yield` perform:
 
 ```java
-<:: 42;                     // sugar for `Effect.Yield% 42`
-<:: someValue;              // sugar for `Effect.Yield% someValue`
+<:: 42;                     // sugar; compiles to `Effect.Gen.Yield% 42`
+<:: someValue;              // sugar; compiles to `Effect.Gen.Yield% someValue`
 ```
 
-This is the only effect kind with a syntactic shorthand form. A
-generator yield is Foi's sole userland-observable pause point (§6
-opener); yield-heavy producer code reads cleanly with the reduced
-notation.
+`Effect.Gen.*` is a compiler-privileged partition per §6.1.4; user
+source cannot write `Effect.Gen.Yield%` directly, and `<::` is the sole
+surface admitted for this perform. This is the only effect kind with a
+syntactic shorthand form. A generator yield is Foi's sole
+userland-observable pause point (§6 opener); yield-heavy producer code
+reads cleanly with the reduced notation.
 
-The sugar is syntactic only. `<:: expr` and `Effect.Yield% expr` are
-handled by the same call-stack walk described in §6.2's abstract
-execution.
+The sugar is syntactic only. `<:: expr` and its compiled
+`Effect.Gen.Yield% expr` are handled by the same call-stack walk
+described in §6.2's abstract execution.
 
 ### §6.3 The Handler Operator
 
@@ -4022,9 +4122,8 @@ scope, and bind `ret` as the resumption callable available inside arm
 bodies (§6.3.2).
 - The **body block** contains **arms**: pattern-match clauses over
 `eff` (§6.3.2). Each arm's body may invoke `ret(v)` to resume with `v`
-as the perform-site expression's value; the arm's terminal expression
-is the handler scope's value contribution at this dispatch.
-- The whole form's value is the arm terminal at scope termination
+as the perform-site expression's value.
+- The whole form's value is determined by how `comp` terminates
 (§6.3.3).
 
 Effect kinds *not matching* the LHS's narrowed set propagate past the
@@ -4039,87 +4138,118 @@ rare/unlikely approach.
 #### §6.3.1 Effect-Kind Narrowing
 
 The LHS of `~<*` is an **effect-kind narrowing expression** that names
-the set of effect kinds this handler is responsible for catching. Foi
-provides a small **pick-syntax DSL** for expressing this set:
+the set of effect kinds this handler is responsible for catching. Two
+shapes are admitted; both prefix-match per §6.1.4:
 
 ```java
-Effect.Ask                      // single kind, bare form
-Effect.<Ask, Log, Retry>        // enumerated subset
-Effect.<&Effect.IO>             // prefix inclusion: every Effect.IO.*
-Effect.<Ask, Log, &Effect.IO>   // combined
+Effect.IO                       // bare form: one prefix root
+                                // (Effect.IO and all Effect.IO.*)
+Effect.<Ask, Retry>             // brace form: multiple prefix roots
+                                // (Effect.Ask.* union Effect.Retry.*)
 ```
 
-- **Bare form**: `Effect.Name` names a single effect kind. `Effect.Ask
-~<* (eff:: comp, ret) { ... }` catches only performs of `Effect.Ask`.
-- **Brace form**: `Effect.<A, B, ...>` names an enumerated subset. Each
-element is either a bare kind name (`Ask`) or a prefix-inclusion
-form (`&Effect.IO`).
-- **Prefix inclusion**: `&Effect.IO` inside a brace form includes every
-effect kind whose declared name has `Effect.IO.` as a prefix
-(`Effect.IO.Read`, `Effect.IO.Write`, `Effect.IO.Close`, ...). The `&`
-sigil marks the prefix relationship, distinguishing it from a bare
-kind-name.
+- **Bare form**: `Effect.Name` catches performs of `Effect.Name` and
+  every declared kind under `Effect.Name.*`.
+- **Brace form**: `Effect.<A, B, ...>` catches the union of the named
+  prefix subtrees. Each entry is a last-segment name (with implicit
+  `Effect.` prefix) or an explicit dotted path.
 
-The narrowing is closed under the pick-syntax DSL: exactly what appears
-in the LHS narrowing is handled, and nothing else. Any perform of a kind
-outside the narrowing propagates past.
+The narrowing is closed: exactly the kinds admitted by the DSL are
+handled, and nothing else. Any perform of a kind outside every named
+prefix propagates past the handler.
 
-**Cross-uses.** The same pick-syntax narrowing appears in `?as` patterns
-(§6.3.2) and in `:Effects(...)` type-signature narrowing (§6.13). One
-DSL, three sites; §6.3.1's specification of the DSL shape governs all
-three.
+Use bare form to catch a single subtree. Use brace form to catch a
+union of disjoint subtrees. To catch a narrower slice than an
+available parent prefix, name more-specific children instead of the
+parent.
+
+**Cross-uses.** The same shapes and prefix-match rule apply at two
+other sites: `?as` patterns inside handler arms (§6.3.2) and
+`:Effects(...)` type-signature declarations (§6.13). At all three
+sites, a named effect-kind path denotes a prefix subtree.
 
 #### §6.3.2 Arms
 
 The body of a `~<*` handler is a **do-block** (§16): a sequence of
-statements terminating in a final unwrap expression `:: <expr>`. On
-each perform-event dispatched to this handler, the do-block runs, and
-`<expr>` produces the **scope-value contribution** for that dispatch.
-Resumption of the perform site is separate: an arm invokes `ret(v)` at
-any point during its evaluation to resume with `v` as the perform-site
-expression's value. An arm that never invokes `ret` terminates the
-handler scope at that dispatch.
+statements terminating in a final unwrap expression `:: <expr>`. Each
+perform-event dispatched to this handler fires the do-block; the
+block's arms match against the event and the matched arm's body
+handles it -- typically by invoking `ret(v)` to resume the suspended
+computation with `v` as the perform-site expression's value.
+
+The handler scope is not per-dispatch: it persists across many
+dispatches from the same `comp`, terminating only when `comp` completes
+(§6.3.3). An arm that never invokes `ret` handles its event to
+completion but does not itself terminate the scope; its terminal
+expression is discarded. Scope termination via a `Done@`-shaped arm
+terminal is a separate mechanism (§6.4.1).
 
 The canonical arm shape is a dependent match against `eff`:
 
 ```java
 Effect.<Ask, Log> ~<* (eff:: producer(), ret) {
     :: ?(eff){
-        [?as Effect.Ask]: ret(readLine(#));
-        [?as Effect.Log]: ret(log(#));
+        [?as Effect.Ask]: ret(readLine(#.value));
+        [?as Effect.Log]: ret(log(#.value));
     };
 };
 ```
 
-- **`(eff:: producer(), ret)`**: the DoBlockDefsInit-shaped head (§16)
-binds `eff` to each perform-event dispatched to this handler, specifies
-`producer()` as the computation whose performs are caught, and binds
-`ret` as the resumption callable for the current perform-event.
+The value bound to `eff` at the handler head, and reachable as `#`
+inside a dependent match's arm bodies via the topic-of-dispatch
+convention, is the **perform-event object**: a first-class value
+carrying the performed effect's kind and payload. Its shape is:
 
-- **`ret`**: a callable of shape `(v) -> scopeValue`. Invoked with a
-value `v`, it resumes the suspended computation at the perform site
-with `v` as the perform-site expression's value; the computation runs
-forward until it reaches natural completion (in which case `ret(v)`
-returns `comp`'s natural return value) or its next perform under the
-same handler scope (in which case `ret(v)` returns the scope value at
-that resumption's completion). Each `ret` value is bound to a specific
-perform-event; invoking it more than once per perform-event is a
-runtime error (delimited-one-shot semantics). Arms that never invoke
-`ret` terminate the handler scope at that dispatch.
+- `.value` -- the payload the perform-site supplied, typed per the
+  effect kind's declared payload type (§6.1.3).
+- `.pos` -- reserved for source-position metadata (compiler-emitted,
+  used by stack traces and instrumentation).
+- `.siteId` -- reserved for per-site identity metadata
+  (compiler-emitted).
 
-- **`:: ?(eff){ ... }`**: the do-block's final unwrap position (§16).
-Its value on each dispatch is the **scope-value contribution** for
-that dispatch.
+Payload access from within an arm body is `#.value` (or `eff.value`
+at the handler-head scope). Bare `#` is the perform-event object
+itself; treating it as the payload directly is a shape mismatch.
 
-- **Arms**: the dependent-match clauses of `?(eff){ ... }`. Each arm's
-pattern is `?as Effect.KindName`, matching the perform-event's effect
-kind. The arm's consequent is the scope-value contribution.
+**Head parens.** The `(eff:: producer(), ret)` clause is a
+DoBlockDefsInit-shaped head (§16). It binds `eff` to each perform-event
+object dispatched to this handler, specifies `producer()` as the
+computation whose performs are caught, and binds `ret` to a fresh
+resumption callable per perform-event.
 
-- **Payload access via `#`**: inside an arm consequent matched by
-`?as Effect.KindName`, the topic reference `#` refers to the effect's
-declared payload value (§6.1.3), not to the perform-event wrapper. For
-a record-shape payload (e.g., `Effect.Retry(<attempt: int, cause: string>) ^bool`),
-fields are accessed as `#.attempt`, `#.cause`.
+**Resumption callable `ret`.** `ret` is a **delimited one-shot continuation** callable bound freshly per perform-event. Invoking `ret(v)` resumes the suspended computation at the perform site with `v` as the perform-site expression's value, driving the computation forward until it reaches its next boundary.
+
+**Control flow across `ret`.** Three boundaries can be reached: (a) a next perform caught by this same handler, (b) a perform that escapes this handler (an effect kind not narrowed by this handler's LHS; §6.3.1), (c) natural completion of `comp`. In case (a), `ret` returns synchronously to its caller; arm code after the `ret` call runs before the arm's terminal expression, and the newly-queued perform dispatches to a fresh arm firing. In case (b), the outer enclosing handler owns the resume schedule; a delimited continuation from `ret`'s call site captures the arm-post-`ret` code, this scope's remaining logic, and everything downstream to the outer handler. On resume, the captured stack runs synchronously from the escape point; `ret` blocks its caller across the escape. In case (c), `ret` returns after `comp`'s natural completion; the arm continues past `ret` to its terminal.
+
+**Return-value opacity.** Under well-formed usage, `ret`'s return value carries no meaningful information: state communication between arm and callee flows exclusively through the payload (callee→handler) and `ret`'s argument (handler→callee), and mid-body arm terminals are discarded (a `Done@`-shaped arm terminal is a separate scope-termination mechanism, §6.4.1).
+
+A `ret` value is one-shot. The first invocation resumes the
+computation. A second invocation of an already-spent `ret` returns
+`Left@ "Continuation Unavailable"`, does not resume the computation, and
+has no side effects. This is a state descriptor, not an error path;
+the returning `Left@` is inspectable, mirroring the "Iterator
+Exhausted" idiom (§6.5.2).
+
+A captured `ret` remains a valid delimited continuation across the
+arm's syntactic completion. Storing `ret` into an enclosing
+(mutable-`:over`) scope and invoking it from a later dynamic context
+is admissible; the compiler-emitted `Gen.runner@` runner (§6.6.7)
+uses this pattern to convert per-perform events into stepper
+interactions.
+
+**Final unwrap `:: ?(eff){ ... }`.** The do-block's final unwrap
+position (§16), evaluated per dispatch. Its value is discarded unless
+it is a `Done@`-shaped value, which terminates the scope (§6.4.1); see
+§6.3.3 for how the handler expression's value is determined.
+
+**Arms.** The dependent-match clauses of `?(eff){ ... }`. Each arm's
+pattern is `?as Effect.KindName`, prefix-matching the perform-event's
+effect kind per §6.1.4. Arm order is first-match-wins (§5): when arms
+have a parent/child prefix relationship, list child arms before parent
+arms so the child fires specifically rather than being subsumed. The
+arm's consequent runs for its side effects (typically invoking `ret`);
+its terminal expression is discarded unless it is a `Done@`-shaped
+value (§6.4.1).
 
 **Type check on `ret` argument.** Each `ret(v)` invocation must supply
 a value of the matched effect kind's declared resume type. `Effect.Ask`
@@ -4130,38 +4260,77 @@ declares `^String`; a `ret(v)` inside its arm must supply a `String`.
 **Arm terminal type.** The arm terminal type contributes to the handler
 expression's return type at scope termination; see §6.3.3.
 
-**Exhaustiveness.** The arms must cover every effect kind admitted by
-the LHS narrowing. `Effect.<Ask, Log>` requires arms for both
-`Effect.Ask` and `Effect.Log`; missing coverage is a compile-time error.
-A default `?:` arm (§5.4) catches otherwise-unmatched kinds, which is
-the ergonomic pairing for prefix-inclusion narrowings (`&Effect.IO`).
+**Exhaustiveness.** The arms must cover every prefix admitted by the
+LHS narrowing. `Effect.<Ask, Log>` requires arms covering both the
+Ask and Log subtrees; a single `[?as Effect.Ask]` arm exhausts the
+Ask side (since it prefix-matches all `Effect.Ask.*`). A default `?:`
+arm (§5.4) catches otherwise-unmatched kinds, useful when a broad
+prefix subtree may grow new sub-kinds later.
 
 #### §6.3.3 Handler Expression Value
 
-A `~<*` handler expression's value is the arm terminal at **scope
-termination**. Scope termination occurs in three shapes:
+A `~<*` handler expression evaluates to a **`Promise` instance**
+(§6.9) that resolves when the handler scope terminates. Under Foi's
+synchronous execution model, a Promise whose backing scope completes
+synchronously is immediately resolved; consumers may inspect the
+resolved value via `.resolved()` (§6.9) or compose asynchronously via
+`~<` / `~map` / `%` per Promise.
 
-- **Natural completion**: `comp` runs to natural completion without
-further perform. If any arm has previously invoked `ret` on the
-last-dispatched perform, that `ret` returns `comp`'s natural return
-value up to the arm; the arm's terminal is then the handler
-expression's value. If no perform ever reached this scope (`comp`
-completed without performing a caught kind), `comp`'s natural return
-is the handler expression's value directly.
+Scope termination -- and thus Promise resolution -- occurs in two
+shapes:
 
-- **Arm-terminates without resume**: an arm dispatches, evaluates its
-body without invoking `ret` (or invokes `ret` and continues past),
-and reaches its terminal. The arm terminal is the handler expression's
-value; `comp` is not resumed from the dispatched perform site.
+**Natural completion of `comp`.** `comp` runs off the end of its body
+or reaches an explicit `^` return. The Promise resolves with `comp`'s
+natural return value. Each perform-event dispatched during `comp`'s
+execution had its own arm handling; when arms invoked `ret`, those
+resumes drove `comp` forward toward this completion. The Promise's
+resolved value is `comp`'s eventual return, independent of arm
+terminals along the way. A `Done@`-typed return from `comp` is
+comp's return value like any other; the Promise resolves with the
+`Done@` payload passed through as an ordinary value.
 
-- **Uncaught-effect propagation**: `comp` performs an effect whose
-kind is outside the LHS narrowing (§6.3.1). The handler expression
-evaluates to `empty`; the propagation is the exit path, and the
-effect continues up the dynamic call stack per §6.1.2.
+**`Done@` arm-terminal.** A matched arm evaluates its consequent to a
+`Done@`-shaped value at the arm's terminal position without having
+invoked `ret` on the current dispatch. The handler scope terminates
+immediately and the Promise resolves with the `Done@` payload. The
+perform site inside `comp` that triggered this dispatch does not
+receive a resume-value; `comp` is abandoned at that perform point.
+See §6.4.1.
 
-Value-shaping wrappers built on top of `~<*` (e.g., `Gen%` returning a
-Promise, IO's runner returning Either) are runner-layer concerns and
-live in §6.6 and §6.12. `~<*` itself carries no such wrapping.
+If neither shape fires -- `comp` never completes naturally, no arm
+ever produces a `Done@` terminal, and no captured `ret` (§6.3.2) is
+invoked from outside the handler -- the Promise remains pending. This
+is a well-formed state: a captured `ret` may still be invoked from a
+later dynamic context to drive `comp` toward completion, at which
+point the Promise resolves.
+
+**Mid-body arm terminals discarded.** Except when an arm's terminal
+is `Done@`-shaped, arm terminals contribute nothing to the Promise.
+Whether an arm invokes `ret` at its terminal position, invokes `ret`
+early and then runs to some other final expression, or never invokes
+`ret` at all, the arm's terminal value is discarded. The state
+channel between arm and callee is the payload / `ret`-argument pair
+(§6.3.2), not the arm terminal.
+
+**Type.** The handler expression's static type is `Promise{T}`, where
+`T` is the union of `comp`'s declared return type and the `Done@`
+payload types of any `Done@`-producing arms in the handler body.
+
+**Example.**
+
+```java
+def result: (Effect.Ask ~<* (eff:: greetUser(), ret) {
+    :: ?(eff){
+        [?as Effect.Ask]: ret("Kyle");
+    };
+}).resolved();
+```
+
+`greetUser()` performs `Effect.Ask` some number of times; each
+dispatch fires the arm, which invokes `ret("Kyle")` to resume. When
+`greetUser` naturally returns, the `~<*` expression's Promise
+resolves with that return value. `.resolved()` extracts it
+synchronously.
 
 ### §6.4 The `Done@` Sentinel
 
@@ -4202,39 +4371,41 @@ Three classes of position inspect a return value for `Done@`:
 - **Handler arm terminal** (§6.3): a `~<*` arm may evaluate to
   `Done@` as its terminal expression; the arm does not invoke `ret`
   at that path, the handler scope terminates, and the handler
-  expression's value is the `Done@` payload. See §6.4.1.
+  expression's Promise (§6.3.3) resolves with the `Done@` payload.
+  See §6.4.1.
 
-- **Wrapped computation natural return** (§6.3.3): `Done@` returned
-  from `comp` at natural completion propagates to the handler expression
-  value per §6.3.3's natural-completion path. If no perform-event
-  dispatched to an arm, `comp`'s return is the handler expression's
-  value directly; if perform-events did dispatch, `Done@` from `comp`
-  flows into whichever `ret` invocation reads it and continues per the
-  arm's onward handling.
+- **Wrapped computation natural return** (§6.3.3): a `Done@` returned
+  by `comp` at natural completion is `comp`'s natural return value
+  like any other; the handler expression's Promise resolves with the
+  `Done@` payload passed through as an ordinary value. No special
+  interpretation applies at this position -- the sentinel behavior
+  is at consumer sites, not at `comp`'s return.
 
 #### §6.4.1 `Done@` in a `~<*` Arm
 
 An arm whose terminal expression is a `Done@`-shaped value terminates
-the handler scope: the arm does not invoke `ret` at its terminal (or
-if it did invoke `ret` earlier, that resume already completed and
-control has returned to the arm), and the scope-termination path fires
-with the `Done@` payload as the handler expression's value.
+the handler scope: the arm does not invoke `ret` on the current
+dispatch, and the scope-termination path fires with the `Done@`
+payload as the resolved value of the handler expression's Promise
+(§6.3.3).
 
 ```java
 Effect.<Ask, Cancel> ~<* (eff:: producer(), ret) {
     :: ?(eff){
         [?as Effect.Cancel]: Done@ empty;
-        [?as Effect.Ask]:    ret(getResponse(#));
+        [?as Effect.Ask]:    ret(getResponse(#.value));
     };
 };
 ```
 
 If `producer()` performs `Effect.Cancel`, that arm's terminal is
 `Done@ empty`; the arm does not invoke `ret`, the handler scope
-terminates, and the handler expression evaluates to `Done@ empty`.
-If `producer()` performs `Effect.Ask`, the arm invokes
-`ret(getResponse(#))` to resume `producer`; the arm's terminal is
-`ret(...)`'s return, which flows outward per §6.3.3.
+terminates, and the `~<*` expression's Promise resolves with
+`Done@ empty`. If `producer()` performs `Effect.Ask`, the arm invokes
+`ret(getResponse(#.value))` to resume `producer`; that resume drives
+`producer()` forward until it eventually completes naturally or hits
+another perform. The arm's terminal in the Ask case is `ret(...)`'s
+return value, which is fire-and-forget (§6.3.2) and discarded.
 
 The perform site inside `comp` that triggered the `Effect.Cancel`
 dispatch does not receive a resume-value; `producer()` is abandoned
@@ -4242,34 +4413,53 @@ at that perform point. This is intentional: `Done@` in the arm
 terminal is the mechanism by which a handler signals 'stop resuming
 this computation, and take my payload as the scope's result.'
 
+**Discard of the paused computation.** When `Done@` terminates the
+handler scope, `comp`'s suspended state at the triggering perform
+site -- frames, environments, closures -- is released by the handler
+machinery. Any `ret` values captured under this scope (§6.3.2) become
+effectively spent: subsequent invocation returns `Left@ "Continuation
+Unavailable"` and does not resume `comp`. The runtime reclaims the
+suspended state once no external reference holds it. `Done@`
+termination is complete: `comp` is not resumable through any
+subsequent action.
+
 **NOTE:** Runner layers built on top of `~<*` (§6.6, §6.12) may
-inspect the `Done@` payload for their own value-shaping (e.g., a `Gen%`
-runner may treat `Done@ payload` from an arm as the terminal value of
-its `.next()` surface). Such inspection reads the handler expression's
-value under the natural pass-through semantic; no runner-layer
-machinery is required to extract the payload from a special exit path.
+inspect the `Done@` payload for their own value-shaping (e.g., a
+`Gen.runner@` may treat `Done@ payload` from an arm as the terminal
+value of its stepper surface). Such inspection reads the handler
+expression's Promise's resolved value under natural pass-through
+semantic; no runner-layer machinery is required to extract the
+payload from a special exit path.
 
 ### §6.5 Iterators
 
-An Iterator (`Iter`) is a stateful protocol for one-at-a-time value delivery. Unlike `Promise` (single resolution), `Channel` (single-consumer handoff), or the streams (§6.10, §6.11, subscribed sources), an Iter delivers values by direct request from its holder: each step advances the source by one position and returns the next value, or a sticky terminal marker when the source has no more to give.
+An **iterator** is a stateful protocol for one-at-a-time value delivery. Unlike `Promise` (single resolution), `Channel` (single-consumer handoff), or the streams (§6.10, §6.11, subscribed sources), an iterator delivers values by direct request from its holder: each step advances the source by one position and returns the next value, or a sticky terminal marker when the source has no more to give.
 
-**NOTE:** `Iter` is not monadic. Neither `~<` nor `~map` is defined on it; the type participates in the composition axis (§6 opener) only via `~<<` as an iterating outer -- consumer-driven walking to exhaustion, per §6.5.3. `PullStream` (§6.11) is the observable-monad type for consumer-timed reads from an *external* producer via a stdlib-mediated buffer; it is not a wrapper over `Iter` and cannot be constructed from an `Iter` source. Consumers wanting monadic-style transformation over a known-source `Iter` compose the per-value work inside a `~<<` block body; consumers needing a monadic observable over decoupled read/write heads use `PullStream` directly.
+Foi provides two peer iterator namespaces:
 
-**NOTE:** An `Iter` is produced by two paths:
+- **`Iter`** (§6.5.1) delivers step results as bare `Right@` / `Left@` values synchronously. Its source is a Tuple or another Iter; execution is sync-honest.
+- **`IterP`** (§6.5.4) delivers step results as `Promise{Right@ ..}` / `Promise{Left@ ..}` values. Its source is a `List{Promise}` or another IterP; the Promise envelope carries any transport-layer asynchrony that arises when generator bodies (§6.6) perform effects whose handlers introduce it.
 
-- **Explicit construction** via `Iter@` (§6.5.1) over a Tuple or another Iter.
-- **Generator invocation** via the reification transform (§6.6), which produces an Iter carrying a state machine.
+The two are distinct types; neither is a subtype or specialization of the other. `IterP.of@` (§6.5.4) lifts an `Iter` to an `IterP`; there is no reverse lift.
 
-Both paths share the base stepping interface (§6.5.2); generator-produced Iters additionally support the binary-`%` resume-value channel per §6.6.4.
+**NOTE:** Neither `Iter` nor `IterP` is monadic. Neither `~<` nor `~map` is defined on either; both participate in the composition axis (§6 opener) only via `~<<` as an iterating outer -- consumer-driven walking to exhaustion, per §6.5.3 and §6.5.6 respectively. `PullStream` (§6.11) is the observable-monad type for consumer-timed reads from an *external* producer via a stdlib-mediated buffer; it is not a wrapper over either iterator type and cannot be constructed from an iterator source. Consumers wanting monadic-style transformation over a known-source iterator compose the per-value work inside a `~<<` block body; consumers needing a monadic observable over decoupled read/write heads use `PullStream` directly.
+
+**NOTE:** An iterator is produced by two paths:
+
+- **Explicit construction** via `Iter@` (§6.5.1) or `IterP@` (§6.5.4) over a compatible source shape, or via `IterP.of@` (§6.5.4) as a lift from an existing `Iter`.
+- **Generator invocation** (§6.6), which produces an `IterP` driven by the generator body via the stdlib runner `Gen.runner@` (§6.6.7).
+
+Both paths share the base stepping interface -- unary `%` for advance, sticky terminal on exhaustion (§6.5.2 for `Iter`, §6.5.5 for `IterP`). Generator-produced iterators additionally support the binary-`%` resume-value channel per §6.6.4.
 
 The userland surface is:
 
-- `Iter@ source`: constructor. `source` is a Tuple or another Iter. Returns an Iter.
-- Unary `%`: `it%` steps the iterator once, returning `Right@ payload` mid-stream or a sticky `Left@ terminal` once the source has been exhausted (§6.5.2).
-- Binary `%`: `it% v` steps a generator-produced Iter delivering `v` as the resume-value for a waiting `<::` perform site (§6.6.4). Ill-formed on Iters constructed via `Iter@`.
-- `~<<`: do-comprehension drainage form; consumes the iterator to its terminal (§6.5.3).
+- `Iter@ source` / `IterP@ source`: constructors (§6.5.1 / §6.5.4). Return an `Iter` or `IterP` respectively.
+- `IterP.of@ iter`: natural-transformation lift from `Iter` to `IterP` (§6.5.4).
+- Unary `%`: `it%` steps the iterator once, returning `Right@ payload` mid-stream or a sticky `Left@ terminal` once the source has been exhausted -- bare envelopes per §6.5.2 for `Iter`, Promise-wrapped envelopes per §6.5.5 for `IterP`.
+- Binary `%`: `it% v` steps a generator-produced iterator delivering `v` as the resume-value for a waiting `<::` perform site (§6.6.4). Ill-formed on iterators constructed via `Iter@` or `IterP@`.
+- `~<<`: do-comprehension drainage form; consumes the iterator to its terminal (§6.5.3 for `Iter`, §6.5.6 for `IterP`, with distinct terminal-shape contracts per each).
 
-**NOTE:** Iter has no explicit close operation and no closed-state observation. An iterator is either mid-stream (`Right@` on step) or terminal (`Left@` on step, sticky); consumers detect terminal state via return-value pattern-match. Generator Iters whose sources never complete are abandoned by dropping references, or by the author passing in a value via Iter `%` to signal the generator to stop itself.
+**NOTE:** Neither `Iter` nor `IterP` has an explicit close operation or closed-state observation. An iterator is either mid-stream (`Right@` on step) or terminal (`Left@` on step, sticky); consumers detect terminal state via return-value pattern-match. Generator iterators whose sources never complete are abandoned by dropping references, or by the author passing in a value via `%` to signal the generator to stop itself.
 
 #### §6.5.1 Iter Construction
 
@@ -4296,7 +4486,7 @@ def same: Iter@ existing;    // same is existing, no new instance
 
 `Iter@` applied to an existing Iter returns *the same instance* -- no new state, no allocation, no wrapper. This form exists to let generic consumers normalize any iterable input to Iter without penalizing callers who already hold an Iter.
 
-Any argument other than a Tuple or Iter is ill-formed.
+Any argument other than a Tuple or Iter is ill-formed at the userland construction surface.
 
 Two Iters constructed from the same source expression have independent state:
 
@@ -4312,25 +4502,35 @@ b%;    // Right{1}     -- independent
 
 The identity form is the sole exception: passing an existing Iter to `Iter@` yields the same shared-state instance.
 
+**Sentinel field.** Every `Iter@` construction mints a unique opaque runtime value and carries it on the iter handle's `.sentinel` field. This value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source Iter's existing sentinel (same instance, same sentinel). The sentinel participates in the sticky terminal envelope shape (§6.5.2) and in drainage discrimination (§6.5.3).
+
 #### §6.5.2 Stepping
 
 Unary `it%` steps the iterator once, returning one of two shapes:
 
 - `Right@ payload`: the next value delivered from the source.
-- `Left@ terminal`: the source has been exhausted; no further values.
+- `Left@ envelope`: the source has been exhausted; `envelope` is the sticky terminal record.
 
-Once the terminal is reached, it is **sticky**: subsequent `it%` invocations continue to return the same `Left@` value. The terminal payload depends on how the iterator concluded:
+Once the terminal is reached, it is **sticky**: subsequent `it%` invocations continue to return the same `Left@ envelope` value.
 
-- **Tuple source exhausted:** terminal is `Left@ "Iterator Exhausted"`.
-- **Generator natural completion:** terminal is the generator's return value (§6.6.3), wrapped in `Left@`.
+**Sticky envelope shape.** The terminal envelope is a record:
+
+```java
+< sentinel: iter.sentinel, terminal: terminalPayload >
+```
+
+- `sentinel` is the iter handle's opaque runtime-minted value (§6.5.1); its presence and identity are how drainage (§6.5.3) recognizes the exhaustion terminal.
+- `terminal` is the terminal payload. For Tuple-source Iters it is `empty` (no user data at exhaustion).
 
 ```java
 def it: Iter@ < 1, 2 >;
 it%;    // Right{1}
 it%;    // Right{2}
-it%;    // Left{"Iterator Exhausted"}
-it%;    // Left{"Iterator Exhausted"}     -- sticky
+it%;    // Left{<sentinel: .., terminal: empty>}
+it%;    // Left{<sentinel: .., terminal: empty>}     -- sticky
 ```
+
+Consumers detecting terminal state pattern-match on `Left`; the terminal payload is `stepResult.value.terminal`. The `.sentinel` field is comparable to `iter.sentinel` via `?=` identity but has no other semantic surface at userland.
 
 Binary `it% v` steps the iterator delivering `v` as the value to resolve a waiting `<::` perform site inside the iterator's execution. This form is defined only on generator-produced Iters (§6.6.4); applying binary `%` to a Tuple-source or Iter-identity Iter is ill-formed:
 
@@ -4355,41 +4555,345 @@ def res: Iter ~<< (v:: it) {
 // v: 20
 // v: 30
 
-res;    // Left{"Iterator Exhausted"}
+res;    // Right{empty}
 ```
 
-The `::`-init on the block-defs entry supplies the iterator source; `v` binds per-iteration to each `Right@ payload` step's payload. The comprehension drives the iterator to its terminal by repeated unary stepping; the loop terminates when a step returns `Left@ terminal`. The value of the `~<<` expression is the terminal `Left@`.
+The `::`-init on the block-defs entry supplies the iterator source; `v` binds per-iteration to each `Right@ payload` step's payload. The comprehension drives the iterator to its terminal by repeated unary stepping; the loop terminates when a step returns `Left@` (the sticky terminal envelope, §6.5.2).
 
-Under the composition axis (§6 opener), `Iter` sits on `~<<` as an iterating outer: the consumer drives, and termination is the iterator's own exhaustion signal. `Iter` is not admitted on `~<*`; it is not an emission source.
+**Drainage terminal shapes.**
 
-`Done@` early-exit (§7.9) applies: a block-body value of `Done@ ..` terminates the loop early.
+- **Natural completion.** When the step returns the sticky terminal envelope, drainage resolves `Right@ terminal` where `terminal` is the envelope's `.terminal` payload. For Tuple-source Iters this is `Right@ empty`.
+- **`Done@` early-exit.** A block-body value of `Done@ payload` terminates drainage early per §7.9 and resolves `Left@ payload` (with §7.9's empty-elision applying at accumulator-carrying comprehensions; Iter has no accumulator, so `Done@ empty` resolves `Left@ empty`).
+
+The Right/Left split at drainage matches the composition semantic: natural completion is the success shape (Right); early exit is the interruption shape (Left). Downstream `~<` / `~map` chains short-circuit on Left; `~cata` (§7.7) forks on both branches.
+
+Under the composition axis (§6 opener), `Iter` sits on `~<<` as an iterating outer: the consumer drives, and termination is either the iterator's own exhaustion signal or a block-body `Done@`. `Iter` is not admitted on `~<*`; it is not an emission source.
+
+**Sentinel discrimination.** The sticky terminal envelope is recognizable by its `.sentinel` field matching `iter.sentinel`. Since Iter's step contract forbids a Left step envelope mid-stream (elements come out wrapped in `Right@` verbatim), the drainage hook can trust that any Left step is the exhaustion terminal. The sentinel field remains structurally useful for `IterP.of@` re-minting (§6.5.4) and for future extensions.
+
+**Hook body.** The `Iter~<<` hook is stdlib self-hosted over `Effect.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Do.Bind` perform's payload -- the source Iter -- via `Done@ #.value`; a sync tail-recursive `drainStep` then steps the iterator, running the block body per `Right@` step under a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the stepped payload. On `Left@` step (sticky terminal), `drainStep` extracts the envelope's `.terminal` and returns `Right@ terminal`. On block-body `Done@ payload` (§7.9), `drainStep` returns `Left@ payload`.
+
+```java
+defn Iter~<<(comp, typ) {
+    ^?(typ){
+        [< Iter >]: iterBindImpl(comp);
+        : Left@ "Invalid LHS"
+    };
+};
+
+defn iterBindImpl(comp) {
+    def iter: empty;
+
+    // synchronously extract :: iterator binding
+    Effect.Do ~<* (eff:: comp(), ret) {
+        :: ?(eff){
+            [?as Effect.Do.Bind]: {
+                iter := #.value;
+                Done@ empty
+            };
+            : empty
+        };
+    };
+
+    ^drainStep();
+
+    defn drainStep() {
+        def stepResult: iter% empty;
+        ^?(stepResult){
+            [?as Left]: Right@ stepResult.value.terminal;
+            [?as Right]: {
+                def bodyTerminal: empty;
+                Effect.Do ~<* (eff:: comp(), ret) {
+                    :: ?(eff){
+                        [?as Effect.Do.Bind]: {
+                            ret(stepResult.value);
+                            empty
+                        };
+                        [?as Effect.Do.Map]: {
+                            bodyTerminal := #.value;
+                            Done@ empty
+                        };
+                    };
+                };
+                ?(bodyTerminal){
+                    [?as Done]: Left@ #.value;
+                    : drainStep()
+                }
+            };
+        };
+    };
+};
+```
+
+This hook body's `?(typ)` dispatch admits only the plain single-source Iter LHS; multi-source cartesian on stateful iterators is out of scope for the current design.
+
+#### §6.5.4 IterP Construction
+
+`IterP` is a peer namespace to `Iter` (§6.5.1), whose step-result envelope is a Promise (§6.8). Where an `Iter` step yields a bare `Right@`/`Left@` synchronously, an IterP step yields a `Promise{Right@ ..}` mid-stream and a `Promise{Left@ ..}` at terminal. The two are distinct types; neither is a specialization of the other. IterP exists because generator bodies performing effects whose handlers introduce asynchrony (§6.6) cannot honor `Iter`'s sync-honest step contract; the Promise envelope carries that asynchrony as transport machinery, distinct from any Promise the user may hold as data (§6.5.5).
+
+The `IterP@` constructor takes one argument and produces an IterP over the supplied source. Two source shapes are accepted:
+
+**`List{Promise}` source:**
+
+```java
+def it: IterP@ <
+    Promise.honor@ 1,
+    Promise.honor@ 2,
+    Promise.honor@ 3
+>;
+```
+
+The list's elements become the sequence of Promise step-envelopes, delivered in list order. Elementwise Promise-type conformance is checked eagerly at construction: when the source's element type is statically known to be `Promise`, the check is compile-time; otherwise it is a runtime check at construction. A non-Promise element rejects the entire construction, before any stepping; there is no partial iteration.
+
+Because delivery is verbatim (§6.5.5), a `Promise.renege@ ..` element in the source is delivered mid-stream as an ordinary Left-envelope step-result; envelope shape does not signal iterator termination. Only source exhaustion produces the sticky terminal, per §6.5.5.
+
+**IterP source (identity):**
+
+```java
+def existing: IterP@ < Promise.honor@ 10, Promise.honor@ 20 >;
+def same: IterP@ existing;    // same is existing, no new instance
+```
+
+`IterP@` applied to an existing IterP returns *the same instance* -- no new state, no allocation, no wrapper. This form exists so generic consumers can normalize any IterP input without penalizing callers who already hold one, mirroring `Iter@`'s identity form (§6.5.1).
+
+Any argument other than a `List{Promise}` or an existing IterP is ill-formed at the userland construction surface. In particular, an `Iter` instance does not implicitly cross into IterP; use `IterP.of@` for that lift.
+
+**Lifting an Iter to an IterP:**
+
+```java
+def sync: Iter@ < 1, 2, 3 >;
+def wrapped: IterP.of@ sync;
+```
+
+`IterP.of@` takes an `Iter` argument and produces an IterP whose steps are the source Iter's steps wrapped in Promise envelopes. A `Right@ v` step becomes `Promise.honor@ Right@ v`. A `Left@ <sentinel: srcSentinel, terminal: T>` sticky step becomes `Promise.renege@ <sentinel: liftedSentinel, terminal: T>` -- the lifted IterP mints its own sentinel at construction, and re-envelopes the source's terminal payload under the lifted sentinel. Consumers holding the lifted IterP discriminate against `liftedIterP.sentinel`, not the source Iter's sentinel; the lift is the natural transformation `Iter -> IterP`, and the source Iter is walked lazily by the lifted IterP's steps, not eagerly consumed at lift time.
+
+`IterP.of@` does not accept IterP input. Callers wanting to normalize a source of unknown iterator-shape use `IterP@` for the IterP-identity form and `IterP.of@` for the Iter lift; the two constructors together cover the normalization surface.
+
+**NOTE:** `Iter@ < p1, p2, .. >` where the elements are Promises delivers those Promises verbatim as ordinary step-payloads; Promise there is opaque cargo under `Iter`'s polymorphic element type, not a mechanism the `Iter` interprets. `IterP@` is the constructor that treats Promise as the transport envelope for step-results. The two forms are structurally distinct: `Iter@ List{Promise}` produces `Either{Promise{v}}` step-shapes; `IterP@ List{Promise}` produces `Promise{Either{v}}` step-shapes.
+
+**NOTE:** Stdlib-internal IterP construction paths -- specifically the callable source used by `Gen.runner@` at §6.6.7 -- extend the accepted source shapes for compiler-emitted runners. The callable-source path is not user-authorable and does not surface in user code; consumers of an IterP constructed this way still interact with it exclusively through the userland surface (§6.5.5, §6.5.6).
+
+Two IterPs constructed from the same source expression have independent state:
+
+```java
+def ps: < Promise.honor@ 1, Promise.honor@ 2, Promise.honor@ 3 >;
+def a: IterP@ ps;
+def b: IterP@ ps;
+
+a%;    // Promise{Right{1}}
+a%;    // Promise{Right{2}}
+b%;    // Promise{Right{1}}     -- independent
+```
+
+The identity form is the sole exception: passing an existing IterP to `IterP@` yields the same shared-state instance.
+
+**Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value and carries it on the iter handle's `.sentinel` field. This value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's existing sentinel (same instance, same sentinel). The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism.
+
+#### §6.5.5 Stepping
+
+Unary `it%` steps the IterP once, returning a Promise resolving to one of two shapes:
+
+- `Promise{Right@ payload}`: the next value delivered from the source, mid-stream.
+- `Promise{Left@ envelope}`: the source has been exhausted; `envelope` is the sticky terminal record.
+
+**Verbatim delivery.** The stepping mechanism inspects no envelope shape at the source; whatever occupies the current source position is delivered as-is, wrapped only by the outer Promise transport (§6.5.4). A `Promise.renege@ ..` element in the source, or a Left step-envelope produced by a callable source, is delivered mid-stream as `Promise{Left@ payload}` -- envelope shape does not signal iterator termination.
+
+```java
+def it: IterP@ <
+    Promise.honor@ 1,
+    Promise.renege@ 42,
+    Promise.honor@ 10
+>;
+
+it%;    // Promise{Right{1}}
+it%;    // Promise{Left{42}}   -- verbatim cargo; iterator still active
+it%;    // Promise{Right{10}}
+```
+
+The active/exhausted distinction lives in the IterP's internal state, not in envelope shape. Iterator termination is signaled only by the exhaustion source -- for a `List{Promise}` source, the list's own end; for a generator source, the body's completion (§6.6).
+
+**Sticky terminal.** Once the source is exhausted, the IterP transitions to its **sticky** terminal state: subsequent `it%` invocations continue to return the same terminal Promise, resolving to `Left@ envelope` where `envelope` is a record:
+
+```java
+< sentinel: iter.sentinel, terminal: terminalPayload >
+```
+
+- `sentinel` is the iter handle's opaque runtime-minted value (§6.5.4); its presence and identity are how drainage (§6.5.6) discriminates exhaustion from mid-stream cargo Left.
+- `terminal` is the terminal payload. For `List{Promise}` sources it is `empty`; for generator sources it is the generator's return value (§6.6.3).
+
+```java
+def it: IterP@ < Promise.honor@ 1, Promise.honor@ 2 >;
+
+it%;    // Promise{Right{1}}
+it%;    // Promise{Right{2}}
+it%;    // Promise{Left{<sentinel: .., terminal: empty>}}
+it%;    // Promise{Left{<sentinel: .., terminal: empty>}}     -- sticky
+```
+
+**Manual discrimination.** A consumer inspecting raw step envelopes distinguishes exhaustion from cargo Left by comparing `env.value.sentinel ?= it.sentinel`: a match identifies the sticky exhaustion envelope minted for this IterP; a mismatch (including missing `.sentinel` field on a non-record cargo payload, which yields `empty` per §2.12.1) identifies mid-stream cargo. The natural consumption path for IterP is composition via `IterP ~<<` (§6.5.6), which does this discrimination internally and returns Right for natural completion and Left for cargo or block-body `Done@`.
+
+**Forgery immunity.** Because the sentinel is minted per instance at construction, cross-IterP smuggling is defeated by construction: itA's sentinel `?=`-fails against itB's. Retroactive injection into an IterP's own source is impossible because the source is captured at construction. Yielded values from a generator body via `<::` are wrapped by the runner's Yield arm into `Right@ ..` envelopes, and `^`-returns are wrapped by the Return arm into the iter's own sentinel envelope; neither path exposes the sentinel field to user code for tampering.
+
+Binary `it% v` steps a generator-produced IterP delivering `v` as the value to resolve a waiting `<::` perform site inside the generator body. This form is defined only on generator-produced IterPs (§6.6.4); applying binary `%` to a `List{Promise}`-source or IterP-identity IterP is ill-formed:
+
+```java
+def it: IterP@ < Promise.honor@ 1, Promise.honor@ 2 >;
+it% 42;    // ill-formed
+```
+
+Ill-formedness is diagnosed statically at the call site when the IterP's construction path is known at compile time; otherwise it is a runtime error on `%`-hook dispatch (§6.2). Non-generator IterPs have no perform sites to resolve, and silently discarding the value would mask consumer bugs.
+
+#### §6.5.6 Draining Via `~<<`
+
+An IterP can be drained via the `~<<` do-comprehension form, with `IterP` as the type-LHS and the specific IterP supplied via the block-defs clause:
+
+```java
+def it: IterP@ < Promise.honor@ 10, Promise.honor@ 20, Promise.honor@ 30 >;
+
+def res: IterP ~<< (v:: it) {
+    log(`"v: `v`");
+};
+// v: 10
+// v: 20
+// v: 30
+
+res;    // Promise{Right{empty}}
+```
+
+The `::`-init on the block-defs entry supplies the IterP source; `v` binds per-iteration to each mid-stream `Right@ payload` step's payload. Drainage drives the IterP by repeated unary stepping with per-step await; the loop terminates via one of three exit shapes.
+
+**Drainage terminal shapes.**
+
+- **Natural completion.** When a step returns the sticky terminal envelope -- detected by `env.value.sentinel ?= iter.sentinel` -- drainage resolves `Promise{Right@ terminal}` where `terminal` is the envelope's `.terminal` payload. For `List{Promise}`-source IterPs this is `Promise{Right{empty}}`; for generator-source IterPs this is `Promise{Right{returnValue}}` where `returnValue` is the generator's own return value.
+- **Mid-stream cargo Left.** A `Promise{Left@ envValue}` step whose `envValue` does not match the sentinel is treated as cargo; drainage exits with `Promise{Left@ envValue}`, passing the cargo payload through as the drainage terminal.
+- **`Done@` early-exit.** A block-body value of `Done@ payload` terminates drainage early per §7.9 and resolves `Promise{Left@ payload}`.
+
+The Right/Left split at drainage matches the composition semantic: natural completion is the success shape (Right); cargo short-circuit and explicit block-body early-exit are both interruption shapes (Left). Downstream `~<` / `~map` chains short-circuit on Left; `~cata` (§7.7) forks on both branches. Consumers wanting to distinguish "cargo Left mid-stream" from "block-body Done@ early-exit" inspect payload shape downstream.
+
+```java
+def it: IterP@ <
+    Promise.honor@ 1,
+    Promise.renege@ "boom",
+    Promise.honor@ 3
+>;
+
+def res: IterP ~<< (v:: it) {
+    log(`"v: `v`");
+};
+// v: 1
+
+res;    // Promise{Left{"boom"}}     -- cargo short-circuit at source[1]
+```
+
+```java
+def it: IterP@ <
+    Promise.honor@ 1,
+    Promise.honor@ 2,
+    Promise.honor@ 3
+>;
+
+def res: IterP ~<< (v:: it) {
+    ?[v ?>= 2]: Done@ v;
+};
+// (no logs; body's terminal fires Done@ at v=2)
+
+res;    // Promise{Left{2}}     -- Done@ early-exit
+```
+
+Under the composition axis (§6 opener), `IterP` sits on `~<<` as an iterating outer: the consumer drives, and termination is either the iterator's own exhaustion signal, a cargo short-circuit, or a block-body `Done@`. `IterP` is not admitted on `~<*`; it is not an emission source.
+
+**Hook body.** The `IterP~<<` hook is stdlib self-hosted over `Effect.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Do.Bind` perform's payload -- the source IterP -- via `Done@ #.value`; a Promise-threaded tail-recursive `drainStep` then steps the iterator, chains via `~<` to await the step envelope, and dispatches on the envelope shape. On `Right`, the block body runs under a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the step payload; the arm's block-body terminal is captured via side effect into `bodyTerminal`, then inspected for `Done@`-shape (early-exit, resolving `Promise.renege@ #.value`) or plain (recurse). On `Left`, the envelope's payload is destructured; if `.sentinel` matches `iter.sentinel`, drainage resolves `Promise.honor@ terminal` (natural completion); otherwise the raw envelope value is passed through as `Promise.renege@ env.value` (cargo short-circuit).
+
+```java
+defn IterP~<<(comp, typ) {
+    ^?(typ){
+        [< IterP >]: iterPBindImpl(comp);
+        : Left@ "Invalid LHS"
+    };
+};
+
+defn iterPBindImpl(comp) {
+    def iter: empty;
+
+    // synchronously extract :: iterator binding
+    Effect.Do ~<* (eff:: comp(), ret) {
+        :: ?(eff){
+            [?as Effect.Do.Bind]: {
+                iter := #.value;
+                Done@ empty
+            };
+            : empty
+        };
+    };
+
+    ^drainStep();
+
+    defn drainStep() {
+        ^(iter% empty) ~< (env) {
+            ?(env){
+                [?as Right]: {
+                    def bodyTerminal: empty;
+                    Effect.Do ~<* (eff:: comp(), ret) {
+                        :: ?(eff){
+                            [?as Effect.Do.Bind]: {
+                                ret(env.value);
+                                empty
+                            };
+                            [?as Effect.Do.Map]: {
+                                bodyTerminal := #.value;
+                                Done@ empty
+                            };
+                        };
+                    };
+                    ?(bodyTerminal){
+                        [?as Done]: Promise.renege@ #.value;
+                        : drainStep()
+                    }
+                };
+                [?as Left]: {
+                    def <:sentinel :? empty, :terminal :? empty>: env.value;
+                    ?{
+                        [sentinel ?= iter.sentinel]: Promise.honor@ terminal;
+                        : Promise.renege@ env.value
+                    }
+                }
+            }
+        };
+    };
+};
+```
+
+This hook body's `?(typ)` dispatch admits only the plain single-source IterP LHS; multi-source composition on IterP is out of scope for the current design.
 
 ### §6.6 Generators
 
-A **generator** is a function whose execution can be suspended mid-body; resumption is controlled on demand via an attached iterator (`Iter` instance, §6.5).
+A **generator** is a function whose execution can be suspended mid-body; resumption is controlled **externally** on demand, via an attached iterator (`IterP` instance, §6.5.4).
 
 Foi generators are the sole userland-observable pause point (§6 opener):
-each suspension is triggered by an `Effect.Yield` perform (via the `<::`
-sugar of §6.2.2), and each resumption is triggered by an explicit step
-on the generator's attached `Iter` instance (§6.6.2).
+each suspension is triggered by an `Effect.Gen.Yield` perform (via the
+`<::` sugar of §6.2.2), and each resumption is triggered by an explicit
+step on the generator's attached `IterP` instance (§6.6.2).
 
-An `Iter` instance is advanced manually with the `%` effector operator,
-or may be consumed fully to its terminal via the `~<*` do-loop
-comprehension.
+An `IterP` instance is advanced manually with the `%` effector operator,
+or may be consumed fully to its terminal via the `IterP ~<<` do-comprehension
+(§6.5.6).
 
-**NOTE:** The `Iter` interface (§6.5) is stdlib-hosted; only the
-reification transform triggered by the `deft Gen.` prefix is
-compiler-privileged. Generator self-hosting is stdlib code built on
-`Effect.Yield ~<*` (§6.3) plus the reification transform; the internal
-implementation is not part of the language definition.
+**NOTE:** The `IterP` interface (§6.5.4) is stdlib-hosted, and generator
+runtime support is stdlib code (`Gen.runner@`, §6.6.7) built on
+`Effect.Gen ~<*` (§6.3). The only compiler privilege the `Gen.` prefix
+carries is (a) implicit wrapping of the function body in the runner
+invocation, (b) rewriting `<::` to `Effect.Gen.Yield%`, and (c)
+compile-time synthesis of `Effect.Gen.Return%` performs at tail
+positions (§6.6.1). Everything else is self-hosted over the general
+effect substrate.
 
-#### §6.6.1 `Gen.` Prefix, Reification Transform
+#### §6.6.1 The `Gen.` Prefix
 
 Generators must be declared with a `Gen.`-prefixed type (via `deft`),
 attached to a function with `:as`:
 
 ```java
-deft Gen.Numbers(int, int) ^Iter;
+deft Gen.Numbers(int, int) ^IterP;
 
 defn numbers(start, end) :as Gen.Numbers {
     start..end ~each (v) {
@@ -4402,17 +4906,24 @@ defn numbers(start, end) :as Gen.Numbers {
 The `Gen.` prefix on a `deft` declaration is compiler-privileged. It
 carries three properties:
 
-- **Reification.** Every function `:as` a `Gen.`-prefixed type undergoes
-  a **state-machine reification transform**: the body is split at each
-  `<::` site into a segment-dispatched stepper. Invocation of the function
-  produces an `Iter` instance rather than eagerly running the body.
-- **Implicit Yield effect.** The type implicitly carries
-  `:Effects(Yield)` in its effect set; explicit `:Effects(Yield)` is
-  admitted but redundant. Additional effects may be declared explicitly
-  (see §6.6.6).
-- **Iter return interface.** The declared return type is `Iter`, and
-  invocation evaluates to an `Iter` instance. No user code runs inside
-  the function body at the call position; only the Iter is produced.
+- **Runner wrapping.** Every function `:as` a `Gen.`-prefixed type has
+  its body implicitly wrapped in a stdlib `Gen.runner@` invocation
+  (§6.6.7). Within the wrapped body, `<::` sugar sites (§6.2.2) surface
+  as `Effect.Gen.Yield%` performs, and tail-position `^expr` compiles
+  to `Effect.Gen.Return% expr`; fall-through paths (reaching the
+  natural end of the body without an explicit `^`) synthesize
+  `Effect.Gen.Return% empty`. The runner produces the `IterP` returned
+  from invocation; no user code runs inside the function body at the
+  call position -- only the IterP is produced.
+- **Compiler-managed Gen effects.** `Effect.Gen.*` is a
+  compiler-privileged partition (§6.1.4); the runner's internal
+  `Effect.Gen ~<*` scope catches both `Yield` and `Return` performs
+  before they escape the generator's own type surface. User source
+  cannot declare `Effect.Gen` in `:Effects(...)` and cannot handle it
+  externally. Non-`Effect.Gen` effects performed inside the body
+  propagate through per §6.6.6.
+- **IterP return interface.** The declared return type is `IterP`, and
+  invocation evaluates to an `IterP` instance.
 
 The `Gen.` prefix is structurally parallel to the `Effect.` prefix on
 effect-kind declarations (§6.1) -- both mark compiler-privileged
@@ -4421,42 +4932,56 @@ compilation of `defn` bodies annotated with them.
 
 #### §6.6.2 Iterator Instance For Generator
 
-Invoking the generator function produces a new `Iter` instance (§6.5)
+Invoking the generator function produces a new `IterP` instance (§6.5.4)
 whose body has not yet started:
 
 ```java
 def it: numbers(2, 5);
 ```
 
-Multiple `Iter` instances attached to the same generator may be started and advanced concurrently.
+Multiple `IterP` instances attached to the same generator may be started and advanced concurrently.
 
-#### §6.6.3 Iterator Stepping, Terminal Semantics
+#### §6.6.3 IterP Stepping, Terminal Semantics
 
-Unary `it%` steps the iterator once, running the generator body up to the
-next `<::` perform-site or to natural completion. Each mid-stream step
-evaluates to `Right@ payload`, where `payload` is the value passed to
-`<::`:
+Unary `it%` steps the iterator once, running the generator body up to
+the next `<::` perform-site or to natural completion. As the
+generator's iterator is an `IterP` (§6.5.4), each step evaluates to a
+`Promise` (§6.8) that resolves to `Right@ payload` mid-stream or to
+`Left@ terminal` at completion, per the IterP step contract of §6.5.5.
+Under Foi's synchronous execution model, generator progress that
+completes without further external coordination resolves the Promise
+immediately; consumers may inspect via `.resolved()` (§6.8) or compose
+via `~<` / `~map` / `%` per Promise.
+
+Each mid-stream step resolves to `Right@ payload`, where `payload` is
+the value passed to `<::`:
 
 ```java
 def it: numbers(2, 5);
-it%;    // Right{2}
-it%;    // Right{3}
-it%;    // Right{4}
-it%;    // Right{5}
+it%;    // Promise{Right{2}}
+it%;    // Promise{Right{3}}
+it%;    // Promise{Right{4}}
+it%;    // Promise{Right{5}}
 ```
 
 When the generator body completes -- either by falling off the end or
-reaching an explicit `^` return -- the iterator transitions to its
-**terminal** state. The generator's final return value (if any) becomes
-the terminal payload wrapped in `Left@`:
+reaching an explicit `^` return -- the IterP transitions to its
+**terminal** state. The generator's final return value (if any) is
+wrapped in the sticky terminal envelope per §6.5.5, with `.terminal`
+carrying the return value:
 
 ```java
-it%;    // Left{"Complete"}
-it%;    // Left{"Complete"}
+it%;    // Promise{Left{<sentinel: .., terminal: "Complete">}}
+it%;    // Promise{Left{<sentinel: .., terminal: "Complete">}}
 ```
 
-The terminal state is **sticky**: subsequent `it%` invocation continues
-to return the same terminal `Left@` value. Terminal iterators are not
+The `.sentinel` field carries the iter handle's opaque runtime-minted
+value (§6.5.4), used by drainage (§6.5.6) to discriminate exhaustion
+from mid-stream cargo Left. If the body has no explicit `^`, `.terminal`
+is `empty`.
+
+The terminal state is **sticky** per §6.5.5: subsequent `it%`
+invocations return the same terminal Promise. Terminal IterPs are not
 one-shot; they idempotently report their terminal result on every
 inspection.
 
@@ -4464,11 +4989,11 @@ inspection.
 
 The binary form `it% v` steps the iterator and delivers `v` as the value
 to resolve the waiting `<::` expression (if any) inside the generator
-body. This enables two-way value flow between the iterator caller and
-the generator body:
+body. The step evaluates to a `Promise` per §6.6.3. This enables two-way
+value flow between the iterator caller and the generator body:
 
 ```java
-deft Gen.Adder(int) ^Iter;
+deft Gen.Adder(int) ^IterP;
 
 defn adder(sum:? 0) :as Gen.Adder {
     ?[sum ?< 100] ~each {
@@ -4478,11 +5003,11 @@ defn adder(sum:? 0) :as Gen.Adder {
 };
 
 def it: adder(13);
-it%;      // Right{13}
-it% 12;   // Right{25}
-it% 50;   // Right{75}
-it% 39;   // Left{114}
-it%;      // Left{114}
+it%;      // Promise{Right{13}}
+it% 12;   // Promise{Right{25}}
+it% 50;   // Promise{Right{75}}
+it% 39;   // Promise{Left{<sentinel: .., terminal: 114>}}
+it%;      // Promise{Left{<sentinel: .., terminal: 114>}}
 ```
 
 Each argument passed to `it%` resolves the value of a waiting `<:: ..`
@@ -4497,33 +5022,37 @@ waiting, the argument is ignored. This case arises at two boundaries:
   has completed, no further code runs; any argument passed to a
   post-terminal `it%` call is likewise dropped.
 
-#### §6.6.5 Draining Iterators Via `~<<`
+#### §6.6.5 Draining Via `~<<`
 
-A finite generator can be eagerly consumed via the `~<<` do-comprehension, per §6.5.3's drainage semantics for `Iter` instances generally. The generator invocation supplies the Iter source via the block-defs clause:
+A finite generator can be eagerly drained via the `~<<` do-comprehension on `IterP` (§6.5.6). The generator invocation supplies the IterP source via the block-defs clause:
 
 ```java
-def res: Iter ~<< (v:: numbers(1, 3)) {
+def res: IterP ~<< (v:: numbers(1, 3)) {
     log(`"v: `v`");
 };
 // v: 1
 // v: 2
 // v: 3
 
-res;      // Left{"Complete"}
+res;      // Promise{Right{"Complete"}}
 ```
 
-The `::`-init on the block-defs entry supplies the generator-produced iterator; `v` binds per-iteration to each `Right@ payload` step's payload. The generator's return value (`"Complete"` in `numbers`) becomes the terminal `Left@` payload per §6.6.3.
+The `::`-init on the block-defs entry supplies the generator-produced IterP; `v` binds per-iteration to each mid-stream `Right@ payload` step's payload. On natural completion -- the body reaching its Return arm -- the generator's step-level sticky terminal is the sentinel envelope with `.terminal` carrying the return value per §6.6.3. Drainage discriminates the envelope via `env.value.sentinel ?= iter.sentinel` (§6.5.6), extracts `.terminal`, and resolves `Promise{Right@ returnValue}` (`Promise{Right{"Complete"}}` for `numbers`).
 
-`Done@` early-exit (§7.9) applies: a block-body value of `Done@ ..` terminates the loop early. Full drainage semantics common to all `Iter` sources are specified at §6.5.3.
+Consumers thread the return value through plain `~<` / `~map` on the Right shape. If `Done@` or mid-stream cargo terminated the drainage instead, the resulting `Promise{Left@ ..}` short-circuits per Promise's Either-aware composition (§6.8.3).
 
-#### §6.6.6 Non-Yield Effects In Generators
+Full drainage semantics -- including mid-stream Left short-circuit and `Done@` early-exit -- are specified at §6.5.6.
 
-A `Gen.`-prefixed type implicitly carries `Effect.Yield` in its effect
-set (§6.6.1). Additional effects may be declared explicitly and performed
-inside the generator body:
+#### §6.6.6 Non-`Gen` Effects In Generators
+
+A `Gen.`-prefixed type has its `Effect.Gen.Yield` / `Effect.Gen.Return`
+coverage handled internally by the runner (§6.6.1); user code cannot
+declare `Effect.Gen` in `:Effects(...)` since the partition is
+compiler-privileged (§6.1.4). Non-`Effect.Gen` effects, however, may be
+declared explicitly and performed inside the generator body:
 
 ```java
-deft Gen.LoggingNumbers(int, int) :Effects(Log) ^Iter;
+deft Gen.LoggingNumbers(int, int) :Effects(Log) ^IterP;
 
 defn loggingNumbers(start, end) :as Gen.LoggingNumbers {
     Effect.Log% `"starting range `start`..`end`";
@@ -4534,116 +5063,169 @@ defn loggingNumbers(start, end) :as Gen.LoggingNumbers {
 };
 ```
 
-The internal `Effect.Yield ~<*` scope installed by the reification
-transform is narrowed to `Effect.Yield` only (per §6.3.1 narrowing
-semantic). Non-Yield performs -- `Effect.Log` above, or any other
-declared effect -- propagate past this internal scope per §6.1.2 dynamic
-lookup, resolving at the nearest enclosing handler in the caller's
-dynamic scope that catches the relevant effect kind.
+The internal `Effect.Gen ~<*` scope installed by the runner is
+prefix-matched to `Effect.Gen` only (per §6.1.4 unified prefix rule and
+§6.3.1 narrowing semantic; catches both `Effect.Gen.Yield` and
+`Effect.Gen.Return`). Non-`Effect.Gen` performs -- `Effect.Log` above,
+or any other declared effect -- propagate past this internal scope per
+§6.1.2 dynamic lookup, resolving at the nearest enclosing handler in
+the caller's dynamic scope that catches the relevant effect kind.
 
 If no such enclosing handler is reachable at the call site, the perform
 is ill-formed per the function's effect signature (§6.13).
 
-#### §6.6.7 Abstract Execution
+#### §6.6.7 The `Gen.runner@` Stdlib Runner
 
-Three algorithms specify the mechanical semantics of generators. The
-first is a compile-time source-to-source transform; the remaining two
-describe runtime execution on the abstract machine.
+The runtime behavior of a `Gen.`-prefixed function invocation is
+furnished by the stdlib runner `Gen.runner@`. The runner is not a
+compiler-privileged construct; it is ordinary Foi source built over
+`Effect.Gen ~<*` (§6.3) and `IterP@` (§6.5.4). The compiler's role is
+limited to the three-part `Gen.` prefix privilege of §6.6.1 -- implicit
+wrap of the body in a runner invocation, `<::` sugar to
+`Effect.Gen.Yield%`, and tail-position `^expr` synthesis of
+`Effect.Gen.Return%`. Everything below is stdlib source.
 
-**Reification Transform.** Applied to the body of a `defn` typed `:as T`
-where `T` is a `Gen.`-prefixed type.
+At each generator invocation, the runner closes over the generator body
+and returns an `IterP` (§6.5.4) whose `%`-hook drives one step of the
+body per call. Internal state -- captured resumption `ret`, in-flight
+step Promise, sticky terminal, entry-guard flag -- lives in the
+runner's closure over `:over`-marked slots (§2.11). No such state is
+observable at the userland surface.
 
-----
+**Runner shape:**
 
-The `ReifyGenBody(body)` steps are:
+```java
+defn Gen.runner@(body) {
+    def insideStep: false;
+    def latestRet: empty;
+    def sticky: empty;
+    def waitingPr: empty;
+    def started: false;
 
-1. Let `sites` be the ordered list of all `<:: expr` positions in `body`,
-    in evaluation order.
+    defn doStep1() :over(started, waitingPr, sticky, latestRet) {
+        started := true;
+        waitingPr := Promise.subj@;
+        Effect.Gen ~<* (eff:: body(), ret) {
+            :: ?(eff){
+                [?as Effect.Gen.Yield]: {
+                    latestRet := ret;
+                    waitingPr% (Right@ #.value);
+                    empty;
+                };
+                [?as Effect.Gen.Return]: {
+                    sticky := Promise.renege@ #.value;
+                    ?{ [!waitingPr.resolved()]: waitingPr% (Left@ #.value); };
+                    Done@ #.value;
+                };
+            };
+        };
+        ^waitingPr.pr;
+    };
 
-2. Partition `body` into `segments`:
-    - The initial segment is the code from the start of `body` up to
-      and including the payload evaluation of the first site in `sites`.
-    - Each subsequent segment begins at the resumption position of the
-      preceding site (the expression slot the `<::` occupies) and runs
-      up to and including the payload evaluation of the next site, or
-      to the natural end of `body` if no further sites remain.
+    defn doStepN(resumeVal) :over(waitingPr, latestRet) {
+        waitingPr := Promise.subj@;
+        latestRet(resumeVal);
+        ^waitingPr.pr;
+    };
 
-3. Assign each segment a state label:
-    - The initial segment: `"start"`.
-    - Each subsequent segment: `"seg_N"` for `N` in `1, 2, ..., Length(sites) - 1`.
-    - Terminal state (post-completion): `"closed"`.
+    defn step(resumeVal) :over(insideStep, sticky, started, waitingPr) {
+        ^?{
+            [!empty sticky]:          sticky;
+            [insideStep]:             Promise.renege@ "Previous Iterator Step Running";
+            ![started]: {
+                insideStep := true;
+                def r: doStep1();
+                insideStep := false;
+                r
+            };
+            ![waitingPr.resolved()]:  Promise.renege@ "Previous Iterator Step Incomplete";
+            : {
+                insideStep := true;
+                def r: doStepN(resumeVal);
+                insideStep := false;
+                r
+            };
+        };
+    };
 
-4. For each segment, compile:
-    - `<::` at the segment's tail: yield the payload out of the segment
-      as its return value; update the enclosing iterator's state variable
-      `__s` to the next segment's label.
-    - Natural completion at the segment's tail: capture the return value
-      of `body` (or `empty` if none); update `__s` to `"closed"`.
+    ^IterP@ step;
+};
+```
 
-5. Produce a stepper function `__stepper(__iter, __resume)`:
-    - Dispatch on `__iter.__s` to the current segment.
-    - Deliver `__resume` at the resumption position of the last site
-      (i.e., as the value of the `<::` expression slot in that segment).
-    - Run the segment to its terminator.
-    - Return the segment's terminal value.
+**Single persistent handler scope.** The runner installs one
+`Effect.Gen ~<*` scope at Call 1, on first entry into `step()` via
+`doStep1`. This scope persists across all subsequent step invocations;
+it is not reopened per step. Its two arms cover the two compiler-emitted
+Gen effect kinds (§6.1.4):
 
-6. Emit the reified generator function whose invocation invokes
-    `ConstructIter` with `__stepper` bound to this stepper.
+- **`Effect.Gen.Yield` arm** -- captures the current `ret` into the
+  runner's `latestRet` slot, resolves the pending `waitingPr` with
+  `Right@ #.value`, and returns `empty` as the arm's discarded scope-
+  value contribution. Because arm-without-`ret` does not terminate the
+  scope per §6.3.2, the scope stays live for the next perform.
+- **`Effect.Gen.Return` arm** -- installs the sticky terminal Promise
+  (`Promise.renege@ #.value`), resolves any outstanding `waitingPr` with
+  `Left@ #.value`, and terminates the scope via `Done@` (§6.4). The
+  runner's step-observation channel is `waitingPr`, not the handler
+  expression's resolved value; the `Done@` payload is discarded per
+  §6.4.1.
 
-----
+**Outstanding-`waitingPr` invariant at Return.** When the body reaches
+`Effect.Gen.Return`, one of two situations holds for the current
+`waitingPr`: either the current step invoked `latestRet(resumeVal)` and
+body ran directly to Return without a Yield in between, or an outer
+non-`Effect.Gen` handler suspended body and the resumption path flowed
+straight to Return. In both cases `waitingPr` is unresolved at Return
+arm entry. The `?{ [!waitingPr.resolved()]: waitingPr% (Left@ #.value); }`
+guard resolves it with the terminal payload; without this, the pending
+Promise the consumer holds would leak as an unresolvable subject.
 
-**Iterator Construction.** Applied at runtime when a generator function
-is invoked.
+**Step-entry guards.** The `step()` function diagnoses two distinct
+consumer-misuse cases; the guarded match dispatches by state:
 
-----
+- **Re-entrancy** -- `insideStep=true` on entry. Any `it%` invocation
+  that arrives while a prior `it%` on the same iterator is still on the
+  sync stack. Covers three distinguishable code shapes with the same
+  runtime signature: body calls its own iterator; an outer non-Gen
+  handler's arm invokes `it%` synchronously during propagation; any
+  downstream sync code reachable from an outer arm's execution invokes
+  `it%`. One diagnostic:
+  `Promise.renege@ "Previous Iterator Step Running"`.
+- **Unawaited prior step** -- `!waitingPr.resolved()` past re-entrancy
+  and past not-started. The consumer received a pending Promise from
+  the prior `it%`, ignored it, and invoked `it%` again before the
+  Promise resolved. Under Foi's synchronous execution model, this
+  arises only when the prior step's body suspended in some outer
+  non-`Effect.Gen` handler introducing asynchrony; the consumer arrived
+  with a next call before the async completed and body resumed to a
+  Gen arm. One diagnostic:
+  `Promise.renege@ "Previous Iterator Step Incomplete"`.
 
-The `ConstructIter(genFn, args)` steps are:
+Guard ordering matters: re-entrancy is checked before unawaited-prior-
+step. During Call 1 re-entrance, both `insideStep=true` and `waitingPr`
+unresolved match; ordering re-entrancy first ensures the more specific
+diagnosis wins per §5 first-match-wins.
 
-1. Allocate a new `Iter` instance `__iter`.
+The `insideStep` flag is set at `step()` entry (immediately before
+`doStep1` or `doStepN`) and cleared before `step()` returns. Under
+synchronous execution, `step()`'s frame is on the sync stack if and
+only if `insideStep=true` at entry; the flag is definitional. The two
+guard signals -- `insideStep` and `!waitingPr.resolved()` -- diagnose
+disjoint consumer mistakes with different remediation paths and are
+not collapsible.
 
-2. Bind the parameters of `genFn` in `__iter`'s environment from `args`
-    per §3.10 call-args processing. These bindings are visible to the
-    generator body when its `"start"` segment runs.
+**Sequential-by-construction.** At most one live-unused `ret` exists at
+any moment per handler scope; each captured `ret` is invoked at most
+once (one-shot); no representable sequence produces out-of-order or
+concurrent effect events. This is a language-level invariant, not a
+runtime property the runner defends. It follows from single-`comp`-per-
+handler (§6.3), delimited-one-shot `ret` (§6.3.2), and Foi's
+synchronous execution model.
 
-3. Set `__iter.__s` to `"start"`.
-
-4. Set `__iter.__stepper` to `genFn`'s reified stepper (produced by
-    `ReifyGenBody` at compile time).
-
-5. Set `__iter.__terminal` to `empty` (unset until the iterator reaches its terminal state).
-
-6. Return `__iter`.
-
-----
-
-**Iterator Step.** Applied at runtime on `iter%` (unary) or `iter% v`
-(binary), per `_percent`-hook dispatch (§6.2), when `iter` is a
-generator-produced Iter. Iters constructed via `Iter@` (§6.5) have a
-trivial step path per §6.5.2 that does not require an abstract-algorithm
-form; binary `iter% v` on such Iters is ill-formed.
-
-----
-
-The `StepIter(iter, resumeVal)` steps are:
-
-1. If `iter.__s` is `"closed"`: return `iter.__terminal`. Any supplied
-    `resumeVal` is discarded (per §6.6.4 post-terminal boundary).
-
-2. Let `outcome` be the result of `iter.__stepper(iter, resumeVal)`. The
-    stepper runs the current segment as follows:
-    - If the segment is `"start"`: `resumeVal` is discarded (per §6.6.4
-      pre-start boundary); the segment runs from the top of `body`.
-    - Otherwise: `resumeVal` is delivered as the value of the last `<::`
-      expression slot; the segment resumes at that position.
-
-3. If the stepper terminated at a `<::` site:
-    - Let `payload` be the yielded value.
-    - `__iter.__s` has been advanced to the next segment's label by the
-      reified transform.
-    - Return `Right@ payload`.
-
-4. If the stepper terminated at the natural end of `body`:
-    - Let `finalReturn` be the value
+**No user-authorable callable-source path.** The final `^IterP@ step`
+invocation exercises the stdlib-internal callable-source path of
+`IterP@` (§6.5.4 NOTE); user code cannot construct an `IterP` from a
+bare callable. The runner is the sole caller of this path in stdlib.
 
 ### §6.7 State
 
@@ -4732,24 +5314,43 @@ bump% 50;    // < 50, 51 >
 
 Inside the block:
 
-- `def prev:: expr` binds `prev` to the observed value of `expr` (a `State` instance) and threads the updated state forward.
-- A bare mid-block statement (`State.put@ ..` above) sequences/chains the expression as a `State` step, threading the updated state forward and discarding the observed value. Explicit `:: expr;` at this position is legal but redundant, because it unwraps/extracts that step's value into the do-comprehension scope, but then discards it. the `def prev:: expr` is the form when you need the unwrapped/extracted value in scope.
-- The terminal expression is `~map`-lifted into the ambient monad. A bare terminal (`prev` above) becomes the block's observed value; the block evaluates to a `State` producing that value while preserving the threaded state.
-- A `::`-prefixed terminal (`::expr`) binds `expr` before the terminal map. For example, the bare `prev;` could have been `::State@ prev`, but that's unnecessary ceremony. Use this form when the terminal expression is itself already lifted as a `State` instance.
+- `def prev:: expr` binds `prev` to the observed value of `expr`
+  (a `State` instance) and threads the updated state forward.
+- A bare mid-block statement (`State.put@ ..` above) sequences/chains
+  the expression as a `State` step, threading the updated state
+  forward and discarding the observed value. Explicit `$expr;` at
+  this position performs the bind non-receivingly -- legal when the
+  step's side effect matters even though its observed value is not
+  needed. `def prev:: expr` is the form when you need the unwrapped
+  observed value in scope.
+- The terminal expression is `~map`-lifted into the ambient monad.
+  A bare terminal (`prev` above) becomes the block's observed value;
+  the block evaluates to a `State` producing that value while
+  preserving the threaded state.
+- A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
+  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
+  Effect.Do.Map% _r` per §3.10.9.4). Use this form when the terminal
+  expression is itself already lifted as a `State` instance; the
+  compiler-synthesized Map tail avoids the double-wrap that a bare
+  terminal would produce.
 
-Example with a `State`-typed terminal, requiring the `::` prefix to avoid double-wrap:
+Example with a `State`-typed terminal, requiring the `$` prefix to
+avoid double-wrap:
 
 ```java
 def compute: State ~<< {
     State.modify@ (+)|1|;
     State.modify@ (*)|3|;
-    ::State.get@
+    $State.get@
 };
 
 compute% 5;    // < 18, 18 >
 ```
 
-Without the `::` on the terminal `State.get@`, the block would produce a `State{ State{...} }`: the terminal map lifting an already-`State` value into another `State` layer. The `::` prefix binds first, so `State.get@` lands at the correct monadic level.
+Without the `$` on the terminal `State.get@`, the block would
+produce a `State{ State{...} }`: the terminal map lifting an
+already-`State` value into another `State` layer. The `$` prefix
+binds first, so `State.get@` lands at the correct monadic level.
 
 Per §3.10.9.4 do-block-compilation split, `State ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
 
@@ -4899,12 +5500,25 @@ task;
 
 Inside the block:
 
-- `def user:: fetchUser(42)` binds `user` to the `Right` payload of the promise returned by `fetchUser(42)`. If the resolved value is `Left@ reason`, the block short-circuits and evaluates to `Promise@ (Left@ reason)`; subsequent statements do not run.
-- A bare mid-block statement sequences the promise step and discards its `Right` value; a `Left` at that step still short-circuits.
-- The terminal expression is `~map`-lifted into the ambient `Promise`, wrapping in `Right`. A bare terminal (`< :user, :orders >` above) produces a `Promise@ (Right@ terminalValue)`.
-- A `::`-prefixed terminal (`::expr`) binds `expr` before the terminal map, avoiding double-wrap when the terminal expression is itself already a `Promise`.
+- `def user:: fetchUser(42)` binds `user` to the `Right` payload of
+  the promise returned by `fetchUser(42)`. If the resolved value is
+  `Left@ reason`, the block short-circuits and evaluates to
+  `Promise@ (Left@ reason)`; subsequent statements do not run.
+- A bare mid-block statement sequences the promise step and discards
+  its `Right` value; a `Left` at that step still short-circuits.
+  Explicit `$expr;` at this position performs the bind non-
+  receivingly -- legal when the step's resolution matters even though
+  its `Right` value is not needed.
+- The terminal expression is `~map`-lifted into the ambient `Promise`,
+  wrapping in `Right`. A bare terminal (`< :user, :orders >` above)
+  produces a `Promise@ (Right@ terminalValue)`.
+- A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
+  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
+  Effect.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
+  terminal expression is itself already a `Promise`.
 
-Each pending promise encountered in the block defers the remaining steps until resolution.
+Each pending promise encountered in the block defers the remaining
+steps until resolution.
 
 Short-circuit example:
 
@@ -5174,9 +5788,7 @@ The `~<*` hook performs each take between iterations; `v` binds to the received 
 
 Unlike the `Promise ~<<` relay pattern above, the block does not itself invoke `take`; the channel LHS supplies the take semantics, and the block observes each payload directly. `Channel` is not admitted on `~<<`; single-operation channel work uses `Promise ~<<` (relay pattern above) rather than `Channel ~<<`.
 
-**NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.<Bind, Map, Return> ~<*` scope over `comp` (§6.3), dispatches on `Effect.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
-
-#### §6.9.5 Multi-Channel Combinators
+**NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do ~<*` scope (prefix-catching `Effect.Do.Bind` and `Effect.Do.Map` per §6.1.4) over `comp` (§6.3), dispatches on `Effect.Do.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
 
 Two named constructors coordinate across a list of channels, each producing a one-shot derived `Channel` that receives the coordination outcome and closes.
 
@@ -5367,7 +5979,7 @@ Semantically, `PushStream ~<*` registers the block body as a subscriber to the s
 
 As a consequence of subscription idempotency, composition patterns that would multiply subscriptions under a naïve counting model (e.g., `sourceSt ~< { sharedInnerSt }` with repeated source deliveries) instead maintain a single subscription per pair. The example in the next NOTE illustrates.
 
-**NOTE:** `~<` on `PushStream` is not equivalent to any of the flatmap variants named in reactive-programming literature (mergeMap, switchMap, concatMap, exhaustMap). Those variants all presuppose that the composition operator drives inner emission; they differ only in *how* driving is scheduled. Foi's execution model separates observation from driving: `~<` composes observation, and driving is the responsibility of whatever produced the inner stream. Users seeking driving-strategy patterns compose them explicitly from combinators (§6.10.4) alongside the driver primitives (`IO`, §6.12) that supply timing and iteration.
+**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do ~<*` scope (prefix-catching `Effect.Do.Bind` and `Effect.Do.Map` per §6.1.4) over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Do.Bind` dispatch's `ret` on the payload (accessed as `#.value` per §6.3.2), wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
 
 To illustrate observation-only composition, consider a shared external inner:
 
@@ -5412,7 +6024,7 @@ subj.st ~map (v) {
 
 **NOTE:** `~<*` LHS shapes under the composition axis (§6 opener). Three shapes participate: an effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3); a `Channel` LHS observes each successful take until the channel closes (§6.9.4); a `PushStream` LHS (this section) subscribes to a producer-broadcast source. All three share the "block body runs per external emission" pattern; they differ in what constitutes an emission, what triggers each emission, and what terminates the composition. Source-side termination varies per LHS (effect-scope end, channel close, stream close); a `Left@ ...` block-terminal unsubscribes the observer only on `PushStream ~<*`. Consumer-driven drainage lives on `~<<` (Iter §6.5.3, List §7.2, PullStream §6.11), not `~<*`.
 
-**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.<Bind, Map, Return> ~<*` scope over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Bind` dispatch's `ret` on the payload, wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
+**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do.<Bind, Map> ~<*` scope over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Do.Bind` dispatch's `ret` on the payload, wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
 
 #### §6.10.4 PushStream Combinators
 
@@ -5901,10 +6513,19 @@ task%;    // 84
 
 Inside the block:
 
-- `def v:: getValue()` binds `x` to the underlying value produced by `getValue()` (an `IO` instance) and sequences its executor into the chain.
-- A bare mid-block statement sequences the IO step and discards its produced value. Explicit `:: expr;` at this position is legal but redundant.
-- The terminal expression is `~map`-lifted into the ambient `IO`. A bare terminal (`v * 2` above) becomes the block's produced value.
-- A `::`-prefixed terminal (`::expr`) binds `expr` before the terminal map, avoiding double-wrap when the terminal expression is itself already an `IO`.
+- `def v:: getValue()` binds `v` to the underlying value produced by
+  `getValue()` (an `IO` instance) and sequences its executor into the
+  chain.
+- A bare mid-block statement sequences the IO step and discards its
+  produced value. Explicit `$expr;` at this position performs the
+  bind non-receivingly -- legal when the step's side effect matters
+  even though its produced value is not needed.
+- The terminal expression is `~map`-lifted into the ambient `IO`.
+  A bare terminal (`v * 2` above) becomes the block's produced value.
+- A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
+  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
+  Effect.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
+  terminal expression is itself already an `IO`.
 
 The Reader environment supplied at `%`-application time is threaded implicitly through every composed step's executor -- each step sees the same environment (see §6.12.4).
 
@@ -6077,7 +6698,9 @@ A companion category -- **ambient effects** -- is exempted from the discipline e
 
 #### §6.13.1 The `:Effects(...)` Clause
 
-An effect set is declared on a function type via `:Effects(...)`, attached to a `deft` function-type expression (§18) between the parameter list and the return type:
+An effect set is declared on a function type via `:Effects(...)`,
+attached to a `deft` function-type expression (§18) between the
+parameter list and the return type:
 
 ```java
 deft AskName(int) :Effects(Ask) ^String;
@@ -6085,21 +6708,34 @@ deft LogTwice(int) :Effects(Log) ^empty;
 deft Composite(int) :Effects(Ask, Retry) ^bool;
 ```
 
-The set expression inside the parens uses the pick-syntax DSL of §6.3.1 verbatim: bare form, brace-enumerated subset, and `&`-prefix inclusion all admitted:
+Each comma-separated entry names an effect-kind path the function
+may perform. Last-segment names carry an implicit `Effect.` prefix
+(`Ask` denotes `Effect.Ask`); explicit dotted paths are admitted for
+sub-namespaced effects:
 
 ```java
-deft WithIO(String) :Effects(&Effect.IO) ^bool;
-deft Mixed(int) :Effects(Ask, Log, &Effect.IO) ^String;
+deft ReadFile(String) :Effects(IO.Read) ^String;
+deft Multi(int) :Effects(Ask, IO.Read, MyModule.CustomOp) ^bool;
 ```
 
-Empty effect set is expressed by omitting the clause; explicit `:Effects()` is legal but redundant:
+Entries prefix-match per §6.1.4: `:Effects(IO)` declares that the
+function may perform `Effect.IO` or any `Effect.IO.*` descendant.
+To narrow, name more-specific paths: `:Effects(IO.Read, IO.Write)`
+declares those two subtrees without also declaring the rest of
+`Effect.IO.*`.
+
+Empty effect set is expressed by omitting the clause; explicit
+`:Effects()` is legal but redundant:
 
 ```java
 deft Pure(int) ^int;                 // implicit :Effects()
 deft AlsoPure(int) :Effects() ^int;  // legal, redundant
 ```
 
-The `:Effects(...)` clause is admitted on `deft` function-type expressions only. It is not admitted directly on `defn`. To attach a declared effect set to a function value, use `:as` with a type that carries the clause:
+The `:Effects(...)` clause is admitted on `deft` function-type
+expressions only. It is not admitted directly on `defn`. To attach a
+declared effect set to a function value, use `:as` with a type that
+carries the clause:
 
 ```java
 deft AskName(int) :Effects(Ask) ^String;
@@ -6229,23 +6865,23 @@ deft LogsProgress(int) :Effects(Log) ^empty;
 
 #### §6.13.6 Interaction With `Gen.` Prefix
 
-A `Gen.`-prefixed type implicitly carries `Effect.Yield` in its declared effect list (§6.6.1). The effect surface of a `Gen.` type is `{Yield} ∪ declared`.
+A `Gen.`-prefixed type's `Effect.Gen.Yield` and `Effect.Gen.Return` performs are compiler-managed and never appear in the type's declared effect list. `Effect.Gen.*` is a compiler-privileged partition (§6.1.4); user source cannot write `:Effects(Effect.Gen...)`, and attempting to do so is a parser-level rejection.
 
-Explicit `:Effects(Yield)` on a `Gen.` type is legal but redundant. Additional non-Yield effects are added via explicit clause and merge with the implicit Yield:
+The effect surface of a `Gen.` type is exactly its declared `:Effects(...)` list, restricted to non-`Effect.Gen` kinds. Non-`Effect.Gen` effects are added via explicit clause:
 
 ```java
-// effective: {Yield}
-deft Gen.Numbers(int, int) ^Iter;
+// declared effects: (none)
+deft Gen.Numbers(int, int) ^IterP;
 
-// effective: {Yield, Ask}
-deft Gen.AskingNumbers(int) :Effects(Ask) ^Iter;
+// declared effects: {Ask}
+deft Gen.AskingNumbers(int) :Effects(Ask) ^IterP;
 ```
 
-The emit-edge rule of §6.13.2 applies uniformly: a generator whose body performs `Effect.Ask` must attach (via `:as`) a `Gen.`-prefixed type whose declared effects include `Ask`. `Yield` performs (via `<::`) are covered by the implicit Yield in every `Gen.` type; the emit-edge declaration for Yield is discharged by the `Gen.` prefix itself.
+The emit-edge rule of §6.13.2 applies uniformly to non-`Effect.Gen` performs: a generator whose body performs `Effect.Ask` must attach (via `:as`) a `Gen.`-prefixed type whose declared effects include `Ask`. `Effect.Gen.Yield` performs (via `<::`) and compiler-synthesized `Effect.Gen.Return` performs (at tail positions per §6.6.1) do not require declaration; both are covered by the `Gen.` prefix itself.
 
-Coverage for `Yield` is discharged by the reification transform's internal `Effect.Yield ~<*` scope (§6.6.6): every yield performed inside a generator body is caught by the transform-installed handler before any escape. Yield never propagates past the generator's own type surface.
+Coverage for `Effect.Gen` is discharged by the runner's internal `Effect.Gen ~<*` scope (§6.6.1, §6.6.6): every `Yield` and `Return` performed inside a generator body is caught by the runner-installed handler before any escape. `Effect.Gen` never propagates past the generator's own type surface.
 
-Non-Yield effects performed inside a generator body propagate normally: the internal `Effect.Yield ~<*` scope is narrowed to Yield only (per §6.3.1 narrowing), so a `Effect.Ask` perform in the generator body escapes past the scope and follows the standard tracking discipline, resolving at whichever handler in the generator's dynamic call stack catches `Ask`.
+Non-`Effect.Gen` effects performed inside a generator body propagate normally: the internal `Effect.Gen ~<*` scope is prefix-matched to `Effect.Gen` only (per §6.1.4 unified prefix rule and §6.3.1 narrowing), so an `Effect.Ask` perform in the generator body escapes past the scope and follows the standard tracking discipline, resolving at whichever handler in the generator's dynamic call stack catches `Ask`.
 
 ### §7 Loops and Comprehensions
 
@@ -6343,7 +6979,7 @@ pairs ~each (<:k, :v>) { log(k, v); };  // destructure block-defs
 
 A Tuple value *is* a `List` monadic value directly -- `List` is the monadic type-name for Foi's positional-Tuple shape (§1.5).
 
-There is no wrapping step: `< 2, 4 >` is a `List` value; `List` on the LHS of `~<<` names the type-level namespace whose `~<` and `~map` hooks dispatch the composition.
+There is no wrapping step: `< 2, 4 >` is a `List` value; `List` on the LHS of `~<<` names the type-level namespace whose `~<<` hook dispatches the composition.
 
 ```java
 def xs: < 2, 4 >;
@@ -6366,36 +7002,18 @@ List ~<< (x:: xs, y:: ys) {
 // < 9, 10, 11, 12 >
 ```
 
-Under the do-block compilation split (§3.10.9.4), each `::` binding lowers to a `~<` (flatMap/bind) call on the LHS's owning namespace, and the terminal expression lowers to a `~map` call (or a `~<` call for a `::`-prefixed terminal). The two-binding block above lowers as:
+Under the do-block compilation split (§3.10.9.4), `List` declares a `~<<` hook (body below); `List ~<<` composition selects the override route. Each `def x::` binding and each `$expr;` mid-block statement compiles to an `Effect.Do.Bind%` perform on the source expression; a bare terminal compiles to an `Effect.Do.Map%` perform; a `$`-prefixed terminal compiles to a compiler-synthesized `def _r: Effect.Do.Bind% expr; Effect.Do.Map% _r` (Bind first, then Map lift). The hook body opens an inner `Effect.Do ~<*` scope, drives the compiled `comp` under handler control via cartesian iteration, and resolves `Right@ list` at natural completion or `Left@ partial` on `Done@` early-exit (with empty-elision per §7.9).
 
-```java
-List ~<< {
-    def x:: xs;
-    def y:: ys;
-    x + y;
-};
+The observable behaviors of `List ~<<` follow directly from this dispatch:
 
-// lowers to:
+- **Successive-value binding.** `def x:: expr` binds `x` to each successive value drawn from `expr`. Each Bind perform's payload is the source list; the hook resumes `comp` once per element in cartesian order.
+- **Cartesian composition.** Multiple `def ::` bindings compose cartesian-wise. Each pass through `comp` fixes one coordinate per Bind depth; the hook re-runs `comp` under a fresh handler installation per pass, advancing an odometer across the source lists.
+- **Terminal collection.** Each iteration's terminal expression contributes to the accumulated result. A bare terminal (Map perform) is lifted into the collection wrap as one element. A `$`-prefixed terminal (Bind + synthesized Map tail) iterates the Bind's payload and lifts each drawn element into the wrap -- for a Tuple-shaped payload, the observable effect is to spread the payload's elements into the accumulation rather than collect the whole Tuple as one element.
+- **Bare mid-block statement.** A bare mid-block statement runs as raw code inside `comp`; it neither performs nor threads its value. Explicit `$expr;` at this position performs Bind non-receivingly -- legal when the statement's perform semantic matters even though its resume-value is not needed.
+- **`$`-prefixed terminal.** A `$`-prefixed terminal (`$expr`) compiles to a Bind on `expr` followed by an implicit Map on the resumed value (§3.10.9.4). For iterating outers like `List`, this spreads `expr`'s produced Tuple into the enclosing accumulation rather than collecting `expr` as one element.
+- **Drainage shape.** The comprehension resolves `Right@ list` at natural completion; `Done@` early-exit resolves `Left@ partial` where `partial` is the accumulator up to and including the `Done@` iteration's contribution, per §7.9's empty-elision refinement.
 
-xs ~< (x) {
-    ys ~map (y) {
-        x + y;
-    };
-};
-// < 9, 10, 11, 12 >
-```
-
-Iteration behavior at `~<<` on `List` is **emergent from `List`'s `~<` and `~map` hooks** (§7.3, §7.4), not intrinsic to the do-block form. `~<<` on `List` has no loop construct of its own; the block body is a callback that `List.~<` invokes once per source element, and each inner block runs the next binding's `~<` inside that outer callback.
-
-The observable behaviors follow directly from this lowering:
-
-- **Successive-value binding.** `def x:: expr` binds `x` to each successive value pulled from `expr` because `List.~<` invokes the callback per element; each invocation binds one element.
-- **Cartesian composition.** Multiple `def ::` bindings compose as nested iterations because the inner `~<` sits INSIDE the outer `~<`'s callback: for each outer element, the inner traversal runs to completion, producing a cartesian traversal.
-- **Terminal collection.** Each iteration's terminal value is collected as one element into the result Tuple because `~map` sits at the innermost position of the nested lowering, collecting one element per innermost invocation.
-- **Bare mid-block statement.** A bare mid-block statement lowers to a `~<` call that discards its produced value; it sequences a step without threading its result. Explicit `:: expr;` at this position is legal but redundant.
-- **`::`-prefixed terminal.** A `::`-prefixed terminal (`::expr`) lowers to `~<` instead of `~map`, binding `expr`'s produced Tuple into the enclosing chain rather than collecting `expr` as one element. Use this when the terminal expression is itself already a Tuple to avoid a nested-Tuple result.
-
-**Nested-Tuple concern.** Because the terminal `~map` collects each iteration's terminal value as *one element* of the result Tuple, a terminal expression that is itself a Tuple produces a Tuple-of-Tuples. The `::` prefix skips the lift:
+**Nested-Tuple concern.** Because the default terminal Map arm collects each iteration's terminal value as *one element* of the result Tuple, a terminal expression that is itself a Tuple produces a Tuple-of-Tuples. The `$` prefix skips the lift:
 
 ```java
 defn tup(x, y) ^< x + y >;
@@ -6403,10 +7021,10 @@ defn tup(x, y) ^< x + y >;
 List ~<< (x:: xs, y:: ys) {
     tup(x, y);      // terminal produces Tuple; nested result
 };
-// < <9>, <10>, <11>, <12> >   -- likely a mistake
+// < <9>, <10>, <11>, <12> >   -- likely a mistake!
 
 List ~<< (x:: xs, y:: ys) {
-    ::tup(x, y);    // ::-prefix binds instead of collecting
+    $tup(x, y);    // $-prefix binds instead of collecting
 };
 // < 9, 10, 11, 12 >
 ```
@@ -6425,7 +7043,7 @@ xs ~map (x) { x * 10; };
 // < 20, 40 >
 ```
 
-Prefer `~map` for the single-source case; `~<<` earns its keep when multiple sources need to be accessed in a shared scope.
+Prefer `~map` for the single-source case; `~<<` earns its keep when multiple sources need cartesian access in a shared scope.
 
 **Compound-LHS `List{Promise}`.** When the source list holds promises and the block body should run per element only after each element's promise resolves (aka, "eager async iteration"), the compound-LHS form `List{Promise} ~<<` triggers per-element awaiting (per §6 opener). The whole comprehension resolves to a promise that settles once the list is drained:
 
@@ -6455,9 +7073,9 @@ If any element's promise resolves with `Left@ reason`, the composition short-cir
 
 For the parallel case -- fire every request concurrently and wait for the full batch -- use `Promise.all@` (§6.8.4) instead.
 
-**Not a separate hook.** `List{Promise} ~<<` shares the single `List~<<` hook (per §3.1.1's one-hook-per-operator-per-namespace rule); the hook's per-shape behavior is selected via the trailing dispatch-type value `ty` (§3.10.9.7). At a `List` call site, `ty` is `< List >` and the hook's plain arm handles ordinary iteration; at a `List{Promise}` call site, `ty` is `< List, Promise >` and the hook's compound-LHS arm handles per-element awaiting. There is no grammar surface for a `List{Promise}~<<` declaration; the compound-LHS specialization is authored as a `?(ty)` arm inside `List~<<`'s body.
+**Not a separate hook.** `List{Promise} ~<<` shares the single `List~<<` hook (per §3.1.1's one-hook-per-operator-per-namespace rule); the hook's per-shape behavior is selected via the trailing dispatch-type value `ty` (§3.10.9.7). At a `List` call site, `ty` is `< List >` and the hook's plain arm handles ordinary cartesian iteration; at a `List{Promise}` call site, `ty` is `< List, Promise >` and the hook's compound-LHS arm delegates the per-element awaiting to `IterP ~<<` (§6.5.6) -- wrapping the source list via `IterP@` (§6.5.4) and driving the block through drainage. Natural completion resolves `Promise{Right{accumulated}}`; mid-stream Left short-circuit resolves `Promise{Left{reason}}`; `Done@` early-exit resolves `Promise{Left{partial}}` with §7.9's empty-elision applied to the accumulator. There is no grammar surface for a `List{Promise}~<<` declaration; the compound-LHS specialization is authored as a `?(ty)` arm inside `List~<<`'s body.
 
-**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as that iteration's terminal contribution, dispatched exactly as a normal terminal expression would be. Under the default `~map`-lift, the payload becomes one appended element. Under a `::`-prefixed terminal (which binds/flattens instead), the payload is flattened in via `~<`; in this case both the normal terminal and the `Done@` payload must be shape-compatible with the monad (Tuple-shaped for `List`).
+**Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as that iteration's terminal contribution, dispatched exactly as a normal terminal expression would be. Under the default `~map`-lift, the payload becomes one appended element. Under a `$`-prefixed terminal (which binds/flattens instead), the payload is flattened in via `~<`; in this case both the normal terminal and the `Done@` payload must be shape-compatible with the monad (Tuple-shaped for `List`).
 
 ```java
 def xs: < 1, 2, 3, 4 >;
@@ -6469,7 +7087,7 @@ List ~<< {
         : x * 10
     }
 };
-// < 10, 20, 5 >
+// Left{<10, 20, 5>}
 
 List ~<< {
     def x:: xs;
@@ -6478,21 +7096,172 @@ List ~<< {
         : x * 10
     }
 };
-// < 10, 20, <5,7> >
+// Left{<10, 20, <5,7>>}
 
 List ~<< {
     def x:: xs;
 
-    // notice :: on next line
-    ::?{
+    // notice $ on next line
+    $ ?{
         [x ?> 2]: Done@ <5,7>;
         : < x * 10 >
     };
 };
-// < 10, 20, 5, 7 >
+// Left{<10, 20, 5, 7>}
 ```
 
-**Compilation.** Per §3.10.9.4 do-block-compilation split, `List ~<<` dispatches through `List`'s stdlib-declared `~<<` hook (§3.1.1.3); the hook's observable behavior at plain-`List` matches the nested `~<` / `~map` lowering shown above.
+**Hook body.** The `List~<<` hook body dispatches on `typ` to select between plain-cartesian iteration (via `listBindImpl`) and outer-Promise-list per-element awaiting (via `listPromiseBindImpl`):
+
+```java
+defn List~<<(comp, typ) {
+    ^?(typ){
+        [< List >]: listBindImpl(comp);
+        [< List, Promise >]: listPromiseBindImpl(comp);
+        : Left@ "Invalid LHS"
+    };
+};
+
+defn listBindImpl(comp) {
+    def results: <>;
+    def sources: <>;
+    def coord: <>;
+    def curDepth: 0;
+    def firstPass: true;
+    def pending: empty;
+    def more: true;
+    def earlyExit: false;
+
+    ^runPass();
+
+    defn runPass()
+        :over (curDepth, pending, sources, coord, results, firstPass, more, earlyExit)
+    {
+        curDepth := 0;
+        pending := empty;
+        Effect.Do ~<* (eff:: comp(), ret) {
+            :: ?(eff){
+                [?as Effect.Do.Bind]: {
+                    def raw: #.value;
+                    ?(raw){
+                        [?as Done]: {
+                            more := false;
+                            earlyExit := true;
+                            pending := raw.value;
+                            Done@ empty
+                        };
+                        : {
+                            def d: curDepth;
+                            curDepth := curDepth + 1;
+                            ?[firstPass]: {
+                                sources := < &sources, raw >;
+                                coord := < &coord, 0 >;
+                            };
+                            ret(sources[d][coord[d]]);
+                            empty
+                        }
+                    }
+                };
+                [?as Effect.Do.Map]: {
+                    def raw: #.value;
+                    ?(raw){
+                        [?as Done]: {
+                            def v: raw.value;
+                            more := false;
+                            earlyExit := true;
+                            pending := ?{
+                                [v ?= empty]: <>;
+                                : < v >
+                            };
+                        };
+                        : pending := < raw >;
+                    };
+                    Done@ empty
+                };
+            };
+        };
+
+        results := < &results, &pending >;
+        firstPass := false;
+        advance();
+        ^?{
+            [more]: runPass();
+            [earlyExit]: Left@ results;
+            : Right@ results
+        };
+    };
+
+    defn advance() :over (coord, more) {
+        def d: size(coord) - 1;
+        def carrying: true;
+        ?[carrying ?and d ?>= 0] ~each {
+            def nextI: coord[d] + 1;
+            ?{
+                [nextI ?< size(sources[d])]: {
+                    coord := replaceAt(coord, d, nextI);
+                    carrying := false;
+                };
+                : {
+                    coord := replaceAt(coord, d, 0);
+                    d := d - 1;
+                };
+            };
+        };
+        ?[carrying]: more := false;
+    };
+
+    defn replaceAt(list, idx, val) {
+        ^< &list, %idx: val >;
+    };
+};
+
+defn listPromiseBindImpl(comp) {
+    ^(Effect.Do ~<* (eff:: comp(), ret) {
+        :: ?(eff){
+            [?as Effect.Do.Bind]: Done@ #.value;
+            : empty
+        };
+    })
+        ~< (srcList) {
+            def acc: <>;
+            def earlyExit: false;
+            (~cata)(
+                (IterP ~<< (v:: IterP@ srcList) {
+                    (Effect.Do ~<* (eff:: comp(), ret) {
+                        :: ?(eff){
+                            [?as Effect.Do.Bind]: { ret(v) };
+                            [?as Effect.Do.Map]: {
+                                Done@ #.value
+                            };
+                        };
+                    })
+                        ~< (res) {
+                            ?(res){
+                                [?as Done]: {
+                                    earlyExit := true;
+                                    ?[res.value ?!= empty]:
+                                        acc := <&acc, res.value>;
+                                };
+                                : ?[!earlyExit]: acc := <&acc, res>;
+                            };
+                            Promise.honor@ empty;
+                        }
+                }),
+                defn(leftVal) :over (acc, earlyExit) ^?{
+                    [earlyExit]: Promise.renege@ acc;
+                    : Promise.renege@ leftVal
+                },
+                defn(_rv) :over (acc, earlyExit) ^?{
+                    [earlyExit]: Promise.renege@ acc;
+                    : Promise.honor@ acc
+                }
+            );
+        };
+};
+```
+
+**Plain-cartesian arm (`listBindImpl`).** Runs `comp` under fresh `Effect.Do ~<*` scope installations, once per coordinate position in the cartesian product. The first pass discovers source lists via each `Effect.Do.Bind` perform's payload and initializes an odometer `coord`; subsequent passes advance the odometer and re-run `comp` with `sources[d][coord[d]]` substituted at each Bind depth. Ret is fire-and-forget per §6.3.2 (D5); the Bind arm's normal terminal is bare `empty` (arm-without-`Done@` per §6.3.2 D4) so the scope persists across multiple Bind arm firings within a single pass. The Map arm terminates the scope via `Done@`, contributing the pass's terminal value to `pending`. Both arms inspect their payloads for `Done@` shape to catch early-exit contributions: a `$Done@` at terminal enters via Bind (payload is Tuple-shaped, assigned directly to `pending` for spread into `results`); a bare-terminal `Done@` enters via Map (payload wrapped as `< payload >` in `pending`, or `<>` under empty-elision per §7.9). Either Done@ path sets `earlyExit := true` and `more := false`, terminating the scope and short-circuiting further passes. After the scope returns, `pending` spreads into `results`; at runPass return, `[more]` continues to the next pass, `[earlyExit]` returns `Left@ results`, and the natural path returns `Right@ results`.
+
+**Outer-Promise-list arm (`listPromiseBindImpl`).** Extracts the source list via a discovery `Effect.Do ~<*` scope catching the first Bind's payload, then drives `IterP ~<<` over `IterP@ srcList` for per-element awaiting. Each iteration installs a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the awaited element into the block body; the block-body terminal Promise is captured via the chained `~<`. The chain's `res` is inspected for `Done@`: on Done@, `earlyExit := true` and `res.value` appends to `acc` unless empty (§7.9 empty-elision); on non-Done@, `!earlyExit` gates further growth. Terminal shape via `~cata` (§7.7): `IterP ~<<` natural completion (Right arm) resolves `Promise{Right{acc}}` when `!earlyExit`, else `Promise{Left{acc}}`; cargo Left short-circuit (Left arm) resolves `Promise{Left{leftVal}}` when `!earlyExit`, else `Promise{Left{acc}}`. Once `Done@` fires, subsequent IterP iterations still run (the outer `~<` fires per step), but `!earlyExit` prevents further accumulator growth; the final terminal shape is delivered at `IterP ~<<` completion.
 
 #### §7.3 `~<`
 
@@ -6962,13 +7731,15 @@ The comprehension's terminal-handler operates on the payload uniformly regardles
 **Concrete dispatch.** Applying the uniform framing to each comprehension:
 
 - **`~each` (§7.1).** Terminal-semantic: discard. `Done@` payload: discarded; loop stops.
-- **`~<<` on `List` (§7.2).** Terminal-semantic: `~map`-lift (or `~<`-bind under `::`-prefixed terminal). `Done@` payload: lifted or bound identically, then stop.
+- **`~<<` on `List` (§7.2).** Terminal-semantic: `~map`-lift (or `~<`-bind under `$`-prefixed terminal). `Done@` payload: lifted or bound identically, then stop.
 - **`~<` (§7.3).** Terminal-semantic: spread into result. `Done@` payload: spread identically, then stop. Payload must be List-shaped.
 - **`~map` (§7.4).** Terminal-semantic: collect as one element. `Done@` payload: collected as one final element, then stop.
 - **`~filter` (§7.5).** Terminal-semantic: boolean predicate decision. `Done@` payload: decision for the terminating iteration (`Done@ true` includes, `Done@ false` excludes), then stop. Non-boolean payload is a shape mismatch.
 - **`~fold` / `~foldR` (§7.6).** Terminal-semantic: new accumulator. `Done@` payload: becomes final accumulator (result), then stop.
 - **`~cata` (§7.7).** Same as `~fold`.
 - **`~ap` (§7.8).** No per-element iteration; no `Done@` interpretation. A `Done@`-shaped value flowing through is treated as an ordinary value.
+
+**Empty-elision at accumulator-carrying `~<<` drainage.** When `Done@` fires early-exit inside a `~<<` drainage that carries an accumulator (`List` and `List{Promise}` on §7.2), the payload is folded into the partial accumulator per the comprehension's terminal-semantic, with one refinement: bare `Done@` and `Done@ empty` drop the payload rather than appending `empty` as a hanging element. `Done@ v` (`v` non-empty) appends `v` as one element via the default terminal-semantic; `$Done@ tup` spreads `tup`'s elements into the accumulator; `$Done@ <>` naturally contributes nothing. `Iter` (§6.5.3) and `IterP` (§6.5.6) have no accumulator; their drainage-Left carries the payload directly (`Left@ payload`, or `Promise{Left{payload}}` for `IterP`), with bare `Done@` and `Done@ empty` resolving `Left@ empty` (or `Promise{Left{empty}}` for `IterP`).
 
 **Nested comprehensions.** `Done@` terminates the innermost enclosing comprehension only. To propagate an early exit through multiple nesting levels, each outer comprehension's iteration must inspect its inner result and issue its own `Done@` accordingly.
 

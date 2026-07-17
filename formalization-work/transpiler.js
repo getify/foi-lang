@@ -172,7 +172,7 @@ var NAMED_UNARY_OPS = {
 	"!empty": x => "(" + x + " != null)",
 };
 
-var ADD_OPS = { "+": "+", "-": "-", "$+": "+" };
+var ADD_OPS = { "+": "+", "-": "-" };
 var MUL_OPS = { "*": "*", "/": "/" };
 
 var CMP_OPS = {
@@ -283,7 +283,6 @@ var OP_FUNC_TABLE = {
 	"!empty": { kind: "unary", render: x => "(" + x + " != null)" },
 	"+":   { kind: "fold",  op: "+" },
 	"-":   { kind: "fold",  op: "-" },
-	"$+":  { kind: "fold",  op: "+" },
 	"*":   { kind: "fold",  op: "*" },
 	"/":   { kind: "fold",  op: "/" },
 	"?and":{ kind: "fold",  op: "&&" },
@@ -1869,11 +1868,11 @@ var renderPipelineBody = (node, outerSet, innerTierPrelude, precondPrelude, recu
 //     the user-side `(?in)(topic, coll)` would produce.
 //
 // Ops outside these three sets — ?as / !as (static-checker
-// layer), ?$= / !$= (set equality, out of scope), or anything
-// else unrecognized — return null from renderDepAtom, triggering
-// whole-node fallback in the DepMatchExpr handler. Partial
-// lowering of an OR-joined atom list silently changes semantics;
-// granular fallback at the atom level isn't safe here.
+// layer) or anything else unrecognized — return null from
+// renderDepAtom, triggering whole-node fallback in the
+// DepMatchExpr handler. Partial lowering of an OR-joined atom
+// list silently changes semantics; granular fallback at the
+// atom level isn't safe here.
 //
 // `#` inside atoms: the topic is implicit on each op's LHS, so
 // the language treats `#` inside an atom as semantically invalid.
@@ -1942,7 +1941,7 @@ var renderDepAtom = (atom, atomDispatch) => {
 		return NAMED_UNARY_OPS[op]("__topic");
 	}
 
-	// ?as / !as, ?$= / !$=, anything else — whole-node fallback.
+	// ?as / !as, anything else — whole-node fallback.
 	return null;
 };
 
@@ -3948,9 +3947,9 @@ var handlers = {
 	// → empty → null semantic.
 	//
 	// Fallback granularity: whole node, on any atom returning
-	// null from renderDepAtom (?as / !as, ?$= / !$=, unrecognized
-	// op). Skipping an OR-list atom silently changes semantics
-	// so partial lowering isn't safe.
+	// null from renderDepAtom (?as / !as, unrecognized op).
+	// Skipping an OR-list atom silently changes semantics so
+	// partial lowering isn't safe.
 	DepMatchExpr(node, recur) {
 		var topicStr = recur(node.topic);
 

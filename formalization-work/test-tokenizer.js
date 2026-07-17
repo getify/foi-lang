@@ -1186,7 +1186,7 @@ async function runTests() {
 		defn subscribe(pr,cb) :over (subscribers) {
 			?{
 				?[subscribers ?has pr]: {
-					def cbs: subscribers[pr] $+ < cb >;
+					def cbs: <[ &subscribers[pr], cb ]>;
 					subscribers := < &subscribers, %from: cbs >;
 				}
 				?: {

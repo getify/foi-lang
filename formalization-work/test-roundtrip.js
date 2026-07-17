@@ -359,7 +359,7 @@ var handlers = {
 		//   - properties present → ".<a,b>" form
 		//   - range present     → ".[range]" form
 		//   - op === "[]"       → empty-bracket form
-		//   - op otherwise      → bare-op form ("+", "$+", etc.)
+		//   - op otherwise      → bare-op form ("+", etc.)
 		// Optional trailing "'" (primed). Then surrounding parens
 		// come from node.delims via gapFill — UNLESS the node is
 		// synthetic (from PrefixCallSuffix bare-op shortcut), in

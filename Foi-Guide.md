@@ -1846,21 +1846,27 @@ def uniques: <[ &something, &another ]>;
 
 All syntax rules/variation of Tuple definition `<    >` still apply inside the `<[    ]>`, including use of the `&` pick sigil (but *not* Record `%` sigil); as Sets *are* Tuples, not Records, field names are not allowed.
 
-Unlike `+` which merely concatenates, the `$+` operator acts as a unique-only Set-append operation:
+Unlike `+` which merely concatenates, to unique-append two or more Sets (unique-element Tuples), spread both into a fresh Set literal; the `<[ ... ]>` form deduplicates on construction:
 
 ```java
 def numbers: <[ 4, 5, 5, 6 ]>;
 
-def moreNumbers: numbers $+ < 6, 7 >;
+def moreNumbers: <[ 6, 7, 7 ]>;
 
-moreNumbers;                // < 4, 5, 6, 7 >
+def digits: <[
+    0, 1, 1, 2, 3,
+    &numbers, 6, &moreNumbers,
+    8, 9
+]>;
+
+digits;    // < 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 >
 ```
 
-**Warning** The `$+` operator only works on Tuples (Sets), not Records.
+**Warning** The `<[ ... ]>` set literal deduplication applies to Tuple content only, not Records.
 
-Set equality comparison deserves special attention. Since Sets are merely a construction form for Tuples, the `?=` will perform Tuple equality comparison, where order matters. This may produce undesired results (false negatives).
+Set equality comparison deserves special attention. Since Sets are merely a construction form for Tuples, the `?=` will perform Tuple equality comparison, where order matters. This would likely produce undesired results (false negatives).
 
-As such, the `?$=` (set equality) operator, and the corresponding `!$=` (set non-equality), perform unordered comparison of Sets (Tuples):
+Instead, use the `setEq(..)` n-ary function, which takes two or more *sets* (tuples) and returns `true` if their contents are set-wise equal (structurally), without considering ordering.
 
 ```java
 def set1: <[ 4, 5, 5, 6 ]>;     // < 4, 5, 6 >
@@ -1869,11 +1875,11 @@ def set3: <[ 6, 4, 5, 0 ]>;     // < 6, 4, 5, 0 >
 
 set1 ?= set2;                   // false
 
-set1 ?$= set2;                  // true
-set1 !$= set3;                  // true
+setEq(set1,set2);               // true
+setEq(set1,set2,set3);          // false
 ```
 
-**Note:** Unordered (Set equality) comparison is slower than ordered comparison (Tuple equality). This cost is worth paying if you really need to compare two Sets, but it may be worth examining if a different approach is feasible.
+**Note:** `setEq(..)` comparison is slower than `?=` Tuple equality. This cost is worth paying if you really need to compare two Sets, but it may be worth examining if a different approach is feasible.
 
 ## Defining Functions
 
@@ -2823,7 +2829,7 @@ xs ~< (x) {
 // < 9, 10, 11, 12 >
 ```
 
-But for the *do comprehension* form, we ostensibly cannot control the final step's behavior:
+But for the *do comprehension* form, we ostensibly cannot control the final step's behavior -- it always `map(..)`s, generally for convenience instead of requiring every terminal to re-wrap:
 
 ```java
 List ~<< (x:: xs, y:: ys) {
@@ -2832,36 +2838,36 @@ List ~<< (x:: xs, y:: ys) {
 // < < 9 >, < 10 >, < 11 >, < 12 > >     <-- oops!
 ```
 
-So here's some workarounds:
+So here are some workarounds:
 
 ```java
 List ~<< (x:: xs, y:: ys) {
-    tup(x,y).0;         // ugh!
+    tup(x,y).0          // ugh!
 };
 // < 9, 10, 11, 12 >
 
 
 List ~<< (x:: xs, y:: ys) {
     def v:: tup(x,y);   // meh
-    v;
+    v
 };
 // < 9, 10, 11, 12 >
 ```
 
-But these are a bit annoying, right?!
+But these are a bit verbose/annoying, right?!
 
-When you need to *unwrap* the final value, there's a special syntactic shortcut, a prefix of `::` on the final expression:
+When you need to prevent the double-wrapping, prefix the final expression with `$`:
 
 ```java
 List ~<< (x:: xs, y:: ys) {
-    ::tup(x,y);         // <-- notice the ::
+    $tup(x,y);          // <-- notice the $
 };
 // < 9, 10, 11, 12 >
 ```
 
-This special `::` usage (without a `def`) may only prefix the **final expression** in the *iteration* block of the *do comprehension*.
+The `$` prefix on the final expression tells the *do comprehension* to bind (chain via `~<`) instead of lift-and-wrap (via `~map`). You can also think about it as skipping the automatic wrapping that would otherwise occur.
 
-You can think about this `::` as instructing the *do comprehension* to perform a final `~<` (instead of `~map`). Or you can think about it as skipping the automatic value wrapping that would otherwise occur.
+**Note:** The `$` sigil is also usable at mid-block positions -- `$expr;` performs a bind without receiving the value into a named slot. It's the sibling of `def x:: expr`: both perform binds, but `$expr` doesn't need a receiving name.
 
 ----
 
@@ -3103,6 +3109,7 @@ Id ~<< (x:: incM(1), y:: doubleM(x)) {
 };
 // Id{10}
 
+// or:
 
 Id ~<< {
     def x:: incM(1);
@@ -3116,7 +3123,7 @@ Id ~<< {
 
 In these snippets, the only substantive difference from the list comprehension form is the `Id` (monad type) being passed as the first (*range*) operand to `~<<`. This provides the *type* of monad to wrap (via its `@` unit constructor) around the final computed value. Remember: if omitted, a general list (Tuple) type is assumed, which is *not* desired here.
 
-Don't forget the special `::` prefix on the final expression, in case you need to omit the automatic monadic type wrapping:
+Don't forget the special `$` prefix on the final expression, in case you need to omit the automatic monadic type wrapping:
 
 ```java
 defn compute(x,y) ^Id@ ((3 * x) + y);
@@ -3131,7 +3138,7 @@ Id ~<< {
 Id ~<< {
     def x:: incM(1);
     def y:: doubleM(x);
-    ::compute(x,y);   // <-- notice ::
+    $compute(x,y);   // <-- notice $
 };
 // Id{10}
 ```
@@ -3613,20 +3620,18 @@ As such, there are a variety of language features for *managing* concurrency. Th
 
 The most basic component of **Foi** concurrency/asynchrony is `Promise`. It resembles promises in other languages (JS, etc), but has some important differences.
 
-Most importantly, `Promise` is a monad. It's kind of like the `Id` monad (it just holds a single value), except it starts out in a *pending* state where it doesn't yet hold any value. Any operations (`~map`, `~<`) are deferred while a promise is pending.
+Most importantly, `Promise` *transforms over* `Either`: the value slot inside a `Promise` is always `Right@ v` (fulfillment) or `Left@ reason` (rejection). Composition sees through the `Right` branch to the underlying value; a `Left` short-circuits the chain. `Promise` has no separate rejection channel -- success and failure are entirely the two `Either` branches.
 
-Once the promise is resolved, any deferred operations are immediately (synchronously) performed. From then onward, the promise remains permanently in the *resolved* state, and any operations against it are evaluated synchronously.
+The async layer sits on top of that. A `Promise` may already be *resolved* at construction, or *pending* awaiting an external resolution. Operations (`~map`, `~<`) composed against a pending promise are deferred; once the promise resolves, deferred operations fire synchronously against the resolved `Either`, and any further operations run synchronously from then on.
 
-A `Promise` always carries an `Either` -- `Right` for fulfillment, `Left` for rejection.
-
-You *can* construct a `Promise` instance that's already resolved. The general-form constructor takes an `Either`:
+You *can* construct a `Promise` instance that's already resolved. The general-form unit constructor takes an `Either`:
 
 ```java
 def pr: Promise@ (Right@ 21);
 // Promise{Right{21}}
 ```
 
-More commonly, use the named sugars `Promise.honor@` (wraps in `Right`) or `Promise.renege@` (wraps in `Left`):
+More commonly, use the named unit constructors `Promise.honor@` (wraps in `Right`) or `Promise.renege@` (wraps in `Left`):
 
 ```java
 def pr: Promise.honor@ 21;
@@ -3735,7 +3740,7 @@ Promise ~<< {
 
 If the promises returned from `getCacheData()` or the `~cata` operation are pending when encountered, the rest of the *do comprehension* block is suspended until the promise resolves. `Promise ~<<` is Either-aware -- `::` binds see through `Right` to the underlying value, and a `Left` mid-chain short-circuits the block.
 
-**Note:** This kind of code may be familiar/recognizable as "async..await" style in JS.
+**Note:** `async..await` in JS (and other languages) *is* `Promise ~<<` do-notation. `await expr` is bind on the Promise monad -- the same operation `def x:: expr` performs inside the block above. What those languages present as dedicated asynchrony sugar is Promise's monadic do-notation with the monad hidden behind a keyword.
 
 #### Eager Asynchronous Iteration
 
@@ -4786,7 +4791,7 @@ Unlike a `Promise` (which resolves once and permanently) or a `PushStream` (whos
 
 However, iterators connect to a fixed source (tuple) or control a [generator invocation](#generator-invocation); `PullStream` only connects opaquely to a buffer (fed by a `PushStream`). Iterators are also non-monadic: there's no `~<` or `~map` defined on them. That said, iterator composition re-uses the `~<<` do-form (borrowed from monadic structures), to drain the iterator.
 
-Iterators may be explicitly constructed via `Iter@`, or are returned from invoking a generator. Both share the same stepping interface; generators additionally allow two-way value flow via a resume-value channel.
+**Foi** provides two peer iterator namespaces: `Iter` (sync) and `IterP` (async). Both share the same stepping interface -- unary `%` to advance, sticky terminal on exhaustion -- and both may be drained via `~<<`. They differ in their step-envelope shape: `Iter` returns bare `Right@`/`Left@`, while `IterP` returns Promise-wrapped step envelopes. Explicit construction uses `Iter@` for `Iter` (Tuple sources) or `IterP@` for `IterP` (`List{Promise}` sources); generators (covered in the next section) produce an `IterP`. Generator-attached `IterP` iterators also allow two-way value flow via argument to the `%` iterator stepping.
 
 ### Constructing An Iterator
 
@@ -4830,14 +4835,14 @@ b%;    // Right{1}     -- independent
 Applying `%` to an iterator -- the unary form, `it%` -- steps it once, returning one of two shapes:
 
 * `Right@ payload` -- the next value from the source.
-* `Left@ terminal` -- the source has been exhausted; no further values.
+* `Left@ envelope` -- the source has been exhausted; no further values.
 
 ```java
 def it: Iter@ < 1, 2 >;
 
 it%;    // Right{1}
 it%;    // Right{2}
-it%;    // Left{"Iterator Exhausted"}
+it%;    // Left{< sentinel: .., terminal: empty >}
 ```
 
 Once the iterator reaches its terminal, the terminal is **sticky**: subsequent `it%` invocations return the same `Left` value, forever. Iterators are not one-shot; they idempotently report their terminal on every inspection.
@@ -4847,11 +4852,41 @@ def it: Iter@ < 1, 2 >;
 
 it%;    // Right{1}
 it%;    // Right{2}
-it%;    // Left{"Iterator Exhausted"}
-it%;    // Left{"Iterator Exhausted"}    -- sticky
+it%;    // Left{< sentinel: .., terminal: empty >}
+it%;    // Left{< sentinel: .., terminal: empty >}    -- sticky
 ```
 
-For any `Iter@`-constructed iterator, the terminal payload is `"Iterator Exhausted"`. For [generator-produced iterators](#generator-invocation), the terminal payload is the generator's own return value.
+The terminal `Left` payload is an **envelope** record with two fields:
+
+* `sentinel` -- an opaque, unique value minted per-iterator at construction. Two iterators never share a sentinel; the same iterator always reports the same sentinel. It lets a consumer tell a *genuine exhaustion* envelope apart from a plain `Left@` from a step.
+* `terminal` -- the actual terminal payload. `empty` for `Iter@`-constructed iterators, or the generator's own return value for generator-produced iterators (see [Generators](#generators)).
+
+If you're stepping manually and need to distinguish exhaustion from a plain `Left` value coming normally through a step, compare the `.sentinel`:
+
+```java
+def it: Iter@ < 10, 20 >;
+
+defn drain(it) {
+    def step: it%;
+    ?(step){
+        [?as Right]: {
+            log(`"got: `step.value`");
+            drain(it)
+        };
+        [?as Left]: ?{
+            [step.value.sentinel ?= it.sentinel]: log("done: exhausted");
+            : log(`"Left: `step.value`");
+        };
+    }
+};
+
+drain(it);
+// got: 10
+// got: 20
+// done: exhausted
+```
+
+Access to a missing `.sentinel` field yields `empty` (harmlessly failing the `?=` check), so the pattern is safe against any value shape. `Iter@`s over Tuple sources never actually produce plain `Left`s -- every element becomes a `Right@` step -- but `IterP`s over `List{Promise}` sources (see below) can (via `Promise.renege@` elements), and the same sentinel-check pattern applies uniformly. In practice, `~<<` drainage (next section) handles this discrimination internally; you'll only reach for manual sentinel checks when consuming iterators at a lower level than `~<<`.
 
 **Note:** Iterators have no `close()` method and no way to observe closed-state directly. If you don't want to keep pulling from an iterator, stop pulling; the iterator will be garbage-collected along with its source. Generator-sourced iterators additionally allow you to send a signal into the generator (via the binary form, `it% signalVal`) to have the generator stop itself -- but that's a generator-side concern, covered in the next section.
 
@@ -4869,10 +4904,31 @@ def res: Iter ~<< (v:: it) {
 // v: 20
 // v: 30
 
-res;    // Left{"Iterator Exhausted"}
+res;    // Right{empty}
 ```
 
-Notice the `Iter` on the LHS: this is a *type-LHS*, not a value. The particular iterator to
+Notice the `Iter` on the LHS: this is a *type-LHS*, not a value. The particular iterator to drain is supplied via the `v:: it` block-defs entry.
+
+`IterP` supports equivalent drainage via its own type-LHS. Because `IterP` step envelopes are Promise-wrapped, the drainage expression resolves to a Promise:
+
+```java
+def it: IterP@ <
+    Promise.honor@ 10,
+    Promise.honor@ 20,
+    Promise.honor@ 30
+>;
+
+def res: IterP ~<< (v:: it) {
+    log(`"v: `v`");
+};
+// v: 10
+// v: 20
+// v: 30
+
+res;    // Promise{Right{empty}}
+```
+
+Generator-produced `IterP` drainage works the same way, and natural completion resolves to `Promise{Right{returnValue}}` where `returnValue` is the generator's own return value. Block-body `Done@ payload` early-exit resolves to `Promise{Left{payload}}` instead; mid-stream cargo `Left`s in the source likewise short-circuit to `Promise{Left{cargo}}`. Drainage discriminates via the sentinel envelope internally, so consumers see the flat Right/Left split at the drainage result.
 
 ## Generators
 
@@ -4887,7 +4943,7 @@ Neither generators nor the iterators they produce are monadic; there's no `~<` o
 A generator is declared with a `Gen.`-prefixed type (via `deft`) and a function (via `defn`) whose `:as` annotation attaches to that type:
 
 ```java
-deft Gen.Numbers(int, int) ^Iter;
+deft Gen.Numbers(int, int) ^IterP;
 
 defn numbers(start, end) :as Gen.Numbers {
     start..end ~each (v) {
@@ -4897,43 +4953,45 @@ defn numbers(start, end) :as Gen.Numbers {
 };
 ```
 
-The `Gen.` prefix on the type is a compiler signal: functions attached to a `Gen.`-prefixed type are transformed internally into state machines rather than run straight through. The return type is `^Iter` because invocation yields an iterator, not the final value; the final value emerges via the iterator's terminal, covered below.
+The `Gen.` prefix on the type is a compiler signal: functions attached to a `Gen.`-prefixed type don't run straight-through when called; instead, invocation returns an iterator, and each step of that iterator advances the body forward until the next `<::` yield. The return type is `^IterP` because invocation yields an `IterP` iterator, not the final value; the final value emerges via the iterator's terminal, covered below.
 
-Only the type-specialized declaration is handled by the compiler transform; the runtime yield machinery (`<::`) is built on top of the standard effect system (see [Effects](#effects) for details).
+The runtime yield machinery (`<::`) is built on top of the standard effect system (see [Effects](#effects) for details).
 
 ### Generator Invocation
 
-Calling a generator function returns an `Iter`. The body does not run at call time; no code inside the generator has executed yet:
+Calling a generator function returns an `IterP`. The body does not run at call time; no code inside the generator has executed yet:
 
 ```java
 def nums: numbers(1, 3);
-// nums is an Iter; the body has not run
+// nums is an IterP; the body has not run
 ```
 
 The first `%` step drives the body forward until it reaches its first `<::`:
 
 ```java
-nums%;    // Right{1}
+nums%;    // Promise{Right{1}}
 ```
 
 Subsequent steps resume at the last `<::`, run forward to the next one, and yield:
 
 ```java
-nums%;    // Right{2}
-nums%;    // Right{3}
+nums%;    // Promise{Right{2}}
+nums%;    // Promise{Right{3}}
 ```
 
-When the body reaches its natural end (or an explicit `^` return), the iterator produces a sticky `Left@ terminal` on that step and every subsequent step (see [Stepping](#stepping)):
+When the body reaches its natural end (or an explicit `^` return), the iterator produces a sticky `Promise{Left@ envelope}` on that step and every subsequent step, where `envelope` carries the generator's return value on its `.terminal` field:
 
 ```java
-nums%;    // Left{"Complete"}
-nums%;    // Left{"Complete"}     -- sticky
+nums%;    // Promise{Left{< sentinel: .., terminal: "Complete" >}}
+nums%;    // Promise{Left{< sentinel: .., terminal: "Complete" >}}    -- sticky
 ```
 
-Because invocation returns an ordinary `Iter`, everything from the [Iterators](#iterators) section applies immediately -- unary stepping, sticky terminal, and drainage via `Iter ~<<`:
+See [Iterators § Stepping](#stepping) for the envelope shape and the sentinel discrimination pattern.
+
+Because invocation returns an `IterP`, everything from the [Iterators](#iterators) section applies -- unary stepping, sticky terminal, and drainage via `IterP ~<<`:
 
 ```java
-Iter ~<< (n:: numbers(1, 3)) {
+IterP ~<< (n:: numbers(1, 3)) {
     log(n)
 };
 // 1
@@ -4941,12 +4999,14 @@ Iter ~<< (n:: numbers(1, 3)) {
 // 3
 ```
 
+Step results are Promise-wrapped even when the generator body runs synchronously; consumers may inspect resolved values by composing with `~<` / `~map` / `~cata`.
+
 ### Yielding Values
 
 Inside a generator body, `<:: v` yields `v` out to the current step and pauses execution at that expression. Generator state -- local variables, loop counters, anything the body has bound -- persists across suspensions:
 
 ```java
-deft Gen.RunningTotal(int) ^Iter;
+deft Gen.RunningTotal(int) ^IterP;
 
 defn runningTotal(count) :as Gen.RunningTotal {
     def total: 0;
@@ -4958,23 +5018,23 @@ defn runningTotal(count) :as Gen.RunningTotal {
 };
 
 def rt: runningTotal(4);
-rt%;    // Right{1}      -- 0+1
-rt%;    // Right{3}      -- 1+2
-rt%;    // Right{6}      -- 3+3
-rt%;    // Right{10}     -- 6+4
-rt%;    // Left{"done"}
+rt%;    // Promise{Right{1}}      -- 0+1
+rt%;    // Promise{Right{3}}      -- 1+2
+rt%;    // Promise{Right{6}}      -- 3+3
+rt%;    // Promise{Right{10}}     -- 6+4
+rt%;    // Promise{Left{< sentinel: .., terminal: "done" >}}
 ```
 
 **Note:** A `<::` yield can appear anywhere an expression is admitted, not just as a standalone statement. Its evaluation-site value is whatever the consumer supplies when resuming (see [Two-Way Value Flow](#two-way-value-flow) below); when the consumer resumes with plain unary `%`, that value is `empty`.
 
 ### The Terminal Value
 
-When a generator's body reaches its natural end, the `^`-returned value becomes the iterator's sticky terminal payload, wrapped in `Left@`. If the body has no explicit `^`, the terminal payload is `empty`.
+When a generator's body reaches its natural end, the `^`-returned value becomes the iterator's sticky terminal payload -- carried as the `.terminal` field of the sentinel envelope inside `Promise{Left@ ..}` (see [Iterators § Stepping](#stepping)). If the body has no explicit `^`, the terminal payload is `empty`.
 
 A generator body can also short-circuit its own iterator early with `Done@`:
 
 ```java
-deft Gen.SquaresUntil(int, int) ^Iter;
+deft Gen.SquaresUntil(int, int) ^IterP;
 
 defn squaresUntil(count, ceiling) :as Gen.SquaresUntil {
     def res: "complete";
@@ -4992,21 +5052,21 @@ defn squaresUntil(count, ceiling) :as Gen.SquaresUntil {
 };
 
 def sq: squaresUntil(10, 20);
-sq%;    // Right{1}
-sq%;    // Right{4}
-sq%;    // Right{9}
-sq%;    // Right{16}
-sq%;    // Left{"exceeded at 5"}    -- 25 > 20
+sq%;    // Promise{Right{1}}
+sq%;    // Promise{Right{4}}
+sq%;    // Promise{Right{9}}
+sq%;    // Promise{Right{16}}
+sq%;    // Promise{Left{< sentinel: .., terminal: "exceeded at 5" >}}    -- 25 > 20
 ```
 
-The `Done@` behavior inside a generator matches its behavior at any comprehension body: the payload becomes the terminal (wrapped in `Left@`), and execution stops.
+The `Done@` behavior inside a generator matches its behavior at any comprehension body: the payload becomes the `.terminal` of the sticky envelope (wrapped in `Promise{Left@ ..}`), and execution stops.
 
 ### Two-Way Value Flow
 
 The unary step form `it%` treats the generator as a pure producer -- values flow out, nothing flows in. The **binary** form `it% v` sends `v` back into the generator as the value of the waiting (most recent) `<::` yield expression:
 
 ```java
-deft Gen.Accumulator() ^Iter;
+deft Gen.Accumulator() ^IterP;
 
 defn accumulator() :as Gen.Accumulator {
     def total: 0;
@@ -5018,25 +5078,25 @@ defn accumulator() :as Gen.Accumulator {
 };
 
 def acc: accumulator();
-acc%;         // Right{0}    -- initial yield
-acc% 5;       // Right{5}    -- delta=5, total becomes 5, yields 5
-acc% 10;      // Right{15}   -- delta=10, total becomes 15, yields 15
-acc% 3;       // Right{18}   -- delta=3, total becomes 18, yields 18
+acc%;     // Promise{Right{0}}    -- initial yield
+acc% 5;   // Promise{Right{5}}    -- delta=5, total becomes 5, yields 5
+acc% 10;  // Promise{Right{15}}   -- delta=10, total becomes 15, yields 15
+acc% 3;   // Promise{Right{18}}   -- delta=3, total becomes 18, yields 18
 ```
 
 Notice `total + (<:: total)` -- the `<:: total` expression yields `total`, pauses, and on resume evaluates to the value supplied to the next `it% v`. That value then flows into the `+` expression.
 
-Binary `%` is only defined on generator-produced iterators; using it on an `Iter@`-constructed iterator is ill-formed, since there's no `<::` yield expression to receive that value.
+Binary `%` is only defined on generator-produced iterators; using it on an `Iter@`- or `IterP@`-constructed iterator is ill-formed, since there's no `<::` yield expression to receive that value.
 
 The first step is a special case: there's no `<::` waiting yet, so any value passed to the first step is discarded, and the generator runs from its start to its first `<::`.
 
-Once the generator stops -- above, the `~each` loop exits once the `total` reaches or exceeds `1000` -- and the iterator reaches its terminal, further binary steps also discard the sent value and return the sticky `Left`.
+Once the generator stops -- above, the `~each` loop exits once the `total` reaches or exceeds `1000` -- and the iterator reaches its terminal, further binary steps also discard the sent value and return the sticky terminal envelope inside `Promise{Left@ ..}`.
 
 ## Effects
 
 An **effect** (aka, "algebraic effects") in **Foi** is a suspension point in a computation; the running code pauses, propagates a payload up the call stack to whichever handler catches it, and then resumes with whatever value the handler chooses to send back. Where an exception `throw` (in other languages) abandons the current work, an effect *pauses* it, so the computation *may* pick up right where it left off (the handler decides).
 
-You've already met an effect in disguise. The `<:: v` yield inside a generator body is a perform site for `Effect.Yield`; the surrounding generator machinery is the handler. Generators are the one built-in that sits directly on the effects system.
+You've already encountered an effect (in disguise). The `<:: v` yield inside a generator body is a perform site for `Effect.Gen.Yield`; the surrounding generator machinery is the handler. Generators are a built-in that sits directly on the effects system.
 
 You don't have to reach for effects directly to use the language. The built-in types cover the common cases already. But when you need to model a suspension point of your own -- reading configuration lazily, prompting the user, retrying on failure, logging without threading a logger through every call -- effects are the mechanism.
 
@@ -5074,7 +5134,7 @@ def result: Effect.Ask ~<* (eff:: greetUser(), ret) {
 };
 ```
 
-The block definition `(eff:: greetUser(), ret)` binds each perform-event dispatched to this handler to `eff`, with `greetUser()` as the computation whose performs are caught, and binds `ret` as a **resumption callable** for use inside arms. The block body is a pattern-match over `eff`; each arm may invoke `ret(v)` to resume the perform site with `v` as its value. Inside a matched arm, the topic reference `#` is the effect's payload -- in the above code, the string the perform site supplied.
+The block definition `(eff:: greetUser(), ret)` binds each perform-event dispatched to this handler to `eff`, with `greetUser()` as the computation whose performs are caught, and binds `ret` as a **resumption callable** for use inside arms. The block body is a pattern-match over `eff`; each arm may invoke `ret(v)` to resume the perform site with `v` as its value. Inside a matched arm, the topic reference `#` is the perform-event object; the payload the perform site supplied is at `#.value`.
 
 `~<*` catches every perform of the LHS's effect kind (or set of kinds) reachable from `comp`, not just at the top level. If `greetUser()` calls `askName()` which in turn performs `Effect.Ask`, this handler catches it just the same. The effect walks the call-stack *dynamically*, like a `try`/`catch`, not lexically.
 
@@ -5090,7 +5150,7 @@ Recall from the [Generators](#generators) section:
 <:: v
 ```
 
-`<:: v` is exact sugar for `Effect.Yield% v`. Generators earn dedicated notation because a yield is **Foi**'s only *userland-observable* pause point; the consumer of the iterator decides when to resume, so the terse form pays for itself. Every other effect uses the plain `Effect.Name% payload` form; the pause is invisible to userland, so no ergonomic shortcut is needed.
+`<:: v` is exact sugar for `Effect.Gen.Yield% v`. Generator yield has dedicated notation because, by design, it's a two-way communication channel and control coordination point between the generator code and the caller that consumes its iterator. Every other effect uses the plain `Effect.Name% payload` form.
 
 ### Tracking Effects
 

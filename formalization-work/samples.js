@@ -452,7 +452,7 @@ export const samples = [
 	// === OpFuncExpr — four inner forms ===
 	{ label: "OpFuncExpr (bare op): (+)",            src: "(+);" },
 	{ label: "OpFuncExpr (range): (..)",             src: "(..);" },
-	{ label: "OpFuncExpr (multi-tok): ($+)",         src: "($+);" },
+	{ label: "OpFuncExpr (multi-tok): (?=)",         src: "(?=);" },
 	{ label: "OpFuncExpr (empty-bracket): ([])",     src: "([]);" },
 	{ label: "OpFuncExpr (angle-pick): (.<a,5>)",    src: "(.<a,5>);" },
 	{ label: "OpFuncExpr (angle-pick computed): (.<%k>)",         src: "(.<%k>);" },
@@ -649,7 +649,7 @@ export const samples = [
 
 	// AddBinExpr — flat iter left-folded binary archetype
 	{ label: "AddBinExpr: a + b + c",                src: "a + b + c;" },
-	{ label: "AddBinExpr: a $+ b",                   src: "a $+ b;" },
+	{ label: "AddBinExpr: a - b",                   src: "a - b;" },
 
 	// MulBinExpr — iter, single-token MulOp
 	{ label: "MulBinExpr: a * b * c",                src: "a * b * c;" },
@@ -1035,49 +1035,59 @@ export const samples = [
 	{ label: "DepMatchExpr NamedUnaryOp with # in consequent", src: `?(name){ [?empty]: "none"; [!empty]: \`"got \`#\`" };` },
 
 	// =============================================================
-	// §16 DO-COMPREHENSIONS
-	// =============================================================
+    // §16 DO-COMPREHENSIONS
+    // =============================================================
 
-	// DoComprExpr — bare body, no defs
-	{ label: "DoComprExpr: Foo ~<< { y }",                       src: "Foo ~<< { y };" },
+    // DoComprExpr — bare body, no defs
+    { label: "DoComprExpr: Foo ~<< { y }",                       src: "Foo ~<< { y };" },
 
-	// DoComprExpr — with defs
-	{ label: "DoComprExpr w/defs: Foo ~<< (x) { x }",            src: "Foo ~<< (x) { x };" },
+    // DoComprExpr — with defs
+    { label: "DoComprExpr w/defs: Foo ~<< (x) { x }",            src: "Foo ~<< (x) { x };" },
 
-	// DoComprExpr — final unwrap
-	{ label: "DoComprExpr w/final: Foo ~<< { ::y }",             src: "Foo ~<< { ::y };" },
+    // DoComprExpr — final non-receiving bind (Dollar terminal)
+    { label: "DoComprExpr w/final: Foo ~<< { $y }",              src: "Foo ~<< { $y };" },
 
-	// DoComprExpr — full: defs + body stmts + final unwrap
-	{ label: "DoComprExpr full",                                 src: "Foo ~<< (x: 1) { def y:: getY(); ::y; };" },
+    // DoComprExpr — full: defs + body stmts + final non-receiving bind
+    { label: "DoComprExpr full",                                 src: "Foo ~<< (x: 1) { def y:: getY(); $y };" },
 
-	// DoComprExpr — BuiltIn targetType
-	{ label: "DoComprExpr (BuiltIn): IO ~<< { y }",              src: "IO ~<< { y };" },
+    // DoComprExpr — BuiltIn targetType
+    { label: "DoComprExpr (BuiltIn): IO ~<< { y }",              src: "IO ~<< { y };" },
 
-	// DoVarDefInitOpt — both op forms and no-init
-	{ label: "DoVarDefInitOpt (::): Foo ~<< (x:: 1) { y }",      src: "Foo ~<< (x:: 1) { y };" },
-	{ label: "DoVarDefInitOpt (:): Foo ~<< (x: 1) { y }",        src: "Foo ~<< (x: 1) { y };" },
-	{ label: "DoVarDefInitOpt (no init): Foo ~<< (x) { y }",     src: "Foo ~<< (x) { y };" },
+    // DoVarDefInitOpt — both op forms and no-init
+    { label: "DoVarDefInitOpt (::): Foo ~<< (x:: 1) { y }",      src: "Foo ~<< (x:: 1) { y };" },
+    { label: "DoVarDefInitOpt (:): Foo ~<< (x: 1) { y }",        src: "Foo ~<< (x: 1) { y };" },
+    { label: "DoVarDefInitOpt (no init): Foo ~<< (x) { y }",     src: "Foo ~<< (x) { y };" },
 
-	// DoDefVarStmt — inside a do-block
-	{ label: "DoDefVarStmt: Foo ~<< { def x:: 5; y; }",          src: "Foo ~<< { def x:: 5; y; };" },
+    // DoDefVarStmt — inside a do-block
+    { label: "DoDefVarStmt: Foo ~<< { def x:: 5; y; }",          src: "Foo ~<< { def x:: 5; y; };" },
 
-	// DoFinalUnwrapExpr — minimal
-	{ label: "DoFinalUnwrapExpr: Foo ~<< { ::42 }",              src: "Foo ~<< { ::42 };" },
+    // DoNonReceivingBindStmt — mid-block non-receiving bind
+    { label: "DoNonReceivingBindStmt (mid-block): Foo ~<< { $doSomething(); y }",
+      src: "Foo ~<< { $doSomething(); y };" },
+    { label: "DoNonReceivingBindStmt (after def-bind): Foo ~<< { def x:: getX(); $log(x); x }",
+      src: "Foo ~<< { def x:: getX(); $log(x); x };" },
 
-	// DoLoopComprExpr — bare body, no defs
-	{ label: "DoLoopComprExpr: Foo ~<* { y }",                       src: "Foo ~<* { y };" },
+    // DoFinalUnwrapExpr — minimal (Dollar opener)
+    { label: "DoFinalUnwrapExpr: Foo ~<< { $42 }",               src: "Foo ~<< { $42 };" },
 
-	// DoLoopComprExpr — with defs
-	{ label: "DoLoopComprExpr w/defs: Foo ~<* (v:: src) { v }",      src: "Foo ~<* (v:: src) { v };" },
+    // DoLoopComprExpr — bare body, no defs
+    { label: "DoLoopComprExpr: Foo ~<* { y }",                       src: "Foo ~<* { y };" },
 
-	// DoLoopComprExpr — final unwrap
-	{ label: "DoLoopComprExpr w/final: Foo ~<* (v:: src) { ::v }",   src: "Foo ~<* (v:: src) { ::v };" },
+    // DoLoopComprExpr — with defs
+    { label: "DoLoopComprExpr w/defs: Foo ~<* (v:: src) { v }",      src: "Foo ~<* (v:: src) { v };" },
 
-	// DoLoopComprExpr — full: defs + body stmts + final unwrap
-	{ label: "DoLoopComprExpr full",                                 src: "Foo ~<* (v:: src) { def y:: getY(); ::y; };" },
+    // DoLoopComprExpr — final non-receiving bind
+    { label: "DoLoopComprExpr w/final: Foo ~<* (v:: src) { $v }",    src: "Foo ~<* (v:: src) { $v };" },
 
-	// DoLoopComprExpr — BuiltIn targetType
-	{ label: "DoLoopComprExpr (BuiltIn): PushStream ~<* (v:: subj.st) { v }", src: "PushStream ~<* (v:: subj.st) { v };" },
+    // DoLoopComprExpr — full: defs + body stmts + final non-receiving bind
+    { label: "DoLoopComprExpr full",                                 src: "Foo ~<* (v:: src) { def y:: getY(); $y };" },
+
+    // DoNonReceivingBindStmt — inside ~<*
+    { label: "DoNonReceivingBindStmt (in ~<*): PushStream ~<* (v:: subj.st) { $sideEffect(v); v }",
+      src: "PushStream ~<* (v:: subj.st) { $sideEffect(v); v };" },
+
+    // DoLoopComprExpr — BuiltIn targetType
+    { label: "DoLoopComprExpr (BuiltIn): PushStream ~<* (v:: subj.st) { v }", src: "PushStream ~<* (v:: subj.st) { v };" },
 
 
 	// =============================================================
@@ -1375,11 +1385,11 @@ export const samples = [
 	{ label: "compound §16: do-compr basic forms",
 	  src: "List ~<< { def x:: xs; x + 1 }; " +
 		"Id ~<< (x:: foo) { x + 1 }; " +
-		"Id ~<< { def x:: foo(); ::bar(x); }; " +
+		"Id ~<< { def x:: foo(); $bar(x); }; " +
 		"Promise ~<* { def r:: get(); };" },
 	{ label: "compound §16: do-compr paren-wrap + chain + :as",
 	  src: "(PushStream ~<* (v:: src) { v }) ~map { \"done\" };" +
-		"(Id ~<< { ::42; }) ~< g;" +
+		"(Id ~<< { 42; }) ~< g;" +
 		"(Channel ~<* (v:: ch) { v }) ~map { \"Complete.\" };" +
 		"(x + 1) ~map f;" +
 		"def x: (PushStream ~<* (v:: src) { v }) :as Foo;" +
@@ -1416,15 +1426,15 @@ export const samples = [
 	// Cross-§ — specific cross-section regressions
 	{ label: "compound cross-§: PickValue + ^(DoCompr) + Maybe._@ + destructure-with-init",
 	  src: "def t: <0, &nums.<1,3>, &person.last, 8>; " +
-		"defn fn() ^(Promise ~<< { def x:: getX(); ::x; }); " +
+		"defn fn() ^(Promise ~<< { def x:: getX(); x; }); " +
 		"Maybe._ @ 42; " +
 		"def (< :p, capt: items.0 >: getOrder(123)) { p; }; " +
 		"Maybe ~<< (< :v >:: getMaybe()) { v; };" },
 
 	// Kitchen sink — numbers/person realistic compound. Unique cross-§ coverage:
-	// PickValue with varied access (`&nums.<1,3>`, `&nums.[..2]`, `&person.<first,nickname>`),
-	// ComputedPropName in record key + computed index (`<%nums: ...>`, `dm[nums]`),
-	// set ops `?$=` / `!$=`, record concat `$+`, range operand variants, `?has`/`!has`.
+    // PickValue with varied access (`&nums.<1,3>`, `&nums.[..2]`, `&person.<first,nickname>`),
+    // ComputedPropName in record key + computed index (`<%nums: ...>`, `dm[nums]`),
+    // range operand variants, `?has`/`!has`.
 	{ label: "compound kitchen sink: numbers/person realistic",
 	  src: "def numbers: < 4, 5, 6 >; " +
 		"def person: < first: \"Kyle\", last: \"Simpson\" >; " +
@@ -1450,9 +1460,7 @@ export const samples = [
 		"def pf: < &person.<first,nickname> >; " +
 		"def fewer: < 0, &numbers, 2: empty, 4: empty >; " +
 		"def dm: < %numbers: \"my favorites\" >; dm[numbers]; " +
-		"def un: <[ &something, &another ]>; " +
-		"def mn: numbers $+ < 6, 7 >; " +
-		"set1 ?$= set2; set1 !$= set3;" },
+        "def un: <[ &something, &another ]>;" },
 
 	// =============================================================
 	// α-CLAIM — STMT-SEMI FAMILY
@@ -1486,7 +1494,7 @@ export const samples = [
 	{ label: "α-claim: BlockExpr lift",                     src: "{ def a: 1;; };" },
 	{ label: "α-claim: DefBlockStmt lift",                  src: "def (x: 1) { def a: 1;; };" },
 	{ label: "α-claim: FuncBodyBlock lift",                 src: "def f: defn(){ def a: 1;; ^a };;" },
-	{ label: "α-claim: DoBlockExpr lift",                   src: "def r: Foo ~<< { def x:: 1;; ::x };;" },
+	{ label: "α-claim: DoBlockExpr lift",                   src: "def r: Foo ~<< { def x:: 1;; $x };;" },
 
 	// =============================================================
 	// α-SOFT — SOFT-DELIM PARTITIONING UNDER preserveSoftDelims:true

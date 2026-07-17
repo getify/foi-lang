@@ -1688,30 +1688,27 @@ var NamedCompareOp = or(
 // <AsTypeOp> := "?as" | "!as";
 var AsTypeOp = or(tokVal("BooleanOper", "?as"), tokVal("BooleanOper", "!as"));
 
-// <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | (Dollar Equal) | Equal | OpenAngle | CloseAngle);
+// <SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | Equal | OpenAngle | CloseAngle);
 //
 // Longest sequence first so `?<=>` matches before `?<=` / `?<>` / etc.
 var SymbolicCompareOp = and(
-	or(Qmark, Exmark),
-	or(
-		and(OpenAngle, Equal, CloseAngle),
-		and(OpenAngle, Equal),
-		and(CloseAngle, Equal),
-		and(OpenAngle, CloseAngle),
-		and(Dollar, Equal),
-		Equal,
-		OpenAngle,
-		CloseAngle
-	)
+    or(Qmark, Exmark),
+    or(
+        and(OpenAngle, Equal, CloseAngle),
+        and(OpenAngle, Equal),
+        and(CloseAngle, Equal),
+        and(OpenAngle, CloseAngle),
+        Equal,
+        OpenAngle,
+        CloseAngle
+    )
 );
 
 // <CompareOp> := NamedCompareOp | SymbolicCompareOp;
 var CompareOp = or(NamedCompareOp, SymbolicCompareOp);
 
-// <AddOp> := (Dollar Plus) | Plus | Hyphen;
-//
-// PEG: Dollar Plus first (two-token longest), then bare Plus/Hyphen.
-var AddOp = or(and(Dollar, Plus), Plus, Hyphen);
+// <AddOp> := Plus | Hyphen;
+var AddOp = or(Plus, Hyphen);
 
 // <MulOp> := Star | ForwardSlash;
 var MulOp = or(Star, ForwardSlash);
@@ -2451,27 +2448,39 @@ var DoubleColon = tokType("DoubleColon");
 // DoubleColon), DoDefVarStmt backtracks at the DoubleColon match and
 // Stmt's DefVarStmt fires.
 export const DoDefVarStmt = production("DoDefVarStmt",
-	and(
-		KwDef, delim(),
-		or(Identifier, DestructureTarget),
-		delim(), DoubleColon, delim(),
-		Expr
-	)
+    and(
+        KwDef, delim(),
+        or(Identifier, DestructureTarget),
+        delim(), DoubleColon, delim(),
+        Expr
+    )
 );
 
-// DoFinalUnwrapExpr := DoubleColon _ ExprNoBlock (_ Semicolon)*;
+// DoNonReceivingBindStmt := Dollar _ ExprNoBlock;
 //
-// Opener `::` is disjoint from any DoStmt — distinguishes the final
-// unwrap form from the rest of a do-block.
-export const DoFinalUnwrapExpr = production("DoFinalUnwrapExpr",
-	and(DoubleColon, delim(), ExprNoBlock, any(and(delim(), Semicolon)))
+// Non-receiving bind form: `$expr` at mid-block position performs a
+// bind with no receiving slot. Opener `$` is disjoint from every
+// other DoStmt opener; PEG order in <DoStmt> is stable.
+export const DoNonReceivingBindStmt = production("DoNonReceivingBindStmt",
+    and(Dollar, delim(), ExprNoBlock)
 );
 
-// <DoStmt> := DoDefVarStmt | Stmt;
+// DoFinalUnwrapExpr := Dollar _ ExprNoBlock (_ Semicolon)*;
+//
+// Opener `$` is shared with DoNonReceivingBindStmt; positional
+// disambiguation happens at DoBlockStmts. DoStmtSemi (`DoStmt` +
+// mandatory Semicolon) consumes `$expr;` mid-block; DoFinalUnwrapExpr
+// fires on tail `$expr` with no trailing semi.
+export const DoFinalUnwrapExpr = production("DoFinalUnwrapExpr",
+    and(Dollar, delim(), ExprNoBlock, any(and(delim(), Semicolon)))
+);
+
+// <DoStmt> := DoDefVarStmt | DoNonReceivingBindStmt | Stmt;
 //
 // PEG: DoDefVarStmt first — Stmt's DefVarStmt would otherwise consume
 // `def x:` happily and leave a dangling `:expr` from the user's `::`.
-var DoStmt = or(DoDefVarStmt, Stmt);
+// DoNonReceivingBindStmt next — its `$` opener is disjoint from Stmt.
+var DoStmt = or(DoDefVarStmt, DoNonReceivingBindStmt, Stmt);
 
 // DoStmtSemi    := DoStmt? (_ Semicolon)+;
 // DoStmtSemiOpt := DoStmt? (_ Semicolon)*;

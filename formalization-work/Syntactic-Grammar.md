@@ -56,10 +56,9 @@ operator sequences that aren't single lex tokens are written as
 space-separated production references: `:=` is `Colon Equal`,
 `~<<` is `Tilde OpenAngle OpenAngle`, `~<*` is `Tilde OpenAngle Star`,
 `#>` is `Hash CloseAngle`, `+>` is `Plus CloseAngle`, `<+` is
-`OpenAngle Plus`, `$+` is `Dollar Plus`, `~<` is `Tilde OpenAngle`.
-Pre-tokenized multi-char operators — `DoubleColon` (`::`),
-`DoublePeriod` (`..`), `TriplePeriod` (`...`) — are referenced by
-their production names directly.
+`OpenAngle Plus`, `~<` is `Tilde OpenAngle`. Pre-tokenized multi-char
+operators — `DoubleColon` (`::`), `DoublePeriod` (`..`), `TriplePeriod`
+(`...`) — are referenced by their production names directly.
 
 **Hidden productions** are marked with angle brackets on the LHS:
 `<Name> := ...`. They match as usual but emit no node; children
@@ -981,7 +980,7 @@ GroupedDoExpr    := OpenParen _ (AsExpr | DoComprExpr | DoLoopComprExpr) _ Close
 ```
 
 **Precedence (tightest → loosest):** Unary → Mul (`*`, `/`) →
-Add (`+`, `-`, `$+`) → Compare/Membership/Type → And (`?and`, `!and`)
+Add (`+`, `-`) → Compare/Membership/Type → And (`?and`, `!and`)
 → Or (`?or`, `!or`) → Flow (`+>`, `<+`, `#>`, all `~`-comprehensions,
 `~<`). All tiers left-associative.
 
@@ -1015,9 +1014,9 @@ Each is a distinct visible AST node.
    Compare tier (§9). Listed in Op so `(?as)` / `(!as)` remain valid
    OpFuncExpr forms. *)
 <AsTypeOp>       := "?as" | "!as";
-<SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | (Dollar Equal) | Equal | OpenAngle | CloseAngle);
+<SymbolicCompareOp> := (Qmark | Exmark) ((OpenAngle Equal CloseAngle) | (OpenAngle Equal) | (CloseAngle Equal) | (OpenAngle CloseAngle) | Equal | OpenAngle | CloseAngle);
 
-<AddOp>          := (Dollar Plus) | Plus | Hyphen;
+<AddOp>          := Plus | Hyphen;
 <MulOp>          := Star | ForwardSlash;
 
 <NamedUnaryOp>   := "?empty" | "!empty";
@@ -1369,10 +1368,11 @@ DoVarDefInitOpt         := (Identifier        (_ (DoubleColon | Colon) _ ExprNoB
                          | (DestructureTarget (_ (DoubleColon | Colon) _ ExprNoBlock)?);
 
 DoDefVarStmt            := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
-<DoStmt>                := DoDefVarStmt | Stmt;
+DoNonReceivingBindStmt  := Dollar _ ExprNoBlock;
+<DoStmt>                := DoDefVarStmt | DoNonReceivingBindStmt | Stmt;
 DoStmtSemi              := DoStmt? (_ Semicolon)+;
 DoStmtSemiOpt           := DoStmt? (_ Semicolon)*;
-DoFinalUnwrapExpr       := DoubleColon _ ExprNoBlock (_ Semicolon)*;
+DoFinalUnwrapExpr       := Dollar _ ExprNoBlock (_ Semicolon)*;
 
 DoLoopComprExpr         := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 ```
