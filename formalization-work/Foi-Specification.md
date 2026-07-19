@@ -1768,6 +1768,49 @@ The composite marker forms are `Tilde OpenAngle OpenAngle` (`~<<`) and `Tilde Op
 
 The full comprehension-dispatch mechanism -- how a comprehension call site routes to its LHS's owning namespace's hook, how alias spellings normalize to canonical, how Tier 2 defaults expand, and the semantic error taxonomy -- is specified in §3.10.9.
 
+##### §3.1.1.4 Operator-Suffix Declaration Form
+
+A function literal may include an arithmetic or equality operator marker at the end of its name:
+
+```java
+// pre-requisite:
+defn Vector@(v) ^v;
+
+defn Vector+(a, b) ^Vector@ < x: a.x + b.x, y: a.y + b.y >;
+defn Vector-(a, b) ^Vector@ < x: a.x - b.x, y: a.y - b.y >;
+defn Vector*(a, k) ^Vector@ < x: a.x * k, y: a.y * k >;
+defn Vector?=(a, b) ^a.x ?= b.x ?and a.y ?= b.y;
+```
+
+Like `@`, `%`, and the comprehension markers, an operator marker is **not part of the function's name as a binding**; the identifier before the marker is the bound namespace name in the enclosing scope. `Vector`, `Vector@`, `Vector+`, `Vector*`, `Vector?=`, and any other operator-suffix form on the same identifier are syntactic forms over a single typeclass namespace (`Vector`).
+
+An operator-marked `defn` installs a hook on the namespace named by the identifier. At the corresponding binary call site (`a + b`, `a ?= b`, etc.) whose LHS is an instance of the declaring namespace, the LHS's owning namespace is inspected for the hook; if present, the hook is invoked with the LHS instance as its first argument and the RHS operand as its second. Dispatch follows the LHS-wins rule shared with the rest of the namespace-attached operator family (§3.8): the LHS's namespace identity drives operator selection; the RHS is data supplied to the hook, and the hook body may inspect its shape (via `?as`, `?(rhs)`, etc.) if the operation is not symmetric across operand shapes.
+
+An operator-marked `defn` is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; an operator-only declaration is rejected at compile time. This mirrors the `%` and comprehension hook requirements (§3.1.1.2, §3.1.1.3).
+
+**Admitted markers.** The operator markers admitted at declaration position fall into two categories:
+
+- **Arithmetic** (`+`, `-`, `*`, `/`): binary operators over instances of the declaring namespace.
+- **Equality** (`?=`): equality dispatch over instances of the declaring namespace. The hook returns a boolean.
+
+Each admitted marker installs a hook of signature `(inst, rhs)` where `inst` is the LHS instance and `rhs` is the RHS operand.
+
+**Canonical `?=`; `!=` derives.** The `!=` operator at call sites cannot be independently attached; its behavior against an instance whose namespace declares `?=` is the boolean negation of the `?=` hook's result. `defn Foo!=(..)` parses at declaration position but is rejected at compile time with a directive to declare `defn Foo?=(..)` instead. Parallels the alias-normalization rule for `~<` (§3.1.1.3).
+
+**Ordering operators.** The ordering markers (`?<`, `?>`, `?<=`, `?>=`, `?<=>`, `?<>`) are not admitted at declaration position and cannot be attached per-namespace. Their behavior against namespaced instances is not dispatched through the namespace; ordering follows the language-level primitive rules from §9. Ordering operators may internally consult a namespace's `?=` hook where the comparison collapses to equality, but the ordering operators themselves are not intercepted.
+
+**Adjacency.** Strict no-trivia between the identifier and the marker, mirroring `Foo@`, `Foo%`, and `Foo~<glyph>` at their declaration positions. For the two-token `?=` and `!=` composites, strict no-trivia between the composing tokens, matching the composite-operator adjacency rule at call sites (§10). Trivia is admitted between the marker and the first paren-set (mirrors normal `defn` paren spacing).
+
+**Parameter constraints.** Exactly one parameter list (multi-tier / curried is not admitted; the binary call site `a + b` has no natural currying surface). The parameter list declares exactly two parameters, neither of which may be a gather parameter. The first parameter binds to the LHS instance; the second binds to the RHS operand. Any other shape is rejected at compile time.
+
+**Missing hook at call site.** When the LHS at a binary call site is a namespaced instance and the namespace has not declared the corresponding hook, the expression is rejected at compile time. There is no primitive fallback for user namespaces: an instance of a user namespace declaring `+` but not `-` does not silently fall through to numeric arithmetic on `-`.
+
+Primitive dispatch on non-namespaced operands is unaffected. `2 + 3`, `"a" + "b"`, and other non-instance operands continue to route through their language-level operator semantics per §1.3 and the corresponding tier in §9. Only LHS values carrying a namespace identity (per §3.8) engage the hook-dispatch route.
+
+**Multi-decl uniqueness.** At most one hook per marker per namespace per scope; multiple declarations of the same marker on the same namespace are rejected at compile time.
+
+**Interaction with fold comprehensions.** When a namespace declares `+` but does not declare `~fold` (respectively `~foldR`), fold call sites over instances of the namespace default to composing the `+` hook: the initial value seeds the accumulator, and `+` is applied left-to-right (or right-to-left for `~foldR`). An explicit `~fold` / `~foldR` hook, when declared, takes precedence over this default.
+
 #### §3.1.2 Named Expression Form
 
 ```java
@@ -2268,7 +2311,7 @@ It invokes a **type namespace**: a binding whose name serves as a type identity,
 
 The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values -- `%` in the next section, and eventually others -- read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
 
-The result is an operator-overloading system that behaves as a typeclass in the ad-hoc-polymorphism sense: a type namespace's set of declared hooks IS the set of operations that admit its instances. The namespace is the main entity; there is no separate class abstraction, no external instance declarations, no orphan installations. A hook is well-defined only against the namespace that declared it; a hook is invoked only against values that identify with that namespace.
+The result is a namespace-attached operator system that behaves as a typeclass in the ad-hoc-polymorphism sense: a type namespace's set of declared hooks IS the set of operations that admit its instances. The namespace is the main entity; there is no separate class abstraction, no external instance declarations, no orphan installations. A hook is well-defined only against the namespace that declared it; a hook is invoked only against values that identify with that namespace.
 
 The family's operator vocabulary is closed. Additional dispatch operators are added only from the existing language operator set: arithmetic, comparison, comprehension, and shape-transform operators are candidates; flow operators (`#>`, `+>`, `<+`), partial-application brackets, and access operators are not. No user-defined operator symbols, and no changes to an operator's precedence, arity, or operand contract when dispatched through a namespace. Each dispatch operator's behavior against namespaced values is a language-level extension of that operator's existing semantics, not a replacement of them.
 

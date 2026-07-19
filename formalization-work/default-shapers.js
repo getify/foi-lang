@@ -2749,7 +2749,13 @@ export const defaultShapers = {
 					p.type === "Comprehension" ||
 					p.type === "Tilde" ||
 					p.type === "OpenAngle" ||
-					p.type === "Star"
+					p.type === "Star" ||
+					p.type === "Plus" ||
+					p.type === "Hyphen" ||
+					p.type === "ForwardSlash" ||
+					p.type === "Qmark" ||
+					p.type === "Exmark" ||
+					p.type === "Equal"
 				) {
 					marker += p.value;
 					continue;
@@ -3060,31 +3066,31 @@ export const defaultShapers = {
 	},
 
 	// DoFinalUnwrapExpr := Dollar _ ExprNoBlock (_ Semicolon)*;
-    //
-    // Dollar (opener; anchored in type tag) and trailing
-    // Semicolons → delims.
-    DoFinalUnwrapExpr(frame,parts) {
-        var expr;
-        var delims = [];
-        for (let p of parts) {
-            if (isNode(p)) expr = p;
-            else delims.push(p); // Dollar, Semicolon
-        }
-        return withDelims({ type: "DoFinalUnwrapExpr", expr }, delims);
-    },
+	//
+	// Dollar (opener; anchored in type tag) and trailing
+	// Semicolons → delims.
+	DoFinalUnwrapExpr(frame,parts) {
+		var expr;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) expr = p;
+			else delims.push(p); // Dollar, Semicolon
+		}
+		return withDelims({ type: "DoFinalUnwrapExpr", expr }, delims);
+	},
 
-    // DoNonReceivingBindStmt := Dollar _ ExprNoBlock;
-    //
-    // Dollar (opener; anchored in type tag) → delim.
-    DoNonReceivingBindStmt(frame,parts) {
-        var expr;
-        var delims = [];
-        for (let p of parts) {
-            if (isNode(p)) expr = p;
-            else delims.push(p); // Dollar
-        }
-        return withDelims({ type: "DoNonReceivingBindStmt", expr }, delims);
-    },
+	// DoNonReceivingBindStmt := Dollar _ ExprNoBlock;
+	//
+	// Dollar (opener; anchored in type tag) → delim.
+	DoNonReceivingBindStmt(frame,parts) {
+		var expr;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) expr = p;
+			else delims.push(p); // Dollar
+		}
+		return withDelims({ type: "DoNonReceivingBindStmt", expr }, delims);
+	},
 
 	// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 	//

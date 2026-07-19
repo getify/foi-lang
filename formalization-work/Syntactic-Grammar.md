@@ -1173,29 +1173,45 @@ DefFuncExpr           := "defn" (_ Identifier)?
      hook on Foo, invoked by `Foo ~<* (..) {..}` observer forms
      whose LHS is Foo. Same `(comp, ty)` calling convention per
      Foi-Specification.md §3.1.1.3.
+   - `defn Foo+(a, b) ...`, `defn Foo-(a, b) ...`,
+     `defn Foo*(a, b) ...`, `defn Foo/(a, b) ...` install arithmetic
+     hooks on Foo, invoked when the LHS at a binary arithmetic
+     call site is an instance of Foo (Foi-Specification.md §3.1.1.4).
+   - `defn Foo?=(a, b) ...`  installs the equality hook on Foo,
+     invoked when the LHS at a `?=` or `!=` call site is an
+     instance of Foo. `!=` derives from `?=` via boolean negation;
+     it cannot be independently attached.
 
    Non-canonical alias spellings for `~<` (`~chain`, `~bind`,
    `~flatMap`) parse at declaration position but are semantically
    rejected; the semantic checker directs the author to use `~<`.
+   The `!=` marker (`Exmark Equal`) similarly parses at declaration
+   position but is semantically rejected; the semantic checker
+   directs the author to declare `?=` and let `!=` derive.
 
    Strict no-trivia between the Identifier and the marker (mirrors
    `Foo@` adjacency at use sites). For the `Tilde OpenAngle` composite
-   markers (`~<`, `~<<`, `~<*`), strict no-trivia within the composite
-   as well (per the composite operators' adjacency rules at their
-   respective use sites). Trivia is admitted between the marker and
-   the first paren-set (mirrors normal `defn` paren spacing).
+   markers (`~<`, `~<<`, `~<*`) and the `Qmark Equal` / `Exmark Equal`
+   composite markers (`?=`, `!=`), strict no-trivia within the
+   composite as well (per the composite operators' adjacency rules
+   at their respective use sites). Trivia is admitted between the
+   marker and the first paren-set (mirrors normal `defn` paren
+   spacing).
 
    The post-marker signature is identical to DefFuncExpr's — same
    paramSet+, optional precondition list, :over clause, :as clause,
-   and FuncBody alternatives.
+   and FuncBody alternatives. Arithmetic and equality markers
+   additionally constrain the paramSet+ shape at the semantic layer:
+   exactly one parameter list, exactly two parameters, no gather
+   (Foi-Specification.md §3.1.1.4).
 
    At most one hook of each kind per namespace per scope; multiple
    declarations of the same kind in one scope are not rejected at
    the grammar layer (transpiler emits last-wins; semantic checker
-   enforces uniqueness). Comprehension-hook decls additionally
-   require an accompanying `@`-hook decl on the same identifier in
-   the same scope (mirrors `%` hook requirement); rejection at
-   semantic layer, not grammar. *)
+   enforces uniqueness). Comprehension-hook and operator-hook decls
+   additionally require an accompanying `@`-hook decl on the same
+   identifier in the same scope (mirrors `%` hook requirement);
+   rejection at semantic layer, not grammar. *)
 
 DefHookDecl           := "defn" _ Identifier
                          ( At
@@ -1204,6 +1220,12 @@ DefHookDecl           := "defn" _ Identifier
                          | (Tilde OpenAngle OpenAngle)
                          | (Tilde OpenAngle Star)
                          | (Tilde OpenAngle)
+                         | Plus
+                         | Hyphen
+                         | Star
+                         | ForwardSlash
+                         | (Qmark Equal)
+                         | (Exmark Equal)
                          )
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
                          (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?

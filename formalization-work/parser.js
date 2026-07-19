@@ -2159,7 +2159,7 @@ export const DefFuncExpr = production("DefFuncExpr",
 // to attach to), so Identifier is required (no `optional()` on it,
 // distinct from DefFuncExpr's anonymous-admissible form).
 //
-// Marker admits six disjoint shapes:
+// Marker admits twelve disjoint shapes:
 //   - At (@)                          — constructor hook (§3.1.1.1)
 //   - Percent (%)                     — effect hook (§3.1.1.2)
 //   - Comprehension                   — single-token comprehension
@@ -2178,15 +2178,30 @@ export const DefFuncExpr = production("DefFuncExpr",
 //                                       (§3.1.1.3)
 //   - Tilde OpenAngle                 — two-token composite for
 //                                       the bind hook ~< (§3.1.1.3)
+//   - Plus (+)                        — arithmetic add hook
+//                                       (§3.1.1.4)
+//   - Hyphen (-)                      — arithmetic subtract hook
+//                                       (§3.1.1.4)
+//   - Star (*)                        — arithmetic multiply hook
+//                                       (§3.1.1.4)
+//   - ForwardSlash (/)                — arithmetic divide hook
+//                                       (§3.1.1.4)
+//   - Qmark Equal (?=)                — two-token composite for
+//                                       the equality hook (§3.1.1.4)
+//   - Exmark Equal (!=)               — two-token composite;
+//                                       parses here but semantic-
+//                                       rejects as the derived form
+//                                       of ?= (§3.1.1.4)
 //
 // Strict no-trivia between Identifier and the marker (mirrors the
 // `Foo@` adjacency at use sites in AtCallExpr, and same rule for
 // `Foo%` and `Foo~<glyph>`). For the Tilde OpenAngle composite
-// markers (`~<`, `~<<`, `~<*`), strict no-trivia within the composite
-// as well — matches the composite operators' adjacency rules at
-// their respective use sites in §10. Trivia IS
-// admitted between the marker and the first paren-set (mirrors
-// normal `defn` paren spacing).
+// markers (`~<`, `~<<`, `~<*`) and the Qmark Equal / Exmark Equal
+// composite markers (`?=`, `!=`), strict no-trivia within the
+// composite as well — matches the composite operators' adjacency
+// rules at their respective use sites in §10. Trivia IS admitted
+// between the marker and the first paren-set (mirrors normal
+// `defn` paren spacing).
 //
 // Post-marker signature identical to DefFuncExpr — same paramSet+,
 // optional precondition list, :over, :as, and FuncBody alternatives.
@@ -2208,29 +2223,42 @@ export const DefFuncExpr = production("DefFuncExpr",
 // first — (Tilde OpenAngle OpenAngle) and (Tilde OpenAngle Star)
 // before (Tilde OpenAngle), otherwise the shorter arm would greedily
 // match the leading two tokens of ~<< / ~<* and leave the third
-// (OpenAngle / Star) dangling into the paren-slot.
+// (OpenAngle / Star) dangling into the paren-slot. The arithmetic
+// single-token arms (Plus, Hyphen, Star, ForwardSlash) and the
+// Qmark Equal / Exmark Equal composite arms are disjoint at first-
+// token level from every prior arm, so their ordering relative to
+// each other and to the prior arms is mechanical. Bare Star as an
+// arithmetic marker is disjoint from (Tilde OpenAngle Star) because
+// the latter requires a Tilde first token; the parser reaches the
+// bare Star arm only when the marker slot does not begin with Tilde.
 export const DefHookDecl = production("DefHookDecl",
-	and(
-		KwDefn, delim(),
-		Identifier,
-		or(
-			At,
-			Percent,
-			ComprehensionTok,
-			and(Tilde, OpenAngle, OpenAngle),
-			and(Tilde, OpenAngle, Star),
-			and(Tilde, OpenAngle)
-		),
-		many(and(
-			delim(), OpenParen, delim(),
-			optional(or(ParameterList, GatherParameter)),
-			delim(), CloseParen
-		)),
-		optional(and(delim(), FuncPrecondList)),
-		optional(and(delim(), FuncOverClause)),
-		optional(and(delim(), FuncAsClause)),
-		delim(), FuncBody
-	)
+    and(
+        KwDefn, delim(),
+        Identifier,
+        or(
+            At,
+            Percent,
+            ComprehensionTok,
+            and(Tilde, OpenAngle, OpenAngle),
+            and(Tilde, OpenAngle, Star),
+            and(Tilde, OpenAngle),
+            Plus,
+            Hyphen,
+            Star,
+            ForwardSlash,
+            and(Qmark, Equal),
+            and(Exmark, Equal)
+        ),
+        many(and(
+            delim(), OpenParen, delim(),
+            optional(or(ParameterList, GatherParameter)),
+            delim(), CloseParen
+        )),
+        optional(and(delim(), FuncPrecondList)),
+        optional(and(delim(), FuncOverClause)),
+        optional(and(delim(), FuncAsClause)),
+        delim(), FuncBody
+    )
 );
 
 

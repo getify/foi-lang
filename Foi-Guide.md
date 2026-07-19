@@ -2367,6 +2367,52 @@ The `~<` hook has surface aliases at call sites -- `~chain`, `~bind`, and `~flat
 
 Comprehension hook declaration and the dispatch/default machinery are covered in depth in the advanced guide and specification (§3.1.1.3, §3.10.9).
 
+### Operator-Suffix Functions
+
+Alongside `@`, `%`, and `~`-suffix hook declarations, **Foi** lets you attach a small set of arithmetic and equality operators to your own types:
+
+```java
+defn Vector@(v) ^v;
+
+defn Vector+(a,b) ^Vector@ < x: a.x + b.x, y: a.y + b.y >;
+defn Vector-(a,b) ^Vector@ < x: a.x - b.x, y: a.y - b.y >;
+defn Vector*(a,k) ^Vector@ < x: a.x * k, y: a.y * k >;
+defn Vector?=(a,b) ^a.x ?= b.x ?and a.y ?= b.y;
+```
+
+**NOTE:** `/` not shown here because Vector division is ill-defined.
+
+Now `+`, `-`, `*`, and `?=` work naturally on `Vector` instances:
+
+```java
+def v1: Vector@ < x: 1, y: 2 >;
+def v2: Vector@ < x: 3, y: 4 >;
+
+v1 + v2;                            // Vector@ < x: 4, y: 6 >
+v1 * 2;                             // Vector@ < x: 2, y: 4 >
+v1 ?= (Vector@ < x: 1, y: 2 >);     // true
+v1 != v2;                           // true
+```
+
+Like `%` and `~`-suffix declarations, an operator-marked `defn` requires an accompanying `defn Name@(..)` on the same identifier -- the hook installs onto that namespace. `Vector`, `Vector@`, `Vector+`, `Vector?=`, and any other operator-suffix form on the same identifier all share one namespace.
+
+The admitted markers are `+`, `-`, `*`, `/`, and `?=`. Each hook takes two parameters: the left operand (an instance of the declaring namespace) and the right operand. When the left operand at a call site is an instance of the declaring namespace, the hook fires. If the left operand's namespace hasn't declared the operator, the call is rejected at compile time -- there's no silent fallback to numeric behavior on user types.
+
+**`!=` derives from `?=`.** Declaring `defn Vector?=(a,b) ...` also determines what `a != b` means for `Vector` instances -- it's just the negation of the `?=` hook's result. Declaring `defn Vector!=(..)` is a compile-time rejection with a directive to declare `?=` instead.
+
+**Ordering operators cannot be type-attached.** `?<`, `?>`, `?<=`, `?>=`, `?<=>`, and `?<>` cannot be intercepted per-namespace. If you need custom ordering on your type, define a plain named function and call it directly:
+
+```java
+defn vectorMag(v) ^v.x * v.x + v.y * v.y;
+defn vectorLT(a,b) ^vectorMag(a) ?< vectorMag(b);
+
+vectorLT(v1,v2);            // true
+```
+
+**NOTE:** When a namespace declares `+` but doesn't declare its own `~fold` / `~foldR` hook, fold comprehensions over instances of the namespace default to composing the `+` hook -- accumulator threaded, `+` applied left-to-right (or right-to-left for `~foldR`). A sum-type namespace declaring just `+` gets a natural `~fold` for free.
+
+Operator hook declaration and the full dispatch mechanism are covered in depth in the specification (§3.1.1.4).
+
 ## Base Unit Functions
 
 In the previous couple of sections, we covered the `@`-suffixed "unit constructor" functions.
