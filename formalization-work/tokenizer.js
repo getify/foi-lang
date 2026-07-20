@@ -30,7 +30,7 @@ export const NATIVES = [ "empty", "true", "false" ];
 
 export const KEYWORDS = [
 	"def", "defn", "deft", "import", "export",
-	":as", ":over",
+	":as", ":over", ":Effects",
 	"int", "integer", "float", "bool", "boolean", "string",
 ];
 

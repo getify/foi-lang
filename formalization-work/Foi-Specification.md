@@ -1,13 +1,9 @@
 # Foi Semantic Specification
 
 **Version:** draft (design phase)
-**Status:** §0 + §1 + §2 first draft
+**Status:** In Progress
 
-This document is the mid-level semantic specification for the Foi language. It sits between `Foi-Guide.md` (user-facing tutorial) and the grammar files -- `Lexical-Grammar.md` (token-level grammar) and `Syntactic-Grammar.md` (production-level grammar). Its job is to describe **how Foi programs behave** at the level of an abstract machine: evaluation order, scope rules, frame contents, lookup semantics, and the operational meaning of each construct.
-
-It is not a formal operational semantics in the academic sense. There are no judgment trees, no Greek-letter inference rules. The register is the WebAssembly specification or R7RS -- algorithmically described execution, expressed as steps a reader can mentally perform.
-
-It is also not a complete specification of Foi today. The language is still in design. Where a region is unsettled, this document marks the territory as *open*, captures what has been provisionally decided, and identifies the questions that gate further commitment. The document is meant to grow incrementally as design lands.
+This document is the specification for the Foi language. It backs `Foi-Guide.md` (user-facing tutorial) and incorporates the grammar files -- `Lexical-Grammar.md` (token-level grammar) and `Syntactic-Grammar.md` (production-level grammar). Here is described **how Foi programs behave** at the level of an abstract machine: evaluation order, scope rules, frame contents, lookup semantics, and the operational meaning of each construct.
 
 ---
 
@@ -2748,28 +2744,28 @@ statement-by-statement to a unary callable `defn(_) { <lowered-body> }`,
 where the leading parameter is discarded (uniform-shape convention;
 see below). Each statement lowers per this table:
 
-- `def x:: expr` -> `def x: Effect.Do.Bind% expr` (perform
-`Effect.Do.Bind` with `expr` as payload; the resume-value binds into
+- `def x:: expr` -> `def x: Effect.Host.Do.Bind% expr` (perform
+`Effect.Host.Do.Bind` with `expr` as payload; the resume-value binds into
 `x`).
-- Mid-block `$expr;` -> `Effect.Do.Bind% expr` (perform Bind
+- Mid-block `$expr;` -> `Effect.Host.Do.Bind% expr` (perform Bind
 non-receivingly; no slot receives the resume-value).
 - Mid-block bare statement (non-`::`, non-`$`) -> executed as raw code
 inside `comp`; no perform is emitted.
-- Bare terminal expression `expr` -> `Effect.Do.Map% expr` (perform
-`Effect.Do.Map` with `expr` as payload; signals a raw-to-wrapped lift
+- Bare terminal expression `expr` -> `Effect.Host.Do.Map% expr` (perform
+`Effect.Host.Do.Map` with `expr` as payload; signals a raw-to-wrapped lift
 to the hook).
-- Terminal `$expr` -> `def _r: Effect.Do.Bind% expr; Effect.Do.Map% _r`
+- Terminal `$expr` -> `def _r: Effect.Host.Do.Bind% expr; Effect.Host.Do.Map% _r`
 (compiler-synthesized receiver and Map tail; Bind first, then lift).
 The synthesis satisfies the compilation contract that every full path
 through `comp` reach a Map arm.
 
 The lowering is uniform: every `::` binding and every `$` sigil in
-source becomes an `Effect.Do.Bind%` perform, and exactly one
-`Effect.Do.Map%` perform fires per full-path completion (either
+source becomes an `Effect.Host.Do.Bind%` perform, and exactly one
+`Effect.Host.Do.Map%` perform fires per full-path completion (either
 directly at a bare terminal, or synthesized at a `$`-terminal's Map
 tail).
 
-**The two internal effect kinds** (`Effect.Do.Bind`, `Effect.Do.Map`)
+**The two internal effect kinds** (`Effect.Host.Do.Bind`, `Effect.Host.Do.Map`)
 are a closed language-provided set, not user-declarable. They exist
 as the compilation contract between the do-block-body lowering and
 the `~<<` hook's handler scope; they carry no admissible signature
@@ -2784,16 +2780,16 @@ keeps the hook's dispatch surface consistent across the initial call
 and all recursive resumptions.
 
 **Hook body pattern.** The hook opens a `~<*` scope narrowed to the
-`Effect.Do` prefix (per §6.1.4 hierarchical namespaces and §6.3.1
-prefix-match narrowing; catches `Effect.Do.Bind` and `Effect.Do.Map`),
+`Effect.Host.Do` prefix (per §6.1.4 hierarchical namespaces and §6.3.1
+prefix-match narrowing; catches `Effect.Host.Do.Bind` and `Effect.Host.Do.Map`),
 running `comp(v)` where `v` is the value driving the current
 iteration:
 
 ```java
-Effect.Do ~<* (eff:: comp(v), ret) {
+Effect.Host.Do ~<* (eff:: comp(v), ret) {
     :: ?(eff){
-        [?as Effect.Do.Bind]: /* handle Bind: gather sub-scopes over ret; Done@ accumulated */;
-        [?as Effect.Do.Map]:  /* handle Map: Done@ (#.value lifted into namespace shape) */;
+        [?as Effect.Host.Do.Bind]: /* handle Bind: gather sub-scopes over ret; Done@ accumulated */;
+        [?as Effect.Host.Do.Map]:  /* handle Map: Done@ (#.value lifted into namespace shape) */;
     };
 };
 ```
@@ -3955,7 +3951,6 @@ prefix that signals effect-kindedness to the compiler:
 
 ```java
 deft Effect.Ask(String) ^String;
-deft Effect.Log(String) ^empty;
 deft Effect.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
@@ -3976,17 +3971,19 @@ carries no runtime cost; it is a compile-time discriminator only.
 Dotted-name at the `deft` name position is admitted specifically for
 effect declaration. Non-effect `deft` retains the single-Identifier form.
 
-The top-level of the effect namespace is always `Effect.`, but
-underneath that, any dotted identifiers (of any depth) may be specified,
-such as `Effect.MyModule.CustomOp`.
+Effect kinds live under a three-root hierarchy specified in §6.1.4.
+User declarations resolve under `Effect.User.*`; the `Effect.Ask` and
+`Effect.Retry` names above are shorthand for `Effect.User.Ask` and
+`Effect.User.Retry` under §6.1.4's implicit-User rewrite. Dotted
+sub-namespaces of any depth are admissible under the user root, such
+as `Effect.MyModule.CustomOp` (shorthand for
+`Effect.User.MyModule.CustomOp`).
 
 #### §6.1.4 Namespace Hierarchy
 
 Effect kinds form a hierarchy via dot-separated identifiers. §6.1.3
-admits any-depth dotted names at the `deft` name position;
-`Effect.IO.Read`, `Effect.MyModule.Sub`, and `Effect.System.Sleep` are
-all valid effect-kind names. Each dotted segment introduces a level of
-the hierarchy.
+admits any-depth dotted names at the `deft` name position; each dotted
+segment introduces a level of the hierarchy.
 
 **Prefix-match discipline.** Every effect-kind name that appears in a
 handler-narrowing (§6.3.1), an arm pattern (§6.3.2), or an effect
@@ -3998,68 +3995,344 @@ the tested kind's segment list must start with the named prefix's
 segment list.
 
 For an effect kind with no declared sub-namespaces, prefix-check
-reduces to exact-check. Single-kind names (`Effect.Ask`, when no
-`Effect.Ask.*` is declared) behave as exact matches in practice --
+reduces to exact-check. Single-kind names (`Effect.User.Ask`, when no
+`Effect.User.Ask.*` is declared) behave as exact matches in practice --
 the wildcarding surface is invisible until sub-kinds are introduced.
 
 There is no exact-match-only mechanism. To narrow beyond a broad
-prefix, name more-specific paths: `Effect.IO.Read` narrows further
-than `Effect.IO`. To catch a set of disjoint subtrees in one handler,
-use brace form (§6.3.1) to enumerate multiple prefix roots.
+prefix, name more-specific paths: `Effect.User.IO.Read` narrows further
+than `Effect.User.IO`. To catch a set of disjoint subtrees in one
+handler, use brace form (§6.3.1) to enumerate multiple prefix roots.
 
 **Arm-level `?as`.** Inside handler-arm patterns (§6.3.2), `?as
-Effect.Kind` applies the same prefix-check. `[?as Effect.IO]` matches
-any perform-event whose kind is `Effect.IO` or under it; `[?as
-Effect.IO.Read]` matches only the `Read` subtree. When arms have a
-parent/child prefix relationship, order matters: match dispatch is
-first-match-wins (§5), so list child arms before their parent arms if
-you want the child to fire specifically rather than being subsumed by
-the parent.
+Effect.Kind` applies the same prefix-check. `[?as Effect.User.IO]`
+matches any perform-event whose kind is `Effect.User.IO` or under it;
+`[?as Effect.User.IO.Read]` matches only the `Read` subtree. When arms
+have a parent/child prefix relationship, order matters: match dispatch
+is first-match-wins (§5), so list child arms before their parent arms
+if you want the child to fire specifically rather than being subsumed
+by the parent.
 
-**Compiler-privileged partitions.** Three top-level sub-namespaces of
-`Effect.` are reserved for compiler-emitted lowering patterns and are
-walled off from user code:
+**Reserved roots.** Three top-level roots under `Effect.` are
+language-reserved and structure the entire effect namespace:
 
-- **`Effect.Compiler.*`** -- instrumentation and metadata effects
-  inserted by compiler passes.
-- **`Effect.Gen.*`** -- generator substrate. `Effect.Gen.Yield` is the
-  perform site of the `<::` sugar (§6.2.2) inside `Gen.`-prefixed
-  bodies (§6.6); `Effect.Gen.Return` is a compiler-injected perform at
-  tail positions of `Gen.`-prefixed bodies (§6.6.7).
-- **`Effect.Do.*`** -- do-comprehension substrate. `Effect.Do.Bind`
-  and `Effect.Do.Map` are the perform sites of the do-block-body
-  lowering under a `~<<` hook's OVERRIDE route (§3.10.9.4).
+| Root | Role | User source rules |
+|---|---|---|
+| `Effect.User.*` | Userland effect kinds | User-declarable; sub-partitions below |
+| `Effect.Host.*` | Compiler and runtime machinery | All four effect sites rejected |
+| `Effect.Sys.*` | User-facing host services | Declaration rejected; perform, handler, and `:Effects(...)` reference admitted |
 
-User source is rejected by the parser at all four effect sites for
-names that prefix-match any of these three partitions:
+Any other top-level segment under `Effect.` is not a reserved root.
+User source may write `Effect.<X>` (where `X` is not `User`, `Host`,
+or `Sys`); the compiler treats it as shorthand for `Effect.User.<X>`
+per **Implicit-User rewrite** below.
 
-- `deft` declaration into a compiler-privileged partition is a compile
-  error.
-- `%` perform-site with a compiler-privileged effect-kind LHS is a
-  compile error.
-- `~<*` handler-narrowing at a compiler-privileged effect kind (bare
-  form or as an entry inside brace) is a compile error.
-- `:Effects(...)` narrowing that references a compiler-privileged
-  effect kind is a compile error.
+`Effect.Host.*` sub-partitions:
 
-The compiler emits into these partitions natively during lowering; user
-source is guaranteed partition-clean by parser construction. The
-rejection applies only to user source: compiler-generated code that
-establishes handler scopes for these partitions (e.g., the stdlib
-`Gen.runner@` handler at §6.6.7, or the `~<<` hook body compiled from
-a user's `Name~<<` declaration at §3.10.9.4) is a compiler-authored
-code path, not user source.
+- **`Effect.Host.Gen.*`** -- generator substrate.
+  `Effect.Host.Gen.Yield` is the perform site of the `<::` sugar
+  (§6.2.2) inside `Gen.`-prefixed bodies (§6.6);
+  `Effect.Host.Gen.Return` is a compiler-injected perform at tail
+  positions of `Gen.`-prefixed bodies (§6.6.7).
+- **`Effect.Host.Do.*`** -- do-comprehension substrate.
+  `Effect.Host.Do.Bind` and `Effect.Host.Do.Map` are the perform sites
+  of the do-block-body lowering under a `~<<` hook's OVERRIDE route
+  (§3.10.9.4).
+- **`Effect.Host.Slot.*`** -- host-internal per-instance slot access,
+  used by runtime bookkeeping (namespace projection, sentinel
+  comparison, effect-signature runtime state). Compiler-emitted only.
+  Specified in §6.1.5.
+- **`Effect.Host.<Trace, Coverage, Warn, ...>`** -- compiler-inserted
+  instrumentation kinds, source-position-carrying and
+  compile-option-gated. Emitted natively during compilation passes;
+  not admitted in user source at any of the four effect sites.
 
-User-declared effect kinds live under `Effect.*` outside these three
-reserved prefixes: `deft Effect.Ask`, `deft Effect.Retry`, and
-`deft Effect.MyModule.Sub` all remain admissible.
+`Effect.User.*` sub-partitions:
+
+- **`Effect.User.Slot.*`** -- language-provided per-instance slot
+  access surface for user-declared namespace hooks (specified in
+  §6.1.5). User source can install a `~<*` handler scope over
+  `Effect.User.Slot.<Read, Write>` for interception (mocking,
+  tracing), but `deft` declaration into `Effect.User.Slot.*` is a
+  compile error -- the sub-partition is language-provided.
+- **`Effect.User.<anything else>`** -- user-declarable effect kinds.
+  All four effect sites admitted.
+
+`Effect.Sys.*` sub-partitions:
+
+- **`Effect.Sys.<Log, Random, CurrentTime>`** -- ambient host services,
+  specified in §6.13.5. User source may perform (`Effect.Sys.Log%
+  ...`) or handle (`Effect.Sys.Log ~<* ...`) these kinds explicitly,
+  or reference them in `:Effects(...)`; declaration is rejected
+  because the ambient set is fixed by the runtime.
+
+**Reserved-root leaf rejection.** `deft Effect.User`, `deft
+Effect.Host`, and `deft Effect.Sys` (bare top segment, no further
+dots) are compile errors -- the reserved roots are not declarable as
+leaf effect kinds. User declarations must go at least one segment
+deeper into the user root.
+
+**Implicit-User rewrite.** Bare `Effect.<X>` at any of the four effect
+sites (`deft`, `%` perform, `~<*` handler-narrowing, `:Effects(...)`),
+where `X` is any first segment other than the three reserved roots
+`User`, `Host`, or `Sys`, is treated as shorthand for
+`Effect.User.<X>`. Dotted forms carry through: `Effect.MyModule.Sub`
+is shorthand for `Effect.User.MyModule.Sub`. The rewrite is applied at
+parse time; the fully-qualified form after rewrite is what appears in
+all subsequent semantic layers:
+
+```java
+deft Effect.Ask(string) ^string;              // ≡ Effect.User.Ask
+deft Effect.MyModule.CustomOp(int) ^bool;     // ≡ Effect.User.MyModule.CustomOp
+
+Effect.Ask% "prompt";                         // ≡ Effect.User.Ask% "prompt"
+Effect.Ask ~<* (eff:: comp, ret) { ... };     // ≡ Effect.User.Ask ~<* (..)
+```
+
+Explicit reserved-root paths (`Effect.User.Ask`, `Effect.Sys.Log`) are
+always valid at the sites where their partition admits them. Explicit
+paths do not rewrite -- a name that already begins with a reserved
+root resolves as written.
+
+The `:Effects(...)` clause has its own last-segment-shorthand form
+described in §6.13.1; that form composes with implicit-User rewrite.
+
+**Compiler-emission at rejected sites.** The compiler emits into
+`Effect.Host.*` and `Effect.Sys.*` natively during lowering and
+runtime handler installation; user source is guaranteed
+partition-clean by parser construction. The rejection applies only to
+user source: compiler-generated code that establishes handler scopes
+for these partitions (e.g., the stdlib `Gen.runner@` handler at
+§6.6.7, the `~<<` hook body compiled from a user's `Name~<<`
+declaration at §3.10.9.4, or the runtime top-level handler for
+ambients at §6.13.5) is a compiler-authored code path, not user
+source.
+
+#### §6.1.5 Per-Instance Slots
+
+Every value in Foi has a **per-namespace slot**: a single storage
+cell, per `(namespace, value)` pair, whose read and write are
+mediated by the language-provided `Effect.User.Slot.<Read, Write>`
+effect kinds. Slots are Foi's substrate for per-instance state
+inside namespace-declared hooks (§3.1.1). Where `:over` mutable
+closures (§2.11) provide per-function-value state, slots provide
+per-instance state scoped to a namespace's own hooks.
+
+The slot exists **implicitly**. No declaration clause on `deft`
+introduces it; whatever a namespace's hooks write is what its hooks
+read. A namespace that stores multiple fields per instance keeps a
+compound (Tuple or record) in the slot.
+
+##### §6.1.5.1 Storage
+
+Slot storage is a runtime side-table primitive keyed on the
+composite `(namespace-identity, value-identity)`. The specific
+representation is implementation-transparent: on-instance storage
+where the value's shape permits it (owned instance shapes,
+`@`-constructed under a namespace Foi controls) and side-table
+entries for primitives, literal-constructed values, and shapes Foi
+does not own.
+
+An unwritten slot resolves to `empty` on read. Namespaces that
+require initialized state may either check `empty` on first read
+and lazily initialize, or initialize eagerly inside the namespace's
+`@` constructor hook.
+
+##### §6.1.5.2 Access Effects
+
+Slot access is performed through two effect kinds under
+`Effect.User.Slot.*` (§6.1.4):
+
+- **`Effect.User.Slot.Read`** -- payload: the instance whose slot
+  to read. Resume type: the slot's current value (or `empty` if
+  unwritten).
+
+- **`Effect.User.Slot.Write`** -- payload: a Tuple `<inst, value>`
+  binding the instance and the value to write. Resume type:
+  `empty` (fire-and-forget; the write is complete when the
+  perform-site expression evaluates).
+
+Under §6.1.4's implicit-User rewrite, user source may abbreviate
+these as `Effect.Slot.Read` and `Effect.Slot.Write` at perform and
+handler sites. This section uses the abbreviated form.
+
+Both kinds are **ambient**: the runtime installs the slot-access
+handler at every outermost `%` invocation, alongside the ambient
+handlers for `Effect.Sys.<Log, Random, CurrentTime>` (§6.13.5).
+Hooks that perform slot access need not include
+`Effect.User.Slot.*` in their `:Effects(...)` clause; §6.13.5's
+ambient category rule applies.
+
+A namespace `Counter` whose instances track a compounding count
+alongside a tag:
+
+```java
+defn Counter@(initTag) ^< tag: initTag >;
+
+defn Counter%(inst, newTag) {
+    def current: Effect.Slot.Read% inst;
+    def prevCount: ?{ [current ?= empty]: 0; : current.count };
+    def next: < count: prevCount + 1, tag: newTag >;
+    Effect.Slot.Write% <inst, next>;
+    ^next.count;
+};
+```
+
+At the call site:
+
+```java
+def c: Counter@ "session-1";
+
+c% "click";      // 1
+c% "click";      // 2
+c% "submit";     // 3
+```
+
+The `Counter%` hook body reads the current slot value, computes
+the next value, writes it back, and returns a projection to the
+caller. The instance `c` itself is unchanged by the writes -- the
+slot storage is orthogonal to the constructed value's shape.
+
+##### §6.1.5.3 Namespace Identity is Compile-Time Lexical
+
+The runtime handler resolves each slot access against the namespace
+identity of the hook that **lexically encloses** the perform site.
+The lexical namespace is established at compile time from the
+enclosing hook's declaration form (`defn Counter@`, `defn Counter%`,
+`defn Counter~<`, `defn Counter+`, etc.) and injected at the
+perform-site emit; the effect payload never carries the namespace
+identity as runtime data.
+
+A consequence: a free function declared outside the namespace does
+not inherit its caller's namespace context. If a `Counter` hook
+calls a free-standing helper function, `Effect.Slot.Read%`
+performed inside that helper resolves against the helper's own
+lexical namespace context (typically none, or a different
+namespace), not `Counter`'s. Slot-touching logic that needs to be
+factored out of a hook body must stay inside a namespace-marked
+hook declaration -- shared logic across hooks composes as inline
+`def`s inside those hooks or passes slot values through parameters.
+
+Cross-namespace slot access is structurally impossible: no key
+value exists that could be passed between namespaces, because
+namespace identity is a compile-time lexical property, not
+runtime data.
+
+##### §6.1.5.4 Interception via User Handlers
+
+`Effect.User.Slot.*` is user-**handleable** but not
+user-**declarable**:
+
+- User source may install a `~<*` handler over `Effect.Slot.<Read,
+  Write>` for the purposes of mocking, test-time capture, tracing,
+  or other debugging cooperation. Standard dynamic lookup (§6.1.2)
+  finds the user's handler before the runtime's ambient handler,
+  giving the user handler an opportunity to intercept slot access
+  within a bounded scope.
+
+- User source may not declare into `Effect.User.Slot.*` via
+  `deft`; the sub-partition is language-provided (§6.1.4).
+  Attempting `deft Effect.User.Slot.<X>` (or `deft Effect.Slot.<X>`
+  under the implicit-User rewrite) is a compile error.
+
+##### §6.1.5.5 Host-Side Slot Access
+
+Compiler-emitted runtime bookkeeping (namespace-identity
+projection, sentinel comparison, effect-signature state, and other
+runtime machinery) uses a parallel `Effect.Host.Slot.<Read, Write>`
+kind with the same payload shape but a sealed partition per §6.1.4.
+User source cannot perform, handle, or narrow against
+`Effect.Host.Slot.*`; it exists to give the runtime the same
+slot-storage discipline as user code without user-observable side
+effects.
+
+##### §6.1.5.6 Reference Identity
+
+Slot storage keys on a **runtime substrate identity** that is
+distinct from user-observable equality. Three layers separate the
+concerns:
+
+1. **Substrate identity** -- a cheap, stable, unforgeable
+   per-value identity used internally by slot-storage keying,
+   sentinel comparison, namespace-identity projection, and garbage
+   collection. The substrate identity never surfaces as a user
+   operator or predicate.
+
+2. **Namespace-declared equality** -- the user-facing `?=` operator
+   (§3.1.1.4), dispatched through the LHS namespace's `?=` hook.
+   Absence of a `?=` hook on an `@`-constructed instance's
+   namespace makes `?=` on that instance a compile error; presence
+   of a hook makes `?=` behave as the namespace author declares.
+
+3. **Slot storage** -- keyed on substrate identity internally; not
+   exposed to userland. The user surface for slot storage is the
+   `Effect.User.Slot.*` effect kinds above.
+
+By value category, the user-facing rules are:
+
+- **`@`-constructed instances** (State, Promise, Channel, IO,
+  Writer, user-defined types): substrate identity at Layer 1; `?=`
+  at Layer 2 requires the namespace to declare a `?=` hook, else
+  compile error. The runtime is free to intern or not intern
+  identical instances -- there is no user operator to observe the
+  choice.
+
+- **Literal-constructed values** (Tuples, records, ranges):
+  structural at Layer 1 (slot-storage keying is via structural
+  hash) and Layer 2 (language-provided structural `?=`).
+
+- **Primitives** (numbers, strings, `empty`, booleans): value-
+  identity at Layer 1; language-provided value-`?=` at Layer 2.
+
+- **Namespace handles** (`List`, `Maybe`, etc.): identity at both
+  layers; language-provided identity-`?=` special-cased since
+  namespace handles are one-per-declaration.
+
+Reference identity is **bounded, not eliminated**. General
+userland has no operator to observe it, and cross-namespace
+observation is structurally impossible per the compile-time
+lexical property of namespace identity established above. Within
+a namespace's own hooks, reference identity of the namespace's
+own instances is intrinsically observable -- that is what
+per-instance state requires, and slot access via
+`Effect.User.Slot.*` is the surface Foi provides for it.
+Namespaces may also expose reference-identity-derived semantics
+through their public `?=` hook as an explicit design decision;
+the resulting behavior is visible in the namespace's own
+declaration, not a language-level leak.
+
+##### §6.1.5.7 Coupling Hygiene, Not Adversarial Defense
+
+The mechanisms in this section are **abstraction hygiene**, not
+adversarial defense. Foi assumes cooperating users; a user
+determined to subvert the mechanism forks the compiler, and Foi
+does not pretend to prevent that.
+
+The specific hygiene properties:
+
+- **Cross-namespace access impossibility** prevents user code from
+  accidentally depending on another namespace's internal state
+  representation. No key value exists to pass, because namespace
+  identity is compile-time lexical, not runtime data.
+
+- **`Effect.Host.Slot.*` sealing** prevents user code from naming
+  runtime-owned slot access, since those identifiers may change
+  across compiler versions.
+
+- **Reference-identity non-exposure** prevents user code from
+  depending on runtime interning decisions, since userland has no
+  operator to observe those decisions.
+
+Explicit named cross-namespace grants (e.g., "namespace A may
+access namespace B's slots") are not admitted in the current
+design.
 
 ### §6.2 Performing Effects
 
 A **perform site** signals that the enclosing computation is producing
 an effect of some kind. Two surface forms serve as perform sites: the
 general `%` effector operator applied to an effect-kinded LHS, and the
-`<::` sugar specific to `Effect.Gen.Yield` (in a Generator). Both are
+`<::` sugar specific to `Effect.Host.Gen.Yield` (in a Generator). Both are
 value-bearing expressions; the value the perform-site expression
 evaluates to is set by the handler that catches the perform.
 
@@ -4121,25 +4394,25 @@ kind's declared payload type (§6.1.3). The perform-site expression's
 type is the effect kind's declared resume type. Both are compile-time
 obligations of §6.13's effect-tracking discipline.
 
-#### §6.2.2 The `<::` Sugar for `Effect.Gen.Yield`
+#### §6.2.2 The `<::` Sugar for `Effect.Host.Gen.Yield`
 
 The composite token `<::` is surface sugar for a compiler-emitted
-`Effect.Gen.Yield` perform:
+`Effect.Host.Gen.Yield` perform:
 
 ```java
-<:: 42;                     // sugar; compiles to `Effect.Gen.Yield% 42`
-<:: someValue;              // sugar; compiles to `Effect.Gen.Yield% someValue`
+<:: 42;                     // sugar; compiles to `Effect.Host.Gen.Yield% 42`
+<:: someValue;              // sugar; compiles to `Effect.Host.Gen.Yield% someValue`
 ```
 
-`Effect.Gen.*` is a compiler-privileged partition per §6.1.4; user
-source cannot write `Effect.Gen.Yield%` directly, and `<::` is the sole
+`Effect.Host.Gen.*` is a compiler-privileged partition per §6.1.4; user
+source cannot write `Effect.Host.Gen.Yield%` directly, and `<::` is the sole
 surface admitted for this perform. This is the only effect kind with a
 syntactic shorthand form. A generator yield is Foi's sole
 userland-observable pause point (§6 opener); yield-heavy producer code
 reads cleanly with the reduced notation.
 
 The sugar is syntactic only. `<:: expr` and its compiled
-`Effect.Gen.Yield% expr` are handled by the same call-stack walk
+`Effect.Host.Gen.Yield% expr` are handled by the same call-stack walk
 described in §6.2's abstract execution.
 
 ### §6.3 The Handler Operator
@@ -4209,7 +4482,10 @@ parent.
 **Cross-uses.** The same shapes and prefix-match rule apply at two
 other sites: `?as` patterns inside handler arms (§6.3.2) and
 `:Effects(...)` type-signature declarations (§6.13). At all three
-sites, a named effect-kind path denotes a prefix subtree.
+sites, a named effect-kind path denotes a prefix subtree. The brace
+form is also admitted at standalone `?as`/`!as` binary expressions
+(§9's TypeCompareBinExpr), with the same OR-union prefix-match
+semantics as handler-arm patterns.
 
 #### §6.3.2 Arms
 
@@ -4230,10 +4506,10 @@ terminal is a separate mechanism (§6.4.1).
 The canonical arm shape is a dependent match against `eff`:
 
 ```java
-Effect.<Ask, Log> ~<* (eff:: producer(), ret) {
+Effect.<Ask, Sys.Log> ~<* (eff:: producer(), ret) {
     :: ?(eff){
         [?as Effect.Ask]: ret(readLine(#.value));
-        [?as Effect.Log]: ret(log(#.value));
+        [?as Effect.Sys.Log]: ret(log(#.value));
     };
 };
 ```
@@ -4545,7 +4821,7 @@ b%;    // Right{1}     -- independent
 
 The identity form is the sole exception: passing an existing Iter to `Iter@` yields the same shared-state instance.
 
-**Sentinel field.** Every `Iter@` construction mints a unique opaque runtime value and carries it on the iter handle's `.sentinel` field. This value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source Iter's existing sentinel (same instance, same sentinel). The sentinel participates in the sticky terminal envelope shape (§6.5.2) and in drainage discrimination (§6.5.3).
+**Sentinel field.** Every `Iter@` construction mints a unique opaque runtime value at construction and writes it into Iter's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source Iter's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.2) and in drainage discrimination (§6.5.3).
 
 #### §6.5.2 Stepping
 
@@ -4614,7 +4890,7 @@ Under the composition axis (§6 opener), `Iter` sits on `~<<` as an iterating ou
 
 **Sentinel discrimination.** The sticky terminal envelope is recognizable by its `.sentinel` field matching `iter.sentinel`. Since Iter's step contract forbids a Left step envelope mid-stream (elements come out wrapped in `Right@` verbatim), the drainage hook can trust that any Left step is the exhaustion terminal. The sentinel field remains structurally useful for `IterP.of@` re-minting (§6.5.4) and for future extensions.
 
-**Hook body.** The `Iter~<<` hook is stdlib self-hosted over `Effect.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Do.Bind` perform's payload -- the source Iter -- via `Done@ #.value`; a sync tail-recursive `drainStep` then steps the iterator, running the block body per `Right@` step under a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the stepped payload. On `Left@` step (sticky terminal), `drainStep` extracts the envelope's `.terminal` and returns `Right@ terminal`. On block-body `Done@ payload` (§7.9), `drainStep` returns `Left@ payload`.
+**Hook body.** The `Iter~<<` hook is stdlib self-hosted over `Effect.Host.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Host.Do.Bind` perform's payload -- the source Iter -- via `Done@ #.value`; a sync tail-recursive `drainStep` then steps the iterator, running the block body per `Right@` step under a fresh `Effect.Host.Do ~<*` scope over `comp()` that ret-substitutes the stepped payload. On `Left@` step (sticky terminal), `drainStep` extracts the envelope's `.terminal` and returns `Right@ terminal`. On block-body `Done@ payload` (§7.9), `drainStep` returns `Left@ payload`.
 
 ```java
 defn Iter~<<(comp, typ) {
@@ -4628,9 +4904,9 @@ defn iterBindImpl(comp) {
     def iter: empty;
 
     // synchronously extract :: iterator binding
-    Effect.Do ~<* (eff:: comp(), ret) {
+    Effect.Host.Do ~<* (eff:: comp(), ret) {
         :: ?(eff){
-            [?as Effect.Do.Bind]: {
+            [?as Effect.Host.Do.Bind]: {
                 iter := #.value;
                 Done@ empty
             };
@@ -4646,13 +4922,13 @@ defn iterBindImpl(comp) {
             [?as Left]: Right@ stepResult.value.terminal;
             [?as Right]: {
                 def bodyTerminal: empty;
-                Effect.Do ~<* (eff:: comp(), ret) {
+                Effect.Host.Do ~<* (eff:: comp(), ret) {
                     :: ?(eff){
-                        [?as Effect.Do.Bind]: {
+                        [?as Effect.Host.Do.Bind]: {
                             ret(stepResult.value);
                             empty
                         };
-                        [?as Effect.Do.Map]: {
+                        [?as Effect.Host.Do.Map]: {
                             bodyTerminal := #.value;
                             Done@ empty
                         };
@@ -4730,7 +5006,7 @@ b%;    // Promise{Right{1}}     -- independent
 
 The identity form is the sole exception: passing an existing IterP to `IterP@` yields the same shared-state instance.
 
-**Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value and carries it on the iter handle's `.sentinel` field. This value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's existing sentinel (same instance, same sentinel). The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism.
+**Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value at construction and writes it into IterP's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism, writing it into the runner-produced IterP's slot.
 
 #### §6.5.5 Stepping
 
@@ -4753,9 +5029,9 @@ it%;    // Promise{Left{42}}   -- verbatim cargo; iterator still active
 it%;    // Promise{Right{10}}
 ```
 
-The active/exhausted distinction lives in the IterP's internal state, not in envelope shape. Iterator termination is signaled only by the exhaustion source -- for a `List{Promise}` source, the list's own end; for a generator source, the body's completion (§6.6).
+The active/exhausted distinction lives in IterP's per-instance slot (§6.1.5), not in envelope shape. Iterator termination is signaled only by the exhaustion source -- for a `List{Promise}` source, the list's own end; for a generator source, the body's completion (§6.6).
 
-**Sticky terminal.** Once the source is exhausted, the IterP transitions to its **sticky** terminal state: subsequent `it%` invocations continue to return the same terminal Promise, resolving to `Left@ envelope` where `envelope` is a record:
+**Sticky terminal.** Once the source is exhausted, the IterP writes the sticky terminal envelope into its slot (§6.1.5); subsequent `it%` invocations read that same envelope back and resolve to `Left@ envelope` where `envelope` is a record:
 
 ```java
 < sentinel: iter.sentinel, terminal: terminalPayload >
@@ -4845,7 +5121,7 @@ res;    // Promise{Left{2}}     -- Done@ early-exit
 
 Under the composition axis (§6 opener), `IterP` sits on `~<<` as an iterating outer: the consumer drives, and termination is either the iterator's own exhaustion signal, a cargo short-circuit, or a block-body `Done@`. `IterP` is not admitted on `~<*`; it is not an emission source.
 
-**Hook body.** The `IterP~<<` hook is stdlib self-hosted over `Effect.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Do.Bind` perform's payload -- the source IterP -- via `Done@ #.value`; a Promise-threaded tail-recursive `drainStep` then steps the iterator, chains via `~<` to await the step envelope, and dispatches on the envelope shape. On `Right`, the block body runs under a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the step payload; the arm's block-body terminal is captured via side effect into `bodyTerminal`, then inspected for `Done@`-shape (early-exit, resolving `Promise.renege@ #.value`) or plain (recurse). On `Left`, the envelope's payload is destructured; if `.sentinel` matches `iter.sentinel`, drainage resolves `Promise.honor@ terminal` (natural completion); otherwise the raw envelope value is passed through as `Promise.renege@ env.value` (cargo short-circuit).
+**Hook body.** The `IterP~<<` hook is stdlib self-hosted over `Effect.Host.Do ~<*` (§6.3, §3.10.9.4 OVERRIDE route). A discovery scope catches the first `Effect.Host.Do.Bind` perform's payload -- the source IterP -- via `Done@ #.value`; a Promise-threaded tail-recursive `drainStep` then steps the iterator, chains via `~<` to await the step envelope, and dispatches on the envelope shape. On `Right`, the block body runs under a fresh `Effect.Host.Do ~<*` scope over `comp()` that ret-substitutes the step payload; the arm's block-body terminal is captured via side effect into `bodyTerminal`, then inspected for `Done@`-shape (early-exit, resolving `Promise.renege@ #.value`) or plain (recurse). On `Left`, the envelope's payload is destructured; if `.sentinel` matches `iter.sentinel`, drainage resolves `Promise.honor@ terminal` (natural completion); otherwise the raw envelope value is passed through as `Promise.renege@ env.value` (cargo short-circuit).
 
 ```java
 defn IterP~<<(comp, typ) {
@@ -4859,9 +5135,9 @@ defn iterPBindImpl(comp) {
     def iter: empty;
 
     // synchronously extract :: iterator binding
-    Effect.Do ~<* (eff:: comp(), ret) {
+    Effect.Host.Do ~<* (eff:: comp(), ret) {
         :: ?(eff){
-            [?as Effect.Do.Bind]: {
+            [?as Effect.Host.Do.Bind]: {
                 iter := #.value;
                 Done@ empty
             };
@@ -4876,13 +5152,13 @@ defn iterPBindImpl(comp) {
             ?(env){
                 [?as Right]: {
                     def bodyTerminal: empty;
-                    Effect.Do ~<* (eff:: comp(), ret) {
+                    Effect.Host.Do ~<* (eff:: comp(), ret) {
                         :: ?(eff){
-                            [?as Effect.Do.Bind]: {
+                            [?as Effect.Host.Do.Bind]: {
                                 ret(env.value);
                                 empty
                             };
-                            [?as Effect.Do.Map]: {
+                            [?as Effect.Host.Do.Map]: {
                                 bodyTerminal := #.value;
                                 Done@ empty
                             };
@@ -4913,7 +5189,7 @@ This hook body's `?(typ)` dispatch admits only the plain single-source IterP LHS
 A **generator** is a function whose execution can be suspended mid-body; resumption is controlled **externally** on demand, via an attached iterator (`IterP` instance, §6.5.4).
 
 Foi generators are the sole userland-observable pause point (§6 opener):
-each suspension is triggered by an `Effect.Gen.Yield` perform (via the
+each suspension is triggered by an `Effect.Host.Gen.Yield` perform (via the
 `<::` sugar of §6.2.2), and each resumption is triggered by an explicit
 step on the generator's attached `IterP` instance (§6.6.2).
 
@@ -4923,10 +5199,10 @@ or may be consumed fully to its terminal via the `IterP ~<<` do-comprehension
 
 **NOTE:** The `IterP` interface (§6.5.4) is stdlib-hosted, and generator
 runtime support is stdlib code (`Gen.runner@`, §6.6.7) built on
-`Effect.Gen ~<*` (§6.3). The only compiler privilege the `Gen.` prefix
+`Effect.Host.Gen ~<*` (§6.3). The only compiler privilege the `Gen.` prefix
 carries is (a) implicit wrapping of the function body in the runner
-invocation, (b) rewriting `<::` to `Effect.Gen.Yield%`, and (c)
-compile-time synthesis of `Effect.Gen.Return%` performs at tail
+invocation, (b) rewriting `<::` to `Effect.Host.Gen.Yield%`, and (c)
+compile-time synthesis of `Effect.Host.Gen.Return%` performs at tail
 positions (§6.6.1). Everything else is self-hosted over the general
 effect substrate.
 
@@ -4952,18 +5228,18 @@ carries three properties:
 - **Runner wrapping.** Every function `:as` a `Gen.`-prefixed type has
   its body implicitly wrapped in a stdlib `Gen.runner@` invocation
   (§6.6.7). Within the wrapped body, `<::` sugar sites (§6.2.2) surface
-  as `Effect.Gen.Yield%` performs, and tail-position `^expr` compiles
-  to `Effect.Gen.Return% expr`; fall-through paths (reaching the
+  as `Effect.Host.Gen.Yield%` performs, and tail-position `^expr` compiles
+  to `Effect.Host.Gen.Return% expr`; fall-through paths (reaching the
   natural end of the body without an explicit `^`) synthesize
-  `Effect.Gen.Return% empty`. The runner produces the `IterP` returned
+  `Effect.Host.Gen.Return% empty`. The runner produces the `IterP` returned
   from invocation; no user code runs inside the function body at the
   call position -- only the IterP is produced.
-- **Compiler-managed Gen effects.** `Effect.Gen.*` is a
+- **Compiler-managed Gen effects.** `Effect.Host.Gen.*` is a
   compiler-privileged partition (§6.1.4); the runner's internal
-  `Effect.Gen ~<*` scope catches both `Yield` and `Return` performs
+  `Effect.Host.Gen ~<*` scope catches both `Yield` and `Return` performs
   before they escape the generator's own type surface. User source
-  cannot declare `Effect.Gen` in `:Effects(...)` and cannot handle it
-  externally. Non-`Effect.Gen` effects performed inside the body
+  cannot declare `Effect.Host.Gen` in `:Effects(...)` and cannot handle it
+  externally. Non-`Effect.Host.Gen` effects performed inside the body
   propagate through per §6.6.6.
 - **IterP return interface.** The declared return type is `IterP`, and
   invocation evaluates to an `IterP` instance.
@@ -5088,10 +5364,10 @@ Full drainage semantics -- including mid-stream Left short-circuit and `Done@` e
 
 #### §6.6.6 Non-`Gen` Effects In Generators
 
-A `Gen.`-prefixed type has its `Effect.Gen.Yield` / `Effect.Gen.Return`
+A `Gen.`-prefixed type has its `Effect.Host.Gen.Yield` / `Effect.Host.Gen.Return`
 coverage handled internally by the runner (§6.6.1); user code cannot
-declare `Effect.Gen` in `:Effects(...)` since the partition is
-compiler-privileged (§6.1.4). Non-`Effect.Gen` effects, however, may be
+declare `Effect.Host.Gen` in `:Effects(...)` since the partition is
+compiler-privileged (§6.1.4). Non-`Effect.Host.Gen` effects, however, may be
 declared explicitly and performed inside the generator body:
 
 ```java
@@ -5106,10 +5382,10 @@ defn loggingNumbers(start, end) :as Gen.LoggingNumbers {
 };
 ```
 
-The internal `Effect.Gen ~<*` scope installed by the runner is
-prefix-matched to `Effect.Gen` only (per §6.1.4 unified prefix rule and
-§6.3.1 narrowing semantic; catches both `Effect.Gen.Yield` and
-`Effect.Gen.Return`). Non-`Effect.Gen` performs -- `Effect.Log` above,
+The internal `Effect.Host.Gen ~<*` scope installed by the runner is
+prefix-matched to `Effect.Host.Gen` only (per §6.1.4 unified prefix rule and
+§6.3.1 narrowing semantic; catches both `Effect.Host.Gen.Yield` and
+`Effect.Host.Gen.Return`). Non-`Effect.Host.Gen` performs -- `Effect.Log` above,
 or any other declared effect -- propagate past this internal scope per
 §6.1.2 dynamic lookup, resolving at the nearest enclosing handler in
 the caller's dynamic scope that catches the relevant effect kind.
@@ -5122,11 +5398,11 @@ is ill-formed per the function's effect signature (§6.13).
 The runtime behavior of a `Gen.`-prefixed function invocation is
 furnished by the stdlib runner `Gen.runner@`. The runner is not a
 compiler-privileged construct; it is ordinary Foi source built over
-`Effect.Gen ~<*` (§6.3) and `IterP@` (§6.5.4). The compiler's role is
+`Effect.Host.Gen ~<*` (§6.3) and `IterP@` (§6.5.4). The compiler's role is
 limited to the three-part `Gen.` prefix privilege of §6.6.1 -- implicit
 wrap of the body in a runner invocation, `<::` sugar to
-`Effect.Gen.Yield%`, and tail-position `^expr` synthesis of
-`Effect.Gen.Return%`. Everything below is stdlib source.
+`Effect.Host.Gen.Yield%`, and tail-position `^expr` synthesis of
+`Effect.Host.Gen.Return%`. Everything below is stdlib source.
 
 At each generator invocation, the runner closes over the generator body
 and returns an `IterP` (§6.5.4) whose `%`-hook drives one step of the
@@ -5148,14 +5424,14 @@ defn Gen.runner@(body) {
     defn doStep1() :over(started, waitingPr, sticky, latestRet) {
         started := true;
         waitingPr := Promise.subj@;
-        Effect.Gen ~<* (eff:: body(), ret) {
+        Effect.Host.Gen ~<* (eff:: body(), ret) {
             :: ?(eff){
-                [?as Effect.Gen.Yield]: {
+                [?as Effect.Host.Gen.Yield]: {
                     latestRet := ret;
                     waitingPr% (Right@ #.value);
                     empty;
                 };
-                [?as Effect.Gen.Return]: {
+                [?as Effect.Host.Gen.Return]: {
                     sticky := Promise.renege@ #.value;
                     ?{ [!waitingPr.resolved()]: waitingPr% (Left@ #.value); };
                     Done@ #.value;
@@ -5196,17 +5472,17 @@ defn Gen.runner@(body) {
 ```
 
 **Single persistent handler scope.** The runner installs one
-`Effect.Gen ~<*` scope at Call 1, on first entry into `step()` via
+`Effect.Host.Gen ~<*` scope at Call 1, on first entry into `step()` via
 `doStep1`. This scope persists across all subsequent step invocations;
 it is not reopened per step. Its two arms cover the two compiler-emitted
 Gen effect kinds (§6.1.4):
 
-- **`Effect.Gen.Yield` arm** -- captures the current `ret` into the
+- **`Effect.Host.Gen.Yield` arm** -- captures the current `ret` into the
   runner's `latestRet` slot, resolves the pending `waitingPr` with
   `Right@ #.value`, and returns `empty` as the arm's discarded scope-
   value contribution. Because arm-without-`ret` does not terminate the
   scope per §6.3.2, the scope stays live for the next perform.
-- **`Effect.Gen.Return` arm** -- installs the sticky terminal Promise
+- **`Effect.Host.Gen.Return` arm** -- installs the sticky terminal Promise
   (`Promise.renege@ #.value`), resolves any outstanding `waitingPr` with
   `Left@ #.value`, and terminates the scope via `Done@` (§6.4). The
   runner's step-observation channel is `waitingPr`, not the handler
@@ -5214,10 +5490,10 @@ Gen effect kinds (§6.1.4):
   §6.4.1.
 
 **Outstanding-`waitingPr` invariant at Return.** When the body reaches
-`Effect.Gen.Return`, one of two situations holds for the current
+`Effect.Host.Gen.Return`, one of two situations holds for the current
 `waitingPr`: either the current step invoked `latestRet(resumeVal)` and
 body ran directly to Return without a Yield in between, or an outer
-non-`Effect.Gen` handler suspended body and the resumption path flowed
+non-`Effect.Host.Gen` handler suspended body and the resumption path flowed
 straight to Return. In both cases `waitingPr` is unresolved at Return
 arm entry. The `?{ [!waitingPr.resolved()]: waitingPr% (Left@ #.value); }`
 guard resolves it with the terminal payload; without this, the pending
@@ -5239,7 +5515,7 @@ consumer-misuse cases; the guarded match dispatches by state:
   the prior `it%`, ignored it, and invoked `it%` again before the
   Promise resolved. Under Foi's synchronous execution model, this
   arises only when the prior step's body suspended in some outer
-  non-`Effect.Gen` handler introducing asynchrony; the consumer arrived
+  non-`Effect.Host.Gen` handler introducing asynchrony; the consumer arrived
   with a next call before the async completed and body resumed to a
   Gen arm. One diagnostic:
   `Promise.renege@ "Previous Iterator Step Incomplete"`.
@@ -5371,8 +5647,8 @@ Inside the block:
   the block evaluates to a `State` producing that value while
   preserving the threaded state.
 - A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
-  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
-  Effect.Do.Map% _r` per §3.10.9.4). Use this form when the terminal
+  map (compiler-synthesized `def _r: Effect.Host.Do.Bind% expr;
+  Effect.Host.Do.Map% _r` per §3.10.9.4). Use this form when the terminal
   expression is itself already lifted as a `State` instance; the
   compiler-synthesized Map tail avoids the double-wrap that a bare
   terminal would produce.
@@ -5519,9 +5795,11 @@ doubled;
 
 This mirrors the Either-aware composition semantic of `~<<` (§6.8.3): `~<` and `~map` on `Promise` see through `Right` and forward `Left` unchanged, so a rejection resolution propagates through any chain of deferred operations without executing them.
 
-`%` dispatch on a subject is realized via ordinary `_percent`-hook dispatch (§6.2); the hook is stdlib code that performs the pending-to-resolved transition on the associated promise.
+`%` dispatch on a subject is realized via ordinary `_percent`-hook dispatch (§6.2); the hook is stdlib code that writes the supplied `Either` into the associated promise's slot (§6.1.5), flips the slot's `resolved` field, and fires every deferred continuation the slot has accumulated during the pending window.
 
 **NOTE:** The promise is separable from its subject (but not vice versa). `subj.pr` is a first-class value: it may be passed, stored, and composed independently. Applying `%` to the subject is the sole path to state transition; a subject whose holder never triggers `%` yields a permanently-pending promise.
+
+**NOTE:** Per-instance slot representation (§6.1.5). A `Promise` instance's slot holds `< resolved, value, deferred >`: a boolean, the resolved `Either` (or `empty` while pending), and a list of continuations waiting on resolution. Already-resolved construction (`Promise@`, `Promise.honor@`, `Promise.renege@`) initializes the slot as `< true, either, <> >` and never accumulates continuations. Pending construction via `Promise.subj@` initializes as `< false, empty, <> >`; `~<` / `~map` composition against the pending promise appends the continuation to `.deferred` via the slot's read-modify-write idiom, and subject-`%` resolution rewrites the slot to `< true, either, <> >`, drains the accumulated continuations against the resolved `Either`, and runs each one synchronously. Composition against an already-resolved promise reads `.value` from the slot and runs the continuation inline without ever touching `.deferred`. The `.resolved()` method projects the slot's `resolved` field directly.
 
 #### §6.8.3 Composition Via `~<<`
 
@@ -5556,8 +5834,8 @@ Inside the block:
   wrapping in `Right`. A bare terminal (`< :user, :orders >` above)
   produces a `Promise@ (Right@ terminalValue)`.
 - A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
-  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
-  Effect.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
+  map (compiler-synthesized `def _r: Effect.Host.Do.Bind% expr;
+  Effect.Host.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
   terminal expression is itself already a `Promise`.
 
 Each pending promise encountered in the block defers the remaining
@@ -5765,6 +6043,8 @@ Because Foi promises resolve synchronously, the `.resolved()` observation immedi
 
 The spirit of CSP is that the primary read operation is `take`, not `peek`; peek is provided for observation patterns -- for example, inspecting availability via the pattern above before committing to a `take`.
 
+**NOTE:** Per-instance slot representation (§6.1.5). A `Channel` instance's slot holds `< closed, capacity, buffer, putQueue, takeQueue, peekWaiters >`: a one-shot `closed` flag, the construction-time buffer `capacity` (`0` for unbuffered), the current `buffer` list of values placed by `put` awaiting `take` (bounded by `capacity`), a `putQueue` of pending puts each carrying its value and resolution callback, a `takeQueue` of pending takes each carrying its resolution callback, and a `peekWaiters` list of pending peeks. `put`, `take`, `peek`, and `close` each rewrite the slot via read-modify-write (per §6.1.5's record-spread-update idiom) to enforce the coordination invariants: `putQueue` is non-empty only when `buffer` is at `capacity` and `takeQueue` is empty; `takeQueue` is non-empty only when `buffer` is empty and `putQueue` is empty; a `put` with a waiting take in `takeQueue` pairs FIFO by moving one entry from `takeQueue` and resolving both callbacks in-line (per §6.8's sync resolution); a `take` with a value in `buffer` shifts it out and, if `putQueue` is non-empty, moves one queued put's value into `buffer` and resolves its callback in the same rewrite. Peeks accumulate independently in `peekWaiters` -- they do not consume; the first value to arrive in `buffer` resolves every pending peek simultaneously and remains queued for a subsequent `take`. `close` sets the flag, drains `putQueue` with `Left@ "Channel Closed"`, resolves any `takeQueue` entries beyond the remaining buffer with the same `Left`, and drains `peekWaiters` with `Left` once the buffer is empty.
+
 #### §6.9.3 Closing
 
 A channel is closed via `.close()`:
@@ -5831,7 +6111,7 @@ The `~<*` hook performs each take between iterations; `v` binds to the received 
 
 Unlike the `Promise ~<<` relay pattern above, the block does not itself invoke `take`; the channel LHS supplies the take semantics, and the block observes each payload directly. `Channel` is not admitted on `~<<`; single-operation channel work uses `Promise ~<<` (relay pattern above) rather than `Channel ~<<`.
 
-**NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do ~<*` scope (prefix-catching `Effect.Do.Bind` and `Effect.Do.Map` per §6.1.4) over `comp` (§6.3), dispatches on `Effect.Do.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
+**NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Host.Do ~<*` scope (prefix-catching `Effect.Host.Do.Bind` and `Effect.Host.Do.Map` per §6.1.4) over `comp` (§6.3), dispatches on `Effect.Host.Do.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
 
 Two named constructors coordinate across a list of channels, each producing a one-shot derived `Channel` that receives the coordination outcome and closes.
 
@@ -5955,6 +6235,8 @@ Broadcast delivery is synchronous: subscribers registered at the moment of the `
 
 **NOTE:** The stream is separable from its subject (but not vice versa). `subj.st` is a first-class value: it may be passed, stored, composed, and observed independently. Applying `%` to the subject is the sole path for the subject's holder to broadcast values; `.close()` on the subject is the sole path to explicit close. Holders of only `.st` are pure observers -- they can subscribe, chain, and check `.closed()`, but cannot broadcast or close the source.
 
+**NOTE:** Per-instance slot representation (§6.1.5). A `PushStream` instance's slot holds `< closed, subscribers >`: a one-shot `closed` flag and the current subscriber-callback list (kept unique per §6.10 opener's idempotent-subscription invariant). A `PushStream.subj@`-constructed subject's slot holds `< associated >`: an indirect reference to the paired `PushStream` value exposed as `.st`. Subject-`%` reads `associated` from its own slot to identify the target stream; coordinating stdlib code then walks the target stream's `subscribers` list and fires each callback synchronously with the broadcast value. `.close()` on the subject follows the same path -- read `associated`, then flip the target stream's `closed` flag and drain its `subscribers` list via §6.1.5's read-modify-write idiom. Stream-side operations (`~<`, `~map`, `~<*`, `.closed()`) touch the stream's own slot directly: chain operators append their subscriber callback to `subscribers`, `.closed()` projects the `closed` flag. The subject → stream reference lives one-way in the subject's slot only; the stream carries no reverse pointer to its subject, matching the "stream is separable from its subject (but not vice versa)" invariant. Downstream composed streams each hold their own slot; close-propagation from source to derived stream is implemented as an entry in the source's `subscribers` list that, when fired at source-close, flips the derived stream's `closed` flag and cascades onward.
+
 #### §6.10.2 Closing
 
 A stream is closed via `.close()` on the subject:
@@ -6022,7 +6304,7 @@ Semantically, `PushStream ~<*` registers the block body as a subscriber to the s
 
 As a consequence of subscription idempotency, composition patterns that would multiply subscriptions under a naïve counting model (e.g., `sourceSt ~< { sharedInnerSt }` with repeated source deliveries) instead maintain a single subscription per pair. The example in the next NOTE illustrates.
 
-**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do ~<*` scope (prefix-catching `Effect.Do.Bind` and `Effect.Do.Map` per §6.1.4) over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Do.Bind` dispatch's `ret` on the payload (accessed as `#.value` per §6.3.2), wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
+**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Host.Do ~<*` scope (prefix-catching `Effect.Host.Do.Bind` and `Effect.Host.Do.Map` per §6.1.4) over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Host.Do.Bind` dispatch's `ret` on the payload (accessed as `#.value` per §6.3.2), wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
 
 To illustrate observation-only composition, consider a shared external inner:
 
@@ -6067,7 +6349,7 @@ subj.st ~map (v) {
 
 **NOTE:** `~<*` LHS shapes under the composition axis (§6 opener). Three shapes participate: an effect-kinded LHS (`Effect.<...>`) establishes a handler scope (§6.3); a `Channel` LHS observes each successful take until the channel closes (§6.9.4); a `PushStream` LHS (this section) subscribes to a producer-broadcast source. All three share the "block body runs per external emission" pattern; they differ in what constitutes an emission, what triggers each emission, and what terminates the composition. Source-side termination varies per LHS (effect-scope end, channel close, stream close); a `Left@ ...` block-terminal unsubscribes the observer only on `PushStream ~<*`. Consumer-driven drainage lives on `~<<` (Iter §6.5.3, List §7.2, PullStream §6.11), not `~<*`.
 
-**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Do.<Bind, Map> ~<*` scope over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Do.Bind` dispatch's `ret` on the payload, wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
+**NOTE:** The `PushStream~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn PushStream~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Host.Do.<Bind, Map> ~<*` scope over `comp` (§6.3), wraps the source via `PushStream.takeUntil@` (§6.10.4) with an internal signal subject to bound observation, subscribes a `~map` observer running each `Effect.Host.Do.Bind` dispatch's `ret` on the payload, wires `.closed()` (§6.10.2) on the source through `~map` to resolve the completion Promise on natural close, and fires the signal subject on `Done@`-arm dispatch to trigger early unsubscribe. The Promise-returning `.closed()` API and the `PushStream.takeUntil@` combinator together supply the close-detection and unsubscribe surface the hook needs; no runtime primitive beyond `Effect ~<*` is required.
 
 #### §6.10.4 PushStream Combinators
 
@@ -6226,6 +6508,8 @@ Returns `true` if `buf` is available for use: either freshly constructed and not
 
 **NOTE:** The `withBuffer@ < buf: ... >` call is the authoritative check for buffer readiness; if `ready()` returned `true` at some prior instant but a stdlib function or a `~<<` binding has since re-taken the buffer, `withBuffer@` will still runtime-error at the recycle site. Users relying on `ready()` for coordination should treat it as a hint, not a lock; the `withBuffer@` error path is the enforceable check.
 
+**NOTE:** Per-instance slot representation (§6.1.5). A `PullStream.Buffer` instance's slot holds `< state, capacity, overflow, queued, waiters >`: the current buffer state (`Fresh`, `InUse`, or `Closed` per §6.11.5), the construction-time `capacity` and `overflow` policy, the current `queued` values list awaiting a reader, and the `waiters` list of parked reader callbacks (see §6.11.3). A `PullStream` reader instance's slot holds `< source >`: an indirect reference to its immediate source -- the paired `PullStream.Buffer` for a root reader, or the upstream derived-`PullStream` for a stream produced by `~<` / `~map` / combinator. Each `~<<` subscription walks the stream's `source` chain to reach the root buffer, transitions the buffer's `state` to `InUse` via §6.1.5's read-modify-write idiom, and drives pulls through the chain; each intermediate stream reads its own `source` slot to forward the pull upstream. Combinator-derived streams (`merge@`, `filter@`, `scan@`, `takeUntil@`) may hold multiple `source` entries in their slot -- one per upstream stream contributing to the composition. Close-propagation from buffer to the entire reader chain is implemented by the same close-signal that transitions the buffer's `state` to `Closed` also resolving the subscribed `~<<`'s completion Promise (see §6.11.3), cascading through derived observers that had chained off the same buffer. The buffer → reader reference lives one-way in the reader's slot only; the buffer carries no reverse pointer to any reader chain rooted on it, matching PullStream's "no user-visible subject" invariant -- the buffer is the write-side handle, structurally analogous to a subject, but without the direct-broadcast semantic.
+
 #### §6.11.2 Chain Composition Via `~<` / `~map`
 
 `~<` and `~map` are single-step chain operators on `PullStream`. Each describes a transformation applied to values pulled through the chain; each produces a derived `PullStream` inheriting pulls from its source.
@@ -6305,7 +6589,7 @@ PullStream ~<< (n:: doubled) {
 //   3. delivers to block as `n`
 ```
 
-**NOTE:** Suspension of `~<<` when the buffer is empty but not closed is handled via a waiter slot on the buffer itself: a subscribed reader that attempts to pull with no value available is parked in the slot, and the next writer enqueue or close signal resumes it. This is buffer-internal subscriber/waiter-list machinery, not effect-substrate suspension. A `PullStream` `~<<` loop that suspends awaiting a buffer arrival does not block the surrounding thread; asynchrony is surfaced through the completion `Promise` the `~<<` expression evaluates to.
+**NOTE:** Suspension of `~<<` when the buffer is empty but not closed is handled through the buffer's per-instance `waiters` slot content (§6.1.5, §6.11.1): a subscribed reader that attempts to pull with no queued value available is parked as a callback in `waiters` via §6.1.5's read-modify-write idiom, and the next writer enqueue or close signal reads `waiters` back to resume the earliest parked reader. This is buffer-internal subscriber/waiter-list machinery, not effect-substrate suspension. A `PullStream` `~<<` loop that suspends awaiting a buffer arrival does not block the surrounding thread; asynchrony is surfaced through the completion `Promise` the `~<<` expression evaluates to.
 
 **Single subscribe per cycle.** Every `PullStream` in a composition chain is ultimately rooted at exactly one `PullStream.Buffer` (or, for `merge@`-derived streams, a finite set of buffers). Binding `~<<` to any reader rooted at a buffer transitions that buffer to an in-use state (`ready()` returns `false`). A subsequent `~<<` bound to any reader rooted at the same buffer -- the same reader or any sibling derived from the same source -- raises an immediate runtime error at the binding site, before the loop iterates. The buffer returns to a ready state when the writer signals close (§6.11.5), at which point recycling via `withBuffer@ < buf: ... >` vends a fresh reader for a new cycle.
 
@@ -6412,15 +6696,14 @@ defn dumpFile(path, stopSt) {
 
 def stopSubj: PushStream.subj@;
 
-Effect.System ~<* (eff:: dumpFile("/tmp/log", stopSubj.st)) {
+Effect.Sys.SIGINT ~<* (eff:: dumpFile("/tmp/log", stopSubj.st)) {
     :: ?(eff){
-        [?as Effect.System.SIGINT]: stopSubj% true;
-        : empty
+        [?as Effect.Sys.SIGINT]: stopSubj% true;
     }
 };
 ```
 
-**NOTE:** `Effect.System.SIGINT` is how to observe the process-level `SIGINT` (stdio interrupt signal).
+**NOTE:** `Effect.Sys.SIGINT` is how to observe the process-level `SIGINT` (stdio interrupt signal). See §6.13.6 for the broader `Sys.*` namespace-expansion register.
 
 The signal stream's emitted value is not itself forwarded; only its arrival triggers the close of the derived stream. If either the source or signal closes without the signal ever emitting, the derived stream closes at that point.
 
@@ -6566,8 +6849,8 @@ Inside the block:
 - The terminal expression is `~map`-lifted into the ambient `IO`.
   A bare terminal (`v * 2` above) becomes the block's produced value.
 - A `$`-prefixed terminal (`$expr`) binds `expr` before the terminal
-  map (compiler-synthesized `def _r: Effect.Do.Bind% expr;
-  Effect.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
+  map (compiler-synthesized `def _r: Effect.Host.Do.Bind% expr;
+  Effect.Host.Do.Map% _r` per §3.10.9.4), avoiding double-wrap when the
   terminal expression is itself already an `IO`.
 
 The Reader environment supplied at `%`-application time is threaded implicitly through every composed step's executor -- each step sees the same environment (see §6.12.4).
@@ -6737,7 +7020,7 @@ Foi's effect system requires **discipline at the declaration surface**: every no
 
 The discipline is intentionally light on ceremony. Declaration is required only where effects are first emitted; the compiler tracks their propagation up the call stack silently; a `~<*` handler somewhere before the outermost `%` boundary satisfies coverage.
 
-A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small stdlib-designated set (Log, Random, CurrentTime) is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. §6.13.5 specifies the ambient category.
+A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small stdlib-designated set (`Effect.Sys.Log`, `Effect.Sys.Random`, `Effect.Sys.CurrentTime`) is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. §6.13.5 specifies the ambient category.
 
 #### §6.13.1 The `:Effects(...)` Clause
 
@@ -6877,54 +7160,89 @@ Ambient effects are pre-covered by the runtime top-level handler installed at ev
 
 #### §6.13.5 Ambient Effects
 
-A small built-in set of effect kinds is **ambient**. The ambient effects are:
+A small built-in set of effect kinds is **ambient**. The ambient
+effects are:
 
-- `Effect.Log`: default handler: stdout write.
-- `Effect.Random`: default handler: PRNG (seedable at boundary).
-- `Effect.CurrentTime`: default handler: system clock.
+- `Effect.Sys.Log`: default handler: stdout write.
+- `Effect.Sys.Random`: default handler: PRNG (seedable at boundary).
+- `Effect.Sys.CurrentTime`: default handler: system clock.
 
-Ambient effects are handled by a runtime-installed handler scope wrapping every outermost `%` invocation. Callers need not declare ambients in `:Effects(...)`; the emit-edge rule (§6.13.2) does not apply to them, nor does the coverage requirement (§6.13.4) apply to them.
+Ambient effects are handled by a runtime-installed handler scope
+wrapping every outermost `%` invocation. Callers need not declare
+ambients in `:Effects(...)`; the emit-edge rule (§6.13.2) does not
+apply to them, nor does the coverage requirement (§6.13.4) apply to
+them.
 
-A user may shadow the ambient handler for a bounded region by establishing a `~<*` scope for that effect kind lexically above a perform site. Standard dynamic lookup (§6.1.2) finds the user's handler before the outermost handler provided by the runtime, handling the effect (and stopping propagation):
+A user may shadow the ambient handler for a bounded region by
+establishing a `~<*` scope for that effect kind lexically above a
+perform site. Standard dynamic lookup (§6.1.2) finds the user's
+handler before the outermost handler provided by the runtime,
+handling the effect (and stopping propagation):
 
 ```java
-Effect.Log ~<* (eff:: doWork(), ret) {
+Effect.Sys.Log ~<* (eff:: doWork(), ret) {
     ::?(eff){
-        [?as Effect.Log]: ret(captureForTest(#));
+        [?as Effect.Sys.Log]: ret(captureForTest(#));
     };
 };
 ```
 
-Inside this scope, `log()` calls (or any direct `Effect.Log%` perform) resolve to the user's `captureForTest` arm; outside, they resolve to the runtime default (stdout).
+Inside this scope, `log()` calls (or any direct `Effect.Sys.Log%`
+perform) resolve to the user's `captureForTest` arm; outside, they
+resolve to the runtime default (stdout).
 
-Declaring an ambient in a `:Effects(...)` clause is legal but redundant; the compiler neither requires it nor checks against it. Users who wish to document ambient use explicitly at an API boundary may do so:
+Declaring an ambient in a `:Effects(...)` clause is legal but
+redundant; the compiler neither requires it nor checks against it.
+Users who wish to document ambient use explicitly at an API boundary
+may do so via the explicit reserved-root path (per §6.13.1's shorthand
+rules):
 
 ```java
 // legal, documentary; no compile effect
-deft LogsProgress(int) :Effects(Log) ^empty;
+deft LogsProgress(int) :Effects(Sys.Log) ^empty;
 ```
 
-**NOTE:** The ambient category is deliberately narrow. Effects with Left-carrying resume (any perform whose value the caller must inspect), any effect that writes to persistent state, and any effect that opens network or file resources are outside the ambient category by design: those effects belong to the tracked discipline where callers explicitly acknowledge them. The ambient set is fixed by the runtime; users cannot mark their own effect kinds as ambient.
+**NOTE:** The ambient category is deliberately narrow. Effects with
+Left-carrying resume (any perform whose value the caller must
+inspect), any effect that writes to persistent state, and any effect
+that opens network or file resources are outside the ambient category
+by design: those effects belong to the tracked discipline where
+callers explicitly acknowledge them. The ambient set is fixed by the
+runtime; users cannot mark their own effect kinds as ambient.
 
-#### §6.13.6 Interaction With `Gen.` Prefix
+#### §6.13.6 Open: `Sys.*` Namespace Expansion
 
-A `Gen.`-prefixed type's `Effect.Gen.Yield` and `Effect.Gen.Return` performs are compiler-managed and never appear in the type's declared effect list. `Effect.Gen.*` is a compiler-privileged partition (§6.1.4); user source cannot write `:Effects(Effect.Gen...)`, and attempting to do so is a parser-level rejection.
+Beyond the three ambients committed in §6.13.5 (`Sys.Log`,
+`Sys.Random`, `Sys.CurrentTime`), the `Effect.Sys.*` namespace has
+room for additional host-service kinds. This subsection is a
+candidate register per §0.3; per-candidate classification (ambient
+vs. tracked) and precise payload/resume shapes remain open.
 
-The effect surface of a `Gen.` type is exactly its declared `:Effects(...)` list, restricted to non-`Effect.Gen` kinds. Non-`Effect.Gen` effects are added via explicit clause:
+- **`Sys.Sleep%`** -- suspend for a specified duration; resumes
+  after elapsed time.
+- **`Sys.EnvVar%`** -- read a named environment variable.
+- **`Sys.Args%`** -- read process command-line arguments.
+- **`Sys.Cwd%`** -- read current working directory.
+- **`Sys.Hostname%`** -- read machine hostname.
+- **`Sys.Platform%`** -- read OS platform identifier (`"linux"`,
+  `"darwin"`, `"win32"`, ...).
+- **`Sys.ProcessId%`** -- read current process ID.
+- **`Sys.Exit%`** -- terminate the process with a status code
+  (no-resume; call site never returns).
+- **`Sys.SIGINT%`** -- process-level interrupt (Ctrl-C) delivery;
+  caller decides whether to continue. Referenced at §6.11.4.
+- **`Sys.Signal.<kind>`** -- broader signal surface (`SIGTERM`,
+  `SIGHUP`, `SIGUSR1`/`SIGUSR2`, ...). Open shape question: one
+  effect kind with a signal-name payload, or per-signal sub-kinds.
+- **`Sys.Clock.Monotonic%`** -- monotonic clock (immune to
+  wall-clock adjustments); distinct from ambient `Sys.CurrentTime`.
+  Useful for reliable duration measurement.
 
-```java
-// declared effects: (none)
-deft Gen.Numbers(int, int) ^IterP;
-
-// declared effects: {Ask}
-deft Gen.AskingNumbers(int) :Effects(Ask) ^IterP;
-```
-
-The emit-edge rule of §6.13.2 applies uniformly to non-`Effect.Gen` performs: a generator whose body performs `Effect.Ask` must attach (via `:as`) a `Gen.`-prefixed type whose declared effects include `Ask`. `Effect.Gen.Yield` performs (via `<::`) and compiler-synthesized `Effect.Gen.Return` performs (at tail positions per §6.6.1) do not require declaration; both are covered by the `Gen.` prefix itself.
-
-Coverage for `Effect.Gen` is discharged by the runner's internal `Effect.Gen ~<*` scope (§6.6.1, §6.6.6): every `Yield` and `Return` performed inside a generator body is caught by the runner-installed handler before any escape. `Effect.Gen` never propagates past the generator's own type surface.
-
-Non-`Effect.Gen` effects performed inside a generator body propagate normally: the internal `Effect.Gen ~<*` scope is prefix-matched to `Effect.Gen` only (per §6.1.4 unified prefix rule and §6.3.1 narrowing), so an `Effect.Ask` perform in the generator body escapes past the scope and follows the standard tracking discipline, resolving at whichever handler in the generator's dynamic call stack catches `Ask`.
+Out of scope for `Sys.*`: file I/O, network I/O, and any operation
+opening persistent or external resources. Those belong to
+user-declared effect kinds or dedicated stdlib namespaces, by the
+same principle §6.13.5 applies to the ambient category. `Sys.*` is
+host-service surface, not application I/O.
 
 ### §7 Loops and Comprehensions
 
@@ -7045,7 +7363,7 @@ List ~<< (x:: xs, y:: ys) {
 // < 9, 10, 11, 12 >
 ```
 
-Under the do-block compilation split (§3.10.9.4), `List` declares a `~<<` hook (body below); `List ~<<` composition selects the override route. Each `def x::` binding and each `$expr;` mid-block statement compiles to an `Effect.Do.Bind%` perform on the source expression; a bare terminal compiles to an `Effect.Do.Map%` perform; a `$`-prefixed terminal compiles to a compiler-synthesized `def _r: Effect.Do.Bind% expr; Effect.Do.Map% _r` (Bind first, then Map lift). The hook body opens an inner `Effect.Do ~<*` scope, drives the compiled `comp` under handler control via cartesian iteration, and resolves `Right@ list` at natural completion or `Left@ partial` on `Done@` early-exit (with empty-elision per §7.9).
+Under the do-block compilation split (§3.10.9.4), `List` declares a `~<<` hook (body below); `List ~<<` composition selects the override route. Each `def x::` binding and each `$expr;` mid-block statement compiles to an `Effect.Host.Do.Bind%` perform on the source expression; a bare terminal compiles to an `Effect.Host.Do.Map%` perform; a `$`-prefixed terminal compiles to a compiler-synthesized `def _r: Effect.Host.Do.Bind% expr; Effect.Host.Do.Map% _r` (Bind first, then Map lift). The hook body opens an inner `Effect.Host.Do ~<*` scope, drives the compiled `comp` under handler control via cartesian iteration, and resolves `Right@ list` at natural completion or `Left@ partial` on `Done@` early-exit (with empty-elision per §7.9).
 
 The observable behaviors of `List ~<<` follow directly from this dispatch:
 
@@ -7181,9 +7499,9 @@ defn listBindImpl(comp) {
     {
         curDepth := 0;
         pending := empty;
-        Effect.Do ~<* (eff:: comp(), ret) {
+        Effect.Host.Do ~<* (eff:: comp(), ret) {
             :: ?(eff){
-                [?as Effect.Do.Bind]: {
+                [?as Effect.Host.Do.Bind]: {
                     def raw: #.value;
                     ?(raw){
                         [?as Done]: {
@@ -7204,7 +7522,7 @@ defn listBindImpl(comp) {
                         }
                     }
                 };
-                [?as Effect.Do.Map]: {
+                [?as Effect.Host.Do.Map]: {
                     def raw: #.value;
                     ?(raw){
                         [?as Done]: {
@@ -7258,9 +7576,9 @@ defn listBindImpl(comp) {
 };
 
 defn listPromiseBindImpl(comp) {
-    ^(Effect.Do ~<* (eff:: comp(), ret) {
+    ^(Effect.Host.Do ~<* (eff:: comp(), ret) {
         :: ?(eff){
-            [?as Effect.Do.Bind]: Done@ #.value;
+            [?as Effect.Host.Do.Bind]: Done@ #.value;
             : empty
         };
     })
@@ -7269,10 +7587,10 @@ defn listPromiseBindImpl(comp) {
             def earlyExit: false;
             (~cata)(
                 (IterP ~<< (v:: IterP@ srcList) {
-                    (Effect.Do ~<* (eff:: comp(), ret) {
+                    (Effect.Host.Do ~<* (eff:: comp(), ret) {
                         :: ?(eff){
-                            [?as Effect.Do.Bind]: { ret(v) };
-                            [?as Effect.Do.Map]: {
+                            [?as Effect.Host.Do.Bind]: { ret(v) };
+                            [?as Effect.Host.Do.Map]: {
                                 Done@ #.value
                             };
                         };
@@ -7302,9 +7620,9 @@ defn listPromiseBindImpl(comp) {
 };
 ```
 
-**Plain-cartesian arm (`listBindImpl`).** Runs `comp` under fresh `Effect.Do ~<*` scope installations, once per coordinate position in the cartesian product. The first pass discovers source lists via each `Effect.Do.Bind` perform's payload and initializes an odometer `coord`; subsequent passes advance the odometer and re-run `comp` with `sources[d][coord[d]]` substituted at each Bind depth. Ret is fire-and-forget per §6.3.2 (D5); the Bind arm's normal terminal is bare `empty` (arm-without-`Done@` per §6.3.2 D4) so the scope persists across multiple Bind arm firings within a single pass. The Map arm terminates the scope via `Done@`, contributing the pass's terminal value to `pending`. Both arms inspect their payloads for `Done@` shape to catch early-exit contributions: a `$Done@` at terminal enters via Bind (payload is Tuple-shaped, assigned directly to `pending` for spread into `results`); a bare-terminal `Done@` enters via Map (payload wrapped as `< payload >` in `pending`, or `<>` under empty-elision per §7.9). Either Done@ path sets `earlyExit := true` and `more := false`, terminating the scope and short-circuiting further passes. After the scope returns, `pending` spreads into `results`; at runPass return, `[more]` continues to the next pass, `[earlyExit]` returns `Left@ results`, and the natural path returns `Right@ results`.
+**Plain-cartesian arm (`listBindImpl`).** Runs `comp` under fresh `Effect.Host.Do ~<*` scope installations, once per coordinate position in the cartesian product. The first pass discovers source lists via each `Effect.Host.Do.Bind` perform's payload and initializes an odometer `coord`; subsequent passes advance the odometer and re-run `comp` with `sources[d][coord[d]]` substituted at each Bind depth. Ret is fire-and-forget per §6.3.2 (D5); the Bind arm's normal terminal is bare `empty` (arm-without-`Done@` per §6.3.2 D4) so the scope persists across multiple Bind arm firings within a single pass. The Map arm terminates the scope via `Done@`, contributing the pass's terminal value to `pending`. Both arms inspect their payloads for `Done@` shape to catch early-exit contributions: a `$Done@` at terminal enters via Bind (payload is Tuple-shaped, assigned directly to `pending` for spread into `results`); a bare-terminal `Done@` enters via Map (payload wrapped as `< payload >` in `pending`, or `<>` under empty-elision per §7.9). Either Done@ path sets `earlyExit := true` and `more := false`, terminating the scope and short-circuiting further passes. After the scope returns, `pending` spreads into `results`; at runPass return, `[more]` continues to the next pass, `[earlyExit]` returns `Left@ results`, and the natural path returns `Right@ results`.
 
-**Outer-Promise-list arm (`listPromiseBindImpl`).** Extracts the source list via a discovery `Effect.Do ~<*` scope catching the first Bind's payload, then drives `IterP ~<<` over `IterP@ srcList` for per-element awaiting. Each iteration installs a fresh `Effect.Do ~<*` scope over `comp()` that ret-substitutes the awaited element into the block body; the block-body terminal Promise is captured via the chained `~<`. The chain's `res` is inspected for `Done@`: on Done@, `earlyExit := true` and `res.value` appends to `acc` unless empty (§7.9 empty-elision); on non-Done@, `!earlyExit` gates further growth. Terminal shape via `~cata` (§7.7): `IterP ~<<` natural completion (Right arm) resolves `Promise{Right{acc}}` when `!earlyExit`, else `Promise{Left{acc}}`; cargo Left short-circuit (Left arm) resolves `Promise{Left{leftVal}}` when `!earlyExit`, else `Promise{Left{acc}}`. Once `Done@` fires, subsequent IterP iterations still run (the outer `~<` fires per step), but `!earlyExit` prevents further accumulator growth; the final terminal shape is delivered at `IterP ~<<` completion.
+**Outer-Promise-list arm (`listPromiseBindImpl`).** Extracts the source list via a discovery `Effect.Host.Do ~<*` scope catching the first Bind's payload, then drives `IterP ~<<` over `IterP@ srcList` for per-element awaiting. Each iteration installs a fresh `Effect.Host.Do ~<*` scope over `comp()` that ret-substitutes the awaited element into the block body; the block-body terminal Promise is captured via the chained `~<`. The chain's `res` is inspected for `Done@`: on Done@, `earlyExit := true` and `res.value` appends to `acc` unless empty (§7.9 empty-elision); on non-Done@, `!earlyExit` gates further growth. Terminal shape via `~cata` (§7.7): `IterP ~<<` natural completion (Right arm) resolves `Promise{Right{acc}}` when `!earlyExit`, else `Promise{Left{acc}}`; cargo Left short-circuit (Left arm) resolves `Promise{Left{leftVal}}` when `!earlyExit`, else `Promise{Left{acc}}`. Once `Done@` fires, subsequent IterP iterations still run (the outer `~<` fires per step), but `!earlyExit` prevents further accumulator growth; the final terminal shape is delivered at `IterP ~<<` completion.
 
 #### §7.3 `~<`
 

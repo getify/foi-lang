@@ -1549,17 +1549,32 @@ export const AddBinExpr = production("AddBinExpr",
 // <AddDispatch> := AddBinExpr | MulDispatch;
 var AddDispatch = or(AddBinExpr, MulDispatch);
 
-// TypeCompareBinExpr := AddDispatch _ AsTypeOp _ NamedType;
+// TypeCompareBinExpr := AddDispatch _ AsTypeOp _ (BraceNarrowing | NamedType);
 //
-// Carves ?as/!as out of CompareBinExpr — their RHS is a NamedType
-// (allowing NativeType keywords like `int`/`bool`), not the general
-// expression RHS that CompareBinExpr accepts. Flat binary, non-iterated.
-// NamedType is §18 (forward-ref via lazy).
+// Carves ?as/!as out of CompareBinExpr — their RHS is a type-form,
+// not the general expression RHS that CompareBinExpr accepts. Two
+// RHS shapes:
+//   - BraceNarrowing: `x ?as Effect.<Ask, Retry>` — Effect-kind
+//     OR-union narrowing (spec §6.3.1's brace form applied at
+//     the standalone binary `?as`/`!as` site).
+//   - NamedType: `x ?as int`, `x ?as Effect.Ask` — bare or dotted
+//     name (including NativeType keywords like `int`/`bool`).
+//
+// PEG: BraceNarrowing first — both alternatives open with a
+// dotted name (via DoComprLHSName inside BraceNarrowing, or via
+// NamedType's bare-or-dotted alt); brace form requires an
+// additional `.<...>` suffix. On absence, backtrack to plain
+// NamedType. Same PEG pattern as DoLoopComprLHS (§16) and
+// DepCondBoolExpr's AsTypeOp arm (§14).
+//
+// Flat binary, non-iterated — `x ?as int ?as bool` requires
+// parens, semantically unclear without them. BraceNarrowing is
+// §16, NamedType is §18 (both forward-ref via lazy).
 export const TypeCompareBinExpr = production("TypeCompareBinExpr",
 	and(
 		AddDispatch,
 		delim(), lazy(() => AsTypeOp), delim(),
-		lazy(() => NamedType)
+		or(lazy(() => BraceNarrowing), lazy(() => NamedType))
 	)
 );
 
@@ -2377,7 +2392,7 @@ var DepCondBoolOp = or(
 	OrOp
 );
 
-// DepCondBoolExpr := AsTypeOp _ NamedType
+// DepCondBoolExpr := AsTypeOp _ (BraceNarrowing | NamedType)
 //                  | DepCondBoolOp _ CompareDispatch
 //                  | NamedUnaryOp
 //                  | OpenParen _ DepCondBoolExpr _ CloseParen;
@@ -2388,9 +2403,16 @@ var DepCondBoolOp = or(
 // (?empty/!empty), disjoint from AsTypeOp, DepCondBoolOp, and the
 // paren-recursive arm's OpenParen opener. Bare form — no RHS; the
 // topic supplies the implicit operand at atom-render time.
+//
+// AsTypeOp arm's RHS admits both BraceNarrowing (spec §6.3.1's
+// brace form applied at match-arm `?as`/`!as` patterns) and
+// NamedType (bare or dotted, including NativeType). PEG:
+// BraceNarrowing first, backtrack to NamedType on absence of
+// `.<...>` suffix — same pattern as TypeCompareBinExpr (§9) and
+// DoLoopComprLHS (§16).
 export const DepCondBoolExpr = production("DepCondBoolExpr",
 	or(
-		and(AsTypeOp, delim(), lazy(() => NamedType)),
+		and(AsTypeOp, delim(), or(lazy(() => BraceNarrowing), lazy(() => NamedType))),
 		and(DepCondBoolOp, delim(), CompareDispatch),
 		NamedUnaryOp,
 		and(OpenParen, delim(), lazy(() => DepCondBoolExpr), delim(), CloseParen)
@@ -2468,6 +2490,66 @@ var MatchExpr = or(IndepMatchExpr, DepMatchExpr);
 // =============================================================
 
 var DoubleColon = tokType("DoubleColon");
+
+// DoComprLHSName := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+//
+// Bare-or-dotted name for do-comprehension LHS. Widened from bare
+// Identifier|BuiltIn to admit Effect-substrate handler narrowings
+// like `Effect.Ask ~<*` and `Effect.User.MyKind ~<*` (§6.3.1).
+// NativeType (int/bool/string/etc.) deliberately excluded — reserved
+// keywords cannot appear at LHS position. Semantic validity (which
+// namespace paths are meaningful at ~<< vs ~<*) is enforced at the
+// semantic layer, not grammar.
+//
+// Full production (not a hidden dispatcher) so multi-segment names
+// live under a single node with proper source positions — same
+// pattern as DefTypeName (§18).
+export const DoComprLHSName = production("DoComprLHSName",
+	and(
+		or(Identifier, BuiltIn),
+		any(and(Period, or(Identifier, BuiltIn)))
+	)
+);
+
+// BraceNarrowing := DoComprLHSName Period OpenAngle _ DoComprLHSName (_ Comma _ DoComprLHSName)* (_ Comma)? _ CloseAngle;
+//
+// Shared brace-narrowing production. Shape: prefix followed by
+// `.<entries>` — catches the OR-union of the named prefix subtrees.
+// Entries are DoComprLHSName — admits bare (`Ask`) and dotted
+// (`Sys.Log`) forms. NativeType excluded via DoComprLHSName's
+// alphabet.
+//
+// Referenced at three sites (all OR-semantic — "any of these
+// prefix subtrees"):
+//   - §9  TypeCompareBinExpr RHS       — `x ?as Effect.<Ask, Retry>`
+//   - §14 DepCondBoolExpr AsTypeOp arm — `[?as Effect.<Ask, Retry>]:`
+//   - §16 DoLoopComprLHS               — `Effect.<Ask, Retry> ~<*`
+//
+// NOT referenced at EffectsClause RHS. `:Effects(...)` has AND
+// semantics (function declares it performs every listed effect);
+// brace narrowing has OR semantics (handler catches any of the
+// listed subtrees). Different semantic roles ⇒ different
+// grammatical treatment. Spec §6.3.1's "three sites" prose
+// (mentioning `:Effects(...)` as a third brace site) is
+// overreach — grammar deliberately keeps them separate.
+//
+// Reserved-root rejection and implicit-User rewrite are
+// semantic-layer (§6.1.4). Grammar stays permissive.
+//
+// Trailing comma admitted for list-editing ergonomics. Empty
+// list (`Effect.<>`) is grammatically disallowed — a set with
+// no admitted kinds is meaningless.
+export const BraceNarrowing = production("BraceNarrowing",
+	and(
+		DoComprLHSName,
+		Period,
+		OpenAngle, delim(),
+		DoComprLHSName,
+		any(and(delim(), Comma, delim(), DoComprLHSName)),
+		optional(and(delim(), Comma)),
+		delim(), CloseAngle
+	)
+);
 
 // DoDefVarStmt := "def" _ (Identifier | DestructureTarget) _ DoubleColon _ Expr;
 //
@@ -2569,14 +2651,26 @@ export const DoBlockExpr = production("DoBlockExpr",
 	{ preserveInnerDelim: true }
 );
 
-// <DoComprLHS> := Identifier | BuiltIn;
+// <DoComprLHS>     := DoComprLHSName;
+// <DoLoopComprLHS> := BraceNarrowing | DoComprLHSName;
 //
-// Shared LHS shape for DoComprExpr and DoLoopComprExpr. Type-LHS only
-// per Slot 15's axis lock — the dispatch to a specific hook resolves
-// at compile time. Iterable drainage over List/Iter/PullStream moved
-// to `~<<`; `~<*` retains producer-broadcast admissions (Channel,
-// PushStream, effect handler scopes).
-var DoComprLHS = or(Identifier, BuiltIn);
+// LHS shapes for do-comprehensions. Bind (`~<<`) admits bare or
+// dotted namespace paths only. Loop (`~<*`) additionally admits
+// the handler-narrowing brace form `Effect.<A, B>` (§6.3.1) via
+// the shared BraceNarrowing production.
+//
+// PEG note on DoLoopComprLHS: BraceNarrowing first — both
+// alternatives start with DoComprLHSName; the brace form requires
+// an additional `.<...>` suffix. If that suffix follows, brace
+// commits; otherwise backtrack to plain DoComprLHSName. Same PEG
+// pattern used at TypeCompareBinExpr (§9) and DepCondBoolExpr's
+// AsTypeOp arm (§14).
+//
+// Type-LHS only per Slot 15's axis lock. Iterable drainage over
+// List/Iter/PullStream lives at `~<<`; `~<*` retains producer-
+// broadcast admissions (Channel, PushStream, effect handler scopes).
+var DoComprLHS     = DoComprLHSName;
+var DoLoopComprLHS = or(BraceNarrowing, DoComprLHSName);
 
 // DoComprExpr := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 //
@@ -2592,17 +2686,18 @@ export const DoComprExpr = production("DoComprExpr",
 	)
 );
 
-// DoLoopComprExpr := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
+// DoLoopComprExpr := DoLoopComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 //
 // `~<*` is Tilde + OpenAngle + Star — three adjacent single-char
-// tokens. Shares LHS (DoComprLHS) and RHS (DoBlockExpr) shape with
-// DoComprExpr; differs only in the operator.
+// tokens. Shares RHS (DoBlockExpr) shape with DoComprExpr; differs
+// in the operator AND in admitting the brace-narrowing LHS form
+// (`Effect.<A, B>`) for handler-scope narrowing (§6.3.1).
 //
 // Value-LHS-with-fn-RHS iter form (`xs ~<* fn`) is gone under Slot 15.
 // Source enters via DoBlockDefsInit clause (`Channel ~<* (v:: ch) {...}`).
 export const DoLoopComprExpr = production("DoLoopComprExpr",
 	and(
-		DoComprLHS,
+		DoLoopComprLHS,
 		delim(),
 		Tilde, OpenAngle, Star,
 		delim(),
@@ -2977,6 +3072,36 @@ export const NestedTypeExpr = production("NestedTypeExpr",
 	and(NamedType, delim(), lazy(() => GroupedTypeExpr))
 );
 
+var KwEffects = tokVal("Keyword", ":Effects");
+
+// EffectsClause := ":Effects" _ OpenParen _ NamedType (_ Comma _ NamedType)* (_ Comma)? _ CloseParen;
+//
+// Optional clause on FuncTypeExpr (§6.13.1) declaring the effect
+// kinds a declared function may perform. Entries are NamedType —
+// admits bare (`Ask`) and dotted (`Sys.Log`, `User.MyKind`) forms.
+// NativeType arm of NamedType is grammatically admitted but
+// semantically nonsense (semantic layer rejects). Reserved-root
+// rejection (Effect.Host.*, bare Effect.<User|Host|Sys>) is
+// semantic-layer, not grammar. Brace-form narrowing
+// (`Effect.<Ask, Retry>`) is out of scope for the clause list;
+// users spell each entry separately.
+//
+// Trailing comma admitted for list-editing ergonomics (matches
+// FuncTypeExpr's arg-list convention).
+//
+// Empty list (`:Effects()`) is disallowed by grammar — the "no
+// effects" case is expressed by omitting the clause entirely.
+export const EffectsClause = production("EffectsClause",
+	and(
+		KwEffects, delim(),
+		OpenParen, delim(),
+		NamedType,
+		any(and(delim(), Comma, delim(), NamedType)),
+		optional(and(delim(), Comma)),
+		delim(), CloseParen
+	)
+);
+
 // <NoUnionTypeExpr> := NestedTypeExpr | NamedType
 //                    | EmptyLit | PlainStr | NumberLit | BooleanLit
 //                    | DataStructTypeExpr;
@@ -3114,7 +3239,7 @@ var FuncTypeArgList = or(
 	FuncTypeFinalArg
 );
 
-// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ (EffectsClause _)? Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 export const FuncTypeExpr = production("FuncTypeExpr",
 	and(
 		OpenParen, delim(),
@@ -3122,6 +3247,7 @@ export const FuncTypeExpr = production("FuncTypeExpr",
 		delim(),
 		optional(and(Comma, delim())),
 		CloseParen, delim(),
+		optional(and(EffectsClause, delim())),
 		Caret, delim(),
 		optional(Qmark), delim(),
 		or(NoUnionTypeExpr, GroupedTypeExpr)
@@ -3135,11 +3261,31 @@ export const FuncTypeExpr = production("FuncTypeExpr",
 // form). Mechanical ordering.
 var TypeExpr = or(FuncTypeExpr, NoFuncTypeExpr);
 
-// DefTypeStmt := "deft" _ Identifier _ TypeExpr;
-export const DefTypeStmt = production("DefTypeStmt",
-	and(KwDeft, delim(), Identifier, delim(), TypeExpr)
+// DefTypeName := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+//
+// Bare-or-dotted name for `deft` declarations. Widened from bare
+// Identifier to admit Effect-substrate declarations like
+// `deft Effect.Ask(...)` and `deft Effect.User.MyKind(...)`.
+// NativeType (int/bool/string/etc.) deliberately excluded — reserved
+// keywords cannot be shadowed as declared type names. Reserved-root
+// rejection at Effect.Host.*, Effect.User.Slot.*, Effect.Sys.*, and
+// bare Effect.<User|Host|Sys> is semantic-layer, not grammar (§6.1.4).
+//
+// Full production (not a hidden dispatcher) so the multi-segment
+// name lives under a single node with proper source positions; the
+// roundtrip serializer needs those positions to sort DefTypeStmt's
+// pieces correctly and place the "deft" anchor at the front.
+export const DefTypeName = production("DefTypeName",
+	and(
+		or(Identifier, BuiltIn),
+		any(and(Period, or(Identifier, BuiltIn)))
+	)
 );
 
+// DefTypeStmt := "deft" _ DefTypeName _ TypeExpr;
+export const DefTypeStmt = production("DefTypeStmt",
+	and(KwDeft, delim(), DefTypeName, delim(), TypeExpr)
+);
 
 // =============================================================
 // PUBLIC API

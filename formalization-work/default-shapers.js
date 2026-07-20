@@ -3092,7 +3092,41 @@ export const defaultShapers = {
 		return withDelims({ type: "DoNonReceivingBindStmt", expr }, delims);
 	},
 
-	// DoComprExpr := (Identifier | BuiltIn) _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
+	// DoComprLHSName := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+	//
+	// Period tokens drop (namespace separator, re-synthesized by
+	// roundtrip via segments-join, parallel to DefTypeName). Single-
+	// segment case still wraps as a DoComprLHSName node for shape
+	// consistency; roundtrip emits it identically to a bare
+	// Identifier/BuiltIn.
+	DoComprLHSName(frame,parts) {
+		return { type: "DoComprLHSName", segments: parts.filter(isNode) };
+	},
+
+	// BraceNarrowing := DoComprLHSName Period OpenAngle _ DoComprLHSName (_ Comma _ DoComprLHSName)* (_ Comma)? _ CloseAngle;
+	//
+	// Prefix is the first DoComprLHSName node; entries are the
+	// remaining DoComprLHSName nodes. Period, OpenAngle, Comma(s),
+	// CloseAngle are structural → delims. emitGeneric walks
+	// pieces in source order and reconstructs the `.<...>` shape
+	// naturally.
+	//
+	// Node shape uniform across all three referring sites:
+	// TypeCompareBinExpr (§9), DepCondBoolExpr (§14), DoLoopComprLHS
+	// (§16). Consumers can rely on `{ prefix, entries }` regardless
+	// of parent context.
+	BraceNarrowing(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var prefix = nodes[0];
+		var entries = nodes.slice(1);
+		var delims = [];
+		for (let p of parts) {
+			if (!isNode(p)) delims.push(p); // Period, OpenAngle, Comma, CloseAngle
+		}
+		return withDelims({ type: "BraceNarrowing", prefix, entries }, delims);
+	},
+
+	// DoComprExpr := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 	//
 	// `~<<` tokens (Tilde + OpenAngle + OpenAngle) are the
 	// monadic-bind operator — anchored in type tag, drop as
@@ -3291,9 +3325,21 @@ export const defaultShapers = {
 	// §18 TYPE DEFINITIONS
 	// =============================================================
 
-	// DefTypeStmt := "deft" _ Identifier _ <TypeExpr>;
+	// DefTypeName := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
 	//
-	// "deft" keyword drops. No structural tokens.
+	// Period tokens drop (namespace separator, re-synthesized by
+	// roundtrip via segments-join, parallel to NamedType.dotted).
+	// Single-segment case still wraps as a DefTypeName node for
+	// shape consistency; roundtrip emits it identically to a bare
+	// Identifier (segments.join(".") with one element = the ident).
+	DefTypeName(frame,parts) {
+		return { type: "DefTypeName", segments: parts.filter(isNode) };
+	},
+
+	// DefTypeStmt := "deft" _ DefTypeName _ <TypeExpr>;
+	//
+	// "deft" keyword drops (re-synthesized at roundtrip via gapFill).
+	// No structural tokens at this level.
 	DefTypeStmt(frame,parts) {
 		var [ name, decl ] = parts.filter(isNode);
 		return { type: "DefTypeStmt", name, decl };
@@ -3390,6 +3436,66 @@ export const defaultShapers = {
 		return withDelims({ type: "DataStructFinalValType", fieldType }, delims);
 	},
 
+	// EffectsClause := ":Effects" _ OpenParen _ NamedType (_ Comma _ NamedType)* (_ Comma)? _ CloseParen;
+	//
+	// ":Effects" keyword drops (re-synthesized at roundtrip via
+	// gapFill). Parens and commas are structural → delims.
+	// Trailing comma (when present) preserved in delims for
+	// roundtrip fidelity.
+	EffectsClause(frame,parts) {
+		var entries = [];
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) entries.push(p);
+			else if (p.type === "Keyword") continue; // ":Effects"
+			else delims.push(p); // OpenParen, CloseParen, Comma
+		}
+		return withDelims({ type: "EffectsClause", entries }, delims);
+	},
+
+	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ (EffectsClause _)? Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+	//
+	// Parens, commas → delims. Caret is dual-purpose: drives
+	// the args/return state machine AND pushes to delims. Qmark
+	// after Caret is dual-purpose: captures `optionalReturn:true`
+	// flag AND pushes to delims (position needed to round-trip
+	// WS straddling the `?`, e.g. `^ ?int` vs `^? int`).
+	//
+	// EffectsClause (§6.13.1) is optional between CloseParen and
+	// Caret. Node-type-checked (EffectsClause is a full production);
+	// assigned to `.effects` slot rather than mistaken for an arg.
+	// Position guard is unambiguous — EffectsClause parses after
+	// CloseParen, so any encountered EffectsClause is post-args
+	// regardless of seenCaret state (but always pre-Caret by grammar).
+	FuncTypeExpr(frame,parts) {
+		var argTypes = [];
+		var effects;
+		var returnType;
+		var optionalReturn = false;
+		var seenCaret = false;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) {
+				if (p.type === "EffectsClause") effects = p;
+				else if (seenCaret) returnType = p;
+				else argTypes.push(p);
+			}
+			else if (p.type === "Caret") {
+				seenCaret = true;
+				delims.push(p); // dual-purpose: state-driver AND delim
+			}
+			else if (p.type === "Qmark" && seenCaret) {
+				optionalReturn = true;
+				delims.push(p); // dual-purpose: flag AND delim
+			}
+			else delims.push(p); // OpenParen, CloseParen, Comma
+		}
+		var node = { type: "FuncTypeExpr", argTypes, returnType };
+		if (effects) node.effects = effects;
+		if (optionalReturn) node.optionalReturn = true;
+		return withDelims(node, delims);
+	},
+
 	// FuncTypeArg := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
 	//
 	// Qmark (when present) is dual-purpose: captured into
@@ -3430,39 +3536,6 @@ export const defaultShapers = {
 			);
 		}
 		return nodes[0];
-	},
-
-	// FuncTypeExpr := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
-	//
-	// Parens, commas → delims. Caret is dual-purpose: drives
-	// the args/return state machine AND pushes to delims. Qmark
-	// after Caret is dual-purpose: captures `optionalReturn:true`
-	// flag AND pushes to delims (position needed to round-trip
-	// WS straddling the `?`, e.g. `^ ?int` vs `^? int`).
-	FuncTypeExpr(frame,parts) {
-		var argTypes = [];
-		var returnType;
-		var optionalReturn = false;
-		var seenCaret = false;
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) {
-				if (seenCaret) returnType = p;
-				else argTypes.push(p);
-			}
-			else if (p.type === "Caret") {
-				seenCaret = true;
-				delims.push(p); // dual-purpose: state-driver AND delim
-			}
-			else if (p.type === "Qmark" && seenCaret) {
-				optionalReturn = true;
-				delims.push(p); // dual-purpose: flag AND delim
-			}
-			else delims.push(p); // OpenParen, CloseParen, Comma
-		}
-		var node = { type: "FuncTypeExpr", argTypes, returnType };
-		if (optionalReturn) node.optionalReturn = true;
-		return withDelims(node, delims);
 	},
 };
 

@@ -915,10 +915,16 @@ OrBinExpr        := AndDispatch (_ OrOp _ AndDispatch)+;
 AndBinExpr       := CompareDispatch (_ AndOp _ CompareDispatch)+;
 
 (* Compare tier has two iter forms:
-   - TypeCompareBinExpr handles ?as/!as, whose RHS is a NamedType
-     (allowing NativeType keywords like `int`/`bool` alongside
-     Identifier/BuiltIn). Flat binary, non-iterated — `x ?as int ?as bool`
-     requires parens, semantically unclear without them.
+   - TypeCompareBinExpr handles ?as/!as. RHS admits two shapes:
+     BraceNarrowing (§16) for Effect-kind OR-union narrowing
+     (`x ?as Effect.<Ask, Retry>`, spec §6.3.1's brace form at the
+     standalone binary site); or NamedType for bare-or-dotted names
+     including NativeType keywords like `int`/`bool`. PEG: try
+     BraceNarrowing first, backtrack to NamedType on absence of
+     `.<...>` suffix — same pattern as DoLoopComprLHS (§16) and
+     DepCondBoolExpr's AsTypeOp arm (§14). Flat binary, non-iterated
+     — `x ?as int ?as bool` requires parens, semantically unclear
+     without them.
    - CompareBinExpr handles ?in/!in/?has/!has and all symbolic compare
      ops, with regular expression RHS and left-fold iteration.
 
@@ -927,7 +933,7 @@ AndBinExpr       := CompareDispatch (_ AndOp _ CompareDispatch)+;
    ?in/!in/?has/!has/symbolic), so order is mechanical. *)
 
 <CompareDispatch>  := TypeCompareBinExpr | CompareBinExpr | AddDispatch;
-TypeCompareBinExpr := AddDispatch _ AsTypeOp _ NamedType;
+TypeCompareBinExpr := AddDispatch _ AsTypeOp _ (BraceNarrowing | NamedType);
 CompareBinExpr     := AddDispatch (_ CompareOp _ AddDispatch)+;
 
 <AddDispatch>    := AddBinExpr | MulDispatch;
@@ -1330,7 +1336,7 @@ DepPatternStmtNoSemi   := DepCondClause _ MatchConsequentNoSemi;
 DepCondClause          := (Qmark | Exmark)? OpenBracket _ DepCondExprList _ CloseBracket;
 <DepCondExprList>      := DepCondExprAtom (_ Comma _ DepCondExprAtom)* (_ Comma)?;
 <DepCondExprAtom>      := DepCondBoolExpr | ExprNoBlock;
-DepCondBoolExpr        := AsTypeOp _ NamedType
+DepCondBoolExpr        := AsTypeOp _ (BraceNarrowing | NamedType)
                         | DepCondBoolOp _ CompareDispatch
                         | NamedUnaryOp
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
@@ -1347,13 +1353,20 @@ nodes. The `NoSemi` variant differs only in trailing-semicolon
 handling for the final clause; downstream code treats them
 uniformly.
 
-Note: `DepCondBoolExpr`'s `DepCondBoolOp _ CompareDispatch` arm
-reaches `CompareDispatch` directly, not through `OperandExpr`. This
-means `:as` is unreachable from inside `DepCondBoolExpr`'s
-operator-led arm — `[?and x :as int]` is a parse error. To annotate,
-use `[?and (x :as int)]` (the paren-recursive arm wraps the inner
-operand). This is consistent with the rule that `:as` cannot attach
-as a bare binary-operand suffix.
+Note: `DepCondBoolExpr`'s `NamedUnaryOp` arm is bare — a single
+`?empty` / `!empty` token with no written operand. The topic supplies
+the operand implicitly (extending the "topic is implicit LHS"
+principle from the operator-led arm to the unary case). No `:as` tail
+reachability here either; annotate at the DepCondClause level via the
+paren-recursive arm if needed.
+
+Note: `DepCondBoolExpr`'s `AsTypeOp` arm admits both `BraceNarrowing`
+and `NamedType` on the RHS. `[?as Effect.<Ask, Retry>]:` applies the
+OR-union prefix-match at match-arm patterns (spec §6.3.1's brace form
+cross-used at `?as` arm patterns); `[?as int]:` and `[?as Effect.Ask]:`
+apply the bare/dotted single-name form. PEG: BraceNarrowing first,
+backtrack to NamedType on absence of `.<...>` — same pattern as
+TypeCompareBinExpr (§9) and DoLoopComprLHS (§16).
 
 Note: `DepCondBoolExpr`'s `NamedUnaryOp` arm is bare — a single
 `?empty` / `!empty` token with no written operand. The topic supplies
@@ -1376,7 +1389,11 @@ or use the def-block form directly.
 ## §16 Do-Comprehensions
 
 ```ebnf
-<DoComprLHS>            := Identifier | BuiltIn;
+<DoComprLHS>            := DoComprLHSName;
+DoComprLHSName          := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+
+<DoLoopComprLHS>        := BraceNarrowing | DoComprLHSName;
+BraceNarrowing          := DoComprLHSName Period OpenAngle _ DoComprLHSName (_ Comma _ DoComprLHSName)* (_ Comma)? _ CloseAngle;
 
 DoComprExpr             := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 
@@ -1396,15 +1413,37 @@ DoStmtSemi              := DoStmt? (_ Semicolon)+;
 DoStmtSemiOpt           := DoStmt? (_ Semicolon)*;
 DoFinalUnwrapExpr       := Dollar _ ExprNoBlock (_ Semicolon)*;
 
-DoLoopComprExpr         := DoComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
+DoLoopComprExpr         := DoLoopComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 ```
 
 Note: `DoComprExpr` and `DoLoopComprExpr` share the LHS (a bare type
 name via `<DoComprLHS>`) and the RHS shape (`DoBlockExpr` — an
-optional defs-init followed by a block body). They differ only in
-the operator (`~<<` vs `~<*`). Per §6 opener's composition-axis
-framing, type-LHS is mandatory on both operators: the dispatch to a
-specific hook resolves at compile time.
+optional defs-init followed by a block body).
+
+Note: `BraceNarrowing` is a shared production referenced at three
+sites, all OR-semantic ("any of these prefix subtrees"):
+
+  - §9  `TypeCompareBinExpr` RHS       — `x ?as Effect.<Ask, Retry>`
+  - §14 `DepCondBoolExpr` AsTypeOp arm — `[?as Effect.<Ask, Retry>]:`
+  - §16 `DoLoopComprLHS`               — `Effect.<Ask, Retry> ~<*`
+
+It is NOT referenced at `EffectsClause` (§13). `:Effects(...)` carries
+AND semantics (function declares it performs every listed effect);
+brace narrowing carries OR semantics (handler catches any of the
+listed subtrees). Different semantic roles ⇒ different grammatical
+treatment; the two lists share no production. Spec §6.3.1's
+"Cross-uses" prose (mentioning `:Effects(...)` as a third brace site)
+is overreach — grammar deliberately keeps them separate.
+
+Reserved-root rejection (`Effect.Host.*`, `Effect.User.Slot.*`,
+`Effect.Sys.*` at declaration sites, bare `Effect.<User|Host|Sys>`)
+and Implicit-User rewrite (`Effect.<X>` → `Effect.User.<X>` where `X`
+is not a reserved root) apply uniformly at all three sites at the
+semantic layer, not grammar. Grammar stays permissive; semantic
+checker enforces (§6.1.4). They differ only in the operator (`~<<`
+vs `~<*`). Per §6 opener's composition-axis framing, type-LHS is
+mandatory on both operators: the dispatch to a specific hook resolves
+at compile time.
 
 `~<*` no longer admits a value-LHS with a fn-RHS iter form (e.g.,
 `xs ~<* fn`). Iterable drainage over `List`, `Iter`, and `PullStream`
@@ -1606,7 +1645,8 @@ unwrap-shaper pattern as `AsExpr` (§5) and `DepCondBoolExpr` arm-3
    the strict reading is "don't brace a non-union/non-function" — this
    is conventionally discouraged but not grammar-rejected.) *)
 
-DefTypeStmt           := "deft" _ Identifier _ TypeExpr;
+DefTypeStmt           := "deft" _ DefTypeName _ TypeExpr;
+DefTypeName           := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
 
 <TypeExpr>            := FuncTypeExpr | NoFuncTypeExpr;
 
@@ -1634,9 +1674,10 @@ DataStructTypeExpr    := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle
 DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
 DataStructFinalValType:= Star (NoUnionTypeExpr | GroupedTypeExpr);
 
-FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
+FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ (EffectsClause _)? Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 <FuncTypeArgList>     := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)
                        | FuncTypeFinalArg;
 FuncTypeArg           := Qmark? (NoUnionTypeExpr | GroupedTypeExpr);
 FuncTypeFinalArg      := (Star (NoUnionTypeExpr | GroupedTypeExpr)) | FuncTypeArg;
+EffectsClause         := ":Effects" _ OpenParen _ NamedType (_ Comma _ NamedType)* (_ Comma)? _ CloseParen;
 ```

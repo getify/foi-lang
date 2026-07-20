@@ -3285,14 +3285,14 @@ None@;                  // None
 
 But that's not particularly useful or interesting: we could already select `Id` or `None` explicitly.
 
-A special `MaybeFrom@` constructor (not the main unit constructor) inspects the provided value and selects `None` when it encounters the `empty` value, and `Id` for any other value:
+A special `Maybe.from@` constructor (not the main unit constructor) inspects the provided value and selects `None` when it encounters the `empty` value, and `Id` for any other value:
 
 ```java
-MaybeFrom@ 42;            // Id{42}
-MaybeFrom@ empty;         // None
+Maybe.from@ 42;            // Id{42}
+Maybe.from@ empty;         // None
 ```
 
-Instead of using `MaybeFrom@`, you can define custom constructor functions that select `None` or `Id` for various values:
+Instead of using `Maybe.from@`, you can define custom constructor functions that select `None` or `Id` for various values:
 
 ```java
 defn nonZero@(v)
@@ -3308,7 +3308,7 @@ def cost: nonZero@ 1.99;        // Id{1.99}
 One common idiom where `Maybe` is used is conditional property access:
 
 ```java
-defn prop(name)(obj) ^MaybeFrom@ obj[name];
+defn prop(name)(obj) ^Maybe.from@ obj[name];
 
 def order: Id@ <
     shippingAddress: <
@@ -3372,8 +3372,8 @@ For example:
 ```java
 def defaultMsg: (@)|"Default!"|;
 
-def m: MaybeFrom@ 42;                 // Id{42}
-def g: MaybeFrom@ empty;              // None
+def m: Maybe.from@ 42;                 // Id{42}
+def g: Maybe.from@ empty;              // None
 
 (~fold)(m, defaultMsg(), (@));        // 42
 (~cata)(g, defaultMsg,   (@));        // Default!
@@ -3392,7 +3392,7 @@ defn two() ^2;
 defn mult(x,y) ^x * y;
 
 def list: < 1, 3, 7 >;
-def m: MaybeFrom@ 42;
+def m: Maybe.from@ 42;
 
 (~fold)(list,  two(), mult);    // 42
 
@@ -5142,7 +5142,7 @@ Once the generator stops -- above, the `~each` loop exits once the `total` reach
 
 An **effect** (aka, "algebraic effects") in **Foi** is a suspension point in a computation; the running code pauses, propagates a payload up the call stack to whichever handler catches it, and then resumes with whatever value the handler chooses to send back. Where an exception `throw` (in other languages) abandons the current work, an effect *pauses* it, so the computation *may* pick up right where it left off (the handler decides).
 
-You've already encountered an effect (in disguise). The `<:: v` yield inside a generator body is a perform site for `Effect.Gen.Yield`; the surrounding generator machinery is the handler. Generators are a built-in that sits directly on the effects system.
+You've already encountered an effect (in disguise). The `<:: v` yield inside a generator body is a perform site for `Effect.Host.Gen.Yield`; the surrounding generator machinery is the handler. Generators are a built-in that sits directly on the effects system.
 
 You don't have to reach for effects directly to use the language. The built-in types cover the common cases already. But when you need to model a suspension point of your own -- reading configuration lazily, prompting the user, retrying on failure, logging without threading a logger through every call -- effects are the mechanism.
 
@@ -5151,9 +5151,8 @@ You don't have to reach for effects directly to use the language. The built-in t
 An effect kind is declared with `deft`, using an `Effect.`-prefixed name:
 
 ```java
-deft Effect.Ask(string) ^string;
-deft Effect.Log(string) ^empty;
-deft Effect.Retry(<attempt: int, cause: string>) ^bool;
+deft Effect.User.Ask(string) ^string;
+deft Effect.User.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
 The parameter position declares the **payload type**: the shape of the value a perform site supplies. The return position declares the **resume type**: the shape of the value the handler passes to its resumption callable, which becomes the perform-site expression's value. `^empty` marks a fire-and-forget effect where the caller ignores the resume.
@@ -5165,10 +5164,10 @@ The `Effect.` prefix is not decorative; it signals to the compiler that this `de
 A **perform site** signals that the enclosing computation is producing an effect. The general form uses the `%` effector operator applied to an effect kind:
 
 ```java
-Effect.Ask% "What is your name?";
+Effect.User.Ask% "What is your name?";
 ```
 
-The expression's value is whatever the handler resumes with: for `Effect.Ask` above, a `string`. Until a handler catches the perform and then affirmatively resumes it, the surrounding computation is suspended.
+The expression's value is whatever the handler resumes with: for `Effect.User.Ask` above, a `string`. Until a handler catches the perform and then affirmatively resumes it, the surrounding computation is suspended.
 
 A **handler scope** is established (via call-stack, not lexical scope) with the `~<*` operator against an `Effect.` prefixed effect type:
 
@@ -5182,11 +5181,32 @@ def result: Effect.Ask ~<* (eff:: greetUser(), ret) {
 
 The block definition `(eff:: greetUser(), ret)` binds each perform-event dispatched to this handler to `eff`, with `greetUser()` as the computation whose performs are caught, and binds `ret` as a **resumption callable** for use inside arms. The block body is a pattern-match over `eff`; each arm may invoke `ret(v)` to resume the perform site with `v` as its value. Inside a matched arm, the topic reference `#` is the perform-event object; the payload the perform site supplied is at `#.value`.
 
-`~<*` catches every perform of the LHS's effect kind (or set of kinds) reachable from `comp`, not just at the top level. If `greetUser()` calls `askName()` which in turn performs `Effect.Ask`, this handler catches it just the same. The effect walks the call-stack *dynamically*, like a `try`/`catch`, not lexically.
+`~<*` catches every perform of the LHS's effect kind (or set of kinds) reachable from `comp`, not just at the top level. If `greetUser()` calls `askName()` which in turn performs `Effect.User.Ask`, this handler catches it just the same. The effect walks the call-stack *dynamically*, like a `try`/`catch`, not lexically.
 
 The whole `~<*` expression's value is the arm's terminal at scope termination. In the common case where every perform arm invokes `ret` and `comp` reaches natural completion, `ret`'s return value flows back to the arm as `comp`'s natural return; the arm's terminal expression then becomes the handler expression's value. In the example above, `result` holds whatever `greetUser()` returned once resumed with `"Kyle"`.
 
 An arm may skip `ret` entirely and evaluate to `Done@` instead; this signals "don't resume." The handler scope terminates, the computation is abandoned at the perform point, and the handler expression's value is the `Done@` payload -- passed through as an ordinary value the surrounding code can inspect. This is the escape hatch for cancellation, fatal errors, and other effects the handler decides shouldn't continue.
+
+----
+
+**Handling multiple effect kinds.** A single handler can catch several
+prefix subtrees at once using the brace form on the LHS. Arms then
+dispatch per kind via `?as`:
+
+```java
+def result: Effect.<User.Ask, Sys.Log> ~<* (eff:: doWork(), ret) {
+    :: ?(eff){
+        [?as Effect.User.Ask]: ret(readInput(#.value));
+        [?as Effect.Sys.Log]: ret(log(#.value));
+    };
+};
+```
+
+The brace form `Effect.<A, B, ...>` means "any of these effect
+subtrees." Each arm's `?as Effect.Name` narrows to one kind. Arms
+run first-match-wins (§5), so if any two arm patterns overlap (a
+child prefix under a parent prefix, or two brace-listed prefixes),
+list the more-specific arm first.
 
 ----
 
@@ -5196,35 +5216,35 @@ Recall from the [Generators](#generators) section:
 <:: v
 ```
 
-`<:: v` is exact sugar for `Effect.Gen.Yield% v`. Generator yield has dedicated notation because, by design, it's a two-way communication channel and control coordination point between the generator code and the caller that consumes its iterator. Every other effect uses the plain `Effect.Name% payload` form.
+`<:: v` is exact sugar for `Effect.Host.Gen.Yield% v`. Generator yield has dedicated notation because, by design, it's a two-way communication channel and control coordination point between the generator code and the caller that consumes its iterator. Every other effect uses the plain `Effect.Name% payload` form.
 
 ### Tracking Effects
 
 **Foi** tracks effects on function type declarations, similar to how mutable-closure intent is tracked on the function signature with `:over`. A function that *directly* (not through other function calls) performs a non-ambient effect must attach (via `:as`) a type declaration whose `:Effects(...)` clause names that effect:
 
 ```java
-deft AskName(int) :Effects(Ask) ^string;
+deft AskName(int) :Effects(User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.Ask% id;
+defn askName(id) :as AskName ^Effect.User.Ask% id;
 ```
 
-Performing `Effect.Ask` in `askName()`'s body without that `:as AskName` attachment is a compile error: the "emit-edge" declaration is required wherever an effect is first performed.
+Performing `Effect.User.Ask` in `askName()`'s body without that `:as AskName` attachment is a compile error: the "emit-edge" declaration is required wherever an effect is first performed.
 
 Intermediate callers don't have to keep re-declaring the effect. If `greetUser` calls `askName` but doesn't itself perform anything new, no declaration is required on `greetUser`; the compiler propagates the effect surface up the call stack silently. Coverage is verified per call stack; somewhere before the outermost boundary, a `~<*` handler for `Ask` must exist. Where in the chain that handler lives is up to you.
 
 ### Ambient Effects
 
-A small runtime-designated set of effects -- **`Effect.Log`, `Effect.Random`, `Effect.CurrentTime`** -- are exempted from the tracking discipline entirely. These are **ambient** effects: they need no `:Effects(...)` declaration on the emit-edge function, and the caller doesn't have to install a `~<*` handler for them:
+A small runtime-designated set of effects -- **`Effect.Sys.Log, Effect.Sys.Random, Effect.Sys.CurrentTime`** -- are exempted from the tracking discipline entirely. These are **ambient** effects: they need no `:Effects(...)` declaration on the emit-edge function, and the caller doesn't have to install a `~<*` handler for them:
 
 ```java
 defn greetUser(id) {
     def name: askName(id);
-    log(`"Hello, `name`");       // Effect.Log; no ceremony
+    log(`"Hello, `name`");       // Effect.Sys.Log; no ceremony
     ^name;
 };
 ```
 
-A **Foi**-provided top-level handler catches ambient performs at the outermost boundary (stdout for `Log`, PRNG for `Random`, system clock for `CurrentTime`). You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
+A **Foi**-provided top-level handler catches ambient performs at the outermost boundary (stdout for `Effect.Sys.Log`, PRNG for `Effect.Sys.Random`, system clock for `Effect.Sys.CurrentTime`). You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
 
 The ambient category is deliberately narrow. Effects with a resume value the caller must inspect, effects that write persistent state, and effects that open network or file resources are outside the ambient set by design; those belong to the tracked discipline where callers explicitly acknowledge them. The ambient set is fixed by the runtime; you can't mark your own effect kinds as ambient.
 

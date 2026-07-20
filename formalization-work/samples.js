@@ -641,6 +641,21 @@ export const samples = [
 	// TypeCompareBinExpr — single-token AsTypeOp, NamedType RHS
 	{ label: "TypeCompareBinExpr: a ?as int",        src: "a ?as int;" },
 
+	// TypeCompareBinExpr — BraceNarrowing RHS (Effect-kind OR-union
+	// narrowing at standalone binary site, §6.3.1 brace form).
+	{ label: "TypeCompareBinExpr: brace narrowing single (?as)",
+	  src: "a ?as Effect.<Ask>;" },
+	{ label: "TypeCompareBinExpr: brace narrowing multi (?as)",
+	  src: "a ?as Effect.<Ask, Retry>;" },
+	{ label: "TypeCompareBinExpr: brace narrowing dotted entries (?as)",
+	  src: "a ?as Effect.<Ask, Sys.Log>;" },
+	{ label: "TypeCompareBinExpr: brace narrowing trailing comma (?as)",
+	  src: "a ?as Effect.<Ask,>;" },
+	{ label: "TypeCompareBinExpr: brace narrowing (!as)",
+	  src: "a !as Effect.<Ask, Retry>;" },
+	{ label: "TypeCompareBinExpr: brace narrowing dotted prefix",
+	  src: "a ?as Effect.User.<MyKind, OtherKind>;" },
+
 	// CompareBinExpr — symbolic op (multi-token Qmark + OpenAngle + Equal)
 	{ label: "CompareBinExpr: a ?<= b",              src: "a ?<= b;" },
 
@@ -1029,6 +1044,20 @@ export const samples = [
 	{ label: "DepMatch: operator-led ?and",               src: '?(x){ ?[?and y]: "ok"; ?: "no" };' },
 	{ label: "DepMatch: operator-led ?=",                 src: '?(x){ ?[?= 1]: "one"; ?: "other" };' },
 	{ label: "DepMatch: operator-led ?as",                src: '?(x){ ?[?as int]: "i"; ?: "?" };' },
+
+	// DepMatch ?as with BraceNarrowing RHS (§6.3.1 brace form
+	// at match-arm patterns — DepCondBoolExpr's AsTypeOp arm).
+	{ label: "DepMatch: ?as brace narrowing single",
+	  src: '?(eff){ [?as Effect.<Ask>]: "ask"; ?: "other" };' },
+	{ label: "DepMatch: ?as brace narrowing multi",
+	  src: '?(eff){ [?as Effect.<Ask, Retry>]: "either"; ?: "other" };' },
+	{ label: "DepMatch: ?as brace narrowing dotted entries",
+	  src: '?(eff){ [?as Effect.<Ask, Sys.Log>]: "either"; ?: "other" };' },
+	{ label: "DepMatch: !as brace narrowing",
+	  src: '?(eff){ ![?as Effect.<Ask>]: "not-ask"; ?: "is-ask" };' },
+	{ label: "DepMatch: ?as brace narrowing in OR-list with atoms",
+	  src: '?(eff){ [?as Effect.<Ask, Retry>, ?as int]: "hit"; ?: "miss" };' },
+
 	{ label: "DepMatch: mixed atom kinds",                src: '?(x){ ?["foo", ?= 1, ?as int]: "match"; ?: "no" };' },
 	{ label: "DepMatch: paren-wrapped fragment unwraps",  src: '?(x){ ?[(?and y)]: "ok"; ?: "no" };' },
 	{ label: "DepMatch: implicit-? clause",               src: '?(x){ ["Kyle"]: "hi"; ?: "bye" };' },
@@ -1081,6 +1110,29 @@ export const samples = [
 
 	// DoComprExpr — BuiltIn targetType
 	{ label: "DoComprExpr (BuiltIn): IO ~<< { y }",              src: "IO ~<< { y };" },
+
+	// DoComprLHS dotted at ~<< — grammatically admitted; semantic
+	// validity is namespace-dependent (§16 opener).
+	{ label: "DoComprExpr: dotted LHS Effect.Foo",
+	  src: "Effect.Foo ~<< { 42; };" },
+
+	// DoLoopComprLHS dotted at ~<* — Effect handler for single
+	// prefix subtree (§6.3.1).
+	{ label: "DoLoopComprExpr: dotted LHS Effect.Ask",
+	  src: "Effect.Ask ~<* (eff:: comp, ret) { ret(42); };" },
+	{ label: "DoLoopComprExpr: multi-dotted LHS Effect.User.MyKind",
+	  src: "Effect.User.MyKind ~<* (eff:: comp, ret) { ret(42); };" },
+
+	// DoLoopComprLHS brace-narrowing at ~<* — handler for union
+	// of prefix subtrees (§6.3.1).
+	{ label: "DoLoopComprExpr: brace narrowing single",
+	  src: "Effect.<Ask> ~<* (eff:: comp, ret) { ret(42); };" },
+	{ label: "DoLoopComprExpr: brace narrowing multi",
+	  src: "Effect.<Ask, Retry> ~<* (eff:: comp, ret) { ret(42); };" },
+	{ label: "DoLoopComprExpr: brace narrowing dotted entries",
+	  src: "Effect.<Ask, Sys.Log> ~<* (eff:: comp, ret) { ret(42); };" },
+	{ label: "DoLoopComprExpr: brace narrowing trailing comma",
+	  src: "Effect.<Ask,> ~<* (eff:: comp, ret) { ret(42); };" },
 
 	// DoVarDefInitOpt — both op forms and no-init
 	{ label: "DoVarDefInitOpt (::): Foo ~<< (x:: 1) { y }",      src: "Foo ~<< (x:: 1) { y };" },
@@ -1310,6 +1362,36 @@ export const samples = [
 	// FuncTypeExpr — basic and complex (optional arg, optional braced-union return, rest)
 	{ label: "DefTypeStmt: FuncTypeExpr (basic)",              src: "deft F (int, string) ^ bool;" },
 	{ label: "DefTypeStmt: FuncTypeExpr (complex)",            src: "deft G (?int, *{bool | string}) ^?{int | Foo};" },
+
+	// FuncTypeExpr with :Effects clause — §6.13.1
+	{ label: "FuncTypeExpr: :Effects (single bare)",
+	  src: "deft F (int) :Effects(Ask) ^string;" },
+	{ label: "FuncTypeExpr: :Effects (multiple bare)",
+	  src: "deft F (int) :Effects(Ask, Retry) ^bool;" },
+	{ label: "FuncTypeExpr: :Effects (dotted)",
+	  src: "deft F (int) :Effects(Sys.Log) ^empty;" },
+	{ label: "FuncTypeExpr: :Effects (mixed bare + dotted)",
+	  src: "deft F (int) :Effects(Ask, Sys.Log) ^string;" },
+	{ label: "FuncTypeExpr: :Effects (trailing comma)",
+	  src: "deft F (int) :Effects(Ask,) ^string;" },
+	{ label: "FuncTypeExpr: :Effects on empty args",
+	  src: "deft F () :Effects(Ask) ^string;" },
+	{ label: "FuncTypeExpr: :Effects with optional return",
+	  src: "deft F (int) :Effects(Ask) ^?bool;" },
+	{ label: "FuncTypeExpr: :Effects with grouped return",
+	  src: "deft F (int) :Effects(Ask) ^{int | Foo};" },
+
+	// DefTypeStmt: dotted LHS for Effect-substrate declarations
+	{ label: "DefTypeStmt: dotted LHS Effect.Ask",
+	  src: "deft Effect.Ask(string) ^string;" },
+	{ label: "DefTypeStmt: dotted LHS Effect.Retry (record payload)",
+	  src: "deft Effect.Retry(<attempt: int, cause: string>) ^bool;" },
+	{ label: "DefTypeStmt: dotted LHS Effect.User.MyKind",
+	  src: "deft Effect.User.MyKind(int) ^bool;" },
+	{ label: "DefTypeStmt: dotted LHS bare 2-segment",
+	  src: "deft Foo.Bar int;" },
+	{ label: "DefTypeStmt: BuiltIn root dotted",
+	  src: "deft List.Cons(int) ^List;" },
 
 	// =============================================================
 	// PARSER COMPOUND REGRESSIONS

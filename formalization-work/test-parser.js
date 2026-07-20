@@ -380,6 +380,29 @@ var failSamples = [
 	// Non-block RHS: `~<*` no longer admits fn-RHS iter form
 	"xs ~<* fn;",
 	"xs ~<* foo.bar;",
+
+	// === BraceNarrowing negatives — grammar at ?as/!as RHS (§9 TypeCompareBinExpr, §14 DepCondBoolExpr AsTypeOp arm) ===
+
+	// Bare <A, B> without `Effect.` prefix rejected at ?as/!as RHS.
+	// Tuple-type visual collision guard: `<int, string>` at deft
+	// declares a tuple; admitting it as sum-type-narrowing at ?as
+	// would collide. Sum-over-native-types is not committed; a
+	// distinct visual shape would be required.
+	"a ?as <Ask, Retry>;",
+	"a !as <Foo>;",
+	'?(x){ [?as <Ask>]: "y"; };',
+
+	// Empty brace `Effect.<>` rejected — grammar requires ≥1 entry.
+	// A narrowing set with no admitted kinds is meaningless.
+	"a ?as Effect.<>;",
+	'?(eff){ [?as Effect.<>]: "y"; };',
+
+	// NativeType prefix rejected at brace prefix position. The
+	// DoComprLHSName alphabet (Identifier | BuiltIn) excludes native
+	// type keywords (int/bool/string/etc.); a reserved keyword
+	// cannot lead a brace narrowing.
+	"a ?as int.<Foo>;",
+	"a ?as string.<X>;",
 ];
 
 var passed = 0;

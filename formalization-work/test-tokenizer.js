@@ -121,6 +121,25 @@ const KNOWN_DIVERGENT = new Map([
 		"Postfix Mountain followed by identifier — lexer-level: Mountain + General; legacy: ForwardSlash + Escape + General. Parser will reject the input, but lex layer is well-formed." ],
 
 	// =========================================================
+	// KEYWORD SET DRIFT — :Effects (§6.13.1)
+	//
+	// New tokenizer's KEYWORDS includes ':Effects' (the effects
+	// annotation on FuncTypeExpr); legacy's list does not. Every
+	// input containing ':Effects' as a leading colon-word will
+	// diverge: new emits Keyword(':Effects'), legacy emits
+	// Colon + General('Effects'). Resolve by adding ':Effects' to
+	// legacy KEYWORDS.
+	// =========================================================
+	[ ":Effects",
+		"Keyword set drift: :Effects is a new Keyword (§6.13.1 FuncTypeExpr effects annotation). New emits Keyword(':Effects'); legacy emits Colon + General('Effects'). Resolve by adding ':Effects' to legacy KEYWORDS." ],
+	[ ":Effects(Ask)",
+		"Same drift as bare ':Effects'; downstream tokens (OpenParen + General('Ask') + CloseParen) match." ],
+	[ "deft F(int) :Effects(Ask) ^string;",
+		"Same drift as bare ':Effects' in full FuncTypeExpr context." ],
+	[ ":Effect",
+		"Builtin set drift: legacy doesn't have 'Effect' in BUILTINS. New: Colon + Builtin('Effect'). Legacy: Colon + General('Effect')." ],
+
+	// =========================================================
 	// TILDE-REMOVED-FROM-IDENTIFIER ALPHABET (Design TODOs (d))
 	//
 	// Tilde is no longer in IdentCont/IdentStart (see
@@ -605,6 +624,10 @@ async function runTests() {
 		":as",
 		":foo",                                // Keyword gate fails on ":foo" → Colon + General
 		":over",
+		":Effects",                            // new Keyword — §6.13.1 (FuncTypeExpr effects clause)
+		":Effect",                             // Boundary: NOT :Effects — falls to Colon + Builtin('Effect')
+		":Effects(Ask)",                       // Adjacency: Keyword + OpenParen + General + CloseParen
+		"deft F(int) :Effects(Ask) ^string;",  // Full FuncTypeExpr context
 		"?in",
 		"!has",
 		"?empty",                              // unary-named-op form

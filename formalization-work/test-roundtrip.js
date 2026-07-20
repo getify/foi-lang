@@ -526,6 +526,11 @@ var handlers = {
 	DoLoopComprExpr: (n, r) => gapFill("~<*", n, r),
 	DoDefVarStmt:    (n, r) => gapFill("def", n, r),
 
+	// DoComprLHSName — bare-or-dotted namespace path. Segments
+	// joined by ".". Parallel to DefTypeName (§18). Never carries
+	// lifted wrappers.
+	DoComprLHSName: (node, recur) => node.segments.map(s => recur(s)).join("."),
+
 	// DoVarDefInitOpt — op (":" or "::") captured into field when
 	// init is present; bare target when no init. Use gapFill when
 	// op is set; fall through to generic for bare target.
@@ -549,6 +554,17 @@ var handlers = {
 	// =============================================================
 
 	DefTypeStmt: (n, r) => gapFill("deft", n, r),
+
+	// DefTypeName — bare-or-dotted; segments joined by ".".
+	// Parallel to NamedType.dotted arm; simpler because
+	// DefTypeName never carries lifted wrappers.
+	DefTypeName: (node, recur) => node.segments.map(s => recur(s)).join("."),
+
+	// EffectsClause — ":Effects" keyword drops from shaper;
+	// re-synthesized at gapFill's first-gap position (before the
+	// OpenParen delim). Parens and commas walk from delims via
+	// gapFill's piece traversal; entries walk as child nodes.
+	EffectsClause: (n, r) => gapFill(":Effects", n, r),
 
 	// NamedType — two arms:
 	//   - native:  { of: "int" }            → emit `of`
