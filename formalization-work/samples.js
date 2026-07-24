@@ -882,6 +882,79 @@ export const samples = [
 	{ label: "defn: destructure-with-init + pipeline",
 	  src: "defn foo(<:z> :? src) #> inc;" },
 
+	// FuncBodyExpr visual-runway narrowing — `^` terse-body form
+	// admits only expression forms whose leading tokens between
+	// `^` and any inner block delimiter provide unambiguous shape
+	// signal (DoCompr / DoLoopCompr / MatchExpr), plus the tight
+	// OrDispatch tier (arithmetic, compare, chain, atoms) and the
+	// GroupedExpr paren-wrap escape hatch. See §13 grammar prose.
+	// Rejected forms — AsExpr, GuardedExpr, AssignmentExpr,
+	// DefFuncExpr, FlowBinExpr chains — are locked in failSamples
+	// (see test-parser.js).
+
+	// DoCompr / DoLoopCompr — new admissions under widening.
+	{ label: "FuncBodyExpr: DoComprExpr body (~<<, bare LHS)",
+	  src: "defn foo() ^IO ~<< { def x:: whatever; };" },
+	{ label: "FuncBodyExpr: DoComprExpr body (~<<, dotted LHS)",
+	  src: "defn foo() ^Foo.Bar ~<< { def x:: e; };" },
+	{ label: "FuncBodyExpr: DoLoopComprExpr body (~<*, Channel)",
+	  src: "defn drain(ch) ^Channel ~<* (v:: ch) { v };" },
+	{ label: "FuncBodyExpr: DoLoopComprExpr body (~<*, BraceNarrowing)",
+	  src: "defn handle(comp) ^Effect.<Ask, Retry> ~<* (eff:: comp, ret) { ret(0) };" },
+
+	// MatchExpr — already reachable via prior ExprNoBlock; now
+	// explicitly enumerated. Regression locks.
+	{ label: "FuncBodyExpr: IndepMatchExpr body (?{...})",
+	  src: "defn classify(x) ^?{ [x ?> 0]: \"pos\"; ?: \"nonpos\" };" },
+	{ label: "FuncBodyExpr: DepMatchExpr body (?(x){...})",
+	  src: "defn describe(x) ^?(x){ [1]: \"one\"; ?: \"other\" };" },
+
+	// OrDispatch — tight algebraic / access forms remain concise.
+	// These already parsed under prior ExprNoBlock; now they parse
+	// via the direct OrDispatch arm. Regression locks.
+	{ label: "FuncBodyExpr: OrDispatch AddBinExpr body",
+	  src: "defn foo(x)(y) ^x + y;" },
+	{ label: "FuncBodyExpr: OrDispatch MulBinExpr body",
+	  src: "defn foo(x)(y)(z) ^x * y * z;" },
+	{ label: "FuncBodyExpr: OrDispatch CompareBinExpr body",
+	  src: "defn is_pos(x) ^x ?> 0;" },
+	{ label: "FuncBodyExpr: OrDispatch OrBinExpr body",
+	  src: "defn any(a, b) ^a ?or b;" },
+	{ label: "FuncBodyExpr: OrDispatch UnaryExpr body",
+	  src: "defn neg(x) ^!x;" },
+	{ label: "FuncBodyExpr: OrDispatch ChainExpr body",
+	  src: "defn get(rec) ^rec.foo.bar;" },
+	{ label: "FuncBodyExpr: OrDispatch CallExpr body",
+	  src: "defn apply(f, x) ^f(x);" },
+	{ label: "FuncBodyExpr: OrDispatch AtCallExpr body",
+	  src: "defn wrap(v) ^Maybe@v;" },
+	{ label: "FuncBodyExpr: OrDispatch DataStructLit body",
+	  src: "defn tup(x) ^< x, x >;" },
+
+	// GroupedExpr paren-wrap — rejected-at-bare forms admitted
+	// via paren-wrap escape hatch.
+	{ label: "FuncBodyExpr: GroupedExpr AsExpr paren-wrap",
+	  src: "defn foo(x) ^(x :as int);" },
+	{ label: "FuncBodyExpr: GroupedExpr GuardedExpr paren-wrap",
+	  src: "defn foo(x) ^(?[x ?> 0]: 1);" },
+	{ label: "FuncBodyExpr: GroupedExpr AssignmentExpr paren-wrap",
+	  src: "defn foo() :over(y) ^(y := 5);" },
+	{ label: "FuncBodyExpr: GroupedExpr DefFuncExpr paren-wrap",
+	  src: "defn foo() ^(defn(x) ^x + 1);" },
+	{ label: "FuncBodyExpr: GroupedExpr FlowBinExpr ~map paren-wrap",
+	  src: "defn foo(xs) ^(xs ~map inc);" },
+	{ label: "FuncBodyExpr: GroupedExpr FlowBinExpr #> paren-wrap",
+	  src: "defn foo(x) ^(x #> inc #> triple);" },
+	{ label: "FuncBodyExpr: GroupedExpr BareBlockExpr paren-wrap",
+	  src: "defn foo(x) ^({ log(x); x + 1 });" },
+
+	// Composition — verifies widening doesn't collide with adjacent
+	// clauses (FuncPrecondList, FuncAsClause).
+	{ label: "FuncBodyExpr: precond + DoComprExpr body",
+	  src: "defn foo(x) ?[x ?< 0]: 0 ^IO ~<< { x };" },
+	{ label: "FuncBodyExpr: FuncAsClause + DoComprExpr body",
+	  src: "defn foo() :as MyIO ^IO ~<< { def x:: 1; };" },
+
 	// DefHookDecl cluster — `defn` + name + marker (@, %, or
 	// comprehension: ~<, ~each, ~map, ~ap, ~filter, ~fold, ~foldR,
 	// ~cata, ~<<, ~<*) + paren-sets + body. Statement-only;
@@ -928,7 +1001,7 @@ export const samples = [
 	{ label: "DefHookDecl: ~map marker",
 	  src: "defn Foo~map(inst, fn) ^Foo@ fn(inst);" },
 	{ label: "DefHookDecl: ~ap marker",
-	  src: "defn Foo~ap(mf, mx) ^mf ~< (fn) { mx ~map fn; };" },
+	  src: "defn Foo~ap(mf, mx) ^(mf ~< (fn) { mx ~map fn; });" },
 	{ label: "DefHookDecl: ~filter marker",
 	  src: "defn Foo~filter(inst, pred) ^inst;" },
 	{ label: "DefHookDecl: ~fold marker",
@@ -1020,7 +1093,7 @@ export const samples = [
 	{ label: "FuncPrecond: with destructure",        src: "defn unpacker(<:a>) ?[a ?< 0]: 0 ^a;" },
 	{ label: "FuncPrecond: with curried",            src: "defn divide(x)(y) ?[y ?= 0]: empty ^x / y;" },
 	{ label: "FuncPrecond: with block body",         src: "defn block_guarded(x) ?[x ?< 0]: 0 { ^x; };" },
-	{ label: "FuncPrecond: with explicit ^x pipeline body", src: "defn pipe_guarded(x) ?[x ?< 0]: 0 ^x #> inc;" },
+	{ label: "FuncPrecond: with explicit ^x pipeline body", src: "defn pipe_guarded(x) ?[x ?< 0]: 0 ^(x #> inc);" },
 
 	// =============================================================
 	// §15 MATCH EXPRESSIONS

@@ -2082,9 +2082,50 @@ var FuncBodyStmts = and(
 	optional(FuncBodyStmtSemiOpt)
 );
 
-// FuncBodyExpr := Caret _ (ExprNoBlock | GroupedExpr);
+// FuncBodyExpr := Caret _ (DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr);
+//
+// Visual-runway widening (§13 grammar prose). Terse `^`-body
+// admits only expression forms whose leading tokens between `^`
+// and any inner block delimiter provide unambiguous shape signal.
+// Narrower than <ExprNoBlock>: DefFuncExpr, AssignmentExpr,
+// GuardedExpr, AsExpr, and the entire FlowBinExpr tier
+// (ComprOp / PipelineOp / ComposeOp chains) are NOT admitted
+// directly. Each paren-wraps through GroupedExpr's inner Expr:
+// `^(x :as int)`, `^(?[c]: x)`, `^(x := 5)`, `^(defn(y)^y)`,
+// `^(x ~map f)`, `^(x #> g)`, `^({x;})`.
+//
+// PEG order rationale:
+// - DoComprExpr / DoLoopComprExpr first — DoComprLHSName consumes
+//   the leading Identifier/BuiltIn (with optional dotted tail);
+//   commits when `~<<` / `~<*` follows, backtracks to later arms
+//   otherwise. Memoization on DoComprLHSName keeps backtracking
+//   cheap. DoLoopComprExpr's BraceNarrowing arm (`Effect.<A, B>`)
+//   is tried first at the shared PEG shape via DoLoopComprLHS.
+// - MatchExpr third — opens with Qmark. Disjoint from the two
+//   DoCompr openers (Identifier/BuiltIn) and from OrDispatch's
+//   tier ladder (BinaryAtom rejects both match forms).
+// - OrDispatch next — tight algebraic and access forms via the
+//   tier ladder from Or down (Or → And → Compare → Add → Mul →
+//   Unary → BinaryAtom). Deliberately narrower than ExprNoBlock —
+//   FlowBinExpr rejected. `^x + y`, `^foo(x)`, `^bar.baz`,
+//   `^< a, b >`, `^42`, `^"hi"`, `^x ?= y` all parse here.
+// - GroupedExpr last — paren-wrapped escape hatch, admitting full
+//   Expr inside for every form the widening leaves out.
+//
+// DoComprExpr / DoLoopComprExpr / MatchExpr are defined in §§15-16
+// (later than this point in file order); forward-refs via lazy().
+// OrDispatch is defined earlier in §9 and reachable in scope.
 export const FuncBodyExpr = production("FuncBodyExpr",
-	and(Caret, delim(), or(ExprNoBlock, GroupedExpr))
+	and(
+		Caret, delim(),
+		or(
+			lazy(() => DoComprExpr),
+			lazy(() => DoLoopComprExpr),
+			lazy(() => MatchExpr),
+			OrDispatch,
+			GroupedExpr
+		)
+	)
 );
 
 // FuncBodyPipeline := PipelineOp _ FlowRHSImplIn (_ FlowOpAndRHS)*;

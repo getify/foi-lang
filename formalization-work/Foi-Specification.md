@@ -2018,7 +2018,32 @@ defn double(v) ^v * 2;
 1. Evaluate `expr` in the call frame.
 2. The function's return value is the result.
 
-The concise body admits any `ExprNoBlock` or a `GroupedExpr` (§13 grammar). To use a body construct that opens with `{`, paren-wrap it.
+The concise body admits five inner shapes: a do-comprehension (`~<<` bind or `~<*` loop), a match expression (`?{...}` or `?(x){...}`), any expression at the `OrDispatch` tier or narrower (arithmetic, compare, boolean, unary, chain access, calls, literals), or a `(...)`-wrapped escape hatch. Formally: `DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr` (§13 grammar).
+
+```java
+defn foo(x)(y)(z) ^x * y * z;
+
+defn drain(ch) ^Channel ~<* (v:: ch) { v };
+
+defn classify(n) ^?{
+    [n ?< 0]: "negative";
+    [n ?= 0]: "zero";
+    : "positive";
+};
+```
+
+Forms whose leading tokens would extend rightward without an unambiguous visual close -- arbitrary `FlowBinExpr` chains (`x ~map f ~map g`, `x #> f #> g`, `f +> g`), `:as`-tailed inners (collides visually with the function's own `:as`), guard expressions (`?[c]: body`), assignments (`x := 5`), inner `defn` definitions -- are not admitted at the terse position. Each requires paren-wrap through `GroupedExpr`:
+
+```java
+defn withMap(xs) ^(xs ~map inc);
+defn typed(x) ^(x :as int);
+defn guarded(x) ^(?[x ?> 0]: 1);
+defn withInner() ^(defn(y) ^y + 1);
+```
+
+Bare `^{...}` is also a parse error; the `{` sitting directly against `^` visually collides with the block body form (§3.3.2). To return a bare block value, paren-wrap: `^({ x; y })`.
+
+This narrowing is the **visual-runway principle**: the tokens between `^` and any inner `{` must signal the body's shape unambiguously (an operator like `~<<`, a sigil like `?`, or a paren mark). At small function-body distances the eye should never need to look ahead to disambiguate the return value's scope from the surrounding function's clauses. Explicit paren-wrapping restores the runway for any form that would otherwise blur it.
 
 #### §3.3.2 Block body: `{ stmts; ^expr; }`
 
@@ -2371,7 +2396,7 @@ doub@ 42;                 // 84
 
 Passing the extracted reference as a callback works the same way: the marker travels with the value, and any receiver that dispatches through it does so via the `@`-call form.
 
-**Adjacency.** The `.@` form is strict no-trivia on both sides: `Foo. @`, `Foo .@`, and `Foo . @` are all parse errors. This stricter rule (versus the trivia-tolerant `Foo@`) matches the form's chain-terminator semantics — there should be no variance around where the access chain ends.
+**Adjacency.** The `.@` form is strict no-trivia on both sides: `Foo. @`, `Foo .@`, and `Foo . @` are all parse errors. This stricter rule (versus the trivia-tolerant `Foo@`) matches the form's chain-terminator semantics; there should be no variance around where the access chain ends.
 
 **No trailing forms.** `Foo.@` admits no chained tail. `Foo.@(x)`, `Foo.@%`, `Foo.@'`, and `Foo.@.bar` are all rejected. To use the extracted reference in any of those roles, first bind it into a name:
 
@@ -3136,7 +3161,7 @@ f <+ g <+ h   ≡   h +> g +> f   ≡   (+>')(f, g, h)
 
 **Unary result.** The composed function's signature is fixed to `(x) -> result`; additional positional arguments at call time are discarded, regardless of the first operand's declared arity. To thread more than one value through a composition, wrap the values in a Tuple or Record at the composition's entry point.
 
-**Operand shape.** Compose operands must be function-value expressions. The ComposeOp RHS narrowing (Syntactic-Grammar `<FlowRHSStrict>` at §9) excludes block-body arms: unlike pipeline stages (§3.10.12), compose operands are lifted at compose time from function-valued expressions and receive no runtime topic to consume — a block operand would have no source to bind an implicit input against. Any operand whose behavior depends on a topic must be wrapped in a function value first.
+**Operand shape.** Compose operands must be function-value expressions. The ComposeOp RHS narrowing (Syntactic-Grammar `<FlowRHSStrict>` at §9) excludes block-body arms: unlike pipeline stages (§3.10.12), compose operands are lifted at compose time from function-valued expressions and receive no runtime topic to consume; a block operand would have no source to bind an implicit input against. Any operand whose behavior depends on a topic must be wrapped in a function value first.
 
 Compose operands compose freely with §3.11 partial application and §3.12 shape transforms; the operand slot is a general function-value expression:
 
@@ -5585,10 +5610,11 @@ The unary form `%` (with no RHS) is ill-formed on a `State` instance: a state in
 
 #### §6.7.3 Named State Constructors
 
-Beyond the general `State@` unit constructor, four named constructors cover the common state operations:
+Beyond the general `State@` unit constructor, five named constructors cover the common state operations:
 
 - `State.get@`: reads the current state as the observed value, leaves the state unchanged.
 - `State.gets@`: applies a function to the current state, returns the result as the observed value, leaves the state unchanged.
+- `State.of@`: produces an initial observed value without changing the state.
 - `State.put@`: writes a new state, produces `empty` as the observed value.
 - `State.modify@`: applies a function to transform the current state, produces `empty` as the observed value.
 
@@ -5597,6 +5623,7 @@ Each is a stdlib-provided `State` instance (or, for `gets`, `put`, and `modify`,
 ```java
 State.get@;              // aka: State@ (defn(s) ^< s, s >)
 State.gets@ (*)|2| ;     // aka: State@ (defn(s) ^< s * 2, s >)
+State.of@ 42;            // aka: State@ (defn(s) ^< 42, s >)
 State.put@ 42 ;          // aka: State@ (defn(s) ^< empty, 42 >)
 State.modify@ (+)|1|;    // aka: State@ (defn(s) ^< empty, s + 1 >)
 ```

@@ -134,6 +134,51 @@ var failSamples = [
 	"(x, y) { x; };",          // same
 	"(x: 1, y) { x; };",       // same
 
+	// FuncBodyExpr visual-runway narrowing — the terse `^`-body
+	// form admits DoCompr / DoLoopCompr / MatchExpr / OrDispatch /
+	// GroupedExpr only. Forms that extend rightward without a visual
+	// close marker (AsExpr / GuardedExpr / AssignmentExpr / DefFuncExpr
+	// / FlowBinExpr chains) and BareBlockExpr (visual collision with
+	// FuncBodyBlock) are rejected at terse position. Each paren-wraps
+	// through GroupedExpr — see the positive samples in samples.js.
+
+	// BareBlockExpr at `^`-body — bare `{` directly against `^`
+	// visually collides with FuncBodyBlock.
+	"defn foo() ^{ x; };",
+	"defn foo(x) ^{ x + 1; };",
+
+	// AsExpr at `^`-body — `:as` tail extends rightward, and
+	// collides visually with FuncAsClause. Kyle-flagged footgun:
+	// `defn foo(x) :as one ^x :as two;` is authorable-and-confusing.
+	// Reject unconditionally.
+	"defn foo(x) ^x :as int;",
+	"defn foo(x) :as one ^x :as two;",
+
+	// GuardedExpr at `^`-body — consequent extends rightward.
+	// Paren-wrap: `^(?[c]: x)`.
+	"defn foo(x) ^?[x ?> 0]: 1;",
+	"defn foo(x) ^![x ?< 0]: 0;",
+
+	// AssignmentExpr at `^`-body — RHS is full Expr, extends
+	// rightward. Paren-wrap: `^(y := 5)`.
+	"defn foo() :over(y) ^y := 5;",
+
+	// DefFuncExpr at `^`-body — inner `^body` extends outward
+	// through the `;` and collides with outer function terminator.
+	// Paren-wrap: `^(defn(y) ^y)`. (Also: use curried decl form
+	// `defn foo(x)(y) ^y` when semantically appropriate.)
+	"defn foo() ^defn(y) ^y;",
+	"defn foo() ^defn bar(y) ^y + 1;",
+
+	// FlowBinExpr at `^`-body — Flow-tier chains (ComprOp,
+	// PipelineOp, ComposeOp) extend rightward without a visual
+	// close. Paren-wrap: `^(x ~map f)`, `^(x #> g)`, `^(f +> g)`.
+	"defn foo(xs) ^xs ~map inc;",
+	"defn foo(xs) ^xs ~each log;",
+	"defn foo(x) ^x #> inc;",
+	"defn foo(f) ^f +> g;",
+	"defn foo(f) ^g <+ f;",
+
 	// Series 1: bare `:` at lenient VarDefInitOptImplIn positions
 	// now rejects. The lenient sigil is `:?` (override-on-empty);
 	// bare `:` at these positions retracts the entry's init-optional

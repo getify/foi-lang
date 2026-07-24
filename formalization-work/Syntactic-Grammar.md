@@ -1246,7 +1246,26 @@ FuncOverClause        := ":over" _ OpenParen _ Identifier (_ Comma _ Identifier)
 FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
-FuncBodyExpr          := Caret _ (ExprNoBlock | GroupedExpr);
+
+(* Visual-runway widening: the terse `^`-body form admits only
+   expression forms whose leading tokens between `^` and any
+   inner block delimiter provide unambiguous shape signal, or
+   a `(...)`-wrapped escape hatch. Narrower than <ExprNoBlock>:
+   DefFuncExpr, AssignmentExpr, GuardedExpr, AsExpr, and the
+   entire FlowBinExpr tier (ComprOp / PipelineOp / ComposeOp
+   chains) are NOT admitted directly — they either extend
+   rightward without a visual close marker (chains, `:as` tails,
+   assignment RHS), collide with adjacent function-signature
+   syntax (function `:as` vs body `:as`), or resemble the block
+   body form too closely (bare `^{...}` vs `defn f(x) { ... }`).
+   Each rejected form paren-wraps through GroupedExpr:
+   `^(x :as int)`, `^(?[c]: x)`, `^(x := 5)`, `^(defn(y)^y)`,
+   `^(x ~map f)`, `^(x #> g)`, `^({x;})`. Match forms
+   (`?{...}` / `?(x){...}`) are admitted directly — the `?`
+   sigil is distinctive enough at terse position. Do-comprehensions
+   (`~<<` / `~<*`) are admitted for the same reason: the operator
+   itself lives between the `^` and the `{`. *)
+FuncBodyExpr          := Caret _ (DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr);
 
 (* The leading `#>` is sugar: `defn foo(x) #> ...` is conceptually
    `defn foo(x) ^ x #> ...`. The function's first positional argument
@@ -1263,6 +1282,47 @@ FuncBodyStmtSemiOpt   := FuncBodyStmt (_ Semicolon)*;
 <FuncBodyStmt>        := ReturnExpr | Stmt;
 ReturnExpr            := Caret _ Expr;
 ```
+
+PEG ordering notes for `FuncBodyExpr`'s inner (the five arms of
+`DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr`):
+
+- `DoComprExpr` and `DoLoopComprExpr` first — both start with a
+  `DoComprLHSName` (bare or dotted Identifier/BuiltIn) and require
+  a distinctive third-token operator sequence (`~<<` / `~<*`)
+  after the LHS. On `~<<`/`~<*` absence they backtrack cleanly to
+  `OrDispatch`, and memoization on `DoComprLHSName` keeps the
+  retry cheap. `DoLoopComprExpr`'s `BraceNarrowing` LHS
+  (`Effect.<A, B>`) is reached through the shared `DoLoopComprLHS`
+  production per §16.
+- `MatchExpr` third — opens with `?{` (`IndepMatchExpr`) or `?(`
+  (`DepMatchExpr`). Disjoint from the two do-compr openers
+  (Identifier/BuiltIn) and from every `OrDispatch` tier-ladder
+  arm (`BinaryAtom` rejects both match forms). Exmark-prefixed
+  `!{...}` / `!(x){...}` are not admitted — `MatchExpr`'s grammar
+  requires a `Qmark` opener; the Exmark forms remain parse errors
+  by the same fall-through path they take everywhere else.
+- `OrDispatch` next — the tier ladder from Or downward (Or → And
+  → Compare → Add → Mul → Unary → BinaryAtom). Deliberately
+  narrower than `<ExprNoBlock>`: `DefFuncExpr`, `AssignmentExpr`,
+  `GuardedExpr`, `AsExpr`, and the entire `FlowBinExpr` tier
+  (ComprOp / PipelineOp / ComposeOp chains) are NOT reachable
+  through the ladder. All admit through `GroupedExpr`'s inner
+  `Expr` when paren-wrapped.
+- `GroupedExpr` last — the `(...)`-wrapped escape hatch, admitting
+  full `Expr` inside. Every form the widening leaves out —
+  arbitrary Flow-tier chains, `:as`-tailed inners, `?[c]: body`
+  guarded expressions, assignment, inner `defn`, `BareBlockExpr`
+  — reaches this position via the paren-wrap.
+
+The `^x + y * z`, `^foo.bar(baz)`, `^x ?= 42`, `^!x`, `^42`,
+`^"hello"`, `^Foo@x`, `^< a, b, c >` idioms all parse via
+`OrDispatch` — the tight algebraic and access forms remain
+concise. Chain-of-`~map` bodies, `:as`-annotated returns, and
+inner function definitions require paren-wrap: `^(x ~map f)`,
+`^(x :as int)`, `^(defn(y)^y)`. This is the visual-runway
+principle in effect — the paren mark forces the reader's eye to
+close-brace the body scope explicitly at forms that would
+otherwise extend rightward past the terse marker.
 
 PEG ordering notes for `FuncBodyPipeline`'s body (the three arms
 of `<FlowRHSImplIn>`):

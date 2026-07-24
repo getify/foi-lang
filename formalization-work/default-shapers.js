@@ -2477,9 +2477,15 @@ export const defaultShapers = {
 		return { type: "ReturnExpr", expr: parts.find(isNode) };
 	},
 
-	// FuncBodyExpr := Caret _ (ExprNoBlock | GroupedExpr);
+	// FuncBodyExpr := Caret _ (DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr);
 	//
-	// Caret drops (anchored in type tag).
+	// Caret drops (anchored in type tag). Shape-neutral to the
+	// visual-runway narrowing (§13 grammar prose): `body` receives
+	// whichever inner node the parser committed to — a DoComprExpr,
+	// DoLoopComprExpr, MatchExpr, OrDispatch-tier node (arithmetic,
+	// compare, boolean, unary, chain, literal, etc.), or the
+	// GroupedExpr paren-wrap result — with no downstream shape
+	// changes.
 	FuncBodyExpr(frame,parts) {
 		return { type: "FuncBodyExpr", body: parts.find(isNode) };
 	},
