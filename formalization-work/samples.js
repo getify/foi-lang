@@ -1294,16 +1294,50 @@ export const samples = [
 	{ label: "RecordTupleLit: bare-entry paren-wrap DefFuncExpr", src: "<(defn(x)^x + 1)>;" },
 	{ label: "RecordTupleLit: bare-entry paren-wrap pipeline",    src: "<(x #> f), (y #> g)>;" },
 
+	// Bare UnaryExpr admitted at RecordTupleValue's UnaryExpr arm
+	// (post-widening). SymbolicUnaryExpr (?x, !x) and NamedUnaryExpr
+	// (?empty x, !empty x) both reach. AsExpr's longer :as-tail
+	// match still wins when present (last two entries verify).
+	{ label: "RecordTupleLit: bare SymbolicUnary !x",              src: "<foo: !x>;" },
+	{ label: "RecordTupleLit: bare SymbolicUnary ?x",              src: "<foo: ?x>;" },
+	{ label: "RecordTupleLit: bare SymbolicUnary on chain",        src: "<complete: !todoRecord.complete>;" },
+	{ label: "RecordTupleLit: bare NamedUnary ?empty",             src: "<isEmpty: ?empty rec>;" },
+	{ label: "RecordTupleLit: bare NamedUnary !empty",             src: "<hasValue: !empty rec>;" },
+	{ label: "RecordTupleLit: bare-entry SymbolicUnary",           src: "<!x, ?y>;" },
+	{ label: "RecordTupleLit: record-spread + unary toggle",       src: "<&todoRecord, complete: !todoRecord.complete>;" },
+	{ label: "RecordTupleLit: SymbolicUnary with :as (AsExpr wins)", src: "<foo: !x :as bool>;" },
+	{ label: "RecordTupleLit: NamedUnary with :as (AsExpr wins)",  src: "<foo: ?empty rec :as bool>;" },
+
+	// Bare OpFuncExpr admitted at RecordTupleValue's OpFuncExpr arm.
+	// `(+)(1,2,3)` already worked via CallExpr (ChainBase =
+	// OpFuncExpr + PrefixCallSuffix); the widening adds bare `(+)`.
+	{ label: "RecordTupleLit: bare OpFuncExpr (+)",                src: "<plus: (+)>;" },
+	{ label: "RecordTupleLit: bare OpFuncExpr (-)",                src: "<minus: (-)>;" },
+	{ label: "RecordTupleLit: bare OpFuncExpr (.)",                src: "<get: (.)>;" },
+	{ label: "RecordTupleLit: bare OpFuncExpr ([])",               src: "<idx: ([])>;" },
+	{ label: "RecordTupleLit: bare OpFuncExpr (.<a,b>)",           src: "<pick: (.<a,b>)>;" },
+	{ label: "RecordTupleLit: bare OpFuncExpr (.[1..3])",          src: "<slice: (.[1..3])>;" },
+	{ label: "RecordTupleLit: operator-namespace record",          src: "<plus: (+), minus: (-), times: (*), div: (/)>;" },
+	{ label: "RecordTupleLit: bare-entry OpFuncExpr",              src: "<(+), (-), (*)>;" },
+	{ label: "RecordTupleLit: OpFuncExpr call-of still works",     src: "<total: (+)(1,2,3)>;" },
+	{ label: "RecordTupleLit: OpFuncExpr with :as (AsExpr wins)",  src: "<plus: (+) :as Function>;" },
+
 	// === SetLit ===
 	{ label: "SetLit: bare values",                              src: "<[1, 2, 3]>;" },
 	{ label: "SetLit: PickValue + bare",                         src: "<[&foo, x]>;" },
 	{ label: "SetLit: nested",                                   src: "<[<[1, 2]>, <[3, 4]>]>;" },
 	{ label: "SetLit: paren-wrapped entry",                      src: "<[(x), y]>;" },
 
-	// SetEntry inherits the widening via its RecordTupleValue arm
+	// SetEntry inherits the paren-wrap widening via its RecordTupleValue arm
 	{ label: "SetLit: paren-wrap DefFuncExpr",                   src: "<[(defn(x)^x + 1)]>;" },
 	{ label: "SetLit: paren-wrap pipeline",                      src: "<[(x #> f), (1 + 2)]>;" },
 	{ label: "SetLit: paren-wrap MatchExpr",                     src: "<[(?{?[c]: 1; ?: 0})]>;" },
+
+	// SetEntry inherits bare UnaryExpr and OpFuncExpr widening
+	{ label: "SetLit: bare SymbolicUnary",                       src: "<[!x, ?y]>;" },
+	{ label: "SetLit: bare NamedUnary",                          src: "<[?empty rec, !empty rec]>;" },
+	{ label: "SetLit: bare OpFuncExpr",                          src: "<[(+), (-), (*)]>;" },
+	{ label: "SetLit: mixed bare unary and OpFuncExpr",          src: "<[!x, (+), ?y, (-)]>;" },
 
 	// === PickValue (8th access-fold site) ===
 	{ label: "PickValue: bare Identifier",                       src: "<&foo>;" },

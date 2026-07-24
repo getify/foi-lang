@@ -2950,32 +2950,57 @@ export const ExplicitPropDef = production("ExplicitPropDef",
 // (PropertyExpr). Order is mechanical.
 var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 
-// RecordTupleValue := AsExpr | CallExpr | EmptyLit | BooleanLit | NumberLit | StringLit
-//                   | DataStructLit | BareIdentifier
+// RecordTupleValue := AsExpr | UnaryExpr | CallExpr | EmptyLit | BooleanLit | NumberLit
+//                   | StringLit | DataStructLit | BareIdentifier | OpFuncExpr
 //                   | (OpenParen _ Expr _ CloseParen);
 //
+// Composition principle for the bare arms: forms that already
+// compose at this position via CallExpr's ChainBase surface — i.e.,
+// their `X(args)` / `X@ v` / `X.<a,b>` call/access form parses bare
+// here — also admit as bare values. UnaryExpr and OpFuncExpr both
+// satisfy this: `(+)(1,2,3)` reaches RecordTupleValue via CallExpr
+// (ChainBase = OpFuncExpr + PrefixCallSuffix), so bare `(+)` also
+// admits; the AsableExpr inner of AsExpr already reaches UnaryExpr
+// (via AsExpr's `:as`-required tail), so bare `!x` / `?x` follows
+// the same pattern without the tail. Both are one-sigil or paren-
+// wrapped-operator shapes with no visual noise inside `<...>`
+// delimiters. The remaining ChainBase alternatives (DefFuncExpr,
+// MatchExpr, GuardedExpr, AssignmentExpr) don't cross this bar —
+// they create real visual chaos at property-value position and
+// remain paren-wrap-only.
+//
 // PEG order:
-// - AsExpr first — longer match with `:as` tail; falls through on no `:as`.
-//   Preserves `<x :as int, y>` after the `:as` rework (leaves no longer
-//   carry `:as` directly).
+// - AsExpr first — longer match with `:as` tail; falls through on
+//   no `:as`. Preserves `<x :as int, y>` after the `:as` rework
+//   (leaves no longer carry `:as` directly).
+// - UnaryExpr after AsExpr, before CallExpr — `?`/`!` openers are
+//   disjoint from CallExpr's IdentBase opener. AsableExpr already
+//   reaches UnaryExpr via AsExpr's tail-requiring arm; the
+//   ordering here mirrors AsableExpr's own PEG.
 // - CallExpr next so `foo.bar` parses as ChainExpr rather than
 //   BareIdentifier with dangling `.bar`.
 // - DataStructLit before BareIdentifier — disjoint openers
 //   (`<` vs IdentBase).
+// - OpFuncExpr after BareIdentifier, before the paren-wrap arm —
+//   both open with `(`; OpFuncExpr's narrow inner (Op / DotAngle /
+//   DotBracket / `[]`) fails through cleanly to the paren-wrap
+//   `(Expr)` arm on non-matching inner content. Same PEG discipline
+//   as ChainBase.
 // - Paren-wrap arm last — consumes `(` before recursing, no LR.
 //
 // Paren-wrap inner is `Expr` (matching GroupedExpr's precedent), not
 // recursive RecordTupleValue. The bare arms stay narrow (visual
 // clarity inside `<...>` separators), but parens earn the right to
-// admit broad expressions. Forms newly admitted via paren-wrap:
+// admit broad expressions. Forms admitted only via paren-wrap:
 // DefFuncExpr (`<foo: (defn()^42)>`), MatchExpr (`<foo: (?{...})>`),
 // AssignmentExpr (`<foo: (x := 5)>`), BareBlockExpr
 // (`<foo: ({x; y;})>`), DoComprExpr (`<foo: (IO ~<< {x;})>`),
 // DoLoopComprExpr, plus the full binary ladder (arithmetic,
 // logical, comparison, flow/pipeline, comprehension): `<foo: (1 + 2)>`,
-// `<foo: (x #> f)>`, `<foo: (xs ~map fn)>`. SetEntry inherits this
-// widening via its RecordTupleValue arm — `<[(defn()^42), (x #> f)]>`
-// also admits.
+// `<foo: (x #> f)>`, `<foo: (xs ~map fn)>`. SetEntry inherits both
+// the bare-arm widening and paren-wrap widening via its
+// RecordTupleValue arm — `<[!x, (+)]>` and `<[(defn()^42), (x #> f)]>`
+// both admit.
 //
 // Visible production (promoted from combinator alias): the paren-
 // wrap arm needs its own frame so its OpenParen/CloseParen tokens
@@ -2987,8 +3012,13 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 // because the inner Expr dispatch reaches the same leaf nodes
 // through its own paren-wrap/unwrap path (GroupedExprNoBlock etc.),
 // and those productions also lift parens onto inner-node delims.
+// Bare UnaryExpr / OpFuncExpr arms produce their own node types
+// (SymbolicUnaryExpr / NamedUnaryExpr / OpFuncExpr) at the AST
+// surface — the shaper's find-inner-node logic returns them as-is
+// with no wrapper delims to lift.
 var RecordTupleValue = production("RecordTupleValue", or(
 	AsExpr,
+	UnaryExpr,
 	CallExpr,
 	EmptyLit,
 	BooleanLit,
@@ -2996,6 +3026,7 @@ var RecordTupleValue = production("RecordTupleValue", or(
 	StringLit,
 	lazy(() => DataStructLit),
 	BareIdentifier,
+	OpFuncExpr,
 	and(OpenParen, delim(), lazy(() => Expr), delim(), CloseParen)
 ));
 

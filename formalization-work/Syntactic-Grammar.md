@@ -1530,9 +1530,9 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntryList> := (_ Comma)* (_ RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-RecordTupleValue       := AsExpr | CallExpr | EmptyLit | BooleanLit
-                        | NumberLit | StringLit
-                        | DataStructLit | BareIdentifier
+RecordTupleValue       := AsExpr | UnaryExpr | CallExpr | EmptyLit
+                        | BooleanLit | NumberLit | StringLit
+                        | DataStructLit | BareIdentifier | OpFuncExpr
                         | (OpenParen _ Expr _ CloseParen);
 
 PickValue              := Ampersand IdentBase MultiAccessExpr?;
@@ -1653,24 +1653,44 @@ SetLit                 := OpenAngle OpenBracket _ SetEntryList _ CloseBracket Cl
 <SetEntry>             := PickValue | RecordTupleValue;
 ```
 
+**Composition principle for `RecordTupleValue`'s bare arms**: forms
+that already compose at this position via `CallExpr`'s `ChainBase`
+surface — i.e., their `X(args)` / `X@ v` / `X.<a,b>` call/access
+form parses bare here — also admit as bare values. `UnaryExpr` and
+`OpFuncExpr` both satisfy this: `(+)(1,2,3)` reaches
+`RecordTupleValue` via `CallExpr` (`ChainBase` = `OpFuncExpr` +
+`PrefixCallSuffix`), so bare `(+)` also admits; `<AsableExpr>`
+already reaches `UnaryExpr` via `AsExpr`'s `:as`-required tail, so
+bare `!x` / `?x` follows the same pattern without the tail. Both
+are one-sigil or paren-wrapped-operator shapes with no visual noise
+inside `<...>` delimiters. The remaining `ChainBase` alternatives
+(`DefFuncExpr`, `MatchExpr`, `GuardedExpr`, `AssignmentExpr`) don't
+cross this bar — they create real visual chaos at property-value
+position and remain paren-wrap-only.
+
 PEG ordering note for `RecordTupleValue`: `AsExpr` first — longer
-match with `:as` tail. Falls through to `CallExpr` and the rest on
-no `:as`. The remaining order is unchanged from prior design:
-`CallExpr` before `BareIdentifier` so `foo.bar` parses as a chain;
-`DataStructLit` before `BareIdentifier` (disjoint openers).
+match with `:as` tail. Falls through to `UnaryExpr` and the rest on
+no `:as`. `UnaryExpr` before `CallExpr` — `?`/`!` openers disjoint
+from `CallExpr`'s `IdentBase` opener. `CallExpr` before
+`BareIdentifier` so `foo.bar` parses as a chain. `DataStructLit`
+before `BareIdentifier` (disjoint openers). `OpFuncExpr` after
+`BareIdentifier`, before the paren-wrap arm — both open with `(`;
+`OpFuncExpr`'s narrow inner (Op / DotAngle / DotBracket / `[]`)
+fails through cleanly to the paren-wrap `(Expr)` arm on non-matching
+inner content. Same PEG discipline as `ChainBase`.
 
 The paren-wrap arm's inner is `Expr` (matching `GroupedExpr`'s
-precedent), not recursive `RecordTupleValue`. The bare arms stay
-narrow — `<foo: 1 + 2>`, `<foo: defn()^42>`, `<foo: x #> f>` etc.
-remain parse errors at the bare arm for visual clarity inside the
-`<...>` separators. The paren-wrap arm earns the right to admit
-broad expressions (DefFuncExpr, MatchExpr, AssignmentExpr,
-BareBlockExpr, DoComprExpr, DoLoopComprExpr, the full binary
-ladder including pipelines, comprehensions, arithmetic, and
-comparison): `<foo: (1 + 2)>`, `<foo: (defn()^42)>`,
-`<foo: (x #> f)>`, `<foo: (?{...})>`, `<foo: (IO ~<< {x;})>` all
-parse. `SetEntry` inherits this widening via its `RecordTupleValue`
-arm — `<[(defn()^42), (x #> f)]>` also admits.
+precedent), not recursive `RecordTupleValue`. Bare arms stay narrow
+(visual clarity inside `<...>` separators); parens earn the right
+to admit broad expressions. Forms admitted only via paren-wrap:
+`DefFuncExpr`, `MatchExpr`, `AssignmentExpr`, `BareBlockExpr`,
+`DoComprExpr`, `DoLoopComprExpr`, the full binary ladder (including
+pipelines, comprehensions, arithmetic, and comparison):
+`<foo: (1 + 2)>`, `<foo: (defn()^42)>`, `<foo: (x #> f)>`,
+`<foo: (?{...})>`, `<foo: (IO ~<< {x;})>` all parse. `SetEntry`
+inherits both the bare-arm widening and paren-wrap widening via
+its `RecordTupleValue` arm — `<[!x, (+)]>` and
+`<[(defn()^42), (x #> f)]>` both admit.
 
 `RecordTupleValue` is visible but UNWRAPS in its shaper — returns
 the inner node directly, lifting wrapper parens (from the paren-
