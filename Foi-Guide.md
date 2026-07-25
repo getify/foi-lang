@@ -4529,7 +4529,7 @@ The first and most important *rule* of FP is that you have to be very careful to
 
 One powerful tool for managing side effects in a mathematical, predictable way is the `IO` monad.
 
-In **Foi**, the `IO` monad is special, in that it composes (implements/transforms over) multiple monad behaviors/types: Task (Deferred), Reader, and Promise.
+In **Foi**, the `IO` monad is special, in that it composes (implements or transforms over) multiple behaviors/types: Task (Deferred), Reader, `Promise`, and `Using` (resource acquire/release).
 
 Let's explore each of these capabilities separately.
 
@@ -4951,6 +4951,67 @@ This repeated `def v::` isn't redeclaration or reassignment. Each `::` bind open
 
 Shadowing works this way in any `~<<` block, not just `IO`. It reads best exactly where this example needs it: when successive binds are steps of the same thing, and inventing fresh names for each would obscure that.
 
+### Managing Resources
+
+Some effects come in pairs. You open a file, you close it. You take a lock, you give it back. Imperatively that's what `try..finally` is for, and the burden is on you to remember the second half -- on every path out, including the ones that fail.
+
+`IO.using@` folds that pair into a single `IO`. You describe both halves once, and hand back something that binds like any other step:
+
+```java
+defn withFile(path) ^(
+    IO.using@ <
+        acquire: (IO@ (defn(env){
+            def fh: File.open@ path;
+            log(`"`path` opened");
+            ^fh
+        })),
+        release: (defn(fh) ^IO@ (defn(env){
+            fh.close();
+            log(`"`path` closed");
+        }))
+    >
+);
+
+def task: IO ~<< {
+    def fh:: withFile("/tmp/log.txt");
+    def a:: readChunk(fh);
+    def b:: readChunk(fh);
+    < :a, :b >;
+};
+
+task%;
+// /tmp/log.txt opened
+// /tmp/log.txt closed
+// < a: .., b: .. >
+```
+
+What's different about `fh` isn't how it binds; it's its lifetime. The close isn't a line you wrote at the bottom of the block -- it's attached to the bind, and *everything after the bind* is the scope it covers. The file stays open exactly as long as there are steps left that could touch it.
+
+Nesting two of them needs no extra thought:
+
+```java
+def task: IO ~<< {
+    def src:: withFile("/tmp/a.txt");
+    def dest:: withFile("/tmp/b.txt");
+    def data:: readAll(src);
+    $writeAll(dest, data);
+};
+
+task%;
+// /tmp/a.txt opened
+// /tmp/b.txt opened
+// /tmp/b.txt closed
+// /tmp/a.txt closed
+```
+
+`dest` closes first, then `src` -- innermost outward, the way a stack of `finally` blocks unwinds. Nobody specified that ordering; it's what "the rest of the block" means at each bind.
+
+Failure is covered too. If the work after the bind lifts into promise-space and reneges, the release still runs before the promise settles, and the failure still propagates -- releasing a resource doesn't turn a failure into a success.
+
+One caution, since the release rides on the bind: a `using` you never bind never releases. `withFile("/tmp/log.txt")%` opens the file and stops there, and so does putting a `using` in the *last* position of a do-block, where there's nothing after it to scope. If you're acquiring something, bind it, and make sure to use it via bind (`::`, `$`, or `~<`).
+
+You won't have to catch that yourself, though. Running or mapping a `using` instead of binding it is a leak **Foi** can see, so it warns you rather than quietly skipping the release. The resource is still acquired and your code still gets its value -- the warning alerts you to the resource leakage.
+
 ## Iterators
 
 An **Iterator** (`Iter`) is a stateful protocol for lazily pulling values from a *source* one at a time.
@@ -5358,7 +5419,7 @@ Intermediate callers don't have to keep re-declaring the effect. If `greetUser` 
 
 ### Ambient Effects
 
-A small runtime-designated set of effects -- **`Effect.Sys.Log, Effect.Sys.Random, Effect.Sys.CurrentTime`** -- are exempted from the tracking discipline entirely. These are **ambient** effects: they need no `:Effects(...)` declaration on the emit-edge function, and the caller doesn't have to install a `~<*` handler for them:
+A small runtime-designated set of effects -- **`Effect.Sys.Log, Effect.Sys.Warn, Effect.Sys.Random, Effect.Sys.CurrentTime`** -- are exempted from the tracking discipline entirely. These are **ambient** effects: they need no `:Effects(...)` declaration on the emit-edge function, and the caller doesn't have to install a `~<*` handler for them:
 
 ```java
 defn greetUser(id) {
@@ -5368,7 +5429,9 @@ defn greetUser(id) {
 };
 ```
 
-A **Foi**-provided top-level handler catches ambient performs at the outermost boundary (stdout for `Effect.Sys.Log`, PRNG for `Effect.Sys.Random`, system clock for `Effect.Sys.CurrentTime`). You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
+A **Foi**-provided top-level handler catches ambient performs at the outermost boundary (stdout for `Effect.Sys.Log`, stderr for `Effect.Sys.Warn`, PRNG for `Effect.Sys.Random`, system clock for `Effect.Sys.CurrentTime`). `Effect.Sys.Warn` is its own kind rather than a flavor of `Log` so that you can intercept diagnostics on their own -- silence them in a test run, or route them somewhere louder -- without touching normal output.
+
+You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
 
 The ambient category is deliberately narrow. Effects with a resume value the caller must inspect, effects that write persistent state, and effects that open network or file resources are outside the ambient set by design; those belong to the tracked discipline where callers explicitly acknowledge them. The ambient set is fixed by the runtime; you can't mark your own effect kinds as ambient.
 

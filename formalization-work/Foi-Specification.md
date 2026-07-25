@@ -66,10 +66,10 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §1 Values *(done)*
 - §2 Bindings & Data Access *(done)*
 - §3 Functions *(done)*
-- §4 Decisions and guards *(done)*
-- §5 Pattern matching *(done)*
-- §6 Suspension and evaluation control *(done)*
-- §7 Loops and comprehensions *(done)*
+- §4 Decisions and Guards *(done)*
+- §5 Pattern Matching *(done)*
+- §6 Suspension and Evaluation Control *(done)*
+- §7 Loops and Comprehensions *(done)*
 - §8 Modules *(planned)*
 - §9 Type system *(planned)*
 
@@ -4099,10 +4099,14 @@ per **Implicit-User rewrite** below.
   used by runtime bookkeeping (namespace projection, sentinel
   comparison, effect-signature runtime state). Compiler-emitted only.
   Specified in §6.1.5.
-- **`Effect.Host.<Trace, Coverage, Warn, ...>`** -- compiler-inserted
+- **`Effect.Host.<Trace, Coverage, ...>`** -- compiler-inserted
   instrumentation kinds, source-position-carrying and
   compile-option-gated. Emitted natively during compilation passes;
   not admitted in user source at any of the four effect sites.
+  Compiler-authored diagnostics addressed to the programmer rather
+  than to tooling -- deprecation notices and the like -- perform
+  `Effect.Sys.Warn` instead, since their audience and delivery are
+  those of a host service (§6.13.5).
 
 `Effect.User.*` sub-partitions:
 
@@ -4117,11 +4121,11 @@ per **Implicit-User rewrite** below.
 
 `Effect.Sys.*` sub-partitions:
 
-- **`Effect.Sys.<Log, Random, CurrentTime>`** -- ambient host services,
-  specified in §6.13.5. User source may perform (`Effect.Sys.Log%
-  ...`) or handle (`Effect.Sys.Log ~<* ...`) these kinds explicitly,
-  or reference them in `:Effects(...)`; declaration is rejected
-  because the ambient set is fixed by the runtime.
+- **`Effect.Sys.<Log, Warn, Random, CurrentTime>`** -- ambient host
+  services, specified in §6.13.5. User source may perform
+  (`Effect.Sys.Log% ...`) or handle (`Effect.Sys.Log ~<* ...`) these
+  kinds explicitly, or reference them in `:Effects(...)`; declaration
+  is rejected because the ambient set is fixed by the runtime.
 
 **Reserved-root leaf rejection.** `deft Effect.User`, `deft
 Effect.Host`, and `deft Effect.Sys` (bare top segment, no further
@@ -6810,11 +6814,12 @@ Backpressure at the userland level is not surfaced beyond the overflow policy: `
 
 An **IO** is a deferred computation that represents a side-effecting action -- printing, network access, file access, timers, random numbers, or any other action whose result is not solely determined by its inputs. No code runs at construction; execution is triggered by applying `%` to the IO instance.
 
-`IO` composes three concerns into a single monadic type:
+`IO` composes four concerns into a single monadic type:
 
 - **Task**: the deferred side-effect execution itself. An `IO` instance holds an executor function that runs when `%` is applied.
 - **Reader**: an environment value threaded implicitly through the chain of composed IOs. The environment is supplied at `%`-application time and delivered to each composed executor.
-**Promise Transformer**: when an IO's execution encounters a `Promise` instance mid-chain, the surrounding IO evaluation lifts into `Promise` space (§6.8). `Channel`, `PushStream`, and `PullStream` compose with `IO` indirectly through this transformer: each type's coordinating operations (`ch.put` / `ch.take`, `subj% v` / `subj.close()`, `PushStream ~<*` / `PullStream ~<<` completions) return `Promise` instances, which thread through the transformer in the ordinary way. There is no separate Channel or stream transformer.
+- **Promise Transformer**: when an IO's execution encounters a `Promise` instance mid-chain, the surrounding IO evaluation lifts into `Promise` space (§6.8). `Channel`, `PushStream`, and `PullStream` compose with `IO` indirectly through this transformer: each type's coordinating operations (`ch.put` / `ch.take`, `subj% v` / `subj.close()`, `PushStream ~<*` / `PullStream ~<<` completions) return `Promise` instances, which thread through the transformer in the ordinary way. There is no separate Channel or stream transformer.
+- **Using Transformer**: an IO constructed over a `Using` pair -- an acquire IO and a release function -- scopes the acquired resource to the continuation the IO is bound into. The acquire runs when the IO is evaluated; the release runs once that continuation has finished, on both settlement branches when the continuation lifted into `Promise` space (§6.12.6).
 
 The userland surface is:
 
@@ -6825,6 +6830,7 @@ The userland surface is:
 - `~<<` do-block composition: sequences IO operations, threading the Reader environment through each step, per §3.10.9.4 do-block-compilation split.
 - `IO.ask@` / `IO.asks@`: named constructors exposing the Reader environment as a bindable value (§6.12.4).
 - `IO.mapEnv@` / `IO.withEnv@` / `IO.updateEnv@`: sub-context constructors that run a sub-IO under a derived environment (§6.12.4).
+- `IO.using@`: named constructor over a `Using` pair, scoping an acquired resource to the continuation the IO is bound into (§6.12.6).
 
 #### §6.12.1 IO Unit Constructors
 
@@ -6893,6 +6899,8 @@ An IO instance's identity is stable across evaluations; the executor may perform
 
 **NOTE:** Per-instance slot representation (§6.1.5). An `IO` instance's slot holds `< id, executor >`: an identity minted at construction via `Effect.Host.Counter%`, and the executor function supplied to `IO@`. The instance value itself is bare; all state is slot-resident. `IO?=` compares the minted ids, so identity is by construction rather than by executor shape -- two IOs built from the same executor expression are distinct instances. Composition via `~<` / `~map` constructs a new IO with its own minted id wrapping the composed executor; it does not mutate the source instance's slot, which is what makes repeated `%` evaluation of any instance in a chain well-defined.
 
+**NOTE:** Applying `%` to an IO constructed by `IO.using@` (§6.12.6) acquires the resource without releasing it, since the release is consulted only at `~<`. The `%` hook diagnoses this case rather than failing it; see §6.12.6.
+
 #### §6.12.3 Composition Via `~<<`
 
 Multiple `IO` operations sequence into a larger `IO` computation via the `~<<` do-block form. The composition rule is identical to `State` (§6.7.4): the block is a chain of monadic binds terminated by a map -- lifting a bare value to the do-comprehension's monadic type -- on the final expression:
@@ -6932,6 +6940,8 @@ Inside the block:
 The Reader environment supplied at `%`-application time is threaded implicitly through every composed step's executor -- each step sees the same environment (see §6.12.4).
 
 Per §3.10.9.4 do-block-compilation split, `IO ~<<` composition compiles via the default route (compile-time expansion to nested `~<` / `~map`).
+
+**Resource-scoped steps.** A step bound from `IO.using@` (§6.12.6) releases its resource when the continuation it was bound into completes. Because the default route expands the block into nested `~<` / `~map`, the continuation of a `def r:: usingIO;` bind is the *entire remainder of the block* -- so the release runs after the last step that could still observe `r`. Nested using-binds therefore release innermost-first, as a consequence of that same nesting rather than of any ordering rule. A using-IO placed in the block's *terminal* position expands to `~map` rather than `~<`, and acquires without releasing (§6.12.6).
 
 #### §6.12.4 Reader Value Access
 
@@ -7022,7 +7032,7 @@ task% < x: 21 >;
 // v + env.x: 42
 ```
 
-**Sub-context constructors.** The Reader is read-only *within* a chain: no step alters the environment its successors observe. An IO that must run under a different environment therefore starts a **new IO context** rather than mutating the ambient one. Three named constructors build that context. Each takes an environment configurator and produces a **sub-IO transformer** -- a function of shape `(IO) ^IO` -- which, applied to a sub-IO, yields an outer IO that runs the sub-IO under the derived environment. The enclosing chain's own environment is unaffected.
+**Sub-context constructors.** The Reader is read-only *within* a chain: no step alters the environment its successors observe. An IO that must run under a different environment therefore starts a **new IO context** rather than mutating the ambient one. Three named constructors build that context. Each takes an environment configurator and produces a **sub-IO transformer** -- a function of shape `(IO) ^IO` -- which, applied to a sub-IO, yields an outer IO that runs the sub-IO under the derived environment. The enclosing chain's own environment is unaffected. A sub-IO constructed by `IO.using@` (§6.12.6) keeps its resource scoping across the derivation: the constructed outer IO carries the sub-IO's release, wrapped so that acquire and release both run under the derived environment, while the enclosing chain's own environment stays unaffected as usual.
 
 - `IO.mapEnv@ fn`: the primitive. Derives the sub-environment by applying `fn` to the ambient environment.
 - `IO.withEnv@ newEnv`: replaces the environment wholesale. Equivalent to `IO.mapEnv@ (Function@ newEnv)`.
@@ -7114,13 +7124,90 @@ In each case, the surrounding IO evaluation lifts, and the outer `%` yields a `P
 
 `Channel`, `PushStream`, and `PullStream` interact with `IO ~<<` only via their `Promise`-returning operations -- each `put` / `take`, each broadcast, each close, and the completion of a `PushStream ~<*` observation scope or `PullStream ~<<` subscribe cycle. Those promises thread through the Promise transformer above; there is no separate Channel or stream transformer.
 
+#### §6.12.6 Resource Scoping Via `IO.using@`
+
+Some side effects come in pairs: a file that must be closed, a lock that must be released, a connection that must be returned to a pool. `IO.using@` binds the two halves into a single `IO` so that the release is not the call site's obligation to remember.
+
+`IO.using@` is a named constructor over a `Using` record:
+
+```java
+deft Using < acquire: IO, release: {(Any) ^IO} >;
+```
+
+- `acquire`: an `IO` whose evaluation produces the resource.
+- `release`: a function from the acquired resource to an `IO` that disposes of it.
+
+The constructed instance is an ordinary `IO` whose executor *is* the acquire. Evaluating it via `%` runs the acquire under the ambient Reader environment and produces the resource; nothing distinguishes it at the `%` surface (§6.12.2). The release is carried alongside the executor in the instance's slot (§6.1.5) and is consulted only by `~<`.
+
+```java
+defn withFile(path) ^(
+    IO.using@ <
+        acquire: (IO@ (defn(env){
+            def fh: File.open@ path;
+            log(`"`path` opened");
+            ^fh
+        })),
+        release: (defn(fh) ^IO@ (defn(env){
+            fh.close();
+            log(`"`path` closed");
+        }))
+    >
+);
+
+def task: IO ~<< {
+    def fh:: withFile("/tmp/log.txt");
+    def a:: readChunk(fh);
+    def b:: readChunk(fh);
+    < :a, :b >;
+};
+
+task%;
+// /tmp/log.txt opened
+// /tmp/log.txt closed
+// < a: .., b: .. >
+```
+
+**Release timing.** The release is tied to the *bind*, not to evaluation. When a using-IO is the LHS of `~<` -- directly, or as a `def r:: ..` bind under `~<<` default-route lowering (§3.10.9.4) -- evaluating the composed IO:
+
+1. runs the acquire under the ambient environment, producing the resource;
+2. applies the bind function to that resource and runs the resulting IO, also under the ambient environment;
+3. runs `release(resource)` under the ambient environment;
+4. produces the continuation's result unchanged. The release IO's own produced value is discarded.
+
+When the continuation's result is a `Promise` (§6.12.5), step 3 defers until that promise settles and runs on **both** branches -- honored and reneged -- with the original settlement reconstructed afterward. A failing continuation still releases; releasing neither converts a renege into an honor nor an honor into a renege.
+
+**Nesting.** Release order follows from bind nesting, not from a separate ordering rule: an inner using-bind's continuation is a subset of the outer one's, so the inner release completes first.
+
+```java
+def task: IO ~<< {
+    def src:: withFile("/tmp/a.txt");
+    def dest:: withFile("/tmp/b.txt");
+    def data:: readAll(src);
+    $writeAll(dest, data);
+};
+
+task%;
+// /tmp/a.txt opened
+// /tmp/b.txt opened
+// /tmp/b.txt closed
+// /tmp/a.txt closed
+```
+
+**NOTE:** Because the release lives in `~<`, a using-IO that is never bound never releases. `withFile("/tmp/log.txt")%` acquires the file and stops; so does a using-IO in a `~<<` block's terminal position, which lowers to `~map` (§6.12.3). Both are the bracket-with-no-body case -- a resource acquired for a continuation that does not exist.
+
+**Leak diagnosis.** Neither case is silent. `IO%` and `IO~map` test the instance's slot for a release before proceeding, and perform `Effect.Sys.Warn` (§6.13.5) when they find one. The test is sound because composition never routes an IO through those hooks: `~<`, `~map`, and the sub-context constructors (§6.12.4) each read the slot and invoke the executor directly rather than applying `%`. A using-IO reaching `IO%` or `IO~map` therefore reached it without a bind. The acquire still runs and the expression still produces its value; the diagnosis reports the leak without altering the result.
+
+Two consequences of that discipline are worth stating explicitly. Sub-context constructors do not produce the leak at all: they carry a using sub-IO's release onto the IO they construct, wrapped in the same environment derivation (§6.12.4). And two stdlib sites apply `%` to an IO they were handed rather than composed: `IO.using@` evaluates its `acquire` under the ambient environment, and the release path runs `usingRelease(res)% env`. For an ordinary acquire or release this is invisible, since a plain IO carries no release of its own and the test does not fire. For a using-IO supplied in either position it does fire, and correctly -- that inner instance's release is bound to nothing and would otherwise be discarded silently.
+
+**NOTE:** Release covers continuation *completion*, not continuation *abandonment*. If an enclosing handler terminates the computation via `Done@` (§6.4) while a step inside the continuation is suspended at a perform, the bind function never returns and the release never runs.
+
 ### §6.13 Effect Signatures
 
 Foi's effect system requires **discipline at the declaration surface**: every non-ambient effect a function might perform must be recorded somewhere the compiler can verify. This section specifies how that recording works: the `:Effects(...)` clause on function types, when declaration is mandatory versus inferred, and how the compiler verifies coverage across a call stack.
 
 The discipline is intentionally light on ceremony. Declaration is required only where effects are first emitted; the compiler tracks their propagation up the call stack silently; a `~<*` handler somewhere before the outermost `%` boundary satisfies coverage.
 
-A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small stdlib-designated set (`Effect.Sys.Log`, `Effect.Sys.Random`, `Effect.Sys.CurrentTime`) is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. §6.13.5 specifies the ambient category.
+A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small stdlib-designated set (`Effect.Sys.Log`, `Effect.Sys.Warn`, `Effect.Sys.Random`, `Effect.Sys.CurrentTime`) is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. §6.13.5 specifies the ambient category.
 
 #### §6.13.1 The `:Effects(...)` Clause
 
@@ -7284,6 +7371,13 @@ A small built-in set of effect kinds is **ambient**. The ambient
 effects are:
 
 - `Effect.Sys.Log`: default handler: stdout write.
+- `Effect.Sys.Warn`: default handler: stderr write. Payload is a
+  diagnostic message; resume is `empty`. Distinct from `Sys.Log` so
+  that diagnostics can be silenced, captured, or escalated
+  independently of ordinary program output -- stdlib operations
+  perform it to report a misuse the compiler cannot detect
+  statically (§6.12.6), and user code may perform it for the same
+  purpose at its own API boundaries.
 - `Effect.Sys.Random`: default handler: PRNG (seedable at boundary).
 - `Effect.Sys.CurrentTime`: default handler: system clock.
 
@@ -7332,7 +7426,7 @@ runtime; users cannot mark their own effect kinds as ambient.
 
 #### §6.13.6 Open: `Sys.*` Namespace Expansion
 
-Beyond the three ambients committed in §6.13.5 (`Sys.Log`,
+Beyond the four ambients committed in §6.13.5 (`Sys.Log`, `Sys.Warn`,
 `Sys.Random`, `Sys.CurrentTime`), the `Effect.Sys.*` namespace has
 room for additional host-service kinds. This subsection is a
 candidate register per §0.3; per-candidate classification (ambient
