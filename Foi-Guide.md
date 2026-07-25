@@ -2220,6 +2220,33 @@ defn half(v) ^v / 2;
 11 #> add(1) #> triple #> half;        // 18
 ```
 
+----
+
+**Applying a function to a value.** A pipeline with a single stage isn't much of a pipeline -- `x #> f` is just `f(x)`, written value-first instead of function-first. On its own that's a stylistic choice. What makes it interesting is that `(#>)` is an ordinary function value, so partial application can fix the *value* and leave the *function* open:
+
+```java
+defn logIt(v) { log(`"log: `v`"); };
+defn saveIt(v) { save(v); };
+
+def handlers: < logIt, saveIt >;
+
+handlers ~each (#>)|42|;
+// log: 42
+// (42 saved)
+```
+
+`(#>)|42|` is a function that takes a function and calls it with `42`. Each element of `handlers` is passed to it in turn, so each handler runs against the same value.
+
+If you've used other FP libraries, you may know this one as `applyTo`, or the *thrush*, or the T combinator -- usually a named helper you import or hand-write. In **Foi** there's nothing to import and nothing to define: it's the pipeline operator lifted to a function value (as any operator can be), with its first argument fixed (as any function's can be).
+
+That generalizes. Any time you find yourself writing a throwaway lambda whose whole job is "call the thing I'm given with the value I already have," `(#>)|value|` is the point-free spelling:
+
+```java
+def notifyAll: (#>)|currentUser|;
+
+subscribers ~each notifyAll;
+```
+
 A *pipeline function* is a specialized function definition form that replaces the `^` return sigil with a `#>` pipeline as its concise body. The *topic* of the first step is automatically bound to the first parameter of the function:
 
 ```java
@@ -2232,7 +2259,7 @@ defn compute(x) #> add(1,#) #> triple #> half;
 compute(11);    // 18
 ```
 
-And again, if we define `add()` as curried function, we can avoid the `#` topic reference:
+And again, if we define `add()` as curried function, we can avoid the explicit `#` topic reference (aka, "point free"):
 
 ```java
 defn add(x)(y) ^x + y;
@@ -2287,12 +2314,13 @@ doub;                   // defn Double@(...
 Functions of this form are opted (exclusively) into alternate parentheses-free call syntax, with the `@` call operator:
 
 ```java
-def v: Double@ 21;      // 42 -- instead of Double(21)
+// instead of Double(21)
+def v: Double@ 21;      // 42
 
 def zero: Double@;      // 0
 ```
 
-**TIP:** Conceptually, you may think of `defn Double@(..) { .. }` as creating a "type namespace" `Double` with a property on it called `@`; that's why `Double.@` references the function itself without an invocation. And the `Double@ 21` / `doub@ 21` call forms are dispatching to that `Double.@` function.
+**TIP:** Conceptually, think of `defn Double@(..) { .. }` as creating a "type namespace" `Double` with a property on it called `@`; that's why `Double.@` references the function itself without an invocation. And the `Double@ 21` / `doub@ 21` call forms are dispatching to that `Double.@` function.
 
 If the `@` function call passes no argument, as in `def zero: Double@;`, a default `empty` is passed; the parameter's default expression, if any, will thus be resolved (as above).
 
@@ -4549,7 +4577,7 @@ specialNumber%;        // 42
 As with all monads, we can compose instances together via comprehensions like `~map` and `~<` (chain):
 
 ```java
-defn doubleIO(v) ^IO.of@ (v * 2);
+defn double(v) ^v * 2;
 
 defn incIO(v) ^IO.of@ (v + 1);
 
@@ -4561,7 +4589,7 @@ defn finish(v) {
 def num: IO.of@ 21;
 
 def task: num
-    ~map doubleIO
+    ~map double
     ~< finish;
 
 task%;   // 43
@@ -4572,41 +4600,43 @@ task%;   // 43
 
 Recall the [`~<<` do-comprehension](#monadic-do-comprehension) (for monads), which gives a special syntax for chaining monadic values together a more familiar imperative-style. It's especially convenient when you might otherwise need to nest `~<` chain steps to create a shared scope for accessing values from each step together.
 
-Because this is so common with `IO`, the *do comprehension* form is most common. The previous snippet could be done like this:
+Because this is so common with `IO`, the *do comprehension* form is most idiomatic. The previous snippet could be done like this:
 
 ```java
 (IO ~<< (v:: num) {
     def x:: doubleIO(v);
-    ::finish(x);
+    $finish(x);
 })%;   // 43
 // v: 42
 ```
 
 As you can see, the `v:: num` statement unwraps the `IO` instance `num`, and assigns its value to `v`. Likewise, the `def x:: doubleIO(v)` unwraps the `IO` instance that comes back from the function call, and assigns the result to `x`.
 
-Finally, the `IO` instance from `finish(x)` is returned (without wrapping, due to the `::` prefix).
+Finally, the `IO` instance from `finish(x)` is returned (without map-wrapping, due to the `$` prefix).
+
+**NOTE:** Where `def x::` is the "receiving bind" form, `$` is the "non-receiving bind" form. If you need to bind an `IO` but don't need the value returned to the do-block, you use `$`. The above snippet uses `$` in the final position, to force a `~<` bind instead of the typical terminal `~map`.
 
 You can interleave `def ::` and `def :` style definitions:
 
 ```java
-defn readFile(filename) {
+defn readFileSync(filename) {
     // ..
     ^IO.of@ fileContents;
 };
 
-defn writeFile(filename,contents) {
+defn writeFileSync(filename,contents) {
     // ..
     ^IO.of@ res;
 };
 
-defn processFile(filename) ^IO ~<< {
-    def text:: readFile(filename);
+defn processFileSync(filename) ^IO ~<< {
+    def text:: readFileSync(filename);
     def uptext: uppercase(text);            // <-- : instead of ::
-    def res:: writeFile("upper.txt",uptext);
+    def res:: writeFileSync("upper.txt",uptext);
     < :res, :text >;
 };
 
-processFile("my-file.txt")%;
+processFileSync("my-file.txt")%;
 // < res: .., text: ... >
 ```
 
@@ -4625,7 +4655,7 @@ task % < x: 42 >;
 // X: 42
 ```
 
-**Note:** The Reader value can be anything, but it's most commonly a Record/Tuple.
+**Note:** The Reader value can be any value, but it's most commonly a Record/Tuple.
 
 Inside a `~<` chain step, the carried Reader value can be *accessed* as so:
 
@@ -4634,22 +4664,22 @@ def task:
     IO.of@ 42
     ~< (v) {
         IO@ (defn(env){
-            log(`"Value: `v`, Env.x: `env.x`");
+            log(`"value: `v`, env.x: `env.x`");
         });
     };
 
 task % < x: 3 >;
-// Value: 42, Env.x: 3
+// value: 42, env.x: 3
 ```
 
-This is a bit ugly/awkward, but is cleaner in *do comprehension* form to *extract* the Reader value:
+This is a bit ugly/awkward, but it's cleaner in *do comprehension* form to *extract* the Reader value:
 
 ```java
 def fortyTwo: IO.of@ 42;
 
 def task: IO ~<< {
-    def v:: fortyTwo;
     def env:: IO.ask@;
+    def v:: fortyTwo;
     log(`"Value: `v`, Env.x: `env.x`");
 };
 
@@ -4657,7 +4687,7 @@ task % < x: 3 >;
 // Value: 42, Env.x: 3
 ```
 
-Alternatively:
+Alternatively, the block definitions clause of an `IO ~<<` automatically binds and passes in the Reader value (`env` below) in the first position:
 
 ```java
 def fortyTwo: IO.of@ 42;
@@ -4670,15 +4700,49 @@ task % < x: 3 >;
 // Value: 42, Env.x: 3
 ```
 
-As shown, the Reader value is automatically provided to the *do comprehension* block, as exposed by a block definitions clause.
+----
+
+**Running against a different environment.** The Reader value is read-only inside a chain -- no step can change what the steps after it see. That's deliberate: it's what makes an `IO` predictable to reason about. So when part of your program needs to run against a *different* environment, you don't modify the current one; you start a new `IO` context just for that sub-computation.
+
+`IO.updateEnv@` merges a patch into the current environment **for a sub IO computation only**. You give it the change first, and it hands back a function you apply to whichever `IO` should run under it:
+
+```java
+defn readFlag() ^IO@ (defn(env) ^env.debug);
+
+def withDebug: IO.updateEnv@ < debug: true >;
+
+def task: IO ~<< (env) {
+    def flag:: withDebug(readFlag());
+    log(`"inner: `flag`, outer: `env.debug`");
+};
+
+task % < debug: false >;
+// inner: true, outer: false
+```
+
+`readFlag()` sees `debug: true` because `withDebug` ran it in a derived context. The surrounding chain still sees `debug: false` -- deriving a context doesn't disturb the one you're in.
+
+Two siblings round it out: `IO.withEnv@` replaces the environment outright instead of patching it, and `IO.mapEnv@` takes a function, for when the new environment is computed from the old one rather than merged or replaced.
+
+With all three unit constructors, the environment change is specified first, and a function is returned that you pass a sub-`IO` to next; this allows building a sub-environment once and using it at each bind site that needs that altered environment.
 
 ### Transforming Over Concurrency
 
-The final super power of `IO` is that its `~<<` chain automatically threads through `Promise` resolution. If an `IO` step yields a `Promise` (or the `IO`'s own executor returns one), the surrounding `IO` chain *lifts* into promise-space: subsequent steps defer until the promise resolves, and the outer `%` yields a `Promise` instead of a concrete value.
+Another super power of `IO` is that its `~<<` chain automatically threads through `Promise` resolution. If any `IO` step (including the `IO`'s own executor) yields a `Promise`, the `IO` chain evaluation *lifts* into promise-space: subsequent steps defer until the promise resolves, and the outer `%` yields a `Promise` instead of a concrete value.
 
-**NOTE:** `Channel`, `PushStream`, and `PullStream` all compose with `IO` too, but indirectly *through* `Promise` -- each type's coordinating operations return `Promise` instances, and those promises thread through the transformer in the usual way. There is no separate `Channel` transformer or stream transformer; there's just the `Promise` transformer meeting promises wherever they come from.
+```java
+def task: IO ~<< {
+    def user:: fetch("/api/user/123");
+    def orders:: fetch("/api/orders/123");
+    < :user, :orders >
+};
 
-#### Promise
+task%;    // Promise{..pending..}
+```
+
+**NOTE:** Other deferred types (`IterP`, `Channel`, `PushStream`, and `PullStream`) also compose with `IO`, but indirectly *through* `IO`'s `Promise` transformation; each type's coordinating operations return `Promise` instances, and those promises thread through the `IO` transformer as illustrated.
+
+#### Promise Transformation
 
 Consider:
 
@@ -4691,7 +4755,7 @@ defn printValue(v) ^IO@ (defn(){
 
 def task: IO ~<< {
     def v:: getValue();     // Promise, not IO
-    ::printValue(v);
+    $printValue(v);
 };
 
 task%;
@@ -4715,7 +4779,7 @@ defn getValue() ^Promise.honor@ (IO.of@ 42);
 
 In either of those forms, the previous snippet would complete with the same outcome: the surrounding `IO` evaluation lifts, and the outer `%` yields a `Promise`.
 
-#### Channel
+#### Channel Transformation
 
 `Channel` isn't a transformer target, but each of its operations returns a `Promise`, so channel work composes naturally through `IO`'s `Promise` transformer:
 
@@ -4742,7 +4806,7 @@ task%;
 
 `ch.put(42)` returns a `Promise` (resolving immediately here because the channel is buffered) which the outer `IO ~<<` sequences and discards. `ch.take()` also returns a `Promise`, and the transformer binds `v` to the taken value directly. There's no channel-specific machinery inside the block; the composition routes through `Promise`.
 
-#### PushStream
+#### PushStream Transformation
 
 `PushStream` and `IO` compose along a different axis. Rather than a stream being lifted through `IO`, a stream is *observed* by a `~<*` scope wired inside an `IO` executor. The scope's setup returns a Promise immediately.
 
@@ -4791,7 +4855,7 @@ The main outer `IO ~<< { .. }` do-comprehension, which kicks everything off, fir
 
 `pumpStream` defines its own inner `IO ~<<` do-comprehension, which first waits for *all* the `Promise` results from the `subj% v` operations to complete. The terminal expression of that do-comprehension is `subj.close()`, which is itself a `Promise` that resolves when the stream finishes closing; *that* `Promise` is the result of the inner do-comprehension.
 
-#### PullStream
+#### PullStream Transformation
 
 The same idea applies to `PullStream`, with the observation scope being `~<<` (consumer-drives-until-done) instead of `~<*`. The `~<<` loop's completion is promise-shaped, so it threads through the outer `IO ~<<` chain the same way:
 
@@ -4826,6 +4890,66 @@ defn dumpFileLines(path) ^IO ~<< {
 The main outer `IO ~<<` do-comprehension waits for `dumpFileLines()` to complete, and `::` unwraps its result to assign to `count`.
 
 The inner `IO ~<<` do-comprehension in `dumpFileLines()` waits for the `Promise` from the `PullStream ~<<` do-comprehension to complete, then resolves to the accumulated `lineCount` variable.
+
+### Iterator Transformation
+
+**NOTE:** [Iterators will be discussed](#iterators) in detail in the following section.
+
+When you step through (or fully consume, via `~<<`) an `IterP` (promise-returning) iterator -- including a [generator-attached](#generators) `IterP` iterator -- each of its promises provide a composition point with an `IO` step:
+
+```java
+def it: IterP@ <
+    Promise.honor@ 10,
+    Promise.honor@ 15,
+    Promise.honor@ 20
+>;
+
+(IO ~<< {
+    def x:: it%;
+    log(`"x: `x`");
+
+    def y:: it%;
+    log(`"y: `y`");
+})%;   // Promise{..pending..}
+// x: 10
+// y: 15
+
+(IO ~<< {
+    $(IterP ~<< (v:: it) {
+        log(`"v: `v`");
+    });
+
+    log("Complete!");
+})%;  // Promise{..pending..}
+// v: 10
+// v: 15
+// v: 20
+// Complete!
+```
+
+**NOTE:** The `$` applied to the above `IterP ~<<` loop is the "non-receiving bind".
+
+Naming each step separately gets awkward quickly -- `x`, `y`, etc carry no meaning here, since every one of them is just "the value from the step I'm on". You can reuse a single name instead:
+
+```java
+(IO ~<< {
+    def v:: it%;
+    log(`"first: `v`");
+
+    def v:: it%;
+    log(`"second: `v`");
+
+    def v:: it%;
+    log(`"third: `v`");
+})%;   // Promise{..pending..}
+// first: 10
+// second: 15
+// third: 20
+```
+
+This repeated `def v::` isn't redeclaration or reassignment. Each `::` bind opens a fresh scope for everything after it, so the second `def v::` *shadows* the first -- the same way a nested function's parameter shadows an outer name. The earlier `v` still exists in its own enclosing scope; you just can't reach it by that name anymore. No `:=` and no `:over` are involved, because nothing is being mutated.
+
+Shadowing works this way in any `~<<` block, not just `IO`. It reads best exactly where this example needs it: when successive binds are steps of the same thing, and inventing fresh names for each would obscure that.
 
 ## Iterators
 
@@ -5172,9 +5296,9 @@ The expression's value is whatever the handler resumes with: for `Effect.User.As
 A **handler scope** is established (via call-stack, not lexical scope) with the `~<*` operator against an `Effect.` prefixed effect type:
 
 ```java
-def result: Effect.Ask ~<* (eff:: greetUser(), ret) {
-    :: ?(eff){
-        [?as Effect.Ask]: ret("Kyle");
+def result: Effect.User.Ask ~<* (eff:: greetUser(), ret) {
+    ?(eff){
+        [?as Effect.User.Ask]: ret("Kyle");
     };
 };
 ```
@@ -5195,7 +5319,7 @@ dispatch per kind via `?as`:
 
 ```java
 def result: Effect.<User.Ask, Sys.Log> ~<* (eff:: doWork(), ret) {
-    :: ?(eff){
+    ?(eff){
         [?as Effect.User.Ask]: ret(readInput(#.value));
         [?as Effect.Sys.Log]: ret(log(#.value));
     };

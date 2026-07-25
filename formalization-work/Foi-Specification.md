@@ -2790,12 +2790,44 @@ source becomes an `Effect.Host.Do.Bind%` perform, and exactly one
 directly at a bare terminal, or synthesized at a `$`-terminal's Map
 tail).
 
-**The two internal effect kinds** (`Effect.Host.Do.Bind`, `Effect.Host.Do.Map`)
-are a closed language-provided set, not user-declarable. They exist
-as the compilation contract between the do-block-body lowering and
-the `~<<` hook's handler scope; they carry no admissible signature
-for `deft` declaration and cannot appear in user-authored
-`:Effects(...)` narrowings.
+**Scope discipline for receiving-bind shadowing.** Each `def x:: expr`
+statement opens a fresh nested block scope for the remainder of the
+body, mirroring the default route's lambda-parameter nesting. The
+statement's lowered form and every subsequent statement live inside
+that nested scope:
+
+```java
+// source:
+Name ~<< {
+    def x:: e1;
+    def x:: e2;   // shadows prior x
+    x + 1;
+};
+
+// lowered comp body:
+def x: Effect.Host.Do.Bind% e1;
+{
+    def x: Effect.Host.Do.Bind% e2;
+    Effect.Host.Do.Map% (x + 1);
+}
+```
+
+Successive `def x:: expr` occurrences with the same name are legal
+under this shape; each occurrence binds in its own nested scope and
+shadows the outer. This matches the shadowing semantic the default
+route delivers naturally via lambda-parameter nesting. The nesting is
+purely lexical within `comp`; the hook's `~<*` walker sees each Bind
+perform at the same dispatch level regardless of nesting depth. Non-
+receiving `$expr;` and mid-block bare statements do not open new
+scopes -- they introduce no name that could collide with a subsequent
+occurrence.
+
+**The two internal effect kinds** (`Effect.Host.Do.Bind`,
+`Effect.Host.Do.Map`) are a closed language-provided set, not
+user-declarable. They exist as the compilation contract between the
+do-block-body lowering and the `~<<` hook's handler scope; they carry
+no admissible signature for `deft` declaration and cannot appear in
+user-authored `:Effects(...)` narrowings.
 
 **Discarded first parameter of `comp`.** `comp` is invoked as a unary
 callable; its parameter is discarded at the outermost invocation and
@@ -2812,7 +2844,7 @@ iteration:
 
 ```java
 Effect.Host.Do ~<* (eff:: comp(v), ret) {
-    :: ?(eff){
+    ?(eff){
         [?as Effect.Host.Do.Bind]: /* handle Bind: gather sub-scopes over ret; Done@ accumulated */;
         [?as Effect.Host.Do.Map]:  /* handle Map: Done@ (#.value lifted into namespace shape) */;
     };
@@ -4483,10 +4515,10 @@ the set of effect kinds this handler is responsible for catching. Two
 shapes are admitted; both prefix-match per §6.1.4:
 
 ```java
-Effect.IO                       // bare form: one prefix root
-                                // (Effect.IO and all Effect.IO.*)
-Effect.<Ask, Retry>             // brace form: multiple prefix roots
-                                // (Effect.Ask.* union Effect.Retry.*)
+Effect.Sys.IO             // bare form: one prefix root
+                          // (Effect.Sys.IO and all Effect.Sys.IO.*)
+Effect.User.<Ask, Retry>  // brace form: multiple prefix roots
+                          // (Effect.User.Ask.* & Effect.User.Retry.*)
 ```
 
 - **Bare form**: `Effect.Name` catches performs of `Effect.Name` and
@@ -4514,12 +4546,24 @@ semantics as handler-arm patterns.
 
 #### §6.3.2 Arms
 
-The body of a `~<*` handler is a **do-block** (§16): a sequence of
-statements terminating in a final unwrap expression `:: <expr>`. Each
-perform-event dispatched to this handler fires the do-block; the
-block's arms match against the event and the matched arm's body
-handles it -- typically by invoking `ret(v)` to resume the suspended
-computation with `v` as the perform-site expression's value.
+The body of a `~<*` handler installed over an effect-kind narrowing is
+a **discrimination block against `eff`**: a sequence of statements
+that dispatches per perform-event on the bound perform-event object,
+resumes the perform site via `ret`, or terminates the scope via
+`Done@`. Do-block terminology (Bind/Map lowering, terminal unwrap)
+does not apply at Effect-handler sites -- monadic-`~<*` (LHS =
+`PushStream`, `Channel`, or other monadic structure per §6.9, §6.10)
+has genuine do-block semantics; the Effect-handler form syntactically
+appropriates the same body grammar but does not perform lowering, and
+sigils like `::` and `$` are semantically inert at Effect-handler
+body sites. Each perform-event dispatched to this handler fires the
+body top-to-bottom; the arms inspect the event and the matched arm's
+body handles it -- typically by invoking `ret(v)` to resume the
+suspended computation with `v` as the perform-site expression's
+value. Idiomatically, all arms are consolidated in a single dependent
+match on `eff` at the body's top level; multiple dependent matches
+would parse and dispatch correctly but there is no reason to split
+arms across separate matches.
 
 The handler scope is not per-dispatch: it persists across many
 dispatches from the same `comp`, terminating only when `comp` completes
@@ -4528,12 +4572,13 @@ completion but does not itself terminate the scope; its terminal
 expression is discarded. Scope termination via a `Done@`-shaped arm
 terminal is a separate mechanism (§6.4.1).
 
-The canonical arm shape is a dependent match against `eff`:
+The canonical arm shape is a dependent match against `eff` as a bare
+statement in the handler body:
 
 ```java
-Effect.<Ask, Sys.Log> ~<* (eff:: producer(), ret) {
-    :: ?(eff){
-        [?as Effect.Ask]: ret(readLine(#.value));
+Effect.<User.Ask, Sys.Log> ~<* (eff:: producer(), ret) {
+    ?(eff){
+        [?as Effect.User.Ask]: ret(readLine(#.value));
         [?as Effect.Sys.Log]: ret(log(#.value));
     };
 };
@@ -4581,7 +4626,7 @@ is admissible; the compiler-emitted `Gen.runner@` runner (§6.6.7)
 uses this pattern to convert per-perform events into stepper
 interactions.
 
-**Final unwrap `:: ?(eff){ ... }`.** The do-block's final unwrap
+**Final unwrap `?(eff){ ... }`.** The do-block's final unwrap
 position (§16), evaluated per dispatch. Its value is discarded unless
 it is a `Done@`-shaped value, which terminates the scope (§6.4.1); see
 §6.3.3 for how the handler expression's value is determined.
@@ -4663,9 +4708,9 @@ payload types of any `Done@`-producing arms in the handler body.
 **Example.**
 
 ```java
-def result: (Effect.Ask ~<* (eff:: greetUser(), ret) {
-    :: ?(eff){
-        [?as Effect.Ask]: ret("Kyle");
+def result: (Effect.User.Ask ~<* (eff:: greetUser(), ret) {
+    ?(eff){
+        [?as Effect.User.Ask]: ret("Kyle");
     };
 }).resolved();
 ```
@@ -4734,8 +4779,8 @@ payload as the resolved value of the handler expression's Promise
 (§6.3.3).
 
 ```java
-Effect.<Ask, Cancel> ~<* (eff:: producer(), ret) {
-    :: ?(eff){
+Effect.User.<Ask, Cancel> ~<* (eff:: producer(), ret) {
+    ?(eff){
         [?as Effect.Cancel]: Done@ empty;
         [?as Effect.Ask]:    ret(getResponse(#.value));
     };
@@ -4930,7 +4975,7 @@ defn iterBindImpl(comp) {
 
     // synchronously extract :: iterator binding
     Effect.Host.Do ~<* (eff:: comp(), ret) {
-        :: ?(eff){
+        ?(eff){
             [?as Effect.Host.Do.Bind]: {
                 iter := #.value;
                 Done@ empty
@@ -4948,7 +4993,7 @@ defn iterBindImpl(comp) {
             [?as Right]: {
                 def bodyTerminal: empty;
                 Effect.Host.Do ~<* (eff:: comp(), ret) {
-                    :: ?(eff){
+                    ?(eff){
                         [?as Effect.Host.Do.Bind]: {
                             ret(stepResult.value);
                             empty
@@ -5161,7 +5206,7 @@ defn iterPBindImpl(comp) {
 
     // synchronously extract :: iterator binding
     Effect.Host.Do ~<* (eff:: comp(), ret) {
-        :: ?(eff){
+        ?(eff){
             [?as Effect.Host.Do.Bind]: {
                 iter := #.value;
                 Done@ empty
@@ -5178,7 +5223,7 @@ defn iterPBindImpl(comp) {
                 [?as Right]: {
                     def bodyTerminal: empty;
                     Effect.Host.Do ~<* (eff:: comp(), ret) {
-                        :: ?(eff){
+                        ?(eff){
                             [?as Effect.Host.Do.Bind]: {
                                 ret(env.value);
                                 empty
@@ -5450,7 +5495,7 @@ defn Gen.runner@(body) {
         started := true;
         waitingPr := Promise.subj@;
         Effect.Host.Gen ~<* (eff:: body(), ret) {
-            :: ?(eff){
+            ?(eff){
                 [?as Effect.Host.Gen.Yield]: {
                     latestRet := ret;
                     waitingPr% (Right@ #.value);
@@ -6724,7 +6769,7 @@ defn dumpFile(path, stopSt) {
 def stopSubj: PushStream.subj@;
 
 Effect.Sys.SIGINT ~<* (eff:: dumpFile("/tmp/log", stopSubj.st)) {
-    :: ?(eff){
+    ?(eff){
         [?as Effect.Sys.SIGINT]: stopSubj% true;
     }
 };
@@ -6778,6 +6823,8 @@ The userland surface is:
 - Unary `%`: runs the executor with no Reader environment.
 - Binary `%`: runs the executor with the supplied Reader environment.
 - `~<<` do-block composition: sequences IO operations, threading the Reader environment through each step, per §3.10.9.4 do-block-compilation split.
+- `IO.ask@` / `IO.asks@`: named constructors exposing the Reader environment as a bindable value (§6.12.4).
+- `IO.mapEnv@` / `IO.withEnv@` / `IO.updateEnv@`: sub-context constructors that run a sub-IO under a derived environment (§6.12.4).
 
 #### §6.12.1 IO Unit Constructors
 
@@ -6843,6 +6890,8 @@ task% < x: 100 >;
 ```
 
 An IO instance's identity is stable across evaluations; the executor may perform any side effect it declares, but the IO itself is not altered by being run.
+
+**NOTE:** Per-instance slot representation (§6.1.5). An `IO` instance's slot holds `< id, executor >`: an identity minted at construction via `Effect.Host.Counter%`, and the executor function supplied to `IO@`. The instance value itself is bare; all state is slot-resident. `IO?=` compares the minted ids, so identity is by construction rather than by executor shape -- two IOs built from the same executor expression are distinct instances. Composition via `~<` / `~map` constructs a new IO with its own minted id wrapping the composed executor; it does not mutate the source instance's slot, which is what makes repeated `%` evaluation of any instance in a chain well-defined.
 
 #### §6.12.3 Composition Via `~<<`
 
@@ -6910,7 +6959,7 @@ Two named constructors expose the Reader environment as a bindable value:
 
 ```java
 IO.ask@;             // aka: IO@ (defn(env) ^env)
-IO.asks@ (.<x>);     // aka: IO@ (defn(env) ^env.x)
+IO.asks@ ((.)|,"x"|);     // aka: IO@ (defn(env) ^env.x)
 ```
 
 Used inside a `~<<` block:
@@ -6918,7 +6967,7 @@ Used inside a `~<<` block:
 ```java
 def task: IO ~<< {
     def env:: IO.ask@;
-    def x:: IO.asks@ (.<x>);
+    def x:: IO.asks@ ((.)|,"x"|);
     log(`"env: `env`, x: `x`");
 };
 
@@ -6943,7 +6992,7 @@ task% < x: 42 >;
 `IO.asks@` earns its distinct role in chain composition (`~<` / `~map` steps outside a do-block) and for constructing reusable projected IOs as first-class values:
 
 ```java
-def readUserId: IO.asks@ (.<user.id>);
+def readUserId: IO.asks@ (defn(env) ^env.user.id);
 
 // composed in a chain:
 readUserId ~< (id) { logUser(id); };
@@ -6972,6 +7021,30 @@ def task: IO ~<< (env, v:: n) {
 task% < x: 21 >;
 // v + env.x: 42
 ```
+
+**Sub-context constructors.** The Reader is read-only *within* a chain: no step alters the environment its successors observe. An IO that must run under a different environment therefore starts a **new IO context** rather than mutating the ambient one. Three named constructors build that context. Each takes an environment configurator and produces a **sub-IO transformer** -- a function of shape `(IO) ^IO` -- which, applied to a sub-IO, yields an outer IO that runs the sub-IO under the derived environment. The enclosing chain's own environment is unaffected.
+
+- `IO.mapEnv@ fn`: the primitive. Derives the sub-environment by applying `fn` to the ambient environment.
+- `IO.withEnv@ newEnv`: replaces the environment wholesale. Equivalent to `IO.mapEnv@ (Function@ newEnv)`.
+- `IO.updateEnv@ patchEnv`: merges a patch into the ambient environment via record spread-update. Equivalent to `IO.mapEnv@ (defn(env) ^< &env, &patchEnv >)`.
+
+```java
+defn readFlag() ^IO.asks@ ((.)|,"debug"|);
+
+def withDebug: IO.updateEnv@ < debug: true >;
+
+def task: IO ~<< {
+    def outer:: readFlag();
+    def inner:: withDebug(readFlag());
+    def after:: readFlag();
+    < :outer, :inner, :after >;
+};
+
+task% < debug: false >;
+// < outer: false, inner: true, after: false >
+```
+
+`inner` observes the patched environment; `after` observes the original, because `withDebug` derived a separate context rather than advancing the chain's own. A configurator built once is reusable across every site that needs the same derivation, which is why the constructors take the configurator first and the sub-IO second.
 
 #### §6.12.5 Promise Transformer
 
@@ -7138,20 +7211,37 @@ defn greetUser(id) {            // no :as, no declared effects
 };
 ```
 
-`greetUser` performs no direct non-ambient emit. Its inferred effect set includes `Ask` (propagated from `askName`). No emit-edge declaration is required on `greetUser`; the tracking continues silently up the call chain.
+`greetUser` performs no direct non-ambient emit. Its inferred effect set
+includes `Ask` (propagated from `askName`). No emit-edge declaration is
+required on `greetUser`; the tracking continues silently up the call
+chain.
 
-Explicit declaration at intermediate positions is legal (defensive documentation, or explicit API-boundary intent). If declared, the declared set must be a superset of the inferred set:
+The `:Effects(...)` clause names only the function's **lexical direct
+performs** -- perform sites appearing in its own body via `%` on an
+effect-kinded LHS or via the `<::` sugar (§6.2.2). Propagated effects
+from callees are not admitted in the declaration; the compiler tracks
+propagation internally per §6.13.4's coverage verification. A function
+like `greetUser` above -- calling `askName` but performing no direct
+emit itself -- omits `:Effects(...)` (or declares `:Effects()`
+explicitly, which is the same thing per §6.13.1). Declaring a propagated
+effect on an intermediate function is a compile error; the emit-edge
+rule (§6.13.2) pins `:Effects(...)` to direct emit sites.
 
-```java
-deft GreetUser(int) :Effects(Ask) ^String;
-defn greetUser(id) :as GreetUser {
-    def name: askName(id);
-    log(`"Hello, `name`");
-    ^name;
-};
-```
+This rule follows from a structural fact: dynamic call stack chains --
+through higher-order function dispatch, first-class function values
+crossing module boundaries, and effect-handler-installed continuations
+-- prevent a caller from statically knowing which effects a callee will
+perform when the callable is dynamically invoked. Requiring
+propagated-effect declaration would break the moment first-class
+functions cross module boundaries. Direct performs are known at
+authoring time and belong on the declaration; propagation is compiler
+machinery, not user declaration burden.
 
-**Higher-order functions.** When a function takes another function as an argument, the callee's effect surface is known from the callee's declared type at each call site. No effect-variable syntax is needed in the higher-order function's signature; the compiler resolves the effect set per-call-site:
+**Higher-order functions.** When a function takes another function as
+an argument, the callee's effect surface is known from the callee's
+declared type at each call site. No effect-variable syntax is needed in
+the higher-order function's signature; the compiler resolves the effect
+set per-call-site:
 
 ```java
 defn retry(fn) ^fn();                // no declared effects
@@ -7160,7 +7250,10 @@ def attempt1: retry(askName);        // resolves with Ask in scope
 def attempt2: retry(pureThunk);      // resolves with empty set
 ```
 
-The two invocations of `retry` induce different inferred effect surfaces from their surrounding scopes, per the callee passed at each site. `retry` itself remains undeclared; the effect polymorphism is a compile-time inference, not a first-class type-language feature.
+The two invocations of `retry` induce different inferred effect surfaces
+from their surrounding scopes, per the callee passed at each site.
+`retry` itself remains undeclared; the effect polymorphism is a
+compile-time inference, not a first-class type-language feature.
 
 #### §6.13.4 Coverage Verification
 
@@ -7173,7 +7266,7 @@ deft AskName(int) :Effects(Ask) ^String;
 defn askName(id) :as AskName ^Effect.Ask% id;
 
 def result: (Effect.Ask ~<* (eff:: greetUser(42), ret) {
-    ::?(eff){
+    ?(eff){
         [?as Effect.Ask]: ret(`"user-`#`");
     };
 })%;
@@ -7208,7 +7301,7 @@ handling the effect (and stopping propagation):
 
 ```java
 Effect.Sys.Log ~<* (eff:: doWork(), ret) {
-    ::?(eff){
+    ?(eff){
         [?as Effect.Sys.Log]: ret(captureForTest(#));
     };
 };
@@ -7527,7 +7620,7 @@ defn listBindImpl(comp) {
         curDepth := 0;
         pending := empty;
         Effect.Host.Do ~<* (eff:: comp(), ret) {
-            :: ?(eff){
+            ?(eff){
                 [?as Effect.Host.Do.Bind]: {
                     def raw: #.value;
                     ?(raw){
@@ -7604,7 +7697,7 @@ defn listBindImpl(comp) {
 
 defn listPromiseBindImpl(comp) {
     ^(Effect.Host.Do ~<* (eff:: comp(), ret) {
-        :: ?(eff){
+        ?(eff){
             [?as Effect.Host.Do.Bind]: Done@ #.value;
             : empty
         };
@@ -7615,7 +7708,7 @@ defn listPromiseBindImpl(comp) {
             (~cata)(
                 (IterP ~<< (v:: IterP@ srcList) {
                     (Effect.Host.Do ~<* (eff:: comp(), ret) {
-                        :: ?(eff){
+                        ?(eff){
                             [?as Effect.Host.Do.Bind]: { ret(v) };
                             [?as Effect.Host.Do.Map]: {
                                 Done@ #.value
