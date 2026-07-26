@@ -408,6 +408,7 @@ var failSamples = [
 	// bare-block consequents without the `:`
 	"?{ ?[c] { y; } };",
 	"?{ ?[c]: x; ? { y; } };",
+	'?(x){ ?[1]: "a"; ? : "b" };',
 	'?(x){ ?["a"] { y; } };',
 	'?(x){ ?[?= 1]: "one"; ? { log("none"); "?" } };',
 	'?(x){ ?[?>= 0] { log(#); "pos" }; ?: "neg" };',

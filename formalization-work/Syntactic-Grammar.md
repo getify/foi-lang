@@ -1402,7 +1402,7 @@ DepCondBoolExpr        := AsTypeOp _ (BraceNarrowing | NamedType)
                         | OpenParen _ DepCondBoolExpr _ CloseParen;
 <DepCondBoolOp>        := CompareOp | AndOp | OrOp;
 
-ElseStmt               := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
+ElseStmt               := Qmark? MatchConsequentNoSemi (_ Semicolon)*;
 <MatchConsequent>      := Colon _ (BlockExprStrict | Expr) _ Semicolon;
 <MatchConsequentNoSemi>:= Colon _ (BlockExprStrict | Expr);
 ```

@@ -2368,14 +2368,20 @@ var MatchConsequent = and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr),
 // Same BlockExprStrict-before-Expr rationale as MatchConsequent.
 var MatchConsequentNoSemi = and(Colon, delim(), or(lazy(() => BlockExprStrict), Expr));
 
-// ElseStmt := (Qmark _)? MatchConsequentNoSemi (_ Semicolon)*;
+// ElseStmt := Qmark? MatchConsequentNoSemi (_ Semicolon)*;
 //
-// Optional leading `?` distinguishes the bare-else form. PEG-wise
-// the leading-? form must be tried before the bare form at all match-stmt
-// dispatch sites (handled in IndepMatchStmts / DepMatchStmts ordering).
+// Optional leading `?` distinguishes the bare-else form. Strict
+// no-trivia between the `?` and the `:` — `?:` is a cuddled sigil
+// pair, matching the adjacency rule at every other `?`-led form
+// (CondClause's `?[` in §14, IndepMatchExpr's `?{` and DepMatchExpr's
+// `?(` above). `? : expr` is a parse error.
+//
+// PEG-wise the leading-? form must be tried before the bare form at all
+// match-stmt dispatch sites (handled in IndepMatchStmts / DepMatchStmts
+// ordering).
 export const ElseStmt = production("ElseStmt",
 	and(
-		optional(and(Qmark, delim())),
+		optional(Qmark),
 		MatchConsequentNoSemi,
 		any(and(delim(), Semicolon))
 	)
