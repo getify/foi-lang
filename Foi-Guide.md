@@ -1645,14 +1645,14 @@ A ranged Tuple subset such as `.[2..5]` is a shorthand equivalent for `.<2,3,4,5
 
 Certain ranges (e.g., `.[0..]`, `.[..-1]`, and `.[0..-1]`) are no-op expressions, since they result in the same Tuple; as immutable values, there's no reason for **Foi** to actually copy the Tuple in these cases.
 
-Out-of-range endpoints are silently clipped: a start `N` less than `0` is treated as `0`, and an end `M` past the last positional index is treated as the last positional index. No error; just the valid subset.
+A negative endpoint counts back from the end, just like `.-N` does: `-1` is the last position, `-2` the second-to-last. That's what `.[..-2]` and `.[-1..]` above are doing. Endpoints still outside the structure after that reading are silently clipped -- below the start becomes `0`, past the end becomes the last positional index. No error; just the valid subset.
 
 ```java
 def items: < 10, 20, 30, 40, 50 >;
 
-items.[-2..2];      // < 10, 20, 30 >          (N clipped to 0)
-items.[3..99];      // < 40, 50 >              (M clipped to 4)
-items.[-5..99];     // < 10, 20, 30, 40, 50 >  (both clipped)
+items.[3..99];      // < 40, 50 >              (end clipped to 4)
+items.[-99..2];     // < 10, 20, 30 >          (start clipped to 0)
+items.[-99..99];    // < 10, 20, 30, 40, 50 >  (both clipped)
 ```
 
 ----
@@ -2756,12 +2756,34 @@ compute(< 1, 3, 5, 7, 9 >);
 
 ----
 
+The *iteration* operand receives exactly one argument: the current value. There's no second index parameter -- writing `(v,i)` leaves `i` as `empty`, since nothing is supplied at that position.
+
+When the index is needed, transform the *range* first. `List.entries@` produces a list of `< index, value >` pairs, which the *iteration* can destructure:
+
+```java
+def xs: < 5, 10, 15 >;
+
+(List.entries@ xs) ~map (< i, v >) {
+    (i + 1) * v;
+};
+// < 5, 20, 30 >
+```
+
+This works the same way for every list comprehension -- `~filter`, `~flatMap`, and the rest -- since they all take the same single-value *iteration* operand.
+
+**Note:** `List.keys@` is the companion, producing just the indicies (`< 0, 1, 2, .. >`).
+
+----
+
 A *map iteration* doesn't always have to produce a single discrete value.
 
 Let's consider the case where a *map* operation itself returns a list (Tuple) instead of a single discrete value; the result is a list of sub-lists. This operation is typically called a *zip*:
 
 ```java
-defn zip(xs,ys) ^xs ~map (x,i) { < x, ys[i] >; };
+defn zip(xs,ys) ^(
+    (List.entries@ xs)
+        ~map (< i, x >) { < x, ys[i] >; }
+);
 
 zip(< 1, 2, 3 >,< 4, 5, 6 >);
 // < <1,4>, <2,5>, <3,6> >
@@ -2776,7 +2798,10 @@ When *mapping* two or more lists (Tuples) together, sometimes what we want is a 
 To perform *merge* (aka, flattening while mapping), we can use the `~flatMap` comprehension:
 
 ```java
-defn merge(xs,ys) ^xs ~flatMap (x,i) { < x, ys[i] >; };
+defn merge(xs,ys) ^(
+    (List.entries@ xs)
+        ~flatMap (< i, x >) { < x, ys[i] >; }
+);
 
 merge(< 1, 2, 3 >,< 4, 5, 6 >);
 // < 1, 4, 2, 5, 3, 6 >
@@ -5340,7 +5365,7 @@ deft Effect.User.Ask(string) ^string;
 deft Effect.User.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
-The parameter position declares the **payload type**: the shape of the value a perform site supplies. The return position declares the **resume type**: the shape of the value the handler passes to its resumption callable, which becomes the perform-site expression's value. `^empty` marks a fire-and-forget effect where the caller ignores the resume.
+The parameter position declares the **payload type**: the shape of the value a perform site supplies. The return position declares the **resume type**: the shape of the value the handler passes to its resumption callable, which becomes the perform-site expression's value. `^empty` marks an effect whose resume carries no information -- the handler still resumes the perform site, the caller just has nothing to read from it.
 
 The `Effect.` prefix is not decorative; it signals to the compiler that this `deft` names an effect kind, not a plain type alias. Only `Effect.`-prefixed names may appear on the LHS of a perform site, on the LHS of a `~<*` handler operator, or in an `:Effects(..)` clause on a function's type declaration.
 
@@ -5368,9 +5393,19 @@ The block definition `(eff:: greetUser(), ret)` binds each perform-event dispatc
 
 `~<*` catches every perform of the LHS's effect kind (or set of kinds) reachable from `comp`, not just at the top level. If `greetUser()` calls `askName()` which in turn performs `Effect.User.Ask`, this handler catches it just the same. The effect walks the call-stack *dynamically*, like a `try`/`catch`, not lexically.
 
-The whole `~<*` expression's value is the arm's terminal at scope termination. In the common case where every perform arm invokes `ret` and `comp` reaches natural completion, `ret`'s return value flows back to the arm as `comp`'s natural return; the arm's terminal expression then becomes the handler expression's value. In the example above, `result` holds whatever `greetUser()` returned once resumed with `"Kyle"`.
+The whole `~<*` expression evaluates to a `Promise` that resolves when the handler scope terminates. Because the scope above completes synchronously, that promise is already resolved by the time you compose against it -- but you still reach the value the same way you would any promise:
 
-An arm may skip `ret` entirely and evaluate to `Done@` instead; this signals "don't resume." The handler scope terminates, the computation is abandoned at the perform point, and the handler expression's value is the `Done@` payload -- passed through as an ordinary value the surrounding code can inspect. This is the escape hatch for cancellation, fatal errors, and other effects the handler decides shouldn't continue.
+```java
+result ~map (v) {
+    log(`"greeted: `v`");
+};
+```
+
+Termination happens in one of two ways. The common one is **natural completion**: the match consequents invoke `ret`, those resumes drive `comp` forward, and `comp` eventually returns -- above, the result is `"Kyle"` returned from `greetUser()` -- and resolves the overall `~<*`promise to that value. The result of each intervening matched consequent is effectively ignored/discarded.
+
+**NOTE:** `ret` resumes the computation, and returns only once that computation reaches its next boundary: its next perform, or its completion. Subsequent operations continue after the `ret(..)` call returns (always `empty`); state flows to the handler through the payload and back through `ret`'s argument, and that pair is the whole channel.
+
+The other termination path is a match consequent that skips calling `ret(..)` and instead evaluates to `Done@`; this signals "don't resume." The scope terminates, the computation is abandoned at the perform point, and the promise resolves with the `Done@` *payload* -- unwrapped, as an ordinary value the surrounding code can inspect. This is the escape hatch for cancellation, fatal errors, and other effects the handler decides shouldn't continue.
 
 ----
 

@@ -1237,7 +1237,7 @@ def field: "y";
 rec[field];                 // 2
 ```
 
-Negative indexing (relative from end) is only available in `.-N` form. In `[ ]` contexts, a negative integer is a literal key lookup; since record property names are positive integers only (per §17 grammar), no such slot can exist and `rec[-N]` returns `empty` per the missing-slot rule.
+Negative indexing (relative from end) is available in the `.-N` form and at range endpoints (§2.12.3). It is not available in `[ ]` computed access: there, a negative integer is a literal key lookup; since record property names are positive integers only (per §17 grammar), no such slot can exist and `rec[-N]` returns `empty` per the missing-slot rule.
 
 **Abstract execution:**
 
@@ -1278,31 +1278,41 @@ items.[..2];        // < 10, 20, 30 >
 items.[3..];        // < 40, 50 >
 ```
 
-**NOTE:** The canonical way to select a range that's a whole slice of the Tuple structure (regardless of its size) -- filtering out non-positionally indexed values (if any) -- is with `.[0..]`. Structure values are immutable and structurally equal; if the original is truly a Tuple (consisting only of positionally indexed entries), the result of `.[0..]` is indistinguishable from the original structure value.
-
-Out-of-range explicit endpoints are clipped to those same bounds: an explicit `N` less than `0` is treated as `0`, and an explicit `M` past the last positional index is treated as the last positional index. The clip is silent; there is no error or `empty` result for an over-reaching endpoint.
+**Negative endpoints.** A negative endpoint counts back from the end of the positional sequence, the same relative reading `.-N` uses (§2.12.2): `-1` is the last positional index, `-2` the second-to-last, and so on. Either endpoint may be negative, independently:
 
 ```java
 // items: < 10, 20, 30, 40, 50 >
 
-items.[-2..2];      // < 10, 20, 30 >          (N clipped to 0)
-items.[3..99];      // < 40, 50 >              (M clipped to 4)
-items.[-5..99];     // < 10, 20, 30, 40, 50 >  (both clipped)
+items.[-2..];       // < 40, 50 >
+items.[..-2];       // < 10, 20, 30, 40 >
+items.[-3..-1];     // < 30, 40, 50 >
+```
+
+**NOTE:** The canonical way to select a range that's a whole slice of the Tuple structure (regardless of its size) -- filtering out non-positionally indexed values (if any) -- is with `.[0..]`. The equivalent spellings `.[..-1]` and `.[0..-1]` are also whole-slice no-ops. Structure values are immutable and structurally equal; if the original is truly a Tuple (consisting only of positionally indexed entries), the result of any of these is indistinguishable from the original structure value.
+
+Endpoints that fall outside the structure *after* the negative reading is resolved are clipped to the structure's bounds: a resolved index below `0` is treated as `0`, and one past the last positional index is treated as the last positional index. The clip is silent; there is no error or `empty` result for an over-reaching endpoint.
+
+```java
+// items: < 10, 20, 30, 40, 50 >
+
+items.[-99..1];     // < 10, 20 >              (start clipped to 0)
+items.[3..99];      // < 40, 50 >              (end clipped to 4)
+items.[-99..99];    // < 10, 20, 30, 40, 50 >  (both clipped)
 ```
 
 **Abstract execution:**
 
-1. Evaluate the base expression to a source value.
+1. Evaluate the base expression to a source value. Let `L` be its count of positional entries.
 2. Compute the effective start `S`:
     1. If `N` is omitted, `S = 0`.
-    2. Otherwise, evaluate `N` to an integer and clip: `S = max(N, 0)`.
+    2. Otherwise, evaluate `N` to an integer. If it is negative, resolve it to `L + N`. Clip the result: `S = max(resolved, 0)`.
 3. Compute the effective end `E`:
-    1. If `M` is omitted, `E` is the source's last positional index.
-    2. Otherwise, evaluate `M` to an integer and clip: `E = min(M, last positional index)`.
+    1. If `M` is omitted, `E = L - 1`.
+    2. Otherwise, evaluate `M` to an integer. If it is negative, resolve it to `L + M`. Clip the result: `E = min(resolved, L - 1)`.
 4. Read the positional entries at indices `S, S+1, ..., E` from the source in order.
 5. The resulting Tuple is the value of the expression.
 
-If `S > E` after clipping, or the source has no positional entries, the result is the empty Tuple `< >`.
+Resolution precedes clipping: a negative endpoint is converted to an absolute index against `L` first, and only the converted value is clipped. If `S > E` after both steps, or the source has no positional entries, the result is the empty Tuple `< >`.
 
 #### §2.12.4 Multi-Pick: `.<a, b>`
 
@@ -1314,7 +1324,7 @@ A multi-pick produces a new Record whose entries are the selected names or posit
 rec.<x, y>;                 // < x: 1, y: 2 >
 ```
 
-When every entry is a positive integer, the multi-pick selects positional entries and produces a Tuple. The `.[N..M]` range form (§2.12.3) is a shorthand for a contiguous positive-integer multi-pick: `items.[2..5]` is equivalent to `items.<2, 3, 4, 5>`.
+When every entry is a positive integer, the multi-pick selects positional entries and produces a Tuple. The `.[N..M]` range form (§2.12.3) is a shorthand for a contiguous positive-integer multi-pick: `items.[2..5]` is equivalent to `items.<2, 3, 4, 5>`. A range with negative endpoints is equivalent to the multi-pick over its *resolved* indices per §2.12.3 -- multi-pick entries themselves are positive integers only.
 
 ```java
 // items: < 10, 20, 30, 40, 50 >
@@ -1670,9 +1680,11 @@ defn Identity@(v) ^v;
 
 The `@` marker is **not part of the function's name as a binding**; `Nothing` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Nothing` and `Nothing@` cannot coexist as separate bindings in the same scope.
 
-`@`-marked functions may only have zero parameters, or one parameter; that single parameter (if any) may *not* be a gather parameter.
+**Parameter constraints.** Exactly one parameter list, declaring zero or one parameters; the single parameter (if any) may not be a gather parameter. Multi-tier (curried) declaration is not admitted. Any other shape is rejected at compile time.
 
-The marker opts the function value into the `@`-call operator (§3.8) at call sites: a no-paren single-argument call form. A `defn` may only carry the `@` marker if its outermost parameter list declares zero or one parameters; `@` on a multi-parameter `defn` is rejected at compile time.
+Multi-tier is foreclosed for the reason at §3.1.1.3: the tier chain is a static surface -- `/\` reshapes against declared arity (§3.12.2), `\/` walks declared tiers (§3.12.3), preconditions hoist to the earliest satisfying tier (§3.5) -- and hook dispatch pins the outermost tier to the dispatch shape, leaving those surfaces nothing to read. A hook may still return a function value; that is where currying belongs at a hook.
+
+The marker opts the function value into the `@`-call operator (§3.8) at call sites: a no-paren single-argument call form.
 
 Call shapes for `@`-marked functions (all equivalent; trivia-tolerant on both sides of `@`):
 
@@ -1703,7 +1715,11 @@ Like `@`, the `%` marker is **not part of the function's name as a binding**; `T
 
 A `defn Name%(..)` declaration is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; the `%` hook installs against the namespace introduced by the `@` hook. A `%`-only declaration is rejected at compile time.
 
-The `%` hook receives an instance as its first parameter and an optional effector argument as its second. The outermost parameter list of a `%`-marked `defn` must declare exactly one or two parameters, neither of which may be a gather parameter; `%` on a parameter list shape outside this range is rejected at compile time. When the hook declares two parameters and the `%`-call form supplies none (`inst%`), the second parameter binds to `empty` per §3.10.1.
+The `%` hook receives an instance as its first parameter and an optional effector argument as its second.
+
+**Parameter constraints.** Exactly one parameter list, declaring one or two parameters, neither a gather parameter. Multi-tier (curried) declaration is not admitted, per §3.1.1.3: hook dispatch pins the outermost tier to the dispatch shape, so the static tier chain has nothing to read. A hook may still return a function value. Any other shape is rejected at compile time.
+
+When the hook declares two parameters and the `%`-call form supplies none (`inst%`), the second parameter binds to `empty` per §3.10.1.
 
 The marker opts the function value into the `%`-call operator (§3.9) at call sites: a postfix effector form invoked against an instance constructed through the same-named `@` hook. Call shapes for `%`-marked functions (all equivalent; trivia-tolerant on both sides of `%`):
 
@@ -1760,7 +1776,11 @@ The composite marker forms are `Tilde OpenAngle OpenAngle` (`~<<`) and `Tilde Op
 
 **Multi-decl uniqueness.** At most one hook per marker per namespace per scope; multiple declarations of the same marker on the same namespace are rejected at compile time.
 
-**Parameter constraints.** The outermost parameter list must declare the fixed shape for the hook's operation. Gather parameters are not admitted in the outermost list. Subsequent (curried) parameter lists are unconstrained.
+**Parameter constraints.** Exactly one parameter list; multi-tier (curried) declaration is not admitted. Gather parameters are not admitted. The list declares the fixed shape for the hook's operation: the LHS instance, the call site's operand(s), and optionally the trailing `ty` (§3.10.9.7).
+
+The restriction is on the declaration's tier shape, not on what the hook returns. A hook may return a function value, and callers may then apply, partially apply, or reshape that value freely -- dispatch is satisfied by the single hook invocation, and everything downstream of its return is ordinary application (§3.10.1).
+
+What multi-tier declaration would provide, and cannot here, is the *static* tier chain: `/\` reshapes against a declaration's arity (§3.12.2), `\/` walks its declared tiers (§3.12.3), and preconditions hoist to the earliest tier satisfying their references (§3.5). Hook dispatch fixes the outermost tier to the dispatch shape, so those surfaces have nothing left to read. A returned function value carries its own arity independently, which is where currying belongs at a hook. Mirrors the constraint at §3.1.1.4.
 
 The full comprehension-dispatch mechanism -- how a comprehension call site routes to its LHS's owning namespace's hook, how alias spellings normalize to canonical, how Tier 2 defaults expand, and the semantic error taxonomy -- is specified in §3.10.9.
 
@@ -2859,8 +2879,7 @@ payload directly).
   value. To drive cartesian iteration, the arm typically opens a fresh
   `~<*` scope over `ret(v')` for each `v'` drawn from `#.value`, and
   gathers each sub-scope's terminal via that sub-scope's own handler-
-  expression Promise (§6.3.3). Ret is fire-and-forget per §6.3.2; the
-  Bind arm does not observe ret's return -- state communication with
+  expression Promise (§6.3.3). Ret returns `empty` per §6.3.2; the Bind arm does not observe ret's return -- state communication with
   sub-scopes flows through the sub-scope handler-expression Promises,
   not through ret. The Bind arm's arm-terminal is `Done@ accumulated`,
   where `accumulated` is the gathered result across sub-scopes;
@@ -3472,6 +3491,10 @@ The `!` polarity negates the *test's truth relative to matching*, not the value 
 - In a function precondition (§3.5): syntactically the same shape at the position between the parameter list and the body, with a slightly narrower consequent grammar.
 - In an independent pattern-matching arm (§5), via the **IndepCondClause** variant -- the same shape with the polarity sigil optionally elided (bare `[test]` reads as implicit `?[test]`).
 - In a conditional `~each` loop comprehension, where the conditional determines whether the next loop iteration is executed or the loop concludes.
+
+This enumeration is exhaustive: a CondClause at any other position is rejected at compile time. The restriction is enforced at the semantic layer, not by the grammar. Syntactic-Grammar's `<FlowLHS>` admits a CondClause at the LHS of every Flow-tier operator -- comprehension, pipeline (`#>`), and compose (`+>` / `<+`) alike -- and defers validity downstream; of those, only the conditional `~each` form (§7.1) is admitted here.
+
+The restriction is on the clause, not on guards. A guard expression (§4.2) produces a value and appears wherever a value expression is admitted, Flow-tier LHS positions included: `?[c]: e #> f` seeds the pipeline with the guard's value, which is the consequent's value or `empty`.
 
 Dependent pattern matching (§5) uses a distinct **DepCondClause** with richer internal structure supporting operator-led boolean sub-expressions and `?as` type arms; that form appears only within dependent-match expressions.
 
@@ -4162,8 +4185,12 @@ value a perform-site supplies. Inside a handler arm, this payload is
 accessed as `.value` on the perform-event object (§6.3.2). The return
 position declares the **resume type**: the shape of the value the
 handler's `ret` invocation supplies and the perform-site expression
-evaluates to. `empty` in return position marks a fire-and-forget
-effect (perform-site expression is `empty`).
+evaluates to. `empty` in return position marks an effect whose resume
+carries no information: the handler still invokes `ret(empty)`, and
+the perform-site expression evaluates to `empty`. It does not mark an
+effect that goes unresumed -- that is the `Done@` arm-terminal path
+(§6.4.1), available on any effect kind regardless of declared resume
+type.
 
 The `Effect.` prefix is normative. A `deft` whose name lacks the prefix
 is a plain type alias (§18), not an effect kind: its name cannot appear
@@ -4247,6 +4274,11 @@ per **Implicit-User rewrite** below.
   used by runtime bookkeeping (namespace projection, sentinel
   comparison, effect-signature runtime state). Compiler-emitted only.
   Specified in §6.1.5.
+- **`Effect.Host.Counter`** -- host-internal minting of unique
+  opaque runtime values, used wherever the runtime needs an
+  unforgeable per-value token (iterator sentinels, substrate
+  identity for slot keying). Compiler-emitted only. Specified in
+  §6.1.5.8.
 - **`Effect.Host.<Trace, Coverage, ...>`** -- compiler-inserted
   instrumentation kinds, source-position-carrying and
   compile-option-gated. Emitted natively during compilation passes;
@@ -4457,8 +4489,11 @@ Slot access is performed through two effect kinds under
 
 - **`Effect.User.Slot.Write`** -- payload: a Tuple `<inst, value>`
   binding the instance and the value to write. Resume type:
-  `empty` (fire-and-forget; the write is complete when the
-  perform-site expression evaluates).
+  `empty`. The perform site is resumed like any other: the handler
+  completes the write and resumes with `empty`, so the write is
+  settled by the time the perform-site expression evaluates. The
+  `empty` resume carries no information; it does not indicate an
+  unresumed perform.
 
 **Slot kinds are not ambient.** The runtime installs a slot-access
 handler at every outermost `%` invocation, so **coverage** (§6.13.4)
@@ -4608,6 +4643,11 @@ By value category, the user-facing rules are:
   layers; language-provided identity-`?=` special-cased since
   namespace handles are one-per-declaration.
 
+- **Minted values** (`Effect.Host.Counter` results, §6.1.5.8):
+  identity at both layers; language-provided identity-`?=`. No
+  namespace owns a minted value, so no `?=` hook is consulted --
+  this is the one `@`-free category with unconditional `?=`.
+
 Reference identity is **bounded, not eliminated**. General
 userland has no operator to observe it, and cross-namespace
 observation is structurally impossible per the compile-time
@@ -4646,6 +4686,60 @@ The specific hygiene properties:
 Explicit named cross-namespace grants (e.g., "namespace A may
 access namespace B's slots") are not admitted in the current
 design.
+
+##### §6.1.5.8 Minting Opaque Values
+
+Several runtime mechanisms require a value that is **fresh**,
+**opaque**, and **unforgeable**: iterator sentinels (§6.5.1,
+§6.5.4) and the substrate identity that slot storage keys on
+(§6.1.5.1, §6.1.5.6). One host effect kind supplies all of them.
+
+**`Effect.Host.Counter`** -- no payload operand. The perform site is
+written `Effect.Host.Counter%`; per §6.2's abstract execution an
+omitted payload is `empty`. Resume type: a freshly minted opaque
+runtime value.
+
+Each perform yields a value distinct from every value any prior
+perform yielded and from every value any later perform will yield,
+for the lifetime of a program run:
+
+- **Uniqueness.** Two minted values are never `?=`-equal to each
+  other; a minted value is `?=`-equal only to itself.
+- **Opacity.** No projection, arithmetic, ordering, or string
+  conversion applies. Identity comparison is the only operation.
+- **Unforgeability.** No userland surface constructs one:
+  `Effect.Host.*` rejects user source at all four effect sites
+  (§6.1.4), and no literal form or unit constructor produces one.
+- **Run-locality.** A minted value is meaningful only within the
+  run that produced it. It is not serializable and not ordered at
+  userland, and exposes no inspectable content -- no ordinal,
+  timestamp, or address is projectable from it.
+
+**Partition.** `Effect.Host.Counter` is sealed per §6.1.4's
+`Effect.Host.*` rule: user source can neither declare, perform,
+handle, nor name it in `:Effects(...)`. The
+`:Effects(Effect.Host.Counter)` spelling is reachable only from
+compiler-authored paths (§6.1.4.1 step 1), exactly as
+`Effect.Host.Slot` is (§6.1.5.5). Unlike `Effect.User.Slot.*`
+(§6.1.5.4), there is no user-facing interception point: uniqueness
+is the property consumers rely on, and an interceptable mint could
+not guarantee it.
+
+**Surfacing.** A minted value reaches userland only where a
+namespace deliberately projects one -- `Iter`'s and `IterP`'s
+`.sentinel` fields (§6.5.1, §6.5.4) are the stdlib instances. Once
+projected it is an ordinary opaque value: bindable, passable,
+storable, `?=`-comparable, and nothing more. Userland's inability
+to *construct* one is precisely what makes a projected sentinel a
+reliable discriminator (§6.5.3, §6.5.6).
+
+**NOTE:** The kind's name describes the runtime's freshness
+mechanism, not a userland surface. Counting is how the host
+guarantees uniqueness; the ordinals themselves are never
+projectable, and no program can read a count off a minted value.
+Programs needing sequential numbering, UUIDs, or any inspectable
+identifier build those over `Effect.Sys.Random` (§6.13.5) or their
+own namespace slot state (§6.1.5.2).
 
 ### §6.2 Performing Effects
 
@@ -4882,14 +4976,19 @@ resumption callable per perform-event.
 
 **Control flow across `ret`.** Three boundaries can be reached: (a) a next perform caught by this same handler, (b) a perform that escapes this handler (an effect kind not narrowed by this handler's LHS; §6.3.1), (c) natural completion of `comp`. In case (a), `ret` returns synchronously to its caller; arm code after the `ret` call runs before the arm's terminal expression, and the newly-queued perform dispatches to a fresh arm firing. In case (b), the outer enclosing handler owns the resume schedule; a delimited continuation from `ret`'s call site captures the arm-post-`ret` code, this scope's remaining logic, and everything downstream to the outer handler. On resume, the captured stack runs synchronously from the escape point; `ret` blocks its caller across the escape. In case (c), `ret` returns after `comp`'s natural completion; the arm continues past `ret` to its terminal.
 
-**Return-value opacity.** Under well-formed usage, `ret`'s return value carries no meaningful information: state communication between arm and callee flows exclusively through the payload (callee→handler) and `ret`'s argument (handler→callee), and mid-body arm terminals are discarded (a `Done@`-shaped arm terminal is a separate scope-termination mechanism, §6.4.1).
+**Return value.** `ret` always returns `empty`, on every path. State communication between arm and callee flows exclusively through the payload (callee→handler) and `ret`'s argument (handler→callee); the return participates in neither direction. Mid-body arm terminals are discarded (a `Done@`-shaped arm terminal is a separate scope-termination mechanism, §6.4.1).
+
+Returning `empty` is not the same as returning immediately. `ret`
+resumes the computation synchronously and returns only when that
+computation reaches its next boundary, per **Control flow across
+`ret`** above; arm code written after a `ret` call runs after the
+resumption.
 
 A `ret` value is one-shot. The first invocation resumes the
-computation. A second invocation of an already-spent `ret` returns
-`Left@ "Continuation Unavailable"`, does not resume the computation, and
-has no side effects. This is a state descriptor, not an error path;
-the returning `Left@` is inspectable, mirroring the "Iterator
-Exhausted" idiom (§6.5.2).
+computation. A second invocation of an already-spent `ret` does not
+resume the computation and has no side effects, and returns `empty`
+like every other invocation. The spent state is therefore not
+observable from the return value.
 
 A captured `ret` remains a valid delimited continuation across the
 arm's syntactic completion. Storing `ret` into an enclosing
@@ -5121,7 +5220,7 @@ If `producer()` performs `Effect.User.Ask`, the arm invokes
 `ret(getResponse(#.value))` to resume `producer`; that resume drives
 `producer()` forward until it eventually completes naturally or hits
 another perform. The arm's terminal in the Ask case is `ret(...)`'s
-return value, which is fire-and-forget (§6.3.2) and discarded.
+return value, which is `empty` per §6.3.2, and discarded.
 
 The perform site inside `comp` that triggered the `Effect.User.Cancel`
 dispatch does not receive a resume-value; `producer()` is abandoned
@@ -5133,9 +5232,9 @@ this computation, and take my payload as the scope's result.'
 handler scope, `comp`'s suspended state at the triggering perform
 site -- frames, environments, closures -- is released by the handler
 machinery. Any `ret` values captured under this scope (§6.3.2) become
-effectively spent: subsequent invocation returns `Left@ "Continuation
-Unavailable"` and does not resume `comp`. The runtime reclaims the
-suspended state once no external reference holds it. `Done@`
+effectively spent: subsequent invocation does not resume `comp`, and
+returns `empty` as every `ret` invocation does. The runtime reclaims
+the suspended state once no external reference holds it. `Done@`
 termination is complete: `comp` is not resumable through any
 subsequent action.
 
@@ -5218,7 +5317,7 @@ b%;    // Right{1}     -- independent
 
 The identity form is the sole exception: passing an existing Iter to `Iter@` yields the same shared-state instance.
 
-**Sentinel field.** Every `Iter@` construction mints a unique opaque runtime value at construction and writes it into Iter's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source Iter's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.2) and in drainage discrimination (§6.5.3).
+**Sentinel field.** Every `Iter@` construction mints a unique opaque runtime value via `Effect.Host.Counter` (§6.1.5.8) at construction and writes it into Iter's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source Iter's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.2) and in drainage discrimination (§6.5.3).
 
 #### §6.5.2 Stepping
 
@@ -5403,7 +5502,7 @@ b%;    // Promise{Right{1}}     -- independent
 
 The identity form is the sole exception: passing an existing `IterP` to `IterP@` yields the same shared-state instance.
 
-**Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value at construction and writes it into IterP's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism, writing it into the runner-produced IterP's slot.
+**Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value via `Effect.Host.Counter` (§6.1.5.8) at construction and writes it into IterP's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism, writing it into the runner-produced IterP's slot.
 
 #### §6.5.5 Stepping
 
@@ -7612,6 +7711,10 @@ A function that **directly performs** a non-ambient effect must include an `:as`
 
 "Directly performs" means the function's own body contains a perform site (via `%` on an effect-kinded LHS, per §6.2, or via the `<::` sugar of §6.2.2) for the effect in question. Performs that occur only in callees are not direct; they belong to those callees' emit-edge declarations.
 
+Inline blocks are part of the enclosing function's own body. A comprehension block-operand (§3.10.9.2), a pipeline-RHS block, a match consequent, and a guarded-expression body are blocks, not functions: they carry no `:as` attachment, no `:over` clause, and no declaration surface of any kind. A perform site inside one is a direct perform of the function that lexically contains the block, and declares there. That a comprehension hook invokes the block does not make it a callee; a callee is a function value with its own declared surface, and a block has none. This parallels `:over` (§2.11), which likewise attaches only at function declarations while inline blocks capture from the enclosing scope implicitly.
+
+A perform site at module top level -- inside a block or not -- has no enclosing function and therefore no emit-edge. Coverage (§6.13.4) applies to it independently of declaration.
+
 ```java
 deft AskName(int) :Effects(Effect.User.Ask) ^string;
 
@@ -7844,9 +7947,9 @@ Covered comprehension mechanisms:
 - `~ap` (§7.8): applicative apply.
 - `Done@` (§7.9): early-exit sentinel behavior across comprehensions.
 
-**Conditional LHS is `~each`-only.** The pattern-match conditional LHS form (`?[cond] ~op ...` / `![cond] ~op ...`, §7.1) is admitted at `~each` and at no other comprehension operator. Every other operator in this section requires a value LHS in the invoked marker's namespace. A CondClause LHS at any other comprehension operator is rejected at compile time.
+**Conditional LHS is `~each`-only.** A CondClause (`?[cond]` / `![cond]`) is not a value expression; per §4.1 its execution ends in control transfer to an enclosing form rather than in a value. §4.1's reachability enumeration admits it at four sites, of which the conditional `~each` form (§7.1) is the only comprehension. A CondClause LHS at any other comprehension operator is rejected at compile time.
 
-The asymmetry follows from what the operators produce. `~each` drives side effects and returns its range, so a conditional that yields no container is coherent. Every other comprehension derives its result from the LHS's elements; a conditional supplies no elements to derive from.
+A guard *expression* is unaffected: `?[c]: e` produces a value (§4.2) and reaches the LHS position through the ordinary expression ladder, as any value expression does.
 
 #### §7.1 `~each`
 
@@ -8204,7 +8307,7 @@ defn listPromiseBindImpl(comp) {
 };
 ```
 
-**Plain-cartesian arm (`listBindImpl`).** Runs `comp` under fresh `Effect.Host.Do ~<*` scope installations, once per coordinate position in the cartesian product. The first pass discovers source lists via each `Effect.Host.Do.Bind` perform's payload and initializes an odometer `coord`; subsequent passes advance the odometer and re-run `comp` with `sources[d][coord[d]]` substituted at each Bind depth. Ret is fire-and-forget per §6.3.2 (D5); the Bind arm's normal terminal is bare `empty` (arm-without-`Done@` per §6.3.2 D4) so the scope persists across multiple Bind arm firings within a single pass. The Map arm terminates the scope via `Done@`, contributing the pass's terminal value to `pending`. Both arms inspect their payloads for `Done@` shape to catch early-exit contributions: a `$Done@` at terminal enters via Bind (payload is Tuple-shaped, assigned directly to `pending` for spread into `results`); a bare-terminal `Done@` enters via Map (payload wrapped as `< payload >` in `pending`, or `<>` under empty-elision per §7.9). Either Done@ path sets `earlyExit := true` and `more := false`, terminating the scope and short-circuiting further passes. After the scope returns, `pending` spreads into `results`; at runPass return, `[more]` continues to the next pass, `[earlyExit]` returns `Left@ results`, and the natural path returns `Right@ results`.
+**Plain-cartesian arm (`listBindImpl`).** Runs `comp` under fresh `Effect.Host.Do ~<*` scope installations, once per coordinate position in the cartesian product. The first pass discovers source lists via each `Effect.Host.Do.Bind` perform's payload and initializes an odometer `coord`; subsequent passes advance the odometer and re-run `comp` with `sources[d][coord[d]]` substituted at each Bind depth. Ret's return value is `empty` per §6.3.2 (D5); the Bind arm's normal terminal is bare `empty` (arm-without-`Done@` per §6.3.2 D4) so the scope persists across multiple Bind arm firings within a single pass. The Map arm terminates the scope via `Done@`, contributing the pass's terminal value to `pending`. Both arms inspect their payloads for `Done@` shape to catch early-exit contributions: a `$Done@` at terminal enters via Bind (payload is Tuple-shaped, assigned directly to `pending` for spread into `results`); a bare-terminal `Done@` enters via Map (payload wrapped as `< payload >` in `pending`, or `<>` under empty-elision per §7.9). Either Done@ path sets `earlyExit := true` and `more := false`, terminating the scope and short-circuiting further passes. After the scope returns, `pending` spreads into `results`; at runPass return, `[more]` continues to the next pass, `[earlyExit]` returns `Left@ results`, and the natural path returns `Right@ results`.
 
 **Outer-Promise-list arm (`listPromiseBindImpl`).** Extracts the source list via a discovery `Effect.Host.Do ~<*` scope catching the first Bind's payload, then drives `IterP ~<<` over `IterP@ srcList` for per-element awaiting. Each iteration installs a fresh `Effect.Host.Do ~<*` scope over `comp()` that ret-substitutes the awaited element into the block body; the block-body terminal Promise is captured via the chained `~<`. The chain's `res` is inspected for `Done@`: on Done@, `earlyExit := true` and `res.value` appends to `acc` unless empty (§7.9 empty-elision); on non-Done@, `!earlyExit` gates further growth. Terminal shape via `~cata` (§7.7): `IterP ~<<` natural completion (Right arm) resolves `Promise{Right{acc}}` when `!earlyExit`, else `Promise{Left{acc}}`; cargo Left short-circuit (Left arm) resolves `Promise{Left{leftVal}}` when `!earlyExit`, else `Promise{Left{acc}}`. Once `Done@` fires, subsequent IterP iterations still run (the outer `~<` fires per step), but `!earlyExit` prevents further accumulator growth; the final terminal shape is delivered at `IterP ~<<` completion.
 
@@ -8316,7 +8419,7 @@ def xs: < 5, 10, 15 >;
 // < 5, 20, 30 >
 ```
 
-**NOTE:** `List.entries@` produces a list of `< index, value >` tuples. `List.keys@` produces a list of indicies (`< 0, 1, 2, .. >`).
+**NOTE:** `List.entries@` and its companion `List.keys@` are specified at §7.10.
 
 **Result shape.** `~map` is container-preserving (i.e., functor): the result is a List of the same length as the LHS, with each element the return value of the corresponding iteration.
 
@@ -8721,3 +8824,50 @@ matrix ~map (row) {
 Row 1's inner `~map` runs to completion; Row 2's inner `~map` hits `v = 6`, returns `Done@ 6`, terminates with `6` as the final element per `~map`'s terminal-semantic. The outer `~map` sees each inner result as an ordinary value.
 
 **Cross-reference.** For `Done@`'s base semantics -- sticky-sentinel behavior, three-call-class taxonomy, raw-value form, and effect-handler-resume interaction -- see §6.4.
+
+### §7.10 List Index Projections
+
+Comprehension iteration operands receive exactly one argument: the
+current element. There is no index parameter -- a two-parameter
+operand leaves its second binding `empty`, because nothing is
+supplied at that position (§3.10.1).
+
+When an iteration needs the index, transform the LHS first. Two
+`List` unit constructors produce index-bearing Lists:
+
+- **`List.entries@ xs`** -- produces a List of `< index, value >`
+  Tuples, one per positional entry of `xs`, in source order.
+- **`List.keys@ xs`** -- produces a List of `xs`'s positional
+  indices: `< 0, 1, 2, .. >`.
+
+Both take a List and return a List of the same length. Both read
+positional entries only (§1.5.2). On an empty List, both yield the
+empty List.
+
+```java
+def xs: < 5, 10, 15 >;
+
+List.entries@ xs;       // < <0, 5>, <1, 10>, <2, 15> >
+List.keys@ xs;          // < 0, 1, 2 >
+```
+
+The resulting List is an ordinary List: every comprehension in this
+section applies to it, and the iteration operand destructures the
+`< i, v >` Tuple in its parameter position:
+
+```java
+(List.entries@ xs) ~map (< i, v >) {
+    (i + 1) * v
+};
+// < 5, 20, 30 >
+```
+
+This composes uniformly -- `~filter` (§7.5), `~fold` (§7.6), and
+the rest take the same single-value operand, so the same transform
+gives each of them index access.
+
+**Standard library.** Both are ordinary `@`-marked constructors
+(§3.1.1.1) on the `List` namespace, declared in the standard
+library alongside `List`'s comprehension hooks. Neither is
+compiler-privileged; a user namespace may declare its own
+`entries@` / `keys@` by the same mechanism.

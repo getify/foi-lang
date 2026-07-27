@@ -1206,10 +1206,19 @@ DefFuncExpr           := "defn" (_ Identifier)?
 
    The post-marker signature is identical to DefFuncExpr's — same
    paramSet+, optional precondition list, :over clause, :as clause,
-   and FuncBody alternatives. Arithmetic and equality markers
-   additionally constrain the paramSet+ shape at the semantic layer:
-   exactly one parameter list, exactly two parameters, no gather
-   (Foi-Specification.md §3.1.1.4).
+   and FuncBody alternatives. Grammar admits `paramSet+`; every
+   marker family narrows it to exactly one parameter list with no
+   gather at the semantic layer. Multi-tier (curried) hook
+   declaration is rejected throughout: dispatch pins the outermost
+   tier to the dispatch shape, leaving no static tier chain for
+   `/\` / `\/` / precondition-hoisting to read. Per-family
+   parameter counts:
+
+   - `@`        — zero or one (Foi-Specification.md §3.1.1.1)
+   - `%`        — one or two (§3.1.1.2)
+   - `~<glyph>` — LHS instance, call-site operand(s), optional
+                  trailing `ty` (§3.1.1.3)
+   - `+ - * / ?=` — exactly two: LHS instance, RHS operand (§3.1.1.4)
 
    At most one hook of each kind per namespace per scope; multiple
    declarations of the same kind in one scope are not rejected at
@@ -1427,13 +1436,6 @@ cross-used at `?as` arm patterns); `[?as int]:` and `[?as Effect.Ask]:`
 apply the bare/dotted single-name form. PEG: BraceNarrowing first,
 backtrack to NamedType on absence of `.<...>` — same pattern as
 TypeCompareBinExpr (§9) and DoLoopComprLHS (§16).
-
-Note: `DepCondBoolExpr`'s `NamedUnaryOp` arm is bare — a single
-`?empty` / `!empty` token with no written operand. The topic supplies
-the operand implicitly (extending the "topic is implicit LHS"
-principle from the operator-led arm to the unary case). No `:as` tail
-reachability here either; annotate at the DepCondClause level via the
-paren-recursive arm if needed.
 
 Note: `<MatchConsequent>` and `<MatchConsequentNoSemi>` are colon-led
 uniformly with §4 guard consequents (`GuardedExpr`) and §3.5

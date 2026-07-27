@@ -1245,7 +1245,7 @@ async function runTests() {
 			def subj: Deferred@;
 			def resCount: 0;
 			def res: <>;
-			prs ~each (pr,idx) {
+			(List.entries@ prs) ~each (< idx, pr >) {
 				pr ~map (v) {
 					resCount := resCount + 1;
 					res := < &res, %idx: v >;
