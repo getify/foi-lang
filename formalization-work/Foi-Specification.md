@@ -2732,8 +2732,8 @@ Each comprehension marker fixes the operand shape supplied at call time and thre
 
 The `~fold` and `~cata` markers form a **mutual-defaulting pair**: they express the same catamorphism, differing only in the None-branch handler's representation (eager value vs. thunk). Missing-hook dispatch routes through the other member of the pair:
 
-- `~fold` missing, `~cata` present: `inst ~fold init fn` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
-- `~cata` missing, `~fold` present: `inst ~cata initThunk fn` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
+- `~fold` missing, `~cata` present: `(~fold)(inst, init, fn)` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
+- `~cata` missing, `~fold` present: `(~cata)(inst, initThunk, fn)` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
 - Both missing: rejected at compile time.
 
 For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the default composition expands over the namespace's declared `~<` primitive and its `@` constructor hook. Where the composition's structural precondition does not fit the namespace's shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an "empty of shape"), the expansion is rejected at compile time. Exact per-marker default-composition formulas are specified at each marker's §7 subsection.
@@ -2905,7 +2905,7 @@ The following comprehension-call errors are reported at compile time:
 
 1. **No owning namespace:** the LHS carries no runtime namespace identity. Comprehension dispatch requires an instance whose namespace was established through an `@`-marked construction.
 2. **Tier 1 missing hook:** the LHS's owning namespace has not declared the invoked Tier 1 hook. `container ~< fn` where `Container` has no `~<` hook is rejected.
-3. **Tier 2 mutual-pair both-missing:** for `~fold` / `~cata`, both members are absent. `container ~fold init fn` where `Container` has neither `~fold` nor `~cata` is rejected.
+3. **Tier 2 mutual-pair both-missing:** for `~fold` / `~cata`, both members are absent. `(~fold)(container, init, fn)` where `Container` has neither `~fold` nor `~cata` is rejected. The two-operand infix form `container ~fold fn` is rejected on the same grounds.
 4. **Tier 2 structural non-fit:** a Tier 2 default's composition precondition does not structurally match the namespace shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an available "empty of shape").
 5. **Operand-shape mismatch:** the operands supplied at the call site do not match the operand shape for the invoked marker (arity, type constraints). Diagnosed per §3.10.1's argument-binding rules applied to the hook's declared parameter list.
 6. **Alias at declaration:** a `~<` alias (`~chain`, `~bind`, `~flatMap`) appears at declaration position (§3.1.1.3). Diagnostic directs the author to declare the hook as `defn Name~<(..)`.
@@ -7844,6 +7844,10 @@ Covered comprehension mechanisms:
 - `~ap` (§7.8): applicative apply.
 - `Done@` (§7.9): early-exit sentinel behavior across comprehensions.
 
+**Conditional LHS is `~each`-only.** The pattern-match conditional LHS form (`?[cond] ~op ...` / `![cond] ~op ...`, §7.1) is admitted at `~each` and at no other comprehension operator. Every other operator in this section requires a value LHS in the invoked marker's namespace. A CondClause LHS at any other comprehension operator is rejected at compile time.
+
+The asymmetry follows from what the operators produce. `~each` drives side effects and returns its range, so a conditional that yields no container is coherent. Every other comprehension derives its result from the LHS's elements; a conditional supplies no elements to derive from.
+
 #### §7.1 `~each`
 
 `~each` is the imperative-iteration comprehension: for each element of the LHS in order, evaluate the iteration operand against that element. The `~each` expression's produced value is not an accumulation of per-iteration results; its purpose is side-effect driving over a bounded sequence.
@@ -8243,7 +8247,16 @@ xs ~< (v) { < v, v * 10 >; };           // block-defs clause
 pairs ~< (<:k, :v>) { < k, v >; };      // destructure block-defs
 ```
 
-**Iteration-operand return.** The operand's returned value must be shape-compatible with the LHS container -- a Tuple/List for a Tuple/List LHS. Non-container return is a shape mismatch. *[verify: compile-time rejection vs. runtime error vs. auto-lift into singleton?]*
+**Iteration-operand return.** The operand's returned value must be shape-compatible with the LHS container -- a Tuple/List for a Tuple/List LHS. Non-container return is a shape mismatch, and will raise a type error (compiler or runtime).
+
+**No auto-lift.** A scalar return is *not* implicitly lifted into a singleton container.
+
+```java
+def xs: < 1, 2, 3 >;
+
+xs ~< (v) { v * 10 };           // shape mismatch -- scalar return
+xs ~< (v) { < v * 10 >; };      // < 10, 20, 30 >
+```
 
 **Empty container.** `~<` on an empty container yields an empty container: `<> ~< anyFn` evaluates to `<>`.
 
@@ -8261,7 +8274,7 @@ xs ~< (v) {
 // < 1, 10, 2, 20, 99 >
 ```
 
-Because `~<` unconditionally spreads terminals, a scalar `Done@` payload would be a shape mismatch. Payload should always be Tuple-shaped.
+Because `~<` unconditionally spreads terminals, a scalar `Done@` payload is the same shape mismatch, diagnosed on the same path. The payload must be Tuple-shaped.
 
 **Hook dispatch.** `~<` dispatches to the LHS's owning namespace's `~<` hook per §3.10.9. `List` declares a `~<` hook in the standard library.
 
@@ -8493,6 +8506,13 @@ defn sub(x, y) ^x - y;
 
 The three-operand form is available only via the operator-as-function invocation; the binary infix form has no syntactic position for a third operand.
 
+`(~foldR)` takes the same three-operand shape, processing right-to-left:
+
+```java
+(~foldR)(1..5, 100, sub);
+// 85   (100 - 5 - 4 - 3 - 2 - 1)
+```
+
 **LHS.** A List value.
 
 **Iteration-operand shapes.** The iteration operand is a two-parameter callable, receiving `(accumulator, currentValue)`:
@@ -8505,7 +8525,7 @@ xs ~fold (acc, <:k, :v>) { acc + v };   // destructure on second param
 
 **Empty and single-value behavior.**
 
-- Two-operand form on an empty List: `~fold` is invalid; type error (runtime)
+- Two-operand form on an empty List: invalid; type error (compiler or runtime). There is no first element to serve as the initial accumulator.
 - Two-operand form on a single-value List: returns that value; the iteration operand is not evaluated.
 - Three-operand form on an empty List: returns the initial value.
 - Three-operand form on a single-value List: iterates once with `(init, xs.0)`; returns that iteration's result.
