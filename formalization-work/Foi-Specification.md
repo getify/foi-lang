@@ -4153,8 +4153,8 @@ function-type expression shape (§18) and a required `Effect.` name
 prefix that signals effect-kindedness to the compiler:
 
 ```java
-deft Effect.Ask(String) ^String;
-deft Effect.Retry(<attempt: int, cause: string>) ^bool;
+deft Effect.User.Ask(string) ^string;
+deft Effect.User.Retry(<attempt: int, cause: string>) ^bool;
 ```
 
 The parameter position declares the **payload type**: the shape of the
@@ -4175,12 +4175,14 @@ Dotted-name at the `deft` name position is admitted specifically for
 effect declaration. Non-effect `deft` retains the single-Identifier form.
 
 Effect kinds live under a three-root hierarchy specified in §6.1.4.
-User declarations resolve under `Effect.User.*`; the `Effect.Ask` and
-`Effect.Retry` names above are shorthand for `Effect.User.Ask` and
-`Effect.User.Retry` under §6.1.4's implicit-User rewrite. Dotted
-sub-namespaces of any depth are admissible under the user root, such
-as `Effect.MyModule.CustomOp` (shorthand for
-`Effect.User.MyModule.CustomOp`).
+User declarations resolve under `Effect.User.*`, and dotted
+sub-namespaces of any depth are admissible under that root, such as
+`Effect.User.MyModule.CustomOp`.
+
+A shorthand form omitting the `User` segment is admitted at every
+effect site. §6.1.4's **Implicit-User rewrite** specifies it, and is
+the sole site in this specification that demonstrates it; every other
+section writes fully-qualified paths.
 
 #### §6.1.4 Namespace Hierarchy
 
@@ -4315,6 +4317,105 @@ declaration at §3.10.9.4, or the runtime top-level handler for
 ambients at §6.13.5) is a compiler-authored code path, not user
 source.
 
+##### §6.1.4.1 Admission Procedure
+
+Given a written effect path `P` and an effect site `S`, where `S` is
+one of `deft` (declaration), `%` (perform, including the `<::` sugar
+of §6.2.2), `~<*` (handler narrowing, including arm `?as` patterns),
+or `:Effects` (signature reference), admission is decided by the
+following procedure. Steps are sequential; the first step that
+rejects terminates the procedure.
+
+1. **Provenance.** If the code under compilation is a
+   compiler-authored path (lowering output, stdlib hook bodies
+   compiled from user declarations, runtime handler installation),
+   admit `P` unconditionally and stop. Every remaining step applies
+   to user source only.
+
+2. **Site-local shorthand.** If `S` is `:Effects`, apply §6.13.1's
+   entry normalization: if `P`'s leftmost segment is not exactly
+   `Effect`, prefix `Effect.` to `P`. At the other three sites, no
+   site-local expansion applies.
+
+3. **Effect-kindedness.** If `P`'s leftmost segment is not exactly
+   `Effect`, reject: `P` names a plain type, not an effect kind
+   (§6.1.3). Because step 2 precedes this one, a `:Effects` entry
+   written in last-segment shorthand has already acquired the prefix
+   and passes here.
+
+4. **Implicit-User rewrite.** Let `R` be `P`'s first segment after
+   `Effect`. If `R` is not one of `User`, `Host`, `Sys`, replace `P`
+   with `Effect.User.` followed by everything after `Effect.`, and
+   set `R` to `User`. Otherwise leave `P` unchanged. `P` is now
+   fully-qualified, and every subsequent step reads the rewritten
+   form.
+
+5. **Partition admission.** Dispatch on `R` and, under `User`, on
+   whether `P` falls in the `Slot` sub-partition:
+
+   | Partition | `deft` | `%` | `~<*` | `:Effects` |
+   |---|---|---|---|---|
+   | `Effect.Host.*` | reject | reject | reject | reject |
+   | `Effect.Sys.*` | reject | admit | admit | admit |
+   | `Effect.User.Slot.*` | reject | admit | admit | admit |
+   | `Effect.User.*` (other) | admit | admit | admit | admit |
+
+   The two rejected-at-`deft` partitions are language-provided:
+   `Effect.Sys.*` membership is fixed by the runtime (§6.13.5), and
+   `Effect.User.Slot.*` is the language's own slot surface (§6.1.5).
+   Reserved-root leaf rejection at `deft` (this section, above)
+   applies independently at that site.
+
+6. **Resolution.** If `S` is `%`, `P` resolves by exact name: the
+   perform site names one declared effect kind, whose declared
+   payload and resume types (§6.1.3) type the perform expression.
+   Prefix-matching does not apply here. A `P` naming no declared
+   kind is an undeclared-name error like any other; no rule specific
+   to reserved roots or to prefixes is involved. Implicit-User
+   shorthand is admitted, having been resolved at step 4, though
+   spec examples write perform sites fully-qualified.
+
+   If `S` is `~<*` or `:Effects`, `P` is a **prefix** per this
+   section's prefix-match discipline, and an empty subtree under `P`
+   is not an error -- a handler or signature written against a
+   subtree that later grows sub-kinds remains well-formed.
+
+Admission is decided independently of whether a matching handler
+exists at runtime; coverage is a separate obligation specified at
+§6.13.4.
+
+**Worked traces.**
+
+```java
+:Effects(Ask)              // step 2: -> Effect.Ask
+                           // step 4: -> Effect.User.Ask
+                           // step 5: User (other), :Effects -> admit
+
+Effect.Sys.Log% "hi"       // step 2: n/a
+                           // step 4: R = Sys, no rewrite
+                           // step 5: Sys, % -> admit
+                           // step 6: Sys.Log declared -> resolves
+
+deft Effect.Sys.Custom(int) ^int;
+                           // step 5: Sys, deft -> reject
+
+Effect.Host.Gen.Yield% 1   // step 5: Host, % -> reject
+                           // (`<::` is the admitted surface, §6.2.2)
+
+Effect.MyMod.Op% x         // step 4: -> Effect.User.MyMod.Op
+                           // step 5: User (other), % -> admit
+                           // step 6: resolves if declared
+
+Effect.User% 42            // step 5: User (other), % -> admit
+                           // step 6: `Effect.User` names no declared
+                           //         kind -> undeclared-name error
+
+Effect.User ~<* (..)       // step 5: User (other), ~<* -> admit
+                           // step 6: prefix; catches every declared
+                           //         kind under the user root,
+                           //         including Effect.User.Slot.*
+```
+
 #### §6.1.5 Per-Instance Slots
 
 Every value in Foi has a **per-namespace slot**: a single storage
@@ -4359,28 +4460,35 @@ Slot access is performed through two effect kinds under
   `empty` (fire-and-forget; the write is complete when the
   perform-site expression evaluates).
 
-Under §6.1.4's implicit-User rewrite, user source may abbreviate
-these as `Effect.Slot.Read` and `Effect.Slot.Write` at perform and
-handler sites. This section uses the abbreviated form.
+**Slot kinds are not ambient.** The runtime installs a slot-access
+handler at every outermost `%` invocation, so **coverage** (§6.13.4)
+is pre-satisfied and no user-side `~<*` is ever required. The
+**emit-edge rule** (§6.13.2) applies in full: a hook whose body
+performs slot access declares it, exactly as it would any other
+tracked effect. The ambient category (§6.13.5) is the four
+`Effect.Sys.*` kinds and nothing else; slots are pre-covered, not
+exempt from declaration. A namespace's statefulness is visible at
+its declared surface.
 
-Both kinds are **ambient**: the runtime installs the slot-access
-handler at every outermost `%` invocation, alongside the ambient
-handlers for `Effect.Sys.<Log, Random, CurrentTime>` (§6.13.5).
-Hooks that perform slot access need not include
-`Effect.User.Slot.*` in their `:Effects(...)` clause; §6.13.5's
-ambient category rule applies.
+Spell the declaration entry at the granularity the hook uses: name
+the `Effect.User.Slot` prefix when the hook both reads and writes,
+and the specific leaf (`Effect.User.Slot.Read`) when it does only
+one. Entries prefix-match per §6.1.4, so the prefix form covers
+both leaves.
 
-A namespace `Counter` whose instances track a compounding count
+A namespace `Tally` whose instances track a compounding count
 alongside a tag:
 
 ```java
-defn Counter@(initTag) ^< tag: initTag >;
+deft TallyStep(Tally, string) :Effects(Effect.User.Slot) ^int;
 
-defn Counter%(inst, newTag) {
-    def current: Effect.Slot.Read% inst;
+defn Tally@(initTag) ^< tag: initTag >;
+
+defn Tally%(inst, newTag) :as TallyStep {
+    def current: Effect.User.Slot.Read% inst;
     def prevCount: ?{ [current ?= empty]: 0; : current.count };
     def next: < count: prevCount + 1, tag: newTag >;
-    Effect.Slot.Write% <inst, next>;
+    Effect.User.Slot.Write% <inst, next>;
     ^next.count;
 };
 ```
@@ -4388,34 +4496,36 @@ defn Counter%(inst, newTag) {
 At the call site:
 
 ```java
-def c: Counter@ "session-1";
+def c: Tally@ "session-1";
 
 c% "click";      // 1
 c% "click";      // 2
 c% "submit";     // 3
 ```
 
-The `Counter%` hook body reads the current slot value, computes
-the next value, writes it back, and returns a projection to the
-caller. The instance `c` itself is unchanged by the writes -- the
-slot storage is orthogonal to the constructed value's shape.
+The `Tally%` hook body reads the current slot value, computes the
+next value, writes it back, and returns a projection to the caller.
+The instance `c` itself is unchanged by the writes -- the slot
+storage is orthogonal to the constructed value's shape. The `@`
+constructor performs no slot access and so carries no declaration;
+only the hooks that actually touch the slot do.
 
 ##### §6.1.5.3 Namespace Identity is Compile-Time Lexical
 
 The runtime handler resolves each slot access against the namespace
 identity of the hook that **lexically encloses** the perform site.
 The lexical namespace is established at compile time from the
-enclosing hook's declaration form (`defn Counter@`, `defn Counter%`,
-`defn Counter~<`, `defn Counter+`, etc.) and injected at the
+enclosing hook's declaration form (`defn Tally@`, `defn Tally%`,
+`defn Tally~<`, `defn Tally+`, etc.) and injected at the
 perform-site emit; the effect payload never carries the namespace
 identity as runtime data.
 
 A consequence: a free function declared outside the namespace does
-not inherit its caller's namespace context. If a `Counter` hook
-calls a free-standing helper function, `Effect.Slot.Read%`
+not inherit its caller's namespace context. If a `Tally` hook
+calls a free-standing helper function, `Effect.User.Slot.Read%`
 performed inside that helper resolves against the helper's own
 lexical namespace context (typically none, or a different
-namespace), not `Counter`'s. Slot-touching logic that needs to be
+namespace), not `Tally`'s. Slot-touching logic that needs to be
 factored out of a hook body must stay inside a namespace-marked
 hook declaration -- shared logic across hooks composes as inline
 `def`s inside those hooks or passes slot values through parameters.
@@ -4430,12 +4540,12 @@ runtime data.
 `Effect.User.Slot.*` is user-**handleable** but not
 user-**declarable**:
 
-- User source may install a `~<*` handler over `Effect.Slot.<Read,
-  Write>` for the purposes of mocking, test-time capture, tracing,
-  or other debugging cooperation. Standard dynamic lookup (§6.1.2)
-  finds the user's handler before the runtime's ambient handler,
-  giving the user handler an opportunity to intercept slot access
-  within a bounded scope.
+- User source may install a `~<*` handler over
+  `Effect.User.Slot.<Read, Write>` for the purposes of mocking,
+  test-time capture, tracing, or other debugging cooperation.
+  Standard dynamic lookup (§6.1.2) finds the user's handler before
+  the runtime's slot-access handler, giving the user handler an
+  opportunity to intercept slot access within a bounded scope.
 
 - User source may not declare into `Effect.User.Slot.*` via
   `deft`; the sub-partition is language-provided (§6.1.4).
@@ -4448,10 +4558,13 @@ Compiler-emitted runtime bookkeeping (namespace-identity
 projection, sentinel comparison, effect-signature state, and other
 runtime machinery) uses a parallel `Effect.Host.Slot.<Read, Write>`
 kind with the same payload shape but a sealed partition per §6.1.4.
-User source cannot perform, handle, or narrow against
-`Effect.Host.Slot.*`; it exists to give the runtime the same
-slot-storage discipline as user code without user-observable side
-effects.
+User source cannot perform, handle, narrow against, or name
+`Effect.Host.Slot.*` in `:Effects(...)` -- all four effect sites are
+rejected per §6.1.4's `Effect.Host.*` partition rule. The
+`:Effects(Effect.Host.Slot)` spelling is therefore reachable only
+from compiler-authored stdlib code paths, never from user source.
+The partition exists to give the runtime the same slot-storage
+discipline as user code without user-observable side effects.
 
 ##### §6.1.5.6 Reference Identity
 
@@ -4579,14 +4692,14 @@ The general perform form is the `%` effector operator (§3.9) applied to
 an effect-kinded LHS:
 
 ```java
-Effect.Ask% "What's your name?";
-Effect.Log% "starting up";
-Effect.Retry% <attempt: 3, cause: "timeout">;
+Effect.User.Ask% "What's your name?";
+Effect.Sys.Log% "starting up";
+Effect.User.Retry% <attempt: 3, cause: "timeout">;
 ```
 
-Whitespace rules follow §3.9: `Effect.Ask%"prompt"`, `Effect.Ask%
-"prompt"`, and `Effect.Ask % "prompt"` all parse to the same perform
-site.
+Whitespace rules follow §3.9: `Effect.User.Ask%"prompt"`,
+`Effect.User.Ask% "prompt"`, and `Effect.User.Ask % "prompt"` all
+parse to the same perform site.
 
 **Compiler-privileged behavior.** When `%` is applied to a LHS carrying
 the normative `Effect.`-prefix effect-kindedness (§6.1.3), the `%`
@@ -4634,7 +4747,7 @@ or may terminate the scope by finishing without resuming.
 The general handler form:
 
 ```java
-Effect.KindA ~<* (eff:: comp, ret) { .. };
+Effect.User.KindA ~<* (eff:: comp, ret) { .. };
 ```
 
 - The **LHS** is an effect-kind narrowing (§6.3.1): the set of kinds
@@ -4665,17 +4778,19 @@ the set of effect kinds this handler is responsible for catching. Two
 shapes are admitted; both prefix-match per §6.1.4:
 
 ```java
-Effect.Sys.IO             // bare form: one prefix root
-                          // (Effect.Sys.IO and all Effect.Sys.IO.*)
+Effect.User.IO            // bare form: one prefix root
+                          // (Effect.User.IO and all Effect.User.IO.*)
 Effect.User.<Ask, Retry>  // brace form: multiple prefix roots
                           // (Effect.User.Ask.* & Effect.User.Retry.*)
 ```
 
 - **Bare form**: `Effect.Name` catches performs of `Effect.Name` and
   every declared kind under `Effect.Name.*`.
-- **Brace form**: `Effect.<A, B, ...>` catches the union of the named
-  prefix subtrees. Each entry is a last-segment name (with implicit
-  `Effect.` prefix) or an explicit dotted path.
+- **Brace form**: `Prefix.<A, B, ...>` catches the union of the named
+  prefix subtrees. Each entry is resolved **relative to the written
+  prefix**: `Effect.User.<Ask, Retry>` names `Effect.User.Ask` and
+  `Effect.User.Retry`. Entries may themselves be dotted, extending
+  the prefix further (`Effect.User.<IO.Read, IO.Write>`).
 
 The narrowing is closed: exactly the kinds admitted by the DSL are
 handled, and nothing else. Any perform of a kind outside every named
@@ -4686,13 +4801,20 @@ union of disjoint subtrees. To catch a narrower slice than an
 available parent prefix, name more-specific children instead of the
 parent.
 
-**Cross-uses.** The same shapes and prefix-match rule apply at two
-other sites: `?as` patterns inside handler arms (§6.3.2) and
-`:Effects(...)` type-signature declarations (§6.13). At all three
-sites, a named effect-kind path denotes a prefix subtree. The brace
-form is also admitted at standalone `?as`/`!as` binary expressions
-(§9's TypeCompareBinExpr), with the same OR-union prefix-match
-semantics as handler-arm patterns.
+**Cross-uses.** The prefix-match rule of §6.1.4 applies wherever an
+effect-kind path is named: handler narrowings here, `?as` patterns
+inside handler arms (§6.3.2), standalone `?as`/`!as` binary
+expressions (§9's TypeCompareBinExpr), and `:Effects(...)`
+type-signature declarations (§6.13.1). At every one of those sites, a
+named path denotes a prefix subtree.
+
+The **brace form** is narrower. It is admitted at the first three --
+handler narrowing, arm patterns, and `?as`/`!as` -- all of which carry
+OR-union semantics ("any of these subtrees"). It is **not** admitted
+in `:Effects(...)`, whose list carries AND semantics (the function
+declares it may perform every entry). The two lists share no grammar
+production; a `:Effects(...)` entry naming several subtrees spells
+each one separately.
 
 #### §6.3.2 Arms
 
@@ -4791,29 +4913,58 @@ its terminal expression is discarded unless it is a `Done@`-shaped
 value (§6.4.1).
 
 **Type check on `ret` argument.** Each `ret(v)` invocation must supply
-a value of the matched effect kind's declared resume type. `Effect.Ask`
-declares `^String`; a `ret(v)` inside its arm must supply a `String`.
-`Effect.Log` declares `^empty`; a `ret(v)` inside its arm must supply
-`empty`. Compile-time obligation of §6.13.
+a value of the matched effect kind's declared resume type.
+`Effect.User.Ask` declares `^string`; a `ret(v)` inside its arm must
+supply a `string`. `Effect.Sys.Log` declares `^empty`; a `ret(v)`
+inside its arm must supply `empty`. Compile-time obligation of §6.13.
 
 **Arm terminal type.** The arm terminal type contributes to the handler
 expression's return type at scope termination; see §6.3.3.
 
-**Exhaustiveness.** The arms must cover every prefix admitted by the
-LHS narrowing. `Effect.<Ask, Log>` requires arms covering both the
-Ask and Log subtrees; a single `[?as Effect.Ask]` arm exhausts the
-Ask side (since it prefix-matches all `Effect.Ask.*`). A default `?:`
-arm (§5.4) catches otherwise-unmatched kinds, useful when a broad
-prefix subtree may grow new sub-kinds later.
+**Exhaustiveness.** The arms must cover every effect kind admitted by
+the LHS narrowing. `Effect.User.<Ask, Log>` requires arms covering
+both the Ask and Log subtrees; a single `[?as Effect.User.Ask]` arm
+exhausts the Ask side (since it prefix-matches all
+`Effect.User.Ask.*`). A default `?:` arm (§5.4) catches
+otherwise-unmatched kinds, useful when a broad prefix subtree may
+grow new sub-kinds later.
+
+This is a **mandatory** compile-time check, and it is distinct from
+§5.5's coverage-gap diagnostic. §5.5's check is optional, §9-gated,
+and keyed on the surface form of an ordinary dependent match; it does
+not govern here even though the handler body is written as one. The
+handler-arm check is keyed on the `~<*` LHS narrowing and is not
+configurable.
+
+The two differ because their failure modes differ. An ordinary
+dependent match whose topic matches no clause yields `empty`, a
+well-defined value the surrounding code proceeds with. A handler
+dispatch matching no arm resumes nothing: the `ret` bound for that
+perform-event becomes unreachable when the body finishes, no arm
+produced a `Done@` terminal, and the perform site inside `comp` is
+left suspended with no surviving route to resume it. The handler
+expression's Promise is then permanently pending. This is not the
+well-formed pending state of §6.3.3 -- that state presupposes a
+captured `ret` still able to drive `comp` forward, and an unmatched
+dispatch captures nothing.
+
+**Scope of the check.** Coverage is verified against the effect kinds
+**declared** at compile time that fall under the LHS narrowing's
+prefixes. A prefix subtree that later grows a new sub-kind does not
+retroactively invalidate a handler compiled before that declaration;
+recompilation surfaces the new gap. A `?:` default arm satisfies the
+check unconditionally and is the recommended shape for handlers over
+broad prefixes.
 
 #### §6.3.3 Handler Expression Value
 
 A `~<*` handler expression evaluates to a **`Promise` instance**
-(§6.9) that resolves when the handler scope terminates. Under Foi's
+(§6.8) that resolves when the handler scope terminates. Under Foi's
 synchronous execution model, a Promise whose backing scope completes
-synchronously is immediately resolved; consumers may inspect the
-resolved value via `.resolved()` (§6.9) or compose asynchronously via
-`~<` / `~map` / `%` per Promise.
+synchronously is immediately resolved; `.resolved()` (§6.8) tests
+whether that has happened, and the resolved value is reached by
+composing with `~<` / `~map` or by binding the promise under
+`Promise ~<<`.
 
 Scope termination -- and thus Promise resolution -- occurs in two
 shapes:
@@ -4824,9 +4975,12 @@ natural return value. Each perform-event dispatched during `comp`'s
 execution had its own arm handling; when arms invoked `ret`, those
 resumes drove `comp` forward toward this completion. The Promise's
 resolved value is `comp`'s eventual return, independent of arm
-terminals along the way. A `Done@`-typed return from `comp` is
-comp's return value like any other; the Promise resolves with the
-`Done@` payload passed through as an ordinary value.
+terminals along the way. A `Done@`-typed return from `comp` is comp's
+return value like any other; the Promise resolves with the `Done@`
+value itself, unwrapped by nothing and interpreted by nothing. This
+differs from the `Done@` arm-terminal shape below, which does unwrap
+to the payload -- the arm terminal is a position that inspects for
+`Done@` (§6.4), and comp's return is not.
 
 **`Done@` arm-terminal.** A matched arm evaluates its consequent to a
 `Done@`-shaped value at the arm's terminal position without having
@@ -4851,25 +5005,43 @@ early and then runs to some other final expression, or never invokes
 channel between arm and callee is the payload / `ret`-argument pair
 (§6.3.2), not the arm terminal.
 
+**Either branch.** Both termination shapes resolve the `Right`
+branch. Natural completion is not a failure, and a `Done@` arm
+terminal is a deliberate early exit rather than an error; neither
+carries failure semantics for the handler to signal. A `Left`
+appears in the resolved payload only when `comp` returns one as an
+ordinary value, in which case it arrives as `Promise{Right{Left{..}}}`
+-- the inner `Left` is comp's data, not the handler's outcome, and it
+does not short-circuit downstream composition (§6.8).
+
 **Type.** The handler expression's static type is `Promise{T}`, where
 `T` is the union of `comp`'s declared return type and the `Done@`
-payload types of any `Done@`-producing arms in the handler body.
+payload types of any `Done@`-producing arms in the handler body. Per
+§6.8's invariant-branch note, `Promise{T}` observes as a single layer
+-- the `Right` discriminator is not a separate unwrap step.
 
 **Example.**
 
 ```java
-def result: (Effect.User.Ask ~<* (eff:: greetUser(), ret) {
+def result: Effect.User.Ask ~<* (eff:: greetUser(), ret) {
     ?(eff){
         [?as Effect.User.Ask]: ret("Kyle");
     };
-}).resolved();
+};
+// Promise{Right{..greetUser()'s return value..}}
+
+result ~map (v) {
+    log(`"greeted: `v`");
+};
 ```
 
-`greetUser()` performs `Effect.Ask` some number of times; each
+`greetUser()` performs `Effect.User.Ask` some number of times; each
 dispatch fires the arm, which invokes `ret("Kyle")` to resume. When
 `greetUser` naturally returns, the `~<*` expression's Promise
-resolves with that return value. `.resolved()` extracts it
-synchronously.
+resolves with that return value. Because the whole scope completes
+synchronously here, the promise is already resolved when `~map` is
+composed against it and the block fires immediately -- but the
+composition is written the same way regardless.
 
 ### §6.4 The `Done@` Sentinel
 
@@ -4916,9 +5088,9 @@ Three classes of position inspect a return value for `Done@`:
 - **Wrapped computation natural return** (§6.3.3): a `Done@` returned
   by `comp` at natural completion is `comp`'s natural return value
   like any other; the handler expression's Promise resolves with the
-  `Done@` payload passed through as an ordinary value. No special
-  interpretation applies at this position -- the sentinel behavior
-  is at consumer sites, not at `comp`'s return.
+  `Done@` value itself. No special interpretation applies at this
+  position -- the sentinel behavior is at consumer sites, not at
+  `comp`'s return, so no unwrapping to the payload occurs.
 
 #### §6.4.1 `Done@` in a `~<*` Arm
 
@@ -4931,25 +5103,30 @@ payload as the resolved value of the handler expression's Promise
 ```java
 Effect.User.<Ask, Cancel> ~<* (eff:: producer(), ret) {
     ?(eff){
-        [?as Effect.Cancel]: Done@ empty;
-        [?as Effect.Ask]:    ret(getResponse(#.value));
+        [?as Effect.User.Cancel]: Done@ empty;
+        [?as Effect.User.Ask]:    ret(getResponse(#.value));
     };
 };
 ```
 
-If `producer()` performs `Effect.Cancel`, that arm's terminal is
+If `producer()` performs `Effect.User.Cancel`, that arm's terminal is
 `Done@ empty`; the arm does not invoke `ret`, the handler scope
-terminates, and the `~<*` expression's Promise resolves with
-`Done@ empty`. If `producer()` performs `Effect.Ask`, the arm invokes
+terminates, and the `~<*` expression's Promise resolves with `empty`
+-- the `Done@` payload, not the `Done@` wrapper. The arm terminal is
+a position that inspects for `Done@` (§6.4), so the unwrap happens
+here; contrast §6.3.3's natural-completion path, where a `Done@`
+returned by `comp` passes through intact.
+
+If `producer()` performs `Effect.User.Ask`, the arm invokes
 `ret(getResponse(#.value))` to resume `producer`; that resume drives
 `producer()` forward until it eventually completes naturally or hits
 another perform. The arm's terminal in the Ask case is `ret(...)`'s
 return value, which is fire-and-forget (§6.3.2) and discarded.
 
-The perform site inside `comp` that triggered the `Effect.Cancel`
+The perform site inside `comp` that triggered the `Effect.User.Cancel`
 dispatch does not receive a resume-value; `producer()` is abandoned
 at that perform point. This is intentional: `Done@` in the arm
-terminal is the mechanism by which a handler signals 'stop resuming
+terminal is the mechanism by which a handler signals: 'stop resuming
 this computation, and take my payload as the scope's result.'
 
 **Discard of the paused computation.** When `Done@` terminates the
@@ -5137,7 +5314,7 @@ defn iterBindImpl(comp) {
     ^drainStep();
 
     defn drainStep() {
-        def stepResult: iter% empty;
+        def stepResult: iter%;
         ^?(stepResult){
             [?as Left]: Right@ stepResult.value.terminal;
             [?as Right]: {
@@ -5204,15 +5381,15 @@ def sync: Iter@ < 1, 2, 3 >;
 def wrapped: IterP.of@ sync;
 ```
 
-`IterP.of@` takes an `Iter` argument and produces an IterP whose steps are the source Iter's steps wrapped in Promise envelopes. A `Right@ v` step becomes `Promise.honor@ Right@ v`. A `Left@ <sentinel: srcSentinel, terminal: T>` sticky step becomes `Promise.renege@ <sentinel: liftedSentinel, terminal: T>` -- the lifted IterP mints its own sentinel at construction, and re-envelopes the source's terminal payload under the lifted sentinel. Consumers holding the lifted IterP discriminate against `liftedIterP.sentinel`, not the source Iter's sentinel; the lift is the natural transformation `Iter -> IterP`, and the source Iter is walked lazily by the lifted IterP's steps, not eagerly consumed at lift time.
+`IterP.of@` takes an `Iter` argument and produces an IterP whose steps are the source Iter's steps wrapped in Promise envelopes. The source step's `Right`/`Left` branch becomes the transport Promise's own branch (§6.5.5), so the lift adds exactly one layer and no more. A `Right@ v` step becomes `Promise@ (Right@ v)`. A `Left@ <sentinel: srcSentinel, terminal: T>` sticky step becomes `Promise@ (Left@ <sentinel: liftedSentinel, terminal: T>)` -- the lifted IterP mints its own sentinel at construction, and re-envelopes the source's terminal payload under the lifted sentinel. Consumers holding the lifted IterP discriminate against `liftedIterP.sentinel`, not the source Iter's sentinel; the lift is the natural transformation `Iter -> IterP`, and the source Iter is walked lazily by the lifted IterP's steps, not eagerly consumed at lift time.
 
 `IterP.of@` does not accept IterP input. Callers wanting to normalize a source of unknown iterator-shape use `IterP@` for the IterP-identity form and `IterP.of@` for the Iter lift; the two constructors together cover the normalization surface.
 
 **NOTE:** `Iter@ < p1, p2, .. >` where the elements are Promises delivers those Promises verbatim as ordinary step-payloads; Promise there is opaque cargo under `Iter`'s polymorphic element type, not a mechanism the `Iter` interprets. `IterP@` is the constructor that treats Promise as the transport envelope for step-results. The two forms are structurally distinct: `Iter@ List{Promise}` produces `Either{Promise{v}}` step-shapes; `IterP@ List{Promise}` produces `Promise{Either{v}}` step-shapes.
 
-**NOTE:** Stdlib-internal IterP construction paths -- specifically the callable source used by `Gen.runner@` at §6.6.7 -- extend the accepted source shapes for compiler-emitted runners. The callable-source path is not user-authorable and does not surface in user code; consumers of an IterP constructed this way still interact with it exclusively through the userland surface (§6.5.5, §6.5.6).
+**NOTE:** Stdlib-internal `IterP` construction paths -- specifically the callable source used by `Gen.runner@` at §6.6.7 -- extend the accepted source shapes for compiler-emitted runners. The callable-source path is not user-authorable and does not surface in user code; consumers of an `IterP` constructed this way still interact with it exclusively through the userland surface (§6.5.5, §6.5.6).
 
-Two IterPs constructed from the same source expression have independent state:
+Two `IterP`s constructed from the same source expression have independent state:
 
 ```java
 def ps: < Promise.honor@ 1, Promise.honor@ 2, Promise.honor@ 3 >;
@@ -5224,7 +5401,7 @@ a%;    // Promise{Right{2}}
 b%;    // Promise{Right{1}}     -- independent
 ```
 
-The identity form is the sole exception: passing an existing IterP to `IterP@` yields the same shared-state instance.
+The identity form is the sole exception: passing an existing `IterP` to `IterP@` yields the same shared-state instance.
 
 **Sentinel field.** Every `IterP@` construction mints a unique opaque runtime value at construction and writes it into IterP's per-instance slot (§6.1.5); the sentinel surfaces at userland via the instance's `.sentinel` projection. The value is unforgeable at userland (no primitive constructs it); it is comparable via `?=` identity equality but not otherwise inspectable. The identity form preserves the source IterP's slot contents wholesale, so the same instance projects the same sentinel. The sentinel participates in the sticky terminal envelope shape (§6.5.5) and in drainage discrimination (§6.5.6). Gen-IterP construction via `Gen.runner@` (§6.6.7) mints its sentinel by the same mechanism, writing it into the runner-produced IterP's slot.
 
@@ -5813,26 +5990,27 @@ Beyond the general `State@` unit constructor, five named constructors cover the 
 - `State.put@`: writes a new state, produces `empty` as the observed value.
 - `State.modify@`: applies a function to transform the current state, produces `empty` as the observed value.
 
-Each is a stdlib-provided `State` instance (or, for `gets`, `put`, and `modify`, a stdlib-provided function that produces a `State` instance):
+Each is a stdlib-provided `State` instance (or, for `gets`, `of`, `put`, and `modify`, a stdlib-provided function that produces a `State` instance):
 
 ```java
 State.get@;              // aka: State@ (defn(s) ^< s, s >)
-State.gets@ (*)|2| ;     // aka: State@ (defn(s) ^< s * 2, s >)
+State.gets@ (*)|2|;      // aka: State@ (defn(s) ^< s * 2, s >)
 State.of@ 42;            // aka: State@ (defn(s) ^< 42, s >)
-State.put@ 42 ;          // aka: State@ (defn(s) ^< empty, 42 >)
+State.put@ 42;           // aka: State@ (defn(s) ^< empty, 42 >)
 State.modify@ (+)|1|;    // aka: State@ (defn(s) ^< empty, s + 1 >)
 ```
 
 Evaluated via `%` in isolation:
 
 ```java
-State.get% 10;                // < 10, 10 >
+(State.get@)% 10;             // < 10, 10 >
 (State.gets@ (*)|2|)% 10;     // < 20, 10 >
+(State.of@ 42)% 10;           // < 42, 10 >
 (State.put@ 42)% 10;          // < empty, 42 >
 (State.modify@ (+)|1|)% 10;   // < empty, 11 >
 ```
 
-`get` and `gets` observe without mutating; `put` and `modify` mutate without meaningfully observing. These four constructors are the primary surface for building state computations; the general `State@` form is the escape hatch for state-changers whose shape doesn't fit these idioms.
+`get` and `gets` observe without mutating; `put` and `modify` mutate without meaningfully observing; `of` does neither, injecting a value into the computation while leaving the state untouched. These five constructors are the primary surface for building state computations; the general `State@` form is the escape hatch for state-changers whose shape doesn't fit these idioms.
 
 #### §6.7.4 Composition Via `~<<`
 
@@ -5914,6 +6092,7 @@ The userland surface is:
 - `.resolved()`: instance method returning `true` if the promise is resolved, `false` if pending.
 - `Promise.race@`: coordination combinator over a list of promises. Constructs a derived `Promise` that resolves with the first source promise's payload.
 - `Promise.all@`: coordination combinator over a list of promises. Constructs a derived `Promise` that resolves with a List of source payloads once every source promise has resolved.
+- `~<` / `~map`: single-step chain operators, both Either-aware -- each sees through `Right` to the underlying value and forwards a `Left` unchanged without invoking the step. Composed against a pending promise, the step is deferred until resolution; against a resolved promise, it runs inline.
 - `~<<` do-block composition: sequences promise operations, deferring subsequent steps across pending resolutions and short-circuiting on `Left`.
 
 #### §6.8.1 Promise Unit Constructors
@@ -6686,7 +6865,7 @@ The userland surface is:
 - `PullStream.withBuffer@ < buf >`: recycle construction; vends a fresh `PullStream` reader over a previously-used, closed `PullStream.Buffer` handle (§6.11.1). Runtime error if the buffer is not in a ready state.
 - `buf.ready()`: pure predicate on a `PullStream.Buffer`; returns `true` when the buffer is available for use, `false` while it is actively in use (§6.11.1). Sole userland method on the buffer handle.
 - `~<` / `~map`: single-step chain operators. Each describes a transformation applied to values pulled through the chain; each produces a derived `PullStream` inheriting pulls from its source when a `~<<` at the tail subscribes (§6.11.2).
-> `~<<`: subscribe-and-drive do-loop; triggers the pipeline to start pulling and runs the block body per delivered value. Resolves to `Promise{Left{"PullStream Closed"}}` on natural exhaustion, or `Promise{Left{payload}}` / `Promise{Right{payload}}` on early exit via `Left@ payload` / `Done@ payload` (§6.11.3).
+- `~<<`: subscribe-and-drive do-loop; triggers the pipeline to start pulling and runs the block body per delivered value. Resolves to `Promise{Left{"PullStream Closed"}}` on natural exhaustion, or `Promise{Left{payload}}` / `Promise{Right{payload}}` on early exit via `Left@ payload` / `Done@ payload` (§6.11.3).
 - `PullStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@`: derived-stream constructors for fan-in, predicate filtering, stateful fold, and signal-driven close (§6.11.4).
 
 #### §6.11.1 Buffer Construction and Introspection
@@ -7362,34 +7541,59 @@ attached to a `deft` function-type expression (§18) between the
 parameter list and the return type:
 
 ```java
-deft AskName(int) :Effects(Ask) ^String;
-deft LogTwice(int) :Effects(Log) ^empty;
-deft Composite(int) :Effects(Ask, Retry) ^bool;
+deft AskName(int) :Effects(Effect.User.Ask) ^string;
+deft LogTwice(int) :Effects(Effect.Sys.Log) ^empty;
+deft Composite(int) :Effects(Effect.User.Ask, Effect.User.Retry) ^bool;
 ```
 
 Each comma-separated entry names an effect-kind path the function
-may perform. Last-segment names carry an implicit `Effect.` prefix
-(`Ask` denotes `Effect.Ask`); explicit dotted paths are admitted for
-sub-namespaced effects:
+may perform. The clause **requires at least one entry**; a function
+that performs no effects expresses that by omitting the clause
+entirely:
 
 ```java
-deft ReadFile(String) :Effects(IO.Read) ^String;
-deft Multi(int) :Effects(Ask, IO.Read, MyModule.CustomOp) ^bool;
+deft Pure(int) ^int;    // no effects
 ```
 
-Entries prefix-match per §6.1.4: `:Effects(IO)` declares that the
-function may perform `Effect.IO` or any `Effect.IO.*` descendant.
-To narrow, name more-specific paths: `:Effects(IO.Read, IO.Write)`
-declares those two subtrees without also declaring the rest of
-`Effect.IO.*`.
+**Entry normalization.** Each entry is normalized before any other
+semantic layer sees it, by a single rule:
 
-Empty effect set is expressed by omitting the clause; explicit
-`:Effects()` is legal but redundant:
+> If the entry's leftmost segment is not exactly `Effect`, prefix
+> `Effect.` to the entry. Otherwise leave the entry as written.
+
+Normalization is therefore idempotent on already-prefixed entries,
+and every one of these spellings reaches `Effect.User.Ask`:
 
 ```java
-deft Pure(int) ^int;                 // implicit :Effects()
-deft AlsoPure(int) :Effects() ^int;  // legal, redundant
+:Effects(Ask)                // -> Effect.Ask       -> Effect.User.Ask
+:Effects(User.Ask)           // -> Effect.User.Ask  (no rewrite)
+:Effects(Effect.Ask)         // as written          -> Effect.User.Ask
+:Effects(Effect.User.Ask)    // as written          (no rewrite)
 ```
+
+The normalized path then passes through §6.1.4's **Implicit-User
+rewrite** in the ordinary way: an entry whose first segment after
+`Effect.` is one of the reserved roots (`User`, `Host`, `Sys`)
+resolves as written, and any other first segment resolves under
+`Effect.User.*`. The two stages compose in that order -- normalize,
+then rewrite -- and the pair is total over every admitted entry
+spelling.
+
+Entries prefix-match per §6.1.4: `:Effects(Effect.User.IO)` declares
+that the function may perform `Effect.User.IO` or any
+`Effect.User.IO.*` descendant. To narrow, name more-specific paths:
+
+```java
+deft ReadFile(string) :Effects(Effect.User.IO.Read) ^string;
+deft Multi(int) :Effects(
+    Effect.User.Ask,
+    Effect.User.IO.Read,
+    Effect.User.MyModule.CustomOp
+) ^bool;
+```
+
+`:Effects(Effect.User.IO.Read, Effect.User.IO.Write)` declares those
+two subtrees without also declaring the rest of `Effect.User.IO.*`.
 
 The `:Effects(...)` clause is admitted on `deft` function-type
 expressions only. It is not admitted directly on `defn`. To attach a
@@ -7397,9 +7601,9 @@ declared effect set to a function value, use `:as` with a type that
 carries the clause:
 
 ```java
-deft AskName(int) :Effects(Ask) ^String;
+deft AskName(int) :Effects(Effect.User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.Ask% id;
+defn askName(id) :as AskName ^Effect.User.Ask% id;
 ```
 
 #### §6.13.2 Emit-Edge Declaration
@@ -7409,11 +7613,11 @@ A function that **directly performs** a non-ambient effect must include an `:as`
 "Directly performs" means the function's own body contains a perform site (via `%` on an effect-kinded LHS, per §6.2, or via the `<::` sugar of §6.2.2) for the effect in question. Performs that occur only in callees are not direct; they belong to those callees' emit-edge declarations.
 
 ```java
-deft AskName(int) :Effects(Ask) ^String;
+deft AskName(int) :Effects(Effect.User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.Ask% id;    // legal: emit-edge declared
+defn askName(id) :as AskName ^Effect.User.Ask% id;    // legal: emit-edge declared
 
-defn askNameUndeclared(id) ^Effect.Ask% id;      // COMPILE ERROR
+defn askNameUndeclared(id) ^Effect.User.Ask% id;      // COMPILE ERROR
 ```
 
 The compile error localizes to the emit-edge function's definition, naming the specific effect kind that lacks declaration.
@@ -7421,11 +7625,13 @@ The compile error localizes to the emit-edge function's definition, naming the s
 Over-declaration is legal. A `deft` may declare more effects than the function body actually performs; the extra effects broaden the caller-facing contract without changing behavior:
 
 ```java
-deft AskAndMaybeRetry(int) :Effects(Ask, Retry) ^String;
+deft AskAndMaybeRetry(int) :Effects(Effect.User.Ask, Effect.User.Retry) ^string;
 
-defn askOnly(id) :as AskAndMaybeRetry ^Effect.Ask% id;   // legal
+defn askOnly(id) :as AskAndMaybeRetry ^Effect.User.Ask% id;   // legal
 // Body performs only Ask; Retry is declared but never emitted.
 ```
+
+This allowance is what admits a declared entry for an effect the function only propagates from a callee; §6.13.3 specifies why such an entry is never *required*.
 
 Under-declaration -- declaring fewer effects than actually emitted -- is not legal.
 
@@ -7434,12 +7640,16 @@ Under-declaration -- declaring fewer effects than actually emitted -- is not leg
 A function that **only calls other functions** (performs no direct emits, or only ambient ones) does not require a `:Effects(...)` bearing type attachment. The compiler infers its applicable effect set from the union of its callees' declared effects, minus any effects handled by `~<*` scopes lexically enclosing the call sites.
 
 ```java
-deft AskName(int) :Effects(Ask) ^String;
-defn askName(id) :as AskName ^Effect.Ask% id;
+deft AskName(int) :Effects(Effect.User.Ask) ^string;
+defn askName(id) :as AskName ^Effect.User.Ask% id;
 
-defn greetUser(id) {            // no :as, no declared effects
-    def name: askName(id);      // compiler infers Ask in scope
-    log(`"Hello, `name`");      // Log is ambient; no tracking
+defn greetUser(id) {    // no :as, no declared effects
+    // compiler infers Effect.User.Ask in scope
+    def name: askName(id);
+
+    // Log is ambient; no tracking
+    log(`"Hello, `name`");
+
     ^name;
 };
 ```
@@ -7449,16 +7659,22 @@ includes `Ask` (propagated from `askName`). No emit-edge declaration is
 required on `greetUser`; the tracking continues silently up the call
 chain.
 
-The `:Effects(...)` clause names only the function's **lexical direct
+The `:Effects(...)` clause on a type attached to an effect-bearing function **must** name all of the function's **lexical direct
 performs** -- perform sites appearing in its own body via `%` on an
 effect-kinded LHS or via the `<::` sugar (§6.2.2). Propagated effects
-from callees are not admitted in the declaration; the compiler tracks
+from callees are never required in the declaration; the compiler tracks
 propagation internally per §6.13.4's coverage verification. A function
 like `greetUser` above -- calling `askName` but performing no direct
-emit itself -- omits `:Effects(...)` (or declares `:Effects()`
-explicitly, which is the same thing per §6.13.1). Declaring a propagated
-effect on an intermediate function is a compile error; the emit-edge
-rule (§6.13.2) pins `:Effects(...)` to direct emit sites.
+emit itself -- omits the clause entirely, since §6.13.1 requires at
+least one entry and the empty set is expressed by absence.
+
+Naming a propagated effect is nonetheless **permitted**, under
+§6.13.2's over-declaration allowance: the entry broadens the
+caller-facing contract and carries no other semantic weight. What the
+emit-edge rule (§6.13.2) pins to direct emit sites is the *obligation*
+to declare, not the *permission*. The compiler's check is therefore
+one-directional -- every directly-performed effect must appear in the
+declared set; the declared set may name more.
 
 This rule follows from a structural fact: dynamic call stack chains --
 through higher-order function dispatch, first-class function values
@@ -7495,21 +7711,25 @@ The compiler verifies **coverage** for every non-ambient effect that propagates.
 Coverage is **per-call-stack, not per-function**. A given intermediate function need not itself wrap with a handler; the requirement is only that *some* enclosing frame in the propagation path handles every emitted effect:
 
 ```java
-deft AskName(int) :Effects(Ask) ^String;
-defn askName(id) :as AskName ^Effect.Ask% id;
+deft AskName(int) :Effects(Effect.User.Ask) ^string;
+defn askName(id) :as AskName ^Effect.User.Ask% id;
 
-def result: (Effect.Ask ~<* (eff:: greetUser(42), ret) {
+def result: (Effect.User.Ask ~<* (eff:: greetUser(42), ret) {
     ?(eff){
-        [?as Effect.Ask]: ret(`"user-`#`");
+        [?as Effect.User.Ask]: ret(`"user-`#.value`");
     };
 })%;
 ```
 
-The `Effect.Ask ~<* (eff:: ..., ret) { ... }` handler encloses the call to `greetUser`, which transitively performs `Effect.Ask`. Coverage is satisfied; the outermost `%` invocation is well-formed.
+The `Effect.User.Ask ~<* (eff:: ..., ret) { ... }` handler encloses the
+call to `greetUser`, which transitively performs `Effect.User.Ask`.
+Coverage is satisfied; the outermost `%` invocation is well-formed.
 
 If no such handler exists on any path from a perform-site to the outermost `%` boundary, the compile error includes the call stack from the perform-site (naming the effect kind) to the outermost `%` invocation, indicating which effect escaped without handling.
 
 Ambient effects are pre-covered by the runtime top-level handler installed at every outermost `%` invocation (§6.13.5); they are excluded from the coverage trace entirely.
+
+`Effect.User.Slot.*` is pre-covered by the same mechanism -- the runtime installs a slot-access handler at every outermost `%` invocation (§6.1.5.2) -- and is likewise excluded from the coverage trace. The two categories differ at declaration, not at coverage: ambients are exempt from the emit-edge rule (§6.13.2), while slot performs must be declared like any other tracked effect.
 
 #### §6.13.5 Ambient Effects
 
@@ -7559,7 +7779,7 @@ rules):
 
 ```java
 // legal, documentary; no compile effect
-deft LogsProgress(int) :Effects(Sys.Log) ^empty;
+deft LogsProgress(int) :Effects(Effect.Sys.Log) ^empty;
 ```
 
 **NOTE:** The ambient category is deliberately narrow. Effects with
