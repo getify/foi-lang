@@ -4123,6 +4123,7 @@ The remaining pieces this section specifies:
 - Deferred type (State §6.7).
 - Self-hosted pause-able types (Promise §6.8, Channel §6.9, Streams §6.10-§6.11, IO §6.12).
 - Effect signatures in types. (§6.13)
+- Stack-depth relocation for non-tail composition chains. (§6.14)
 
 **NOTE:** Effects, handlers, and their signatures reuse existing Foi surface: `deft` (with `Effect.` prefix), the `%` effector operator, `~<*` handler ops, and `:Effects(...)` narrowing. No new operators or keywords are introduced by this section; the mechanisms below specify what compiler-privileged behavior existing surface acquires when the LHS carries effect-kindedness.
 
@@ -7675,13 +7676,16 @@ deft Composite(int) :Effects(Effect.User.Ask, Effect.User.Retry) ^bool;
 ```
 
 Each comma-separated entry names an effect-kind path the function
-may perform. The clause **requires at least one entry**; a function
-that performs no effects expresses that by omitting the clause
+may perform. The clause **requires at least one entry**; a function that
+performs no *tracked* effects expresses that by omitting the clause
 entirely:
 
 ```java
-deft Pure(int) ^int;    // no effects
+deft Pure(int) ^int;    // no tracked effects
 ```
+
+Ambients (§6.13.5) are exempt from the discipline, so a function whose
+only performs are ambient carries this same clause-absent type.
 
 **Entry normalization.** Each entry is normalized before any other
 semantic layer sees it, by a single rule:
@@ -7706,6 +7710,32 @@ resolves as written, and any other first segment resolves under
 `Effect.User.*`. The two stages compose in that order -- normalize,
 then rewrite -- and the pair is total over every admitted entry
 spelling.
+
+**`Any` is reserved at this clause.** One entry name is checked before
+normalization and never rewritten:
+
+```java
+deft FilterPredT(Any) :Effects(Any) ^bool;
+```
+
+`:Effects(Any)` declares that the function admits **any** effect
+budget. It is the surface a stdlib type uses for a user-supplied
+callback slot, where the declaring code cannot know what the user's
+function performs. Because normalization would otherwise carry `Any`
+to `Effect.User.Any` -- a perfectly ordinary user-declarable path --
+the name is reserved here specifically, in the same manner as the
+reserved roots of §6.1.4.
+
+`Any` is admitted **only as the clause's sole entry**. The clause is
+an AND-list, and `Any` subsumes every effect kind, so a mixed form
+such as `:Effects(Any, Effect.User.Ask)` is rejected.
+
+This is a declaration surface only. It does not relax §6.13.2's
+emit-edge rule for the function that supplies the callback, and it
+does not relax §6.13.4's coverage rule: a perform inside the supplied
+callback still traces outward to an enclosing `~<*` exactly as it
+would otherwise. Whether a given function conforms to a slot declared
+`:Effects(Any)` is a type-conformance question, covered in §9.
 
 Entries prefix-match per §6.1.4: `:Effects(Effect.User.IO)` declares
 that the function may perform `Effect.User.IO` or any
@@ -7955,6 +7985,306 @@ opening persistent or external resources. Those belong to
 user-declared effect kinds or dedicated stdlib namespaces, by the
 same principle §6.13.5 applies to the ambient category. `Sys.*` is
 host-service surface, not application I/O.
+
+### §6.14 The Continuation Trampoline
+
+§3.4 guarantees proper tail calls: a chain of tail calls consumes
+O(1) frames regardless of length. Non-tail composition is the
+residual case. When a composed step's result must be consumed --
+destructured, inspected, passed through further work -- before the
+enclosing body finishes, the call producing it is not in tail
+position, and its frame stays live until that work completes.
+
+The self-hosted composing types of this section build chains of
+exactly that shape. Each `~<` step's result feeds the next step's
+input; the chain's length is user-determined and unbounded. Under
+synchronous execution with no microtask boundary to break the chain
+into separate turns, an N-step non-tail chain costs N live native
+frames, and a sufficiently long chain exhausts the native stack.
+
+`ContinuationTrampoline` is the stdlib utility those types use to
+relocate that depth off the native call stack. It is ordinary Foi
+source over hidden slots (§6.1.5): a slot holding a pair, a loop,
+and a call. It requires no compiler privilege and no runtime
+primitive the language lacks, and it is therefore replaceable and
+instrumentable by the same means as any other stdlib code.
+
+**Opt-in, not ambient.** Conversion is a per-namespace decision.
+Namespaces whose composition has no depth problem -- `Id`, `None`,
+`Maybe`, `Either`, and any base constructor returning a plain value
+-- are untouched. This is why the relocation is not performed by a
+runtime scheduler: a scheduler applies to every composition,
+including those that never needed it, and reorders them for nothing.
+
+#### §6.14.1 The Continuation Pair
+
+A `ContinuationTrampoline` instance holds a **continuation pair** in
+its slot: a thunk naming the work to perform next, and an optional
+resume naming what to do with that work's result.
+
+```java
+deft ContThunk() ^Any;
+deft ContResume(Any) ^Any;
+deft ContPair < ContThunk, ContResume >;
+deft ContConstruct(ContPair) :Effects(Effect.Host.Slot.Write) ^ContinuationTrampoline;
+
+defn ContinuationTrampoline@(pair) :as ContConstruct {
+    def inst: <>;
+    Effect.Host.Slot.Write% < inst, pair >;
+    ^inst
+};
+```
+
+The slot is a **positional 2-tuple** -- the one stdlib slot that is
+not a record. Its arity is fixed and it carries no optional named
+fields, so the `?has`-based discrimination of §6.1.5 has nothing to
+discriminate on and does not apply here.
+
+**The one-argument form is admitted and means "nothing pending."**
+A pair written `< thunk >` is read with the second position
+defaulting to `empty`; the bounce then performs no push and no
+corresponding pop for that step. Tuple-length conflation between
+`< thunk >` and `< thunk, empty >` is immaterial at this slot, since
+both denote the absence of a pending resume.
+
+**NOTE:** The `deft` spelling that expresses the optional second
+entry is not settled; `ContPair` above states the two-entry shape.
+The prose above is normative on the admitted forms, per §0's
+prose-over-examples convention. The type-level spelling is covered
+in §9.
+
+**Why a namespace and not a bare Tuple.** The drive point
+discriminates a continuation pair from an ordinary value by
+namespace identity (`?as ContinuationTrampoline`, §3.8). A bare
+`< thunk, resume >` Tuple flowing through a user's chain would be
+structurally indistinguishable from a user Tuple carrying two
+function values.
+
+#### §6.14.2 The Bounce
+
+The `%` hook drives the pair to a value. It maintains an explicit
+LIFO stack of pending resumes on the heap, in place of the native
+frames those resumes would otherwise occupy.
+
+**Abstract execution of `ContinuationTrampoline%`:**
+
+1. Let `stack` be `empty` and `current` be the instance.
+2. Repeat:
+    1. If `current` is a `ContinuationTrampoline`:
+        1. Read its slot as `< left, right >`, with `right`
+           defaulting to `empty`.
+        2. If `right` is not `empty`, push `right` onto `stack`.
+        3. Set `current` to the result of invoking `left`.
+        4. Continue at step 2.
+    2. Otherwise, if `stack` is non-empty:
+        1. Pop `resume` from `stack`.
+        2. Set `current` to the result of `resume(current)`.
+        3. Continue at step 2.
+    3. Otherwise, terminate the loop.
+3. The value of `current` at termination is the result of the
+   bounce.
+
+```java
+deft ContBounce(ContinuationTrampoline) :Effects(Effect.Host.Slot.Read) ^Any;
+
+defn ContinuationTrampoline%(inst) :as ContBounce {
+    def stack: empty;
+    def current: inst;
+    ?[true] ~each {
+        ?{
+            [current ?as ContinuationTrampoline]: {
+                def <left, right:? empty>: Effect.Host.Slot.Read% current;
+                ?[!empty right]: stack := < right, stack >;
+                current := left();
+                empty
+            };
+            [!empty stack]: {
+                def <resume, rest>: stack;
+                stack := rest;
+                current := resume(current);
+                empty
+            };
+            : Done@
+        };
+    };
+    ^current
+};
+```
+
+**Evaluation order is preserved exactly.** The stack is LIFO, and
+that is normative, not incidental: work pushed by a step lands on
+top of work pushed before it and drains first, which is precisely
+the order the equivalent nested native calls produce. A conversion
+performed under §6.14.4 may not change the observable evaluation
+order of the chain it converts.
+
+**Fan-out drains through the same stack.** A step that produces
+several pieces of pending work at once -- the subscriber list at a
+Promise resolution is the canonical case -- pushes them and returns.
+The first popped subscriber runs; whatever it pushes lands on top
+and drains completely before the next sibling is reached. That is
+depth-first, and it is the order the nested-call form produces.
+There is no second mechanism: one LIFO stack covers both chain
+depth and subscriber breadth.
+
+**The stack is a cons cell.** `< right, stack >` on push, destructure
+on pop. A flat list rebuilt by spread (`< right, &stack >`) or
+sliced on pop is O(N) per operation and makes the whole bounce
+O(N²). The same rule applies at fan-out sites: walk a subscriber
+list **by index**, never by slicing, or an N-subscriber fan-out
+becomes O(N²).
+
+#### §6.14.3 `contRamp`
+
+Every drive point routes through one helper rather than open-coding
+the discrimination:
+
+```java
+deft ContRampT(Any) ^Any;
+
+defn contRamp(v) :as ContRampT ^?{
+    [v ?as ContinuationTrampoline]: v%;
+    : v
+};
+```
+
+Four properties of this declaration are normative.
+
+**It carries no `:Effects` clause.** The slot read reached through
+`v%` is declared on `ContinuationTrampoline%`, and arrives at
+`contRamp` as a propagated effect. Per §6.13.3, propagated effects
+are not declarable at an intermediate function; `contRamp` performs
+no lexical direct emit of its own, so it declares nothing.
+
+**It is a free function, outside any namespace.** It touches no
+slot itself, and the read it triggers resolves against the lexical
+namespace of the hook it reaches, per §6.1.5's namespace-identity
+rule. Declaring it inside a namespace would be inert at best.
+
+**The discrimination arm is not an optimization.** A drive point may
+legitimately receive an instance of some other namespace -- an IO
+executor may yield an IO. An unconditional `v%` would dispatch that
+value's own `%` hook, which is the wrong hook; for IO specifically
+it would also present a chain-internal value at the `%` boundary and
+defeat §6.12.6's leak diagnosis.
+
+**`ContinuationTrampoline%` keeps its own inline discrimination.**
+Routing the bounce loop's test through `contRamp` would re-enter the
+bounce at every step.
+
+#### §6.14.4 Conversion Discipline
+
+A namespace converts by the following procedure. It is a stdlib
+authoring discipline, not a compiler obligation.
+
+1. **Locate the frame-accumulating sites.** For each hook that
+   composes, find every position where a composed step's result is
+   consumed -- destructured, matched, or otherwise read -- before
+   the body completes. Positions whose downstream call is already in
+   tail position (§3.4.1) accumulate no frame and are left alone.
+
+2. **Test each site for convertibility.** A site is convertible only
+   if the value returned there reaches a drive point (step 4)
+   **unbroken**: every construct enclosing the position between it
+   and the boundary must pass the value outward unexamined. A
+   construct that *consumes* the position's return -- reads it,
+   lifts it, or adopts it as the enclosing form's own result --
+   breaks the path, and a pair returned there is received as an
+   ordinary value rather than as work.
+
+   `~cata` is the attested breaking case. `Promise~cata` consumes
+   its arm's return as the cata's own value on both paths: a settled
+   arm's return is honored into a fresh Promise, and a pending arm's
+   return is routed through resolution. A pair returned from either
+   becomes a resolution value, never a bounce step.
+
+   A site failing this test is not converted in place. Either leave
+   it alone, or relocate the decision to a position that does have
+   an unbroken path. The attested technique is a flag set across the
+   interposing call: the interposed arm records only whether its
+   side of the step already fired, and the *thunk* -- whose return
+   does reach the drive point -- returns the next work accordingly.
+
+3. **Return a pair instead of calling through.** At each convertible
+   position, return a `ContinuationTrampoline@` over a thunk
+   performing the upstream call and a resume performing the rest of
+   the body against that call's result:
+
+```java
+    ^ContinuationTrampoline@
+        (defn() ^upstreamStep(..)),
+        (defn(res) :as StepResume { .. })
+    >;
+```
+
+4. **Route every boundary hook through `contRamp`**, applying it to
+   the value that hook is about to return. A boundary hook is one at
+   which a converted value can reach code outside the namespace's
+   own machinery. Their count is a per-namespace fact and is not
+   always one: a namespace may have a single hook, or several (a `%`
+   hook alongside a subject-side close path), or none of its own --
+   in which case its converted values reach the outside through
+   another namespace's boundary hook, and it is that hook that must
+   ramp. A converted value escaping without passing a drive point is
+   delivered to a consumer as a bare `ContinuationTrampoline`
+   instance.
+
+Four constraints hold across every conversion.
+
+**Public API is unchanged.** Conversion is invisible at the type's
+surface; the same calls produce the same values in the same order.
+
+**An inner resume is a function, not an inline block.** §6.13.2's
+exemption covers inline blocks -- comprehension operands, pipeline
+right-hand sides, match consequents. An anonymous `defn` is none of
+those: if its body performs, it carries its own `deft` and `:as`.
+
+**A resume's declared parameter type is the upstream step's result
+shape**, not `ContPair`. `ContPair` is what the constructor takes;
+the resume receives whatever the thunk produced.
+
+**Stdlib machinery keeps invoking executors directly.** Per §6.12.6,
+`~<`, `~map`, and the sub-context constructors read the slot and
+invoke the executor rather than applying `%`. A converted walker
+that drives chain steps through `%` breaks that invariant and
+reports a leak on every well-formed using-IO.
+
+**Compile-time obligations.** This section introduces none. The
+utility is entirely runtime stdlib. The only static obligations it
+carries are the ones any hook carries: each of the two hooks
+declares its own slot access under §6.13.2's emit-edge rule, and
+`contRamp` declares nothing under §6.13.3.
+
+#### §6.14.5 Space Behavior
+
+The trampoline converts native stack depth into **heap depth**. An
+N-step chain with pending work costs O(N) heap; a step whose
+downstream call is in tail position costs nothing. This is a
+relocation, not an elimination -- N pending resumes are N pieces of
+pending work by definition, and no mechanism can make them not
+exist.
+
+What changes is the character of the limit. Native stack depth is
+fixed at process start and its exhaustion is fatal; heap depth is
+configurable and its exhaustion presents as heap exhaustion. A chain
+length that reliably overflows the native stack sits far below what
+the heap-resident form reaches, and the failure mode when the
+heap-resident form does exhaust is an allocation failure rather than
+a recursion-depth failure.
+
+**Naming.** "Trampoline" conventionally implies constant space, and
+the general case here is not constant. The classical constant-space
+trampoline is this mechanism's all-tail special case: a pair whose
+resume is absent (§6.14.1) costs neither a push nor a later pop, so
+a chain composed entirely of tail steps bounces in genuinely
+constant space. Chains with pending work do not, and the O(N) heap
+cost is the honest statement of what they cost.
+
+**Relationship to §3.4.** Proper tail calls are a language-level
+guarantee covering tail chains. The continuation trampoline is a
+stdlib-level technique covering non-tail chains in self-hosted
+composing types. They address disjoint cases; neither substitutes
+for the other.
 
 ### §7 Loops and Comprehensions
 
