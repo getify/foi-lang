@@ -1680,6 +1680,35 @@ defn Identity@(v) ^v;
 
 The `@` marker is **not part of the function's name as a binding**; `Nothing` is the bound name in the enclosing scope; the `@` marker is a separate AST-recorded flag on the function value. `Nothing` and `Nothing@` cannot coexist as separate bindings in the same scope.
 
+**Constructor labels.** A `@`-marked declaration name may carry one
+optional **label** segment, written as a dotted suffix on the
+namespace name:
+
+```java
+defn Maybe.from@(v) ^..;
+defn IO.of@(v) ^..;
+defn State.get@() ^..;
+```
+
+The label names an alternate constructor on the same namespace: the
+namespace binding is still the leading segment (`Maybe`, `IO`,
+`State`), and the labeled form installs a distinct constructor hook
+reached at call sites as `Maybe.from@ v`. At most one label segment
+is admitted; `Foo.a.b@` is rejected.
+
+Labels are **constructor-only**. The `%`, comprehension, arithmetic,
+and `?=` markers (§3.1.1.2 through §3.1.1.4) admit no label: an
+"alternate `+` for `Foo`" has no coherent reading, whereas
+"alternate constructor via a different input path" does. The
+restriction is enforced at the semantic layer; the grammar admits a
+label before any marker (Syntactic-Grammar `DefHookName` at §13),
+consistent with how alias markers and hook uniqueness are handled.
+
+A dotted name with no marker tail is not a declaration form at all.
+`defn Maybe.parse(v) ^..` is a parse error, not a labeled ordinary
+function -- labels exist to name constructors on a namespace, and
+ordinary `defn` has no namespace to attach to.
+
 **Parameter constraints.** Exactly one parameter list, declaring zero or one parameters; the single parameter (if any) may not be a gather parameter. Multi-tier (curried) declaration is not admitted. Any other shape is rejected at compile time.
 
 Multi-tier is foreclosed for the reason at §3.1.1.3: the tier chain is a static surface -- `/\` reshapes against declared arity (§3.12.2), `\/` walks declared tiers (§3.12.3), preconditions hoist to the earliest satisfying tier (§3.5) -- and hook dispatch pins the outermost tier to the dispatch shape, leaving those surfaces nothing to read. A hook may still return a function value; that is where currying belongs at a hook.

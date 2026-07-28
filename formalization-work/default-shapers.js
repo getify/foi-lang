@@ -2684,7 +2684,23 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 
-	// DefHookDecl := "defn" _ Identifier
+	// DefHookName := Identifier (Period Identifier)?;
+	//
+	// UNWRAPS when there's no label — returns the inner Identifier
+	// node directly, so `defn Foo@(..)` produces exactly the AST it
+	// did before this production existed. Same unwrap pattern as
+	// RecordTupleValue (§17) and AsExpr (§5). Only the labeled form
+	// surfaces a DefHookName node; consumers discriminate on
+	// `node.name.type`.
+	DefHookName(frame,parts) {
+		var nodes = parts.filter(isNode);
+		if (nodes.length === 1) return nodes[0];
+		var delims = parts.filter(p => !isNode(p));   // Period
+		var [ namespace, label ] = nodes;
+		return withDelims({ type: "DefHookName", namespace, label }, delims);
+	},
+
+	// DefHookDecl := "defn" _ DefHookName
 	//                ( At
 	//                | Percent
 	//                | Comprehension
@@ -2795,7 +2811,10 @@ export const defaultShapers = {
 				continue;
 			}
 			// Nodes
-			if (p.type === "Identifier" && !name && paramSets.length === 0 && !lastOpenParen) {
+			if (
+				(p.type === "Identifier" || p.type === "DefHookName") &&
+				!name && paramSets.length === 0 && !lastOpenParen
+			) {
 				name = p;
 				continue;
 			}

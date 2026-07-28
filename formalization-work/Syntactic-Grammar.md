@@ -1195,8 +1195,9 @@ DefFuncExpr           := "defn" (_ Identifier)?
    position but is semantically rejected; the semantic checker
    directs the author to declare `?=` and let `!=` derive.
 
-   Strict no-trivia between the Identifier and the marker (mirrors
-   `Foo@` adjacency at use sites). For the `Tilde OpenAngle` composite
+   Strict no-trivia between the hook name and the marker (including
+   between a label segment and the marker, which mirrors `Foo@`
+   adjacency at use sites). For the `Tilde OpenAngle` composite
    markers (`~<`, `~<<`, `~<*`) and the `Qmark Equal` / `Exmark Equal`
    composite markers (`?=`, `!=`), strict no-trivia within the
    composite as well (per the composite operators' adjacency rules
@@ -1228,7 +1229,26 @@ DefFuncExpr           := "defn" (_ Identifier)?
    identifier in the same scope (mirrors `%` hook requirement);
    rejection at semantic layer, not grammar. *)
 
-DefHookDecl           := "defn" _ Identifier
+(* Hook name: namespace, plus at most one optional label segment.
+   The label is CONSTRUCTOR-ONLY discipline (Foi-Specification.md
+   §3.1.1.1) — "alternate `+` for Foo" has no coherent reading,
+   while "alternate constructor via a different input path" does.
+   Grammar admits the label before any marker; rejection of
+   label-with-non-`@` lives at the semantic layer, matching how
+   alias markers (~chain/~bind) and hook-uniqueness are handled.
+   A dotted name with NO marker tail falls through to DefFuncExpr
+   and fails there — `defn Maybe.parse(..)` is not a declaration
+   form.
+
+   BuiltIn deliberately NOT admitted at either segment: user source
+   may not declare hooks on built-in namespaces. Self-hosted stdlib
+   definitions that do exactly that are layer-0 bootstrap source,
+   admitted by a compiler mode that relaxes BuiltIn — not by this
+   grammar. This is the one place DefHookName diverges from
+   DefTypeName (§18), which admits BuiltIn at every segment. *)
+DefHookName           := Identifier (Period Identifier)?;
+
+DefHookDecl           := "defn" _ DefHookName
                          ( At
                          | Percent
                          | Comprehension

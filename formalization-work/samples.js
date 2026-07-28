@@ -990,6 +990,15 @@ export const samples = [
 	{ label: "DefHookDecl: @ destructure param",             src: "defn Foo@(<:a, :b>) ^a + b;" },
 	{ label: "DefHookDecl: % destructure params",            src: "defn Bar%(<:s>, <:e>) ^s;" },
 
+	// DefHookName — optional label segment. Constructor-only by
+	// semantic rule; grammar admits the label before any marker.
+	{ label: "DefHookDecl: dotted name + @ marker",
+	  src: "defn Foo.bar@(v) ^v;" },
+	{ label: "DefHookDecl: dotted name + @ + :as clause",
+	  src: "defn Foo.bar@() :as StateGetT ^< 1, 1 >;" },
+	{ label: "DefHookDecl: dotted name + block body",
+	  src: "defn Foo.bar@(v) { v; };" },
+
 	// Comprehension marker variants — Tier 1 (~<, ~each).
 	{ label: "DefHookDecl: ~< marker (Tilde OpenAngle composite)",
 	  src: "defn Foo~<(inst, fn) ^fn(inst);" },

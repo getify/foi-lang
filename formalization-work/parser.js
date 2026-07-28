@@ -2204,7 +2204,25 @@ export const DefFuncExpr = production("DefFuncExpr",
 	)
 );
 
-// DefHookDecl := "defn" _ Identifier
+// DefHookName := Identifier (Period Identifier)?;
+//
+// At most one label segment (`State.get@`), unlike DefTypeName's
+// `*` — effect kinds nest arbitrarily, hook names don't. No `_`
+// between segments or before the marker: dotted names are tight
+// and the marker is adjacent to the name.
+//
+// BuiltIn NOT admitted — user source may not declare hooks on
+// built-in namespaces. Self-hosted stdlib that does so is layer-0
+// bootstrap source, admitted by a compiler mode that relaxes
+// BuiltIn. Do not widen this to match DefTypeName.
+export const DefHookName = production("DefHookName",
+	and(
+		Identifier,
+		optional(and(Period, Identifier))
+	)
+);
+
+// DefHookDecl := "defn" _ DefHookName
 //                (At | Percent | Comprehension | (Tilde OpenAngle))
 //                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
 //                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
@@ -2290,7 +2308,7 @@ export const DefFuncExpr = production("DefFuncExpr",
 export const DefHookDecl = production("DefHookDecl",
     and(
         KwDefn, delim(),
-        Identifier,
+        DefHookName,
         or(
             At,
             Percent,

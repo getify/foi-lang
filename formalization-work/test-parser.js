@@ -362,6 +362,10 @@ var failSamples = [
 	"defn Foo ~<<(comp, ty) ^comp;",
 	"defn Foo ~<*(comp, ty) ^comp;",
 
+	"defn List~each(inst, fn) ^fn(inst);",
+	"defn List.entries@(xs) ^xs;",
+	"defn Maybe.parse(v) ^v;",
+
 	// Strict no-trivia WITHIN the Tilde-led composite markers
 	// (`~<`, `~<<`, `~<*`) — matches the composite operators' own
 	// adjacency rules at their respective use sites in §10.
