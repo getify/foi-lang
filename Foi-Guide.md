@@ -287,29 +287,49 @@ The triple-slash `///` comment block can start anywhere on a line, span as many 
 
 ## Imports And Exports
 
-To import named dependencies (including "globals" from the built-in `#Std`), use the `import` keyword:
+To import a dependency, use the `import` keyword as the value of a top-of-scope `def`:
 
 ```java
-def Std: import "#Std";
+def Std: import "foi:Std";
 
 Std.log("Hello");               // "Hello"
 
 Std.log(6 + 12);                // 18
 ```
 
-Or import specific members from a dependency:
+A module's exports are a Record, and `import` evaluates to that Record -- so the ordinary destructuring forms apply. Pull out specific members:
 
 ```java
-def < :log >: import "#Std";
+def < :log >: import "foi:Std";
 
 log("Hello");                   // "Hello"
 ```
 
-The project manifest maps dependency files to identifiers, which can then be imported by name:
+Or capture the whole Record and destructure at the same time:
 
 ```java
-def < :myHelper >: import "Utils";
+def < :log, #Std >: import "foi:Std";
 ```
+
+There are exactly two kinds of specifier.
+
+A **package specifier** looks like `"foi:Std"` -- a package name, a `:`, then a module name within that package. It's a registry name, not a file path; everything after the `:` is the package's business, and may contain `/` without that meaning directory traversal:
+
+```java
+def < :parse >: import "graphql:client/parser";
+```
+
+`foi` is a reserved package name, and the only one. The language's own packages are modules under it: `foi:Std`, `foi:Test`.
+
+A **relative-path specifier** must start with `./` or `../`, and must carry the `.foi` extension:
+
+```java
+def < :myHelper >: import "./utils.foi";
+```
+
+A specifier matching neither shape is a compile error. In particular: no bare names, no leaving the `.foi` extension off, no directory or `index` resolution, and no version syntax inside the string.
+
+The specifier is never computed, either -- always a plain string literal, never an expression, never an interpolated string, never a variable holding a string.
 
 ----
 
@@ -325,9 +345,36 @@ To rename lexical exports (e.g., from lexical `login` / `logout` to exported nam
 export { doLogin: login, doLogout: logout };
 ```
 
-When exporting, keep in mind that `defn` function definitions *do* hoist -- so they can appear anywhere in the outmost module scope, even below an `export` statement. This is the most common type of value to export from a module.
+An entry can also reach through an access path. In the concise form, the exported name is the final segment:
 
-However, `def` variable definitions (even if they hold functions) do not hoist. Those must always appear at the top of a scope, thus before any `export` statements. Those variables must be assigned an intended value to *export* before an `export` statement; subsequent variable assignments are not retroactively exported.
+```java
+export { :config.timeout };            // exported name: `timeout`
+export { retries: config.attempts };   // exported name: `retries`
+```
+
+`export` is a *definition* statement, alongside `def`, `defn`, and `deft`. It lives in the same top-of-scope definition section they do, freely interleaved with them, and must come before any non-definition statement. It's admitted only at module scope -- there's no exporting from an inner block.
+
+What an `export` entry registers is a **name paired with a lexical reference** -- not a value read at the moment the statement appears. Values arrive later: the whole definition section settles first, and only then is the export Record built from the registered references. So there's no such thing as exporting "too early," and the relative order of a `def` and the `export` naming it doesn't matter:
+
+```java
+export { :apiURL };
+
+def apiURL: "https://example.com";
+```
+
+What *is* required is that an exported name be constant. A `defn` or `deft` name is constant by construction. A `def` binding qualifies as long as nothing assigns to it with `:=` anywhere in the visible scope chain -- whether or not that assignment would actually run:
+
+```java
+def count: 0;
+
+export { :count };          // compile error
+
+count := 1;
+```
+
+The error is reported at the `export` entry, and names where the offending assignment sits.
+
+**Note:** An entry carrying an access path (`{ :config.timeout }`) *does* read a value, making it a consuming operation. If its path reaches a `def` declared later in the section, that's a forward reference and needs `Lazy@` (see [Lazy Forward References](#lazy-forward-references)).
 
 ## Function Calls
 
@@ -1450,7 +1497,7 @@ str.1;                      // "e"
 To determine the length of a string (or a Tuple), or the count of fields in a Record, use the `size()` function:
 
 ```java
-def < :size >: import "#Std";
+def < :size >: import "foi:Std";
 
 size("Hello");              // 5
 size(< "O", "K" >);         // 2

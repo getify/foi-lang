@@ -453,6 +453,23 @@ var failSamples = [
 	// cannot lead a brace narrowing.
 	"a ?as int.<Foo>;",
 	"a ?as string.<X>;",
+
+	// === DefTypeFrom negatives — §9.2.2 / §9.4 ===
+
+	// Specifier must be PlainStr; a name and an interpolated string
+	// both reject. "A specifier is never computable."
+	'deft Point from name;',
+	'deft Point from `"./`d`.foi";',
+
+	// The `from` tail is terminal — no second reach, no trailing
+	// TypeExpr after it.
+	'deft Coord Point from "./a.foi" from "./b.foi";',
+	'deft Point from "./g.foi" int;',
+
+	// `from` is STRICTLY a `deft` tail — not admitted at arbitrary
+	// type-reference positions (:as RHS, FuncTypeExpr return).
+	'def x: y :as Point from "./g.foi";',
+	'deft F (int) ^Point from "./g.foi";',
 ];
 
 var passed = 0;

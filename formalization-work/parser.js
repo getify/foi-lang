@@ -3378,9 +3378,45 @@ export const DefTypeName = production("DefTypeName",
 	)
 );
 
-// DefTypeStmt := "deft" _ DefTypeName _ TypeExpr;
+// DefTypeFrom := "from" _ PlainStr;
+//
+// `from` is a CONTEXTUAL keyword. It is not in tokenizer.js's
+// KEYWORDS set, so both tokenizers classify it by reserved-set
+// membership and emit a single General token — matched here by value
+// at this one position. Deliberately not promoted to a reserved
+// keyword: `from` stays available as an ordinary identifier
+// everywhere else.
+//
+// Structurally byte-parallel to ImportExpr (§3) — same
+// and(Kw, delim(), PlainStr) shape, same keyword-drops shaper, same
+// gapFill anchor at roundtrip.
+var KwFrom = tokVal("General", "from");
+
+export const DefTypeFrom = production("DefTypeFrom",
+	and(KwFrom, delim(), PlainStr)
+);
+
+// DefTypeStmt := "deft" _ DefTypeName _ ( (NamedType _ DefTypeFrom)
+//                                       | DefTypeFrom
+//                                       | TypeExpr );
+//
+// PEG ordering is load-bearing: the `from`-bearing arms MUST precede
+// TypeExpr. NamedType is reachable from TypeExpr via NoUnionTypeExpr,
+// so TypeExpr-first would commit `Point` in
+// `deft Coord Point from "./g.foi";` to arm 3 and leave the tail
+// dangling.
+//
+// Arm 1 before arm 2 is by specificity, not ambiguity — arm 2's
+// leading `from` cannot match at a NamedType-leading position anyway.
 export const DefTypeStmt = production("DefTypeStmt",
-	and(KwDeft, delim(), DefTypeName, delim(), TypeExpr)
+	and(
+		KwDeft, delim(), DefTypeName, delim(),
+		or(
+			and(NamedType, delim(), DefTypeFrom),
+			DefTypeFrom,
+			TypeExpr
+		)
+	)
 );
 
 // =============================================================

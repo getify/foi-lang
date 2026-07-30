@@ -158,7 +158,7 @@ export const samples = [
 	// =============================================================
 
 	// ImportExpr — direct, also covered indirectly via DefVarStmt
-	{ label: "ImportExpr (in DefVarStmt)",           src: 'def x: import "foo";' },
+	{ label: "ImportExpr (in DefVarStmt)",           src: 'def x: import "./foo.foi";' },
 
 	// Export bindings
 	{ label: "Export named, no access",              src: "export { a: b };" },
@@ -178,7 +178,7 @@ export const samples = [
 	// DefVarStmt — exercises target/init alts beyond the basic case
 	{ label: "DefVarStmt: destructure target (concise)", src: "def <:a, :b>: foo;" },
 	{ label: "DefVarStmt: destructure target (named)",   src: "def <a: x, b: y>: foo;" },
-	{ label: "DefVarStmt: import init",              src: 'def x: import "foo";' },
+	{ label: "DefVarStmt: import init",              src: 'def x: import "./foo.foi";' },
 
 	// DestructureTarget / DestructureNamedDef / DestructureConciseDef / DestructureCapture
 	{ label: "Destructure named, no access",          src: "def < a: src >: payload;" },
@@ -1508,6 +1508,34 @@ export const samples = [
 	  src: "deft Foo.Bar int;" },
 	{ label: "DefTypeStmt: BuiltIn root dotted",
 	  src: "deft List.Cons(int) ^List;" },
+
+	// DefTypeFrom — graph reach (§9.2.2, §9.4). Bare reach, rename
+	// reach, and the name-position cases DefTypeName already admits.
+	{ label: "DefTypeFrom: bare reach (relative path)",
+	  src: 'deft Point from "./geometry.foi";' },
+	{ label: "DefTypeFrom: bare reach (parent-relative path)",
+	  src: 'deft Point from "../lib/geometry.foi";' },
+	{ label: "DefTypeFrom: bare reach (package specifier)",
+	  src: 'deft Config from "foi:Std";' },
+	{ label: "DefTypeFrom: rename reach",
+	  src: 'deft Coord Point from "./geometry.foi";' },
+	{ label: "DefTypeFrom: rename reach (dotted source name)",
+	  src: 'deft R Either.Right from "./sum.foi";' },
+	{ label: "DefTypeFrom: BuiltIn at name position",
+	  src: 'deft List from "foi:Std";' },
+	{ label: "DefTypeFrom: dotted name position",
+	  src: 'deft Foo.Bar from "./x.foi";' },
+
+	// `from` is contextual, not reserved — still an ordinary
+	// identifier at every other position.
+	{ label: "DefTypeFrom: `from` as ordinary binding name",
+	  src: "def from: 5;" },
+
+	// DefTypeName consumes greedily, so this is a type NAMED `from`
+	// declared as the string-literal type — arm 2 can't match,
+	// because the `from` token is already spent at the name position.
+	{ label: "DefTypeFrom: greedy name position (no reach)",
+	  src: 'deft from "./geometry.foi";' },
 
 	// =============================================================
 	// PARSER COMPOUND REGRESSIONS

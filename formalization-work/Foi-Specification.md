@@ -70,8 +70,8 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §5 Pattern Matching *(done)*
 - §6 Suspension and Evaluation Control *(done)*
 - §7 Loops and Comprehensions *(done)*
-- §8 Modules *(planned)*
-- §9 Type system *(planned)*
+- §8 Modules *(done)*
+- §9 Type system *(partial)*
 
 ---
 
@@ -473,7 +473,7 @@ A `def` slot persists for the lifetime of its frame. When the frame is exited, t
 
 #### §2.1.1 `def` Placement: Top Of Scope
 
-`def` statements must appear at the top of their scope. Specifically: within any scope (module, function body, or block), `def` statements must precede all other statements except other definitional forms (`defn`, `deft`) which may interleave freely with `def` at the top.
+`def` statements must appear at the top of their scope. Specifically: within any scope (module, function body, or block), `def` statements must precede all other statements except other definitional forms (`defn`, `deft`, and -- at top-level module scope only -- `export`) which may interleave freely with `def` at the top.
 
 This contiguous top-of-scope run of definitional statements is the scope's **`def` section**. §2.2's `Lazy@` resolution operates within this region; references to "the section" throughout §2.2 refer to it.
 
@@ -1144,11 +1144,11 @@ xs ~map (v:? 0) { v * 2 };          // v = 0 for empty elements
 
 **Why four block forms:** the grammar distinguishes (a) bare block, no bindings clause (§2.9.1); (b) `def`-prefixed bindings statement, no implicit source (§2.9.2); (c) bindings expression with no implicit source, host-attached to guards and match consequents (§2.9.3); and (d) bindings expression with an implicit source from the enclosing context, at comprehension RHS or pipeline RHS.
 
-### §2.10 Module scope
+### §2.10 Module Scope
 
-The outermost scope of a module has an unmarked (implicit) **`def` section** at its top (§2.1.1): `def`, `defn`, and `deft` may interleave with no enclosing syntactic delimiter, and general statements follow. The module's frame is the root of the frame chain for all expressions evaluated within the module.
+The outermost scope of a module has an unmarked (implicit) **`def` section** at its top (§2.1.1): `def`, `defn`, `deft`, and `export` may interleave with no enclosing syntactic delimiter, and general statements follow. The module's frame is the root of the frame chain for all expressions evaluated within the module.
 
-Modules additionally admit `import` -- which appears only as an initializer value on a top-of-scope `def` (e.g., `def Std: import "#Std";`) -- and `export` -- a statement form unique to module scope. Both are detailed in §8.
+`import` appears only as an initializer value on a top-of-scope `def` (e.g., `def Std: import "foi:Std";`). `export` is a `def`-section statement form admitted only at module scope. Both are detailed in §8.
 
 ### §2.11 Closure Capture
 
@@ -9230,3 +9230,451 @@ gives each of them index access.
 library alongside `List`'s comprehension hooks. Neither is
 compiler-privileged; a user namespace may declare its own
 `entries@` / `keys@` by the same mechanism.
+
+## §8 Modules
+
+A **module** is a single source file. It is the only unit of separate
+compilation, the only unit of export, and the key by which collected
+types are namespaced (§9.3). There is no sub-file module form and no
+multi-file module form.
+
+A module's outermost scope is an ordinary lexical scope (§2.10); the
+outermost link in the scope chain.
+
+### §8.1 The Compilation Unit Set
+
+The set of modules constituting a build is supplied by the toolchain.
+This specification defines module graph construction and cross-module
+checking over whatever set is supplied. It does not define how that set
+is determined, and it does not define a program entry point.
+
+Effect-kind collision (§8.5.1) and effect coverage (§6.13.4) are
+whole-program checks over the unit set.
+
+### §8.2 `import`
+
+`import` (Syntactic-Grammar `ImportExpr` at §3) appears only as the
+initializer of a `def` in a scope's `def` section (§2.1.1):
+
+```java
+def Std: import "foi:Std";
+```
+
+A module's exports are implicitly a **Record** (§8.3). `import`
+evaluates to that Record. The binding target is an ordinary `def`
+target, so the whole Record may be captured, destructured, or both, per
+§2.13:
+
+```java
+def < :log, :size >: import "foi:Std";
+
+def < :log, #Std >: import "foi:Std";
+```
+
+**The specifier is not computable.** `ImportExpr` admits only
+`PlainStr`: the non-interpolating string form (§1.4). A specifier is
+never an expression, an interpolated string, or a name.
+
+An `import` result supplies values only. It does not supply a type
+name (§9.2.1).
+
+### §8.3 `export`
+
+`export` (Syntactic-Grammar `ExportExpr` at §3) is a **`def`-section
+statement**. It groups with `def`, `defn`, and `deft` under §2.1.1's
+top-of-scope rule and must precede any non-definitional statement in
+the module's outermost scope. It is admitted only there.
+
+The grammar admits `ExportExpr` freely interleaved with `Stmt` at
+`Program`; the ordering rule is enforced at the semantic layer, in the
+same manner as reserved-root rejection (§6.1.4.1).
+
+#### §8.3.1 `export` Binds Names, Not Values
+
+An `export` entry registers an **exported name** paired with a lexical
+reference. It does not read the referenced binding at the point the
+statement appears.
+
+```java
+export { :login, :logout };            // exported names match lexical names
+export { doLogin: login };             // exported name differs
+export { :config.timeout };            // exported name `timeout`
+export { retries: config.attempts };   // exported name `retries`
+```
+
+The concise form `{ :name }` registers `name` and references the
+lexical `name`. The concise-with-access form `{ :a.b }` registers the
+**final path segment** as the exported name and references the path.
+The named form `{ target: source }` registers `target` and references
+`source`, with an optional access tail.
+
+**Abstract execution (module load):**
+
+1. The module's `def` section is evaluated per §2.2, in source order.
+2. At the end of the `def` section, the force pass of §2.2.5 runs; no
+   thunk survives it (§2.2.11).
+3. The export Record is constructed: for each registered entry, in
+   source order, the entry's lexical reference is read (including any
+   access path) and stored under the entry's exported name.
+4. The module's remaining statements evaluate.
+
+Step 3 occurs after step 2; an export entry never observes a thunk.
+
+#### §8.3.2 Exported Names Must Be Constants
+
+An `export` entry's referenced binding must be **observably constant**
+in the sense of §2.3: a `def` binding with no `:=` assignment to that
+name anywhere in the visible scope chain, whether or not the assignment
+executes. A `defn` or `deft` name is constant by construction.
+
+Referencing a reassigned binding is a compile error. **The diagnostic
+is reported at the `export` entry, not at the assignment**, and names
+the offending assignment's source position.
+
+An imported value is fixed for the lifetime of the load.
+
+#### §8.3.3 `Lazy@` In Export Entries
+
+Because `export` participates in the `def` section, `Lazy@` (§2.2) is
+available to its entries under §2.2.6's directly-enclosing-scope
+restriction. It applies only where the entry performs a **consuming**
+operation in §2.2.3's sense.
+
+- `export { :foo }` and `export { a: b }` register a name and read no
+  value at registration. `Lazy@` is not applicable.
+- `export { :a.b }` and `export { a: b.c }` carry an access path, which
+  is a consuming operation. An entry whose path reaches a `def`
+  declared later in the section is a forward reference through a force
+  point and takes `Lazy@`.
+
+### §8.4 Specifiers
+
+A specifier is one of exactly two arms, decidable by lookahead on the
+leading characters. There is no fallback chain and no third arm.
+
+**Package specifier.** Shape `<package-name>:<module-name>`, as in
+`"foi:Std"` or `"graphql:client/parser"`. A package specifier is a
+**registry name, not a filesystem path**. Everything after the first
+`:` is opaque to this specification; it may contain `/` without that
+denoting path traversal. Package registry mechanics -- registration,
+resolution, distribution, installation -- are outside this
+specification.
+
+**Relative-path specifier.** Must begin `./` or `../`, and must carry
+the `.foi` extension. Ordinary filesystem path normalization applies.
+
+A specifier matching neither arm is a compile error.
+
+**Not admitted, at either arm:** bare names implying `./`; extension
+inference; directory or index resolution; version syntax, ranges, or
+any lockfile notion.
+
+Canonicalization's obligation is *same file ⇒ same canonical path*.
+
+#### §8.4.1 Canonicalization Splits By Arm
+
+- **Path arm:** ordinary filesystem normalization to an absolute path.
+- **Package arm:** the name is the key, with no transformation.
+
+The package arm relies on a contract the package layer supplies:
+**package names are unique within a build by construction**. Where two
+otherwise-identically-named packages must coexist -- different
+versions, or a public and a private package sharing a name -- the
+package layer aliases them before any source is read, so the surface
+exposed to `import` and to a graph reach (§9.4) is always a unique name
+mapping.
+
+Version resolution is a package-layer concern; the language sees
+resolved names only.
+
+**Aliasing does not resolve effect-kind collisions.** It renames the
+package, not the effect kinds declared in its source. See §8.5.1.
+
+#### §8.4.2 Reserved Package Names
+
+The reserved package-name set is exactly `{ foi }`. The set is closed
+and does not grow. Every language-owned package is a **module under the
+reserved root** -- `foi:Std`, `foi:Test`.
+
+### §8.5 Effect Kinds Are Global
+
+Effect kinds register in a single global namespace. They are not keyed
+by module, and they are not collected into the graph layer (§9.3).
+
+**The `Effect` namespace is always in scope.** It is never imported and
+never reached. There is no import that makes an effect kind available,
+and no module in which a declared effect kind is out of scope.
+
+At the four Effect surfaces -- declaration, perform site, handler
+narrowing, and `:Effects(...)` -- an `Effect.`-rooted path resolves
+through §6.1.4.1's admission procedure against the global effect
+namespace. No lexical lookup occurs.
+
+A module may perform or handle a kind declared in a module it has no
+edge to:
+
+```java
+// ./ask.foi
+deft Effect.Ask(string) ^string;
+```
+
+```java
+// any other module in the unit set -- no import, no reach
+def name: Effect.Ask% "user";
+```
+
+A perform site and a handler each name a kind and no module; a kind's
+name is its entire identity.
+
+#### §8.5.1 Collision Is Fatal
+
+Two modules in the compilation unit set declaring the same effect kind
+is a compile error, without exception. This includes two versions of
+one library, both declaring the same kind, reached transitively through
+unrelated dependencies.
+
+The check is **link-time**; it requires the whole unit set. The
+diagnostic names **both** declaring modules and their source positions.
+
+### §8.6 Hook Coherence Across Modules
+
+The module declaring a namespace's `@` unit constructor is the only
+module that may declare hooks on that namespace.
+
+§3.1.1.2, §3.1.1.3, and §3.1.1.4 each require a hook declaration to be
+accompanied *in the same scope* by a `defn Name@(..)` of the same name.
+A module's top level is the outermost lexical scope (§8), so a hook
+declared in one module against a namespace constructed in another fails
+that requirement.
+
+Layer-0 bootstrap relaxes the `BuiltIn` restriction in the
+hook-declaration name position (Syntactic-Grammar §13's `DefHookName`
+note), not the same-scope accompaniment requirement.
+
+## §9 Type System
+
+This section specifies type names: how they are declared, how a
+reference resolves to a declaration, how a name crosses a module
+boundary, and what an assertion against a resolved name tests. Type
+expression semantics, the distinctness and subsumption relations,
+inference, and overload selection are open; §9.7 enumerates them.
+
+### §9.1 Type Names And Scopes
+
+A `deft` declaration registers its name in the scope containing it.
+Scopes chain innermost outward; a module's outermost scope is the last
+link (§8).
+
+#### §9.1.1 `deft` Is A Declaration
+
+`deft` has no runtime effect. Three consequences:
+
+- **Conditionals do not gate it and loops do not repeat it.** A `deft`
+  inside a match consequent registers in that consequent's scope
+  whether or not the arm is ever taken. A `deft` in a loop body
+  declares once, not once per iteration. A scope is a lexical region,
+  not a dynamic activation.
+
+- **A `deft` name is in scope throughout its entire lexical scope**,
+  not only textually below itself. Registration and overload rules
+  operate on a scope's whole declaration *set* at once, never on a
+  running textual prefix.
+
+- **Resolution requires no evaluation.** Resolving a name at a source
+  position is a scope-chain walk over syntax: no execution, no
+  cross-module reads.
+
+**Implementation note.** A resolver collects a scope's declaration set
+before resolving any name within it.
+
+#### §9.1.2 Registration And Resolution
+
+**The scope is the registration unit, not the declaration.** A name is
+registered in a scope or it is not. There is no partial shadowing, and
+declaration sets do not merge across scopes.
+
+1. The first `deft` of a name in a lexical scope shadows **the entirety
+   of that name** from any outer scope.
+2. Resolution searches the lexical scope chain outward. The first scope
+   in which the name is registered wins.
+3. Lexical chain exhausted ⇒ **unresolved name**, a compile error at
+   the reference.
+
+**A bare name resolves in the lexical scope chain only.** The graph
+layer (§9.3) is never consulted for a bare name; it is reached by
+`from` (§9.4), which writes into a lexical scope. Every resolution,
+before and after a reach, is lexical.
+
+Unresolved-name and mode-mixing (§9.5) diagnostics are scope-local and
+syntactic, and remain correct when the remainder of the file does not
+parse.
+
+### §9.2 `deft` Declaration Forms
+
+`deft` has two destinations, discriminated by whether the declared name
+sits under `Effect.`:
+
+- An `Effect.`-rooted name declares an **effect kind** in the global
+  effect namespace (§6.1.3, §8.5). It registers in no scope, shadows
+  nothing, and is never collected into the graph layer. An
+  `Effect.`-rooted `deft` at any inner scope is a compile error.
+- Every other name declares a **type** in the scope containing the
+  declaration.
+
+Three right-hand shapes for a type declaration:
+
+**Fresh declaration.** Introduces a new type.
+
+```java
+deft Point <x: int, y: int>;
+```
+
+**Local alias.** Binds an additional name to an already-resolvable
+type. `Point` resolves by ordinary lexical lookup (§9.1.2).
+
+```java
+deft Coord Point;
+```
+
+An alias binds a name and mints nothing. `?as Coord` and `?as Point`
+test the same namespace identity (§9.6).
+
+**Graph reach.** Binds a graph-layer entry; mechanism at §9.4.
+
+```java
+deft Point from "./geometry.foi";
+```
+
+**A one-entry union is not an alias.** `deft Alias { Point }` **mints a
+new namespace** that `Point` is a member of: `p ?as Alias` succeeds by
+union-membership walk, `Alias@ x` has no constructor hook, and any hook
+declared on `Alias` is a supertype's hook. That is supertyping.
+
+Qualified references need no additional surface: `NamedType` is already
+bare-or-dotted (Syntactic-Grammar §18).
+
+#### §9.2.1 `def` Is Not A `deft` Binding Surface
+
+A type name may not be bound through `def`, and an `import` result does
+not supply one.
+
+`deft` names are compile-time entities; `def` slots hold runtime
+values.
+
+#### §9.2.2 Grammar Surface
+
+`DefTypeName` admits `BuiltIn` at every segment, so
+`deft List from "foi:Std";` requires no special provision at the name
+position. The `from` tail is the addition to Syntactic-Grammar §18:
+
+```ebnf
+DefTypeStmt   := "deft" _ DefTypeName _ ( (NamedType _ DefTypeFrom)
+                                        | DefTypeFrom
+                                        | TypeExpr );
+DefTypeFrom   := "from" _ PlainStr;
+```
+
+The `from`-bearing arms precede `TypeExpr` in the ordered choice.
+
+`from` is a **contextual** keyword, matched as an identifier of that
+spelling at this position. It is not in the reserved keyword set.
+
+`DefTypeFrom` takes `PlainStr`, matching `ImportExpr` (§8.2); a
+specifier is never computable.
+
+### §9.3 The Graph Layer
+
+Every **top-level** `deft` type declaration in every module of the
+compilation unit set (§8.1) is collected implicitly into the **graph
+layer**. Collection covers all three right-hand shapes (§9.2): fresh
+declarations, local aliases, and graph reaches alike. A `deft` at any
+inner scope never escapes its file.
+
+Graph entries are keyed by the declaring module's **canonical path**
+(§8.4.1). Two modules declaring `Foo` produce two distinct entries
+distinguished by origin.
+
+Graph construction collects every `deft` and resolves every `from`
+clause by syntactic walk, with no evaluation. Collection is total and
+requires no ordering, so import cycles are benign for types.
+
+Collection makes a name **reachable** by a `from` clause (§9.4). It
+does not place the name in any scope; a graph entry is reachable and
+nothing more.
+
+Effect kinds are not collected (§9.2).
+
+### §9.4 `from`
+
+`from` is a `deft` tail that binds a graph-layer entry into the lexical
+scope containing the declaration, with or without renaming:
+
+```java
+deft Point from "./geometry.foi";
+deft Coord Point from "./geometry.foi";
+```
+
+It is **the only path to the graph layer**, and it is valid whether or
+not the target module was ever imported.
+
+`from` is **strictly a `deft` tail**. It is not admitted at arbitrary
+type-reference positions.
+
+Once bound, the name is an ordinary lexical type name; registration,
+shadowing, and overload rules are §9.1.2 and §9.5.
+
+### §9.5 Overloads
+
+Multiple `deft`s of one name in one scope are **overloads**. They must
+have distinct type shapes; non-distinct overloads are a compile error.
+What makes two type shapes distinct is a §9.7 predicate.
+
+An overload set cannot be extended. A lexical `deft Foo` adding one
+overload hides every `Foo` overload an outer scope registered or
+reached; a set is replaced wholesale, or bound whole.
+
+**`from` binds the whole overload set as a unit.** A reach of a name
+with N overloads at the target module binds all N.
+
+**Mixing modes in one scope is a compile error.** In a single scope, at
+any nesting depth:
+
+- a fresh-or-alias `deft Foo ...` together with a `deft Foo from ".."`
+- two `deft Foo from ".."` clauses reaching different modules
+
+Different scopes are ordinary shadowing. This check is scope-local and
+syntactic, decidable without the distinctness predicate.
+
+**Resolution precedes selection.** §9.1.2 resolves the *name* to a
+scope. Selection chooses among that scope's set by type shape, and is
+open (§9.7). Once a scope wins, an overload set in which nothing is
+satisfiable is a selection failure there, not a reason to continue
+walking outward.
+
+### §9.6 Type Assertion
+
+`:as` and `?as` (§5) are the positions where a type name is written
+down. Dispatch reads the value's `__ns` (§3.8) and involves no name.
+
+`?as Foo` tests whether the value's `__ns` is the entity `Foo` resolves
+to **at that source position**, not whether the value belongs to some
+namespace spelled `Foo`.
+
+Exactly one resolution failure exists here: a name resolving in no
+lexical scope, diagnosed at the reference (§9.1.2).
+
+#### §9.6.1 All Types Are Explicitly Reached
+
+There is no ambient type layer. Using `List` at a `:as` or `?as`
+position requires reaching it:
+
+```java
+deft List from "foi:Std";
+
+xs ?as List;
+```
+
+**`BuiltIn` lexical status does not imply availability.** `List`,
+`Channel`, `Promise`, etc, all lex as `BuiltIn`.
+
+// TODO

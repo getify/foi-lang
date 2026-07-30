@@ -555,6 +555,11 @@ var handlers = {
 
 	DefTypeStmt: (n, r) => gapFill("deft", n, r),
 
+	// DefTypeFrom — contextual `from` keyword drops at shape time,
+	// re-synthesized at the first source-position gap. Same handler
+	// shape as ImportExpr's gapFill("import", ...).
+	DefTypeFrom: (n, r) => gapFill("from", n, r),
+
 	// DefTypeName — bare-or-dotted; segments joined by ".".
 	// Parallel to NamedType.dotted arm; simpler because
 	// DefTypeName never carries lifted wrappers.

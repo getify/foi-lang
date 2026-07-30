@@ -1747,8 +1747,32 @@ unwrap-shaper pattern as `AsExpr` (§5) and `DepCondBoolExpr` arm-3
    the strict reading is "don't brace a non-union/non-function" — this
    is conventionally discouraged but not grammar-rejected.) *)
 
-DefTypeStmt           := "deft" _ DefTypeName _ TypeExpr;
+DefTypeStmt           := "deft" _ DefTypeName _ ( (NamedType _ DefTypeFrom)
+                                                | DefTypeFrom
+                                                | TypeExpr );
 DefTypeName           := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+DefTypeFrom           := "from" _ PlainStr;
+
+(* `from` is a CONTEXTUAL keyword — matched as an identifier of that
+   spelling at this one position, and deliberately NOT a member of the
+   reserved KEYWORDS set. `def from: 5;` still declares an ordinary
+   binding.
+
+   The two `from`-bearing arms precede TypeExpr in the ordered choice.
+   NamedType is reachable from TypeExpr (via NoUnionTypeExpr), so with
+   TypeExpr first, `deft Coord Point from "./g.foi";` would commit
+   `Point` to the TypeExpr arm and leave the `from` tail dangling at
+   the statement terminator.
+
+   DefTypeFrom takes PlainStr, matching ImportExpr (§3): a specifier is
+   never computable.
+
+   DefTypeName already admits BuiltIn at every segment, so
+   `deft List from "foi:Std";` needs no provision at the name position.
+   Consequence at arm 3, worth pinning: DefTypeName consumes greedily,
+   so `deft from "./g.foi";` declares a type NAMED `from` whose
+   declaration is the string-literal type — arm 2 cannot match, since
+   the `from` token is already consumed by the name. *)
 
 <TypeExpr>            := FuncTypeExpr | NoFuncTypeExpr;
 

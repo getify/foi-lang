@@ -3361,13 +3361,48 @@ export const defaultShapers = {
 		return { type: "DefTypeName", segments: parts.filter(isNode) };
 	},
 
-	// DefTypeStmt := "deft" _ DefTypeName _ <TypeExpr>;
+	// DefTypeFrom := "from" _ PlainStr;
+	//
+	// The contextual `from` keyword arrives as a General token and
+	// drops here, re-synthesized at roundtrip via gapFill — exactly
+	// how ImportExpr handles its "import" Keyword. The PlainStr node
+	// is kept intact. No structural tokens.
+	DefTypeFrom(frame,parts) {
+		return { type: "DefTypeFrom", specifier: parts.find(isNode) };
+	},
+
+	// DefTypeStmt := "deft" _ DefTypeName _ ( (NamedType _ DefTypeFrom)
+	//                                       | DefTypeFrom
+	//                                       | TypeExpr );
 	//
 	// "deft" keyword drops (re-synthesized at roundtrip via gapFill).
 	// No structural tokens at this level.
+	//
+	// Three node shapes, one per §9.2's three right-hand forms:
+	//   fresh / local alias  → { name, decl }
+	//   bare graph reach     → { name, from }
+	//   rename graph reach   → { name, decl, from }
+	//
+	// `decl` carries the same meaning in the rename-reach arm as in
+	// the local-alias arm — the NamedType being bound to a new local
+	// name — so the reach arms are purely additive. Consumers
+	// discriminate on presence of `from`.
+	//
+	// Key insertion order preserves { type, name, decl } on the
+	// TypeExpr arm, so every pre-existing DefTypeStmt AST is
+	// byte-identical and any roundtrip movement on old samples is a
+	// real regression.
 	DefTypeStmt(frame,parts) {
-		var [ name, decl ] = parts.filter(isNode);
-		return { type: "DefTypeStmt", name, decl };
+		var nodes = parts.filter(isNode);
+		var name = nodes[0];
+		var last = nodes[nodes.length - 1];
+		var from = (last && last.type === "DefTypeFrom") ? last : null;
+		var decl = (nodes[1] && nodes[1] !== from) ? nodes[1] : null;
+
+		var node = { type: "DefTypeStmt", name };
+		if (decl) node.decl = decl;
+		if (from) node.from = from;
+		return node;
 	},
 
 	// NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
