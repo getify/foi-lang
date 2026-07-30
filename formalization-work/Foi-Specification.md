@@ -53,11 +53,9 @@ When this document shows a JS lowering, it reflects what the bootstrap transpile
 
 ### §0.3 Conventions for open territory
 
-A region of the spec is **settled** when its operational behavior is fixed by the language design as stated in this document. The bootstrap transpiler and its oracle suites are useful evidence of design-behavior alignment during the design phase but are not themselves part of the settled definition; the spec is the authoritative record.
+A region of the spec is **settled** when its operational behavior is fixed by this document. The bootstrap transpiler and its oracle suites are not part of the settled definition; the spec is the authoritative record.
 
-A region is **open** when at least one of the following holds: the design has multiple candidate semantics under active consideration; the construct depends on a yet-to-be-decided cross-cutting feature (type-system lifecycle, module semantics, or hook-dispatch runtime-table finalization per §3.10.9).
-
-Open regions appear inline under an **Open** heading within the relevant section.
+A region is **open** when its operational behavior is not fixed by this document. Open regions appear inline under an **Open** heading within the relevant section.
 
 ### §0.4 Document scope
 
@@ -518,15 +516,13 @@ def x: 1 + 3;       // statement completion value: 4
 
 Syntactically, statements like `def` cannot necessarily be used in expression positions. However, block expressions *implicitly* adopt the final statement's completion value; a `def` statement in the final position exposes its assigned value as its completion value, and thus the same value is adopted as the block expression result.
 
-Consider this degenerate, uncommon example:
-
 ```java
 def x: {
     def y: 42;
 };
 ```
 
-You'd rarely have a block with only `def` statement(s) in it and no evaluated statements/expressions below them. But in this example, the `def y: 42` statement has `42` as a completion value, and that same `42` value is adopted by the `{ }` block expression per §2.9.1's block-completion rule. Then, the same `42` value is assigned to `x`. Finally, this also means the completion value of `def x: ..` is also `42`.
+The `def y: 42` statement has `42` as its completion value; that value is adopted by the `{ }` block expression per §2.9.1's block-completion rule, and assigned to `x`. The completion value of `def x: ..` is therefore also `42`.
 
 **Do-comprehension exception.** Inside a `~<<` or `~<*` block (§7), a single-colon `def x: expr` statement is a local binding whose completion value does not participate in the block's monadic composition; it is neither `~<`-chained nor collected as a terminal value. To bind a name to a monadic step's unwrapped result, use the double-colon form `def x:: expr` instead. See §7 for the do-block's statement categories in full.
 
@@ -543,43 +539,37 @@ def life: <
 
 The field `answer` references `life`, the very binding being constructed. At the point `answer`'s initializer is evaluated, `life` does not yet hold a value; the record literal is mid-construction. `Lazy@` makes the reference legal and defers its resolution until the binding completes.
 
-Formally speaking, `Lazy@` is intended for forward-reference without requiring manual source-reordering (which in some cases, as above, is not even sufficient).
-
-So the above example, deconstructed into two `def`s, illustrates the lazy-forward-reference semantic:
+The same semantic in two separate `def`s:
 
 ```java
 def answer: Lazy@ life.meaning(2, 40);
+
 def life: <
     meaning: defn(x, y) ^x + y,
 >;
 ```
 
-At the moment `answer` is being defined, `life` has not yet been defined. Instead of re-ordering to define `life` before `answer`, `Lazy@` allows this lazily-resolved forward reference containing expression.
+At the moment `answer` is being defined, `life` has not yet been defined. `Lazy@` defers the reference until it resolves.
 
-#### §2.2.1 Motivation
+#### §2.2.1 Forward References Inside A Record Literal
 
-Immutable records cannot be modified after construction. A record field that references the record itself, another field of the same record, or a sibling binding defined later in the same `def` statement(s) section, cannot be written directly:
+A record field may not directly reference the record being constructed, another field of that same record, or a sibling binding defined later in the same `def` statement(s) section:
 
 ```java
 def life: <
     meaning: defn(x, y) ^x + y,
-    answer: life.meaning(2, 40)    // `life` not yet bound
+    answer: life.meaning(2, 40)    // ill-formed: `life` not yet bound
 >;
 ```
 
-Without `Lazy@`, the only alternative is to construct an incomplete record first and reassign the binding to a corrected version:
+Each such reference requires `Lazy@`. The working version (from above):
 
 ```java
 def life: <
-    meaning: defn(x, y) ^x + y
->;
-life := <
-    &life,
-    answer: life.meaning(2, 40)
+    meaning: defn(x, y) ^x + y,
+    answer: @Lazy life.meaning(2, 40)
 >;
 ```
-
-This pattern produces an intermediate record that exists only as a scaffold for the corrected version. Beyond the wasted construction, the `:=` introduces consequences that the program did not actually intend: the binding becomes reassignable, any enclosing function must declare `:over (life)` (§3.6) to acknowledge the non-constancy, and local reasoning about `life` weakens because the name now refers to different values at different points in the scope. None of these costs reflect the program's intent, which was to construct a single value with a self-referential field.
 
 `Lazy@` expresses the construction directly. The binding is defined exactly once, no intermediate value is produced, no reassignability is implied, and no `:over` annotation is required. The construct exists so that ordinary self-referential and mutually-referential value construction does not require mutability-flavored workarounds.
 
@@ -608,7 +598,7 @@ A thunk produced by `Lazy@` is a first-class value. It may flow through expressi
 
 **Consuming operations** read into the thunk's value. Arithmetic, comparison, logical operators, conditional tests, pattern matches against value patterns, computed record keys, spread (`&thunk`), pick (`thunk.name`), slice (`thunk.[a..b]`), destructure-and-rebind against a thunk source, and explicit `%` forcing all fall in this class. A consuming operation requires the thunk's resolved value at the moment of the operation. If the thunk is resolved, the value is read cheaply. If the thunk is unresolved, the consuming operation cannot complete; instead, the surrounding initializer's evaluation is itself deferred, and the binding being defined adopts a derived thunk pending on the same identifiers.
 
-The class of an operation is determined by the operation, not by user annotation. The user writes ordinary expressions; the language carries thunks through positions that store them and forces them at positions that read them. The distinction is invisible to the program text and consistent with the natural reading of each operation.
+The class of an operation is determined by the operation, not by user annotation. The language carries thunks through positions that store them and forces them at positions that read them. No syntax marks the distinction.
 
 #### §2.2.4 Propagation and Deferral Through the Section
 
@@ -722,15 +712,11 @@ Reference-shaped cycles -- where identifiers reference each other through struct
 
 #### §2.2.9 The `%` Effector Operator and `Lazy@`
 
-Conceptually, a `Lazy@` thunk is a syntactically-simplified deferred value (e.g., IO, State).
-
 The `%` effector operator dispatches to the LHS's `_percent` hook (§3.10.9). Applying `%` to a value whose namespace defines no `_percent` hook is a type error.
 
 The `Lazy@` namespace defines a `_percent` hook that is identity: `x%` for a `Lazy@`-bound name resolves to the same value a bare `x` read produces. Resolution of the deferred reference is performed exclusively by the carry-and-force machinery (§2.2.3 through §2.2.5), which is not user-callable; the identity hook exists so that `%` remains well-typed on a `Lazy@`-bound name without introducing a special-cased resolution path.
 
-`%` may be useful stylistically as a marker on a thunk-bound name, to create a visual "compute this result" connection back to the `Lazy@` deferral, even though it has no operational effect.
-
-This is analogous to how a program might null out a reference to signal participation in garbage collection: the act doesn't trigger or alter the collector, which runs on its own schedule, but it communicates intent about the value's lifecycle to a reader.
+`%` on a `Lazy@`-bound name has no operational effect.
 
 #### §2.2.10 Other Examples
 
@@ -927,23 +913,7 @@ def y: 42;
 
 When the initializer of `def x: y` is evaluated, the `def y` statement below it has not yet established the binding for `y`. The lookup fails.
 
-**NOTE:** This motivates `Lazy@` (§2.2) as a forward-reference mechanism for `def`.
-
-**Why the asymmetry between `defn` and `def`?** Reassignable bindings need linear traceability: a reader scanning the scope top to bottom should be able to identify every point at which a name might receive a new value. Constraining `def` to the top of the scope, and rejecting forward references between `def`s, means the reader can scan in linear time. `defn` is structurally constant -- it cannot be reassigned, so its position in the source does not affect what value it ever holds -- and so it is safe to hoist and to appear anywhere.
-
-#### §2.5.1 Stylistic note
-
-The hoisting model admits a style where executable code appears at the top of a scope and helper functions appear at the bottom:
-
-```java
-helper(42);
-other();
-
-defn helper(v) ^ v * 2;
-defn other() ^ log("hello");
-```
-
-This is permitted at module scope and inside function bodies, and is a style the language is designed to make ergonomic.
+**NOTE:** `Lazy@` (§2.2) is the forward-reference mechanism for `def`.
 
 ### §2.6 The single-slot rule
 
@@ -981,9 +951,10 @@ defn foo() ^1;
 defn foo() ^2;
 ```
 
-The rule is one slot per name per scope, period. There is no overload, no shadow-within-scope, no last-wins resolution.
+One slot per name per scope. There is no overload, no shadow-within-scope, and no last-wins resolution.
 
-**Shadowing across nested scopes is permitted.** A `def` in a nested block introduces a fresh slot in the inner frame; the outer name remains unchanged and is restored when the inner scope exits:
+**Shadowing across nested scopes is permitted.** A `def` in a nested block introduces a fresh slot in the inner frame; the outer name
+remains unchanged and is restored when the inner scope exits:
 
 ```java
 def x: 1;
@@ -1039,7 +1010,10 @@ A bare block expression (Syntactic-Grammar `BareBlockExpr`) introduces a new fra
 2. Evaluate each statement in source order, in the new frame.
 3. The block expression's result value is the completion value of its final statement.
 
-Bare blocks appear at statement position and at every implicit-input expression position (comprehension RHS, pipeline RHS, pipeline-bodied function body, match consequent). At an expression position, the block's final expression value is its final statement's completion value.
+Bare blocks appear at statement position and at every implicit-input
+expression position (comprehension RHS, pipeline RHS, pipeline-bodied
+function body, match consequent). At an expression position, the block's
+final expression value is its final statement's completion value.
 
 Within a bare block, the same `def`-at-top rule applies (§2.1.1).
 
@@ -1063,11 +1037,11 @@ This is the `DefBlockStmt` form (Syntactic-Grammar §11). The leading `def` keyw
     3. Destructure target `<...>: source`: see §2.13.
 3. Evaluate `body`'s statements in the new frame, in source order.
 
-The Identifier-no-initializer form is settled convenience: the language reads it as "implicit `: empty`."
+The language reads the Identifier-no-initializer form as "implicit `: empty`."
 
 The defs-init clause uses the **strict-optional** binding form: Identifier entries may omit their initializer (implicit `: empty` as above), but destructure-target entries require their initializer explicitly. There is no implicit source at this position for a destructure to bind against.
 
-**Why this form exists alongside the bare block:** `def` statements inside a bare block must each appear as their own statement at the top of the block. `def (defs) { body }` groups the bindings into a single clause, separates them visually from the body, and reads as "introduce these names, then run this body." It is the preferred form when more than one local is needed.
+**Relation to the bare block.** `def` statements inside a bare block each appear as their own statement at the top of the block (§2.1.1). `def (defs) { body }` groups the same bindings into a single clause ahead of the body.
 
 #### §2.9.3 Def-Block Expression (no implicit input): `(defs) { body }`
 
@@ -1142,7 +1116,7 @@ xs ~map (v:? 0) { v * 2 };          // v = 0 for empty elements
 
 **Implicit-or-override default:** at this position, an entry's primary binding source is the implicit input from the enclosing context. A no-init entry uses that input directly, falling back to `empty` when the context supplies none. A `:?`-init entry uses that input when non-empty and evaluates its init expression only when the input is empty, overriding it. At positions where no implicit input is provided (§2.9.2, §2.9.3), the unconditional `:` sigil is used instead: an Identifier-no-init resolves to `empty`, an Identifier-`:`-init evaluates its expression unconditionally, and a destructure-no-init is rejected as having no source.
 
-**Why four block forms:** the grammar distinguishes (a) bare block, no bindings clause (§2.9.1); (b) `def`-prefixed bindings statement, no implicit source (§2.9.2); (c) bindings expression with no implicit source, host-attached to guards and match consequents (§2.9.3); and (d) bindings expression with an implicit source from the enclosing context, at comprehension RHS or pipeline RHS.
+**The four block forms.** The grammar distinguishes (a) bare block, no bindings clause (§2.9.1); (b) `def`-prefixed bindings statement, no implicit source (§2.9.2); (c) bindings expression with no implicit source, host-attached to guards and match consequents (§2.9.3); and (d) bindings expression with an implicit source from the enclosing context, at comprehension RHS or pipeline RHS.
 
 ### §2.10 Module Scope
 
@@ -1200,7 +1174,7 @@ fs.3();                     // 3
 
 **NOTE:** `&fs` is pick-spreading (§2.12.6) the existing `fs` Tuple into the new re-assigned Tuple. `@` is the identity function (§3.8.1), and `| .. |` is partial application (§3.11) to *capture* the per-iteration `i` via closure.
 
-Each closure captures the frame in which its iteration ran; that frame is distinct for each iteration. This rule is non-negotiable for Foi's loop semantics; it is what makes `~each` compose correctly with closure-bearing bodies.
+Each closure captures the frame in which its iteration ran; that frame is distinct for each iteration.
 
 ### §2.12 Pick Expressions
 
@@ -1970,12 +1944,6 @@ defn area(<:width, :height>: <>) ^width * height;
 area(< width: 5, height: 3 >);      // 15
 ```
 
-**Open:** Decide if destructuring should provide a mechanism for defaulting each assignment, such as `< :foo = 2 >`.
-```
-
-### Replace with
-
-```
 #### §3.2.3 Destructure Parameters
 
 A destructure parameter takes the form of a destructure target (§2.13), optionally with an explicit `:? source` fallback tail:
@@ -2067,7 +2035,12 @@ defn double(v) ^v * 2;
 1. Evaluate `expr` in the call frame.
 2. The function's return value is the result.
 
-The concise body admits five inner shapes: a do-comprehension (`~<<` bind or `~<*` loop), a match expression (`?{...}` or `?(x){...}`), any expression at the `OrDispatch` tier or narrower (arithmetic, compare, boolean, unary, chain access, calls, literals), or a `(...)`-wrapped escape hatch. Formally: `DoComprExpr | DoLoopComprExpr | MatchExpr | OrDispatch | GroupedExpr` (§13 grammar).
+The concise body admits five inner shapes: a do-comprehension (`~<<`
+bind or `~<*` loop), a match expression (`?{...}` or `?(x){...}`), any
+expression at the `OrDispatch` tier or narrower (arithmetic, compare,
+boolean, unary, chain access, calls, literals), or a `(...)`-wrapped
+escape hatch. Formally: `DoComprExpr | DoLoopComprExpr | MatchExpr |
+OrDispatch | GroupedExpr` (§13 grammar).
 
 ```java
 defn foo(x)(y)(z) ^x * y * z;
@@ -2090,9 +2063,8 @@ defn guarded(x) ^(?[x ?> 0]: 1);
 defn withInner() ^(defn(y) ^y + 1);
 ```
 
-Bare `^{...}` is also a parse error; the `{` sitting directly against `^` visually collides with the block body form (§3.3.2). To return a bare block value, paren-wrap: `^({ x; y })`.
-
-This narrowing is the **visual-runway principle**: the tokens between `^` and any inner `{` must signal the body's shape unambiguously (an operator like `~<<`, a sigil like `?`, or a paren mark). At small function-body distances the eye should never need to look ahead to disambiguate the return value's scope from the surrounding function's clauses. Explicit paren-wrapping restores the runway for any form that would otherwise blur it.
+Bare `^{...}` is also a parse error. To return a bare block value,
+paren-wrap: `^({ x; y })`.
 
 #### §3.3.2 Block body: `{ stmts; ^expr; }`
 
@@ -2122,7 +2094,7 @@ defn classify(n) {
 };
 ```
 
-This rule is what makes Foi's tail-position analysis a structural property of the AST rather than a control-flow analysis (§3.4).
+Tail position is therefore a structural property of the AST (§3.4).
 
 #### §3.3.3 Pipeline body: `#> stage #> stage ...`
 
@@ -2369,7 +2341,7 @@ defn add(x, y) :as AddFunc ^x + y;
 
 - `:as Type` is transparent at runtime; it imposes no behavior beyond what §9 specifies.
 - `:as` appears once, after any `:over` clause and before the body.
-- The type slot admits only a bare `Identifier`, not the broader `NamedType` production used in `AsAnnotationExpr` (§5). This narrowing is intentional: the `defn` declaration grammar is already substantially complex, and confining `FuncAsClause` to an identifier reference to a `deft`-declared function type keeps the function-signature surface tractable. To annotate with a compound type expression, declare a `deft` binding for that type and reference it by name.
+- The type slot admits only a bare `Identifier`, not the broader `NamedType` production used in `AsAnnotationExpr` (§5). To annotate with a compound type expression, declare a `deft` binding for that type and reference it by name.
 
 ### §3.8 The `@`-Call Operator
 
@@ -2398,7 +2370,7 @@ def x: @42;                              // 42
 def y: @(1 + 2);                         // 3
 ```
 
-To reference the `@` operator as a first-class function value, use the standard operator-as-function lift form `(@)`. This matches the rule applied to every other operator: bare-operator-in-value-position is not admitted; `( )` is required to lift an operator up to a value (e.g., `(+)`, `(?and)`, `(@)`). The LHS-less *use* form `@v` is a special-case of the operator being applied with no callee, not the operator referenced as a value.
+`(@)` is the operator-as-function lift of `@` (§3.13). Bare operators are not admitted at value position; the `( )` wrap lifts an operator to a value uniformly across the operator set (`(+)`, `(?and)`, `(@)`). The LHS-less *use* form `@v` is the operator applied with no callee, not a reference to the operator as a value.
 
 `(@)` is **arity-polymorphic:** it dispatches at call time on the number of arguments supplied, mirroring the `@`-call operator's LHS-presence dispatch at the lifted-function layer:
 
@@ -2431,7 +2403,7 @@ The prime form `(@')` reverses argument order for the 2-argument arity: swaps to
 
 `Foo@` alone is uniformly a call form regardless of the constructor's declared arity (§3.10.7): with an argument trail (`Foo@x`) or without (`Foo@`), the `@`-call form dispatches the constructor. There is no arity-based ref-vs-call distinction on the `Foo@` shape.
 
-To extract the constructor as a first-class function value, use the reference form `Foo.@`:
+The reference form `Foo.@` extracts the constructor as a first-class function value:
 
 ```java
 def doub: Double.@;       // reference to Double's constructor
@@ -2447,7 +2419,7 @@ Passing the extracted reference as a callback works the same way: the marker tra
 
 **Adjacency.** The `.@` form is strict no-trivia on both sides: `Foo. @`, `Foo .@`, and `Foo . @` are all parse errors. This stricter rule (versus the trivia-tolerant `Foo@`) matches the form's chain-terminator semantics; there should be no variance around where the access chain ends.
 
-**No trailing forms.** `Foo.@` admits no chained tail. `Foo.@(x)`, `Foo.@%`, `Foo.@'`, and `Foo.@.bar` are all rejected. To use the extracted reference in any of those roles, first bind it into a name:
+**No trailing forms.** `Foo.@` admits no chained tail. `Foo.@(x)`, `Foo.@%`, `Foo.@'`, and `Foo.@.bar` are all rejected. The extracted reference reaches those roles only through a name it is bound to:
 
 ```java
 def cons: Foo.@;
@@ -2501,7 +2473,7 @@ The primary consumer of this mechanism is the dispatch-type introspection surfac
 
 The symbol `%` (Syntactic-Grammar `EffectorTail` at §7) is an effector call operator against an instance value, with an optional right-hand environment operand.
 
-It dispatches an effector call through the instance's owning namespace, subject to an opt-in `%`-marked hook (§3.1.1.2) on that namespace. If the namespace declares no such hook, the `%`-call is a type error. Value-like namespaces that want their instances to admit `%` calls without an effect declare an explicit identity `%` hook (per the `Lazy@` pattern at §2.2.9; see §3.9.1).
+It dispatches an effector call through the instance's owning namespace, subject to an opt-in `%`-marked hook (§3.1.1.2) on that namespace. If the namespace declares no such hook, the `%`-call is a type error. A value-like namespace admits `%` calls on its instances only by declaring an explicit identity `%` hook (per the `Lazy@` pattern at §2.2.9; see §3.9.1).
 
 Where `@` invokes a namespace as a constructor (§3.8), `%` invokes an instance's namespace as an effector. An instance carries its namespace identity as a runtime contract, established at construction; `%` reads that identity to route dispatch.
 
@@ -2516,7 +2488,7 @@ If the instance's owning namespace declares no `%` hook, the `%`-call form is a 
 
 The rejection is **normative**. `%` requires a `%` hook to dispatch to.
 
-Value-like namespaces (`Lazy@`, `Id@`, `None@`, etc.) that carry no effect but want to admit `%` calls MUST declare an explicit identity `%` hook:
+A value-like namespace (`Lazy@`, `Id@`, `None@`, etc.) carries no effect, and admits `%` calls on its instances only by declaring an explicit identity `%` hook:
 
 ```java
 defn Identity@(v) ^v;
@@ -2534,7 +2506,7 @@ Note that this rejection is distinct from the rejection of `%` against a value w
 
 `%` also admits no LHS-less use form. `%v` is not a valid expression; `%` requires an instance LHS.
 
-To reference the `%` operator as a first-class function value, use the operator-as-function lift form `(%)` (§3.9.3).
+`(%)` is the operator-as-function lift of `%` (§3.9.3), and is the only form in which `%` is a value.
 
 #### §3.9.3 `(%)` As A Function Value
 
@@ -2707,7 +2679,7 @@ The `@`-call form admits exactly zero or one operand. Spread arguments and named
 
 **NOTE:** Parentheses following `@` are not call syntax; they are expression-grouping for the operand. `Foo@(x + 1)` is `Foo` applied to the value of `x + 1`, not a parenthesized argument list.
 
-To reference the constructor hook as a function value, use `Foo.@` (§3.8). To invoke the operator-function form, use `(@)(Foo, x)` (§3.13).
+`Foo.@` (§3.8) references the constructor hook as a function value. `(@)(Foo, x)` (§3.13) is the operator-function form of the same dispatch.
 
 The `@` operator, including how `Foo.@` resolves at call time and how the resulting instance carries its owning namespace identity, is specified in full in §3.8.
 
@@ -2724,7 +2696,7 @@ If the instance's owning namespace declares no `%` hook, the `%`-call form is a 
 
 The `%`-call form admits exactly zero or one operand. Spread arguments and named arguments are not part of this form.
 
-To invoke the operator-function form, use `(%)(inst)` or `(%)(inst, env)` (§3.9.3).
+`(%)(inst)` and `(%)(inst, env)` (§3.9.3) are the operator-function forms of the same two shapes.
 
 The `%` operator is specified in full in §3.9.
 
@@ -2781,8 +2753,10 @@ Each comprehension marker fixes the operand shape supplied at call time and thre
 
 The `~fold` and `~cata` markers form a **mutual-defaulting pair**: they express the same catamorphism, differing only in the None-branch handler's representation (eager value vs. thunk). Missing-hook dispatch routes through the other member of the pair:
 
-- `~fold` missing, `~cata` present: `(~fold)(inst, init, fn)` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
-- `~cata` missing, `~fold` present: `(~cata)(inst, initThunk, fn)` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
+- `~fold` missing, `~cata` present: `(~fold)(inst, init, fn)` dispatches
+  to the `~cata` hook with `() -> init` thunk-wrap.
+- `~cata` missing, `~fold` present: `(~cata)(inst, initThunk, fn)`
+  dispatches to the `~fold` hook with `initThunk()` evaluated eagerly.
 - Both missing: rejected at compile time.
 
 For the remaining Tier 2 markers (`~map`, `~ap`, `~filter`, `~foldR`), the default composition expands over the namespace's declared `~<` primitive and its `@` constructor hook. Where the composition's structural precondition does not fit the namespace's shape (e.g., `~foldR` on an infinite structure; `~filter` on a namespace without an "empty of shape"), the expansion is rejected at compile time. Exact per-marker default-composition formulas are specified at each marker's §7 subsection.
@@ -2999,22 +2973,19 @@ The two-operand inline forms of `~fold` / `~foldR` on Tuples (`xs ~fold fn` with
 
 **Prime forms.** The prime form of a lifted comprehension follows the semantic-inversion rule established for primed operators (§3.12.1, §3.12.4): prime is the natural inverse along whatever axis is meaningful for the operator. For the comprehension family, the meaningful axis is **direction of traversal** -- the axis that unifies the family's identity (`~fold` / `~foldR` being the canonical example).
 
-Argument-order-swap prime, admitted for other Foi binary operators without a direction axis (`.`, `%`, `?<=>`, `?in`), is **not** admitted for comprehension operators. Mixing arg-swap prime with direction-reversal prime within the same operator family would impose a per-marker cognitive load users would have to memorize; unifying prime on the direction axis, and requiring partial application or explicit lambda for argument reordering, keeps the family coherent.
+Argument-order-swap prime, admitted for other Foi binary operators without a direction axis (`.`, `%`, `?<=>`, `?in`), is **not** admitted for comprehension operators. Argument reordering is expressed by partial application or an explicit lambda.
 
-Comprehension primes fall into three categories:
+Comprehension primes fall into two categories:
 
 - **Direction-reversal (admitted).** The fold family carries a direction axis. `(~fold')` dispatches to the `~foldR` hook; `(~foldR')` dispatches to the `~fold` hook (inverse-of-inverse per §3.12.1). At declaration position, `~fold` and `~foldR` remain separate canonical markers with independent hook slots on the namespace; the prime is a call-site alias linking them. A namespace that declares `~fold` but not `~foldR` (or vice versa) is subject to the missing-hook rules of §3.10.9.3; the prime resolves at dispatch, then the standard Tier 2 default expansion applies to the resolved hook.
 
-- **Reserved (semantic-reject; future activation possible).** `(~each')`, `(~map')`, and `(~cata')` parse at the grammar layer (universal-prime path per §3.13) and reject at the semantic layer with a diagnostic. Each carries a plausible direction axis whose semantics await commitment: `~each'` for right-to-left iteration on ordered containers; `~map'` for direction-observable mapping where hooks carry effects; `~cata'` for direction-reversed catamorphism on ordered-container `~cata` shapes. Reserving the surface spelling -- rather than silently accepting it as a no-op or admitting arg-swap semantics -- preserves the option to activate these primes with direction semantics in a future revision without breaking existing code.
+- **Rejected.** `(~each')`, `(~map')`, `(~cata')`, `(~<')`, `(~ap')`, and `(~filter')` parse at the grammar layer (universal-prime path per §3.13) and reject at the semantic layer with a diagnostic. Argument-order-swap is not admitted for the comprehension family per the family-coherence rule above; a fixed operand with the instance flowing in later is expressed as `(~<glyph>)|, operand|`, and the diagnostic directs the author to that form.
 
-- **Rejected (permanent; no direction axis).** `(~<')`, `(~ap')`, and `(~filter')` reject at the semantic layer with a diagnostic. These operators have no direction axis; the only inversion available on them at the operator layer is argument-order-swap. Argument-order-swap is not admitted for the comprehension family per the family-coherence rule above -- and, independently, is redundant with partial application (§3.11): a fixed operand with the instance flowing in later is expressed as `(~<glyph>)|, operand|`, which is what arg-swap prime would have served anyway. The diagnostic directs the author to this pattern.
-
-**Infix does not admit prime.** The ComprOp production (§10) admits only `Comprehension` or `Tilde OpenAngle` markers; prime is not part of infix comprehension syntax. `xs ~fold' fn` is a parse error. Prime forms are reachable only through the operator-as-function paren-wrap: `(~fold')(xs, init, fn)`. To invoke a direction-reversed fold in infix position, use the direct spelling `xs ~foldR fn`.
+**Infix does not admit prime.** The ComprOp production (§10) admits only `Comprehension` or `Tilde OpenAngle` markers; prime is not part of infix comprehension syntax. `xs ~fold' fn` is a parse error. Prime forms are reachable only through the operator-as-function paren-wrap: `(~fold')(xs, init, fn)`. Infix direction-reversal is the direct spelling `xs ~foldR fn`.
 
 **Semantic errors.** The error taxonomy of §3.10.9.5 applies uniformly to lifted-function-form calls, with dispatch resolution and hook lookup performed against the LHS argument at call time rather than against the LHS operand at parse time. In addition, the arity-mismatch error described above is diagnosed at call time. Two errors specific to primed comprehensions:
 
-- **Reserved prime form**: `(~each')`, `(~map')`, or `(~cata')` appears in an expression. Diagnostic directs the author to use the base marker pending semantic definition of the prime form in a future spec revision.
-- **Prime not admitted**: `(~<')`, `(~ap')`, or `(~filter')` appears in an expression. These markers carry no direction axis, and arg-swap prime is not part of the comprehension family. Diagnostic directs the author to partial application (§3.11) for the operand-fixed, instance-flows-through pattern arg-swap would have served: `(~filter)|, pred|`, `(~<)|, fn|`, `(~ap)|, valInst|`.
+- **Rejected prime form**: `(~each')`, `(~map')`, `(~cata')`, `(~<')`, `(~ap')`, or `(~filter')` appears in an expression. Diagnostic directs the author to the base marker.
 
 ##### §3.10.9.7 Dispatch-Type Introspection
 
@@ -3083,7 +3054,7 @@ Both idioms rely on namespace-value `?=` identity equality per §3.8.
 
 **No parallel declaration surfaces.** A namespace declares at most one hook per operator (§3.1.1). Compound-LHS specialization is entirely a runtime-reflection concern inside the hook body: dispatch on `ty` inside the single declared hook.
 
-**Rationale.** A single hook declaration with runtime `ty` dispatch collapses what would otherwise be an N-fold surface (one hook per compound-LHS shape) into one hook that self-hosts its own specialization. This is the same collapse pattern as the four-way namespace collapse at §3.8, applied to the specialization axis: what appear to be N distinct hooks are one hook plus a dispatch value. The primary consumer of this mechanism is the `~<<` override route (§3.10.9.4); `List{Promise} ~<<` (§7.2's eager-async-iteration form) is self-hosted as a compound-LHS specialization arm of the single `List~<<` hook, via `?(ty)` dispatch inside the hook body.
+**Rationale.** A single hook declaration with runtime `ty` dispatch collapses what would otherwise be an N-fold surface (one hook per compound-LHS shape) into one hook that self-hosts its own specialization. Compound-LHS specialization is one hook plus a dispatch value, not N hooks. The primary consumer of this mechanism is the `~<<` override route (§3.10.9.4); `List{Promise} ~<<` (§7.2's eager-async-iteration form) is self-hosted as a compound-LHS specialization arm of the single `List~<<` hook, via `?(ty)` dispatch inside the hook body.
 
 #### §3.10.10 Multi-Tier Function Call
 
@@ -3455,14 +3426,12 @@ flat("https://my.site", "/api/find", "name=getify");
 
 #### §3.12.4 Primed inverses
 
-`/\` and `\/` are each other's inverses; `'` is its own inverse. So each transform admits a primed-inverse form expressing the other:
+`/\` and `\/` are each other's inverses; `'` is its own inverse. Each transform therefore admits a primed-inverse form expressing the other:
 
 ```java
 def uncurry: (/\');
 def curry: (\/');
 ```
-
-The primed forms exist for language consistency (every operator admits a primed form) but the recommended style is to use the named operator directly: `\/` rather than `/\'`, `/\` rather than `\/'`.
 
 ### §3.13 Operator-as-Function
 
@@ -3483,7 +3452,7 @@ This section specifies the standalone **guard expression** form, `?[cond]: conse
 
 A guard expression produces a value based on a single boolean test. If the test's polarity-adjusted result is `true`, the guard **matches** and the consequent is evaluated to produce the guard's value. If the guard does not match, the consequent is not evaluated and the guard's value is `empty` (§1.1).
 
-The CondClause primitive introduced here is also the atomic decision form embedded in function preconditions (§3.5), the independent form of pattern matching (§5), and the conditional-form of the `~each` loop comprehension (§7). Pattern matching (§5) extends the single-clause shape defined here to a multi-clause first-match-wins cascade, with optional topic dispatch and an optional else clause; the forms share the `?[cond]:` clause syntax and the `?/!` polarity vocabulary, and diverge on how many clauses combine and on whether a shared topic threads through them. A single-clause independent-match expression is semantically equivalent to the guard expression form here; the standalone guard is the shorter surface.
+The CondClause primitive introduced here is also the atomic decision form embedded in function preconditions (§3.5), the independent form of pattern matching (§5), and the conditional-form of the `~each` loop comprehension (§7). Pattern matching (§5) extends the single-clause shape defined here to a multi-clause first-match-wins cascade, with optional topic dispatch and an optional else clause; the forms share the `?[cond]:` clause syntax and the `?/!` polarity vocabulary, and diverge on how many clauses combine and on whether a shared topic threads through them. A single-clause independent-match expression is semantically equivalent to the guard expression form here.
 
 ### §4.1 The CondClause Primitive
 
@@ -3558,7 +3527,7 @@ The empty result on non-match is the source of §1.1's "A failed guard expressio
 
 **Tail position.** When a guard expression occupies a tail position, its consequent occupies a tail position. The non-match path produces the `empty` literal with no call and is trivially tail-safe. A guard is therefore proper-tail-call transparent, in the same sense as a precondition consequent (§3.5).
 
-**Nested guards.** A guard's consequent may itself be a guard: `?[a]: ?[b]: x`. The inner guard is evaluated only when the outer matches; the composite's value is `x` when both match and `empty` otherwise. The two non-match paths are **not distinguishable** at the composite's value -- outer-failed and inner-failed both produce `empty`. Where the distinction matters, use an independent match (§5.1) with explicit clauses rather than nesting guards.
+**Nested guards.** A guard's consequent may itself be a guard: `?[a]: ?[b]: x`. The inner guard is evaluated only when the outer matches; the composite's value is `x` when both match and `empty` otherwise. The two non-match paths are **not distinguishable** at the composite's value -- outer-failed and inner-failed both produce `empty`. An independent match (§5.1) with explicit clauses distinguishes them.
 
 **`:as` precedence.** The consequent slot is greedy and consumes a trailing `:as` annotation. Annotating the guard expression itself requires explicit parens:
 
@@ -3644,8 +3613,6 @@ The consequent may be an assignment expression:
 ?[valid]: counter := counter + 1;
 ```
 
-This form has an important property that the other consequent shapes do not carry as directly:
-
 **The assignment evaluates only when the guard matches.** When the CondClause does not match, no part of the assignment expression is evaluated and no slot is mutated. The guard expression's value is `empty` (per §4.2), unchanged from any other non-match outcome.
 
 **When the guard matches, the guard's value is the assigned value** -- the value written to the target's slot. This follows compositionally from three properties: the guard's value on match is the consequent value (§4.2); an assignment expression's value is the assigned RHS; and the consequent slot receives the assignment expression directly.
@@ -3660,8 +3627,6 @@ This form has an important property that the other consequent shapes do not carr
 1. No part of the assignment expression is evaluated -- not the RHS, not the target's base, not any computed key. The conditional-evaluation property covers the whole expression, not the RHS alone; a perform site (§6.2) anywhere within it does not fire.
 2. No slot is mutated.
 3. The guard expression's value is `empty`.
-
-The conditional-mutation property is intentional: `?[cond]: target := value` is the canonical form for "mutate this slot only when this condition holds", without needing to wrap the mutation in a block. It is the shortest expression of a guarded re-assignment side effect in Foi.
 
 ### §4.4 Composition
 
@@ -3691,7 +3656,7 @@ def maybeResult: ?[x ?> 0]: compute(x);
 
 The equivalence is total, not approximate. The two forms share the CondClause primitive (§4.1), and their consequent slots are the same grammar (`BlockExprStrict | Expr`), so every consequent shape of §4.3 -- expression, bare block, def-block, assignment -- transfers unchanged. Match/no-match, the `empty` non-match value, conditional evaluation of the consequent, static type, tail position, and frame allocation all follow from §5.1 applied to a one-clause cascade.
 
-An implementation may therefore lower `GuardedExpr` to `IndepMatchExpr` at any stage after parsing and share a single evaluation path for both. The guard is a surface abbreviation, not an independent semantic construct; §4.2 and §4.3 describe its behavior directly because it is the form a reader meets first, not because it carries semantics §5 lacks.
+An implementation may therefore lower `GuardedExpr` to `IndepMatchExpr` at any stage after parsing and share a single evaluation path for both. The guard is a surface abbreviation, not an independent semantic construct.
 
 **Related forms.**
 
@@ -3772,7 +3737,7 @@ greeting;                   // "Hello!"
 
 **Equivalence to guard expression.** A single-clause independent match with no else clause is *exactly* a guard expression (§4.2): the consequent value on match, `empty` on non-match. §4.4 states the equivalence normatively, in the direction that matters for implementation -- the guard is defined as this form, and may be lowered to it.
 
-The equivalence is total, including under the optional coverage-gap configuration (§5.5). That diagnostic is keyed on the **surface form** a program was written in, not on the desugared shape: a guard expression is partial by design (§4.2 -- its `empty` arm is unconditional and cannot be discharged), so a guard lowered to a one-clause match does not become a coverage gap by virtue of the lowering. Writing `?{ [c]: e }` directly does expose the clause to the diagnostic, because at that surface the missing else is a plausible omission rather than a stated intent.
+The equivalence is total, including under the optional coverage-gap configuration (§5.5). That diagnostic is keyed on the surface form a program was written in, not on the desugared shape: a guard lowered to a one-clause match is not a coverage gap; `?{ [c]: e }` written directly is exposed to the check. See §5.5.
 
 The standalone `?[c]: e` form is the shorter surface for the single-clause case; the `?{ [c]: e }` form is preferred only when a second clause or an else is anticipated.
 
@@ -3975,7 +3940,7 @@ A `#` at either position therefore does not refer to the match's own topic. It r
 };
 ```
 
-Three of the four `#` above reach the outer topic and the fourth reaches the inner one, across two adjacent lines. The narrow binding extent is what makes this legal, and it is a genuine readability hazard: prefer capturing a topic into a named binding whenever a `#` would otherwise cross a match boundary.
+Three of the four `#` above reach the outer topic and the fourth reaches the inner one. The narrow binding extent is what makes each resolution legal.
 
 ##### §5.2.2.2 Nested Dependent Match
 
@@ -4035,7 +4000,7 @@ The else clause consists of an optional leading `?` sigil followed by a match co
 
 No trivia is admitted between the `?` and the `:`. The pair cuddles as `?:`, consistent with `?[` (§4.1), `?{` (§5.1), and `?(` (§5.2) -- every `?`-led form in the language binds its sigil to the delimiter that follows it.
 
-**Placement is structural.** A match body admits at most one else clause, and only in final position. Neither is a semantic check: `IndepMatchStmts` and `DepMatchStmts` (§5.1, §5.2) reach `ElseStmt` only through the single trailing `optional(...)` slot, so a second else, or an else followed by a pattern clause, fails to parse rather than being diagnosed later. An implementation gets both rules from the grammar and needs no separate pass to enforce them.
+**Placement is structural.** A match body admits at most one else clause, and only in final position. Neither is a semantic check: `IndepMatchStmts` and `DepMatchStmts` (§5.1, §5.2) reach `ElseStmt` only through the single trailing `optional(...)` slot, so a second else, or an else followed by a pattern clause, fails to parse.
 
 The trailing slot is an exclusive choice between an else clause and a semicolon-less final pattern clause, so a body ending in an else must terminate its last pattern clause with a `;`.
 
@@ -4053,7 +4018,7 @@ Two surface forms are semantically equivalent:
 };
 ```
 
-The leading `?` on the else clause is a stylistic marker; it may be omitted for brevity or included for visual consistency when the match's pattern clauses use explicit polarity sigils.
+The leading `?` on the else clause carries no semantic; the two forms are interchangeable.
 
 **Semantic.** If any preceding pattern clause matches, the else clause is not evaluated. If no preceding clause matches, the else consequent is evaluated in the current environment (with the topic `T` available at `#` in the dependent form); its value is the match expression's value.
 
@@ -4686,36 +4651,14 @@ a namespace's own hooks, reference identity of the namespace's
 own instances is intrinsically observable -- that is what
 per-instance state requires, and slot access via
 `Effect.User.Slot.*` is the surface Foi provides for it.
-Namespaces may also expose reference-identity-derived semantics
-through their public `?=` hook as an explicit design decision;
-the resulting behavior is visible in the namespace's own
-declaration, not a language-level leak.
+A namespace may expose reference-identity-derived semantics
+through its public `?=` hook.
 
-##### §6.1.5.7 Coupling Hygiene, Not Adversarial Defense
+##### §6.1.5.7 Cross-Namespace Grants
 
-The mechanisms in this section are **abstraction hygiene**, not
-adversarial defense. Foi assumes cooperating users; a user
-determined to subvert the mechanism forks the compiler, and Foi
-does not pretend to prevent that.
-
-The specific hygiene properties:
-
-- **Cross-namespace access impossibility** prevents user code from
-  accidentally depending on another namespace's internal state
-  representation. No key value exists to pass, because namespace
-  identity is compile-time lexical, not runtime data.
-
-- **`Effect.Host.Slot.*` sealing** prevents user code from naming
-  runtime-owned slot access, since those identifiers may change
-  across compiler versions.
-
-- **Reference-identity non-exposure** prevents user code from
-  depending on runtime interning decisions, since userland has no
-  operator to observe those decisions.
-
-Explicit named cross-namespace grants (e.g., "namespace A may
-access namespace B's slots") are not admitted in the current
-design.
+There is no form by which one namespace is granted access to
+another namespace's slots. No such grant is admitted at any
+site.
 
 ##### §6.1.5.8 Minting Opaque Values
 
@@ -4750,10 +4693,8 @@ for the lifetime of a program run:
 handle, nor name it in `:Effects(...)`. The
 `:Effects(Effect.Host.Counter)` spelling is reachable only from
 compiler-authored paths (§6.1.4.1 step 1), exactly as
-`Effect.Host.Slot` is (§6.1.5.5). Unlike `Effect.User.Slot.*`
-(§6.1.5.4), there is no user-facing interception point: uniqueness
-is the property consumers rely on, and an interceptable mint could
-not guarantee it.
+`Effect.Host.Slot` is (§6.1.5.5). There is no user-facing interception
+point for this kind.
 
 **Surfacing.** A minted value reaches userland only where a
 namespace deliberately projects one -- `Iter`'s and `IterP`'s
@@ -4762,14 +4703,6 @@ projected it is an ordinary opaque value: bindable, passable,
 storable, `?=`-comparable, and nothing more. Userland's inability
 to *construct* one is precisely what makes a projected sentinel a
 reliable discriminator (§6.5.3, §6.5.6).
-
-**NOTE:** The kind's name describes the runtime's freshness
-mechanism, not a userland surface. Counting is how the host
-guarantees uniqueness; the ordinals themselves are never
-projectable, and no program can read a count off a minted value.
-Programs needing sequential numbering, UUIDs, or any inspectable
-identifier build those over `Effect.Sys.Random` (§6.13.5) or their
-own namespace slot state (§6.1.5.2).
 
 ### §6.2 Performing Effects
 
@@ -4920,10 +4853,9 @@ The narrowing is closed: exactly the kinds admitted by the DSL are
 handled, and nothing else. Any perform of a kind outside every named
 prefix propagates past the handler.
 
-Use bare form to catch a single subtree. Use brace form to catch a
-union of disjoint subtrees. To catch a narrower slice than an
-available parent prefix, name more-specific children instead of the
-parent.
+Bare form catches a single subtree; brace form catches a union of
+disjoint subtrees. A narrower slice than an available parent prefix
+is named by its more-specific children.
 
 **Cross-uses.** The prefix-match rule of §6.1.4 applies wherever an
 effect-kind path is named: handler narrowings here, `?as` patterns
@@ -6678,39 +6610,90 @@ all.take();    // Promise{Right{< 42, 10 >}}
 all.take();    // Promise{Left{"Channel Closed"}}
 ```
 
-The received list preserves the input list's ordering, independent of the order in which values arrived. Each source value is consumed from its channel as it arrives; values consumed before every-satisfaction is reached are held internally by the combinator until the derived channel emits. If any source channel closes before producing a value, `all` closes with pending takes resolving `Left@ "Channel Closed"`.
+The received list preserves the input list's ordering, independent of
+the order in which values arrived. Each source value is consumed from
+its channel as it arrives; values consumed before every-satisfaction is
+reached are held internally by the combinator until the derived channel
+emits. If any source channel closes before producing a value, `all`
+closes with pending takes resolving `Left@ "Channel Closed"`.
 
-**NOTE:** These are Channel-returning constructors; the derived channel composes uniformly with the Channel API (§6.9.2-§6.9.4) -- downstream consumers apply `take` and Promise-based composition to it identically to any other channel. One-shot with auto-close is the derived channel's contract: unlike a base `Channel@`-constructed instance, it emits exactly one value over its lifetime.
+**NOTE:** These are Channel-returning constructors; the derived channel
+composes uniformly with the Channel API (§6.9.2-§6.9.4) -- downstream
+consumers apply `take` and Promise-based composition to it identically
+to any other channel. One-shot with auto-close is the derived channel's
+contract: unlike a base `Channel@`-constructed instance, it emits
+exactly one value over its lifetime.
 
 ### §6.10 PushStream
 
-A **PushStream** is a monadic *subscribable source* of values -- not a container holding a value, but a protocol for value delivery to registered subscribers. Unlike `Promise` (§6.8), whose composition threads a single resolution through the chain, and unlike `Channel` (§6.9), which coordinates one-to-one value handoff between producer and consumer, a `PushStream` broadcasts each value pushed by its producer to every currently-subscribed observer.
+A **PushStream** is a monadic *subscribable source* of values: a
+protocol for value delivery to registered subscribers, not a container
+holding a value. A `PushStream` broadcasts each value pushed by its
+producer to every currently-subscribed observer.
 
-A stream is either **open** (accepting pushed values and forwarding them to subscribers) or **closed** (no further values propagate). This is analogous to `Promise`'s pending/resolved distinction but structurally different: a promise resolves once and permanently holds that value; a stream emits values as its producer supplies them, retains no value between emissions, and terminates by transitioning to closed. Close signals propagate downstream to any composed observer.
+A stream is either **open** (accepting pushed values and forwarding
+them to subscribers) or **closed** (no further values propagate). A
+stream retains no value between emissions. Close signals propagate
+downstream to any composed observer.
 
-**NOTE:** `PushStream` is monadic in the sense of the observable monad in reactive-programming literature. `~<` and `~map` are defined directly on it; `~<*` (§6.10.3) is the composition-form operator. Monad laws hold under observable-behavior equivalence: from any subscriber's viewpoint, `(PushStream.subj@).st ~< f` and the stream produced by `f v` (once `v` is pushed) yield emission sequences and close timings indistinguishable to that observer. This is a weaker equivalence than the static-value equalities that hold for `Promise` or `Id`, because a stream has no static value to equate -- only a sequence of emissions observable through subscription.
+`~<` and `~map` are defined directly on `PushStream`; `~<*` (§6.10.3)
+is the composition-form operator.
 
-**NOTE:** Four design commitments frame `PushStream`'s subscription semantics:
+**NOTE:** Four rules govern `PushStream`'s subscription semantics:
 
-- **Hot**: producers push independently of subscribers. Values pushed while no subscriber is registered are lost. Cold streams are `PullStream` (§6.11).
-- **Broadcast**: every currently-subscribed observer receives every pushed value. Subscription is fanout, not queued handoff.
-- **No replay**: a subscriber sees only values pushed after its subscription; values pushed before its subscription are not delivered to it. Streams retain no history.
-- **Idempotent subscription**: a subscription is a relationship between subscriber and source, not an accumulating count. Establishing a subscription for a (subscriber, source) pair that already exists is a no-op. This invariant applies uniformly to every operator (`~<`, `~map`, `~<*`, combinators) that establishes subscriptions internally.
+- **Hot**: producers push independently of subscribers. Values pushed
+  while no subscriber is registered are lost. Cold streams are
+  `PullStream` (§6.11).
+- **Broadcast**: every currently-subscribed observer receives every
+  pushed value. Subscription is fanout, not queued handoff.
+- **No replay**: a subscriber sees only values pushed after its
+  subscription; values pushed before its subscription are not delivered
+  to it. Streams retain no history.
+- **Idempotent subscription**: a subscription is a relationship between
+  subscriber and source, not an accumulating count. Establishing a
+  subscription for a (subscriber, source) pair that already exists is a
+  no-op. This invariant applies uniformly to every operator (`~<`,
+  `~map`, `~<*`, combinators) that establishes subscriptions internally.
 
-These match the hot-observable design well-worn in reactive-programming literature (with idempotent subscription as Foi's language-level addition). They distinguish `PushStream` from `Channel` (single-consumer, coordinated, back-pressured) and from `Promise` (single-value, replayable via re-observation).
+These match the hot-observable design well-worn in reactive-programming
+literature (with idempotent subscription as Foi's language-level
+addition). They distinguish `PushStream` from `Channel`
+(single-consumer, coordinated, back-pressured) and from `Promise`
+(single-value, replayable via re-observation).
 
 The userland surface is:
 
-- `PushStream@`: this unit constructor form exists for definitional completeness, but its use is always ill-formed and will produce a compiler error.
-- `PushStream.subj@`: subject constructor. Exposes `.st` (the associated `PushStream`) as its sole field. Returns a subject.
-- `subj.close()`: close the stream. Available on the subject only. Returns `Right@ true` on first invocation; subsequent invocations return `Left@ "PushStream Closed"`. Close propagates downstream to composed observers.
-- `stream.closed()`: available on the stream. Returns a `Promise` that resolves to `Right@ empty` once the stream closes. For sync inspection of current state, use `.closed().resolved()` (per §6.8).
-- Subject `%`: `subj% v` broadcasts `v` to all current subscribers of the associated stream. Returns a Promise (see §6.10.1).
-- `~<` / `~map`: single-step chain operators. Each registers a subscriber on the source stream and produces a derived stream carrying transformed values to that derived stream's own subscribers.
-`~<*` subscription form: registers the block body as a subscriber to the source stream; the block body executes per value broadcast from the source. Resolves to `Promise{Left{"PushStream Closed"}}` when the source closes, or `Promise{Left{payload}}` when a terminal `Left@ payload` in the block body signals early unsubscribe (§6.10.3). The block's terminal expression is otherwise discarded.
-- `PushStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@`: derived-stream constructors for fan-in, predicate filtering, stateful fold, and signal-driven close (§6.10.4).
+- `PushStream@`: this unit constructor form exists for definitional
+  completeness, but its use is always ill-formed and will produce a
+  compiler error.
+- `PushStream.subj@`: subject constructor. Exposes `.st` (the associated
+  `PushStream`) as its sole field. Returns a subject.
+- `subj.close()`: close the stream. Available on the subject only.
+  Returns `Right@ true` on first invocation; subsequent invocations
+  return `Left@ "PushStream Closed"`. Close propagates downstream to
+  composed observers.
+- `stream.closed()`: available on the stream. Returns a `Promise` that
+  resolves to `Right@ empty` once the stream closes. For sync inspection
+  of current state, use `.closed().resolved()` (per §6.8).
+- Subject `%`: `subj% v` broadcasts `v` to all current subscribers of
+  the associated stream. Returns a Promise (see §6.10.1).
+- `~<` / `~map`: single-step chain operators. Each registers a
+  subscriber on the source stream and produces a derived stream carrying
+  transformed values to that derived stream's own subscribers.
+  `~<*` subscription form: registers the block body as a subscriber to
+  the source stream; the block body executes per value broadcast from the
+  source. Resolves to `Promise{Left{"PushStream Closed"}}` when the
+  source closes, or `Promise{Left{payload}}` when a terminal
+  `Left@ payload` in the block body signals early unsubscribe (§6.10.3).
+  The block's terminal expression is otherwise discarded.
+- `PushStream.merge@` / `.filter@` / `.scan@` / `.takeUntil@`:
+  derived-stream constructors for fan-in, predicate filtering, stateful
+  fold, and signal-driven close (§6.10.4).
 
-**NOTE:** `~<<` (single-value do-block, §6.8.3) is not defined on `PushStream`. Streams have no single value to extract; `~<*` is the composition-form operator for producer-broadcast sources. This mirrors the split for other `~<*`-consuming types (§6.3, §6.9).
+**NOTE:** `~<<` (single-value do-block, §6.8.3) is not defined on
+`PushStream`. Streams have no single value to extract; `~<*` is the
+composition-form operator for producer-broadcast sources. This mirrors
+the split for other `~<*`-consuming types (§6.3, §6.9).
 
 #### §6.10.1 PushStream Unit Constructor
 
@@ -7651,7 +7634,7 @@ task%;
 
 **Leak diagnosis.** Neither case is silent. `IO%` and `IO~map` test the instance's slot for a release before proceeding, and perform `Effect.Sys.Warn` (§6.13.5) when they find one. The test is sound because composition never routes an IO through those hooks: `~<`, `~map`, and the sub-context constructors (§6.12.4) each read the slot and invoke the executor directly rather than applying `%`. A using-IO reaching `IO%` or `IO~map` therefore reached it without a bind. The acquire still runs and the expression still produces its value; the diagnosis reports the leak without altering the result.
 
-Two consequences of that discipline are worth stating explicitly. Sub-context constructors do not produce the leak at all: they carry a using sub-IO's release onto the IO they construct, wrapped in the same environment derivation (§6.12.4). And two stdlib sites apply `%` to an IO they were handed rather than composed: `IO.using@` evaluates its `acquire` under the ambient environment, and the release path runs `usingRelease(res)% env`. For an ordinary acquire or release this is invisible, since a plain IO carries no release of its own and the test does not fire. For a using-IO supplied in either position it does fire, and correctly -- that inner instance's release is bound to nothing and would otherwise be discarded silently.
+Two consequences follow. Sub-context constructors do not produce the leak at all: they carry a using sub-IO's release onto the IO they construct, wrapped in the same environment derivation (§6.12.4). And two stdlib sites apply `%` to an IO they were handed rather than composed: `IO.using@` evaluates its `acquire` under the ambient environment, and the release path runs `usingRelease(res)% env`. For an ordinary acquire or release this is invisible, since a plain IO carries no release of its own and the test does not fire. For a using-IO supplied in either position it does fire, and correctly -- that inner instance's release is bound to nothing and would otherwise be discarded silently.
 
 **NOTE:** Release covers continuation *completion*, not continuation *abandonment*. If an enclosing handler terminates the computation via `Done@` (§6.4) while a step inside the continuation is suspended at a perform, the bind function never returns and the release never runs.
 
@@ -7944,47 +7927,12 @@ rules):
 deft LogsProgress(int) :Effects(Effect.Sys.Log) ^empty;
 ```
 
-**NOTE:** The ambient category is deliberately narrow. Effects with
-Left-carrying resume (any perform whose value the caller must
-inspect), any effect that writes to persistent state, and any effect
-that opens network or file resources are outside the ambient category
-by design: those effects belong to the tracked discipline where
-callers explicitly acknowledge them. The ambient set is fixed by the
-runtime; users cannot mark their own effect kinds as ambient.
-
-#### §6.13.6 Open: `Sys.*` Namespace Expansion
-
-Beyond the four ambients committed in §6.13.5 (`Sys.Log`, `Sys.Warn`,
-`Sys.Random`, `Sys.CurrentTime`), the `Effect.Sys.*` namespace has
-room for additional host-service kinds. This subsection is a
-candidate register per §0.3; per-candidate classification (ambient
-vs. tracked) and precise payload/resume shapes remain open.
-
-- **`Sys.Sleep%`** -- suspend for a specified duration; resumes
-  after elapsed time.
-- **`Sys.EnvVar%`** -- read a named environment variable.
-- **`Sys.Args%`** -- read process command-line arguments.
-- **`Sys.Cwd%`** -- read current working directory.
-- **`Sys.Hostname%`** -- read machine hostname.
-- **`Sys.Platform%`** -- read OS platform identifier (`"linux"`,
-  `"darwin"`, `"win32"`, ...).
-- **`Sys.ProcessId%`** -- read current process ID.
-- **`Sys.Exit%`** -- terminate the process with a status code
-  (no-resume; call site never returns).
-- **`Sys.SIGINT%`** -- process-level interrupt (Ctrl-C) delivery;
-  caller decides whether to continue. Referenced at §6.11.4.
-- **`Sys.Signal.<kind>`** -- broader signal surface (`SIGTERM`,
-  `SIGHUP`, `SIGUSR1`/`SIGUSR2`, ...). Open shape question: one
-  effect kind with a signal-name payload, or per-signal sub-kinds.
-- **`Sys.Clock.Monotonic%`** -- monotonic clock (immune to
-  wall-clock adjustments); distinct from ambient `Sys.CurrentTime`.
-  Useful for reliable duration measurement.
-
-Out of scope for `Sys.*`: file I/O, network I/O, and any operation
-opening persistent or external resources. Those belong to
-user-declared effect kinds or dedicated stdlib namespaces, by the
-same principle §6.13.5 applies to the ambient category. `Sys.*` is
-host-service surface, not application I/O.
+**NOTE:** Effects with Left-carrying resume (any perform whose value
+the caller must inspect), effects that write to persistent state, and
+effects that open network or file resources are outside the ambient
+category; they fall under the tracked discipline. The ambient set is
+fixed by the runtime; users cannot mark their own effect kinds as
+ambient.
 
 ### §6.14 The Continuation Trampoline
 
@@ -8767,7 +8715,7 @@ xs ~map (v) { v * 2; };                 // block-defs clause
 pairs ~map (<:k, :v>) { <v, k>; };      // destructure block-defs
 ```
 
-To access the value *and* index, use the `List.entries@` unit constructor to produce an *entries* list to apply to `~map`, and destructure the iteration value:
+The `List.entries@` unit constructor produces an *entries* list whose iteration value destructures to `< index, value >`:
 
 ```java
 def xs: < 5, 10, 15 >;
@@ -8795,7 +8743,7 @@ zip(< 1, 2, 3 >, < 4, 5, 6 >);
 // < <1, 4>, <2, 5>, <3, 6> >
 ```
 
-To flatten instead of nesting, use `~<` (§7.3).
+`~<` (§7.3) flattens instead of nesting.
 
 **Empty LHS.** `~map` on an empty List yields an empty List: `<> ~map anyFn` evaluates to `<>`.
 
@@ -8880,7 +8828,7 @@ pairs ~filter (<:k, :v>) { k ?> 0 };       // destructure block-defs
 
 **Iteration-operand return.** The operand must return a boolean value. Non-boolean return is a shape mismatch, and will raise a type error (compiler or runtime).
 
-To access the element's index within the LHS, pair with `List.entries@` (as with `~map`):
+`List.entries@` supplies the element's index within the LHS, as with `~map`:
 
 ```java
 def xs: < 10, 20, 30, 40 >;
@@ -9055,8 +9003,10 @@ defn add(x, y) ^x + y;
 
 **Mutual-defaulting pair with `~fold`.** Per §3.10.9.3, `~fold` and `~cata` form a mutual-defaulting pair on the same catamorphism, differing only in the initial value's representation (eager value vs. thunk). If a namespace declares one but not the other, dispatch routes through the declared hook with an appropriate wrap or eager invocation:
 
-- Namespace declares `~cata` only: `(~fold)(inst, init, fn)` dispatches to the `~cata` hook with `() -> init` thunk-wrap.
-- Namespace declares `~fold` only: `(~cata)(inst, initThunk, fn)` dispatches to the `~fold` hook with `initThunk()` evaluated eagerly (forfeits laziness -- the cost of not declaring `~cata`).
+- Namespace declares `~cata` only: `(~fold)(inst, init, fn)` dispatches
+  to the `~cata` hook with `() -> init` thunk-wrap.
+- Namespace declares `~fold` only: `(~cata)(inst, initThunk, fn)`
+  dispatches to the `~fold` hook with `initThunk()` evaluated eagerly.
 - Neither declared: rejected at compile time.
 
 **Early exit.** Returning a `Done@`-shaped value from an iteration terminates the traversal. The payload is treated as the terminating iteration's terminal contribution -- becomes the final accumulator (result), same as in `~fold`:
@@ -9077,7 +9027,7 @@ defn add(x, y) ^x + y;
 
 `~cata` is a **Tier 2** marker (§3.1.1.3), member of the mutual-defaulting pair with `~fold` per §3.10.9.3.
 
-**Prime forms.** `(~cata')` is reserved per §3.10.9.6 (semantic-reject; future activation possible for direction-reversed catamorphism).
+**Prime forms.** `(~cata')` rejects at the semantic layer per §3.10.9.6.
 
 #### §7.8 `~ap`
 
@@ -9095,7 +9045,7 @@ def four: Id@ 4;
 
 For curried functions of multiple arguments, chained `~ap` applications supply arguments one at a time; each application peels one layer of the curry.
 
-The function-held-in-container structure is the intrinsic distinguishing feature of applicative -- what the abstraction is *about*. The operand being a same-namespace instance (rather than a bare value) is a definitional convention of the applicative abstraction, chosen for uniformity across all namespaces: for `Id`, wrapping the operand is ceremony that computes the same result as a bare value would; for `Maybe`, `Either`, `List`, `Promise`, or `IO`, the operand's own context contributes to the outcome, and the wrapping is what makes the composition well-defined.
+The `~ap` operand is a same-namespace instance, not a bare value (§3.10.9.2).
 
 To illustrate:
 
@@ -9135,13 +9085,13 @@ Standard Applicative-from-Monad derivation:
 fnInst ~ap valInst   ==   fnInst ~< ((fn) { valInst ~map fn })
 ```
 
-**Prime forms.** `(~ap')` rejects at the semantic layer per §3.10.9.6 (no direction axis; argument-order-swap not admitted for comprehensions).
+**Prime forms.** `(~ap')` rejects at the semantic layer per §3.10.9.6.
 
 #### §7.9 `Done@` Across Comprehensions
 
 `Done@` is the early-exit sentinel for comprehension iterations. §6.4 specifies its full sticky-sentinel semantics and the three call classes (raw-value, comprehension iteration return, effect handler resume). This section covers the "comprehension iteration return" class.
 
-**Uniform framing: comprehensions lift over `Done@`.** Every comprehension can be understood as a product of two orthogonal axes: a *terminal-semantic* (what to do with each iteration's terminal value -- collect, spread, fold, discard, decide) and a *control-flow signal* (whether to continue or stop). `Done@` is the control-flow axis; the payload rides on the data axis and is processed by the comprehension's normal terminal-semantic, unchanged.
+**Uniform framing: comprehensions lift over `Done@`.** Every comprehension has two axes: a *terminal-semantic* (what happens to each iteration's terminal value -- collect, spread, fold, discard, decide) and a *control-flow signal* (continue or stop). `Done@` sets the control-flow axis; the payload rides the data axis and is processed by the comprehension's normal terminal-semantic, unchanged.
 
 Iteration return shape:
 
@@ -9149,7 +9099,7 @@ Iteration return shape:
 iterationReturn :: Terminal | Done@ Terminal
 ```
 
-The comprehension's terminal-handler operates on the payload uniformly regardless of which arm delivered it; the `Done@` arm additionally halts the traversal. There is no per-comprehension `Done@` rule to learn -- learn each comprehension's terminal-semantic (§7.1–§7.8), and `Done@` slots in.
+The comprehension's terminal-handler operates on the payload uniformly regardless of which arm delivered it; the `Done@` arm additionally halts the traversal. Each comprehension's `Done@` behavior follows from its terminal-semantic (§7.1–§7.8).
 
 **Concrete dispatch.** Applying the uniform framing to each comprehension:
 
@@ -9164,7 +9114,7 @@ The comprehension's terminal-handler operates on the payload uniformly regardles
 
 **Empty-elision at accumulator-carrying `~<<` drainage.** When `Done@` fires early-exit inside a `~<<` drainage that carries an accumulator (`List` and `List{Promise}` on §7.2), the payload is folded into the partial accumulator per the comprehension's terminal-semantic, with one refinement: bare `Done@` and `Done@ empty` drop the payload rather than appending `empty` as a hanging element. `Done@ v` (`v` non-empty) appends `v` as one element via the default terminal-semantic; `$Done@ tup` spreads `tup`'s elements into the accumulator; `$Done@ <>` naturally contributes nothing. `Iter` (§6.5.3) and `IterP` (§6.5.6) have no accumulator; their drainage-Left carries the payload directly (`Left@ payload`, or `Promise{Left{payload}}` for `IterP`), with bare `Done@` and `Done@ empty` resolving `Left@ empty` (or `Promise{Left{empty}}` for `IterP`).
 
-**Nested comprehensions.** `Done@` terminates the innermost enclosing comprehension only. To propagate an early exit through multiple nesting levels, each outer comprehension's iteration must inspect its inner result and issue its own `Done@` accordingly.
+**Nested comprehensions.** `Done@` terminates the innermost enclosing comprehension only. An early exit propagates through multiple nesting levels only when each outer comprehension's iteration inspects its inner result and issues its own `Done@`.
 
 ```java
 def matrix: < <1,2,3,4>, <5,6,7,8> >;
@@ -9191,8 +9141,8 @@ current element. There is no index parameter -- a two-parameter
 operand leaves its second binding `empty`, because nothing is
 supplied at that position (§3.10.1).
 
-When an iteration needs the index, transform the LHS first. Two
-`List` unit constructors produce index-bearing Lists:
+Index access comes from transforming the LHS. Two `List` unit
+constructors produce index-bearing Lists:
 
 - **`List.entries@ xs`** -- produces a List of `< index, value >`
   Tuples, one per positional entry of `xs`, in source order.
@@ -9675,6 +9625,13 @@ xs ?as List;
 ```
 
 **`BuiltIn` lexical status does not imply availability.** `List`,
-`Channel`, `Promise`, etc, all lex as `BuiltIn`.
+`Channel`, `Promise`, etc, all lex as `BuiltIn`. That classification is
+a lexical-grammar fact; it registers nothing in any scope. An unreached
+`List` at a `:as` or `?as` position exhausts the lexical chain and is an
+unresolved name (§9.1.2), diagnosed at the reference.
 
-// TODO
+Graph-layer collection (§9.3) does not close the gap: collection makes a
+name reachable, and `from` (§9.4) is the only construct that binds it
+into a scope. An `import` of the declaring module does not supply the
+type name either (§9.2.1) -- values and type names cross a module
+boundary by separate constructs.
