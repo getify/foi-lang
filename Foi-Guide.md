@@ -555,6 +555,8 @@ def add6: (+)|6|;
 add6(12);                       // 18
 ```
 
+Notice the intentional visual semantic of the `| |` pipes call-form compared to traditional `( )` call-form: the pipes are still *open*, meaning they're still expecting more arguments (the rest of the application); by contrast, the `( )` is *closed* so all arguments are assumed to already be present and application (function call) is performed immediately.
+
 Regardless of the arity (expected number of arguments) of the function or operator, and no matter how many arguments you pass, the `|    |` will always *partially apply*, meaning the arguments are remembered for later, but the function is not yet invoked:
 
 ```java
