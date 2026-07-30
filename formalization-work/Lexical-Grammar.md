@@ -122,9 +122,9 @@ BooleanOper             := ("?" | "!") Alpha IdentCont*;  (* Note 4: BOOLEAN_NAM
 
 (* Reserved-word sets:
      NATIVES                  = { "empty", "true", "false" }
-     KEYWORDS                 = { "def", "defn", "deft", "import", "export",
-                                  ":as", ":over", "int", "integer", "float",
-                                  "bool", "boolean", "string" }
+     KEYWORDS                 = { "def", "defn", "deft", "import",
+                                  "export", ":as", ":over", "int",
+                                  "float", "bool", "string" }
      BUILTINS                 = { "Id", "None", "Maybe", "Left", "Right",
                                   "Either", "Done", "Promise",
                                   "PushStream", "PullStream", "Channel",

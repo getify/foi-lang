@@ -35,8 +35,7 @@ token type plus a `value` field constraint.
   for reserved-word value-literals, each gated through its type
   production at the lex layer:
   - `Keyword` values: `"def"`, `"defn"`, `"deft"`, `"import"`,
-    `"export"`, `":as"`, `":over"`, `"int"`, `"integer"`,
-    `"float"`, `"bool"`, `"boolean"`, `"string"`
+    `"export"`, `":as"`, `":over"`, `"int"`, `"float"`, `"bool"`, `"string"`
   - `Native` values: `"true"`, `"false"`, `"empty"`
   - `Builtin` values: `"Id"`, `"None"`, `"Maybe"`, `"Left"`, `"Right"`,
   `"Either"`, `"Done"`, `"Promise"`, `"PushStream"`, `"PullStream"`,
@@ -1242,9 +1241,9 @@ DefFuncExpr           := "defn" (_ Identifier)?
 
    BuiltIn deliberately NOT admitted at either segment: user source
    may not declare hooks on built-in namespaces. Self-hosted stdlib
-   definitions that do exactly that are layer-0 bootstrap source,
-   admitted by a compiler mode that relaxes BuiltIn — not by this
-   grammar. This is the one place DefHookName diverges from
+   definitions that do exactly that are runtime-bootstrap source,
+   admitted by the compiler mode of Foi-Specification §10.1 -- not
+   by this grammar. This is the one place DefHookName diverges from
    DefTypeName (§18), which admits BuiltIn at every segment. *)
 DefHookName           := Identifier (Period Identifier)?;
 
@@ -1785,7 +1784,7 @@ UnionTypeExpr         := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
 
 NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*)
                        | NativeType;
-<NativeType>          := "int" | "integer" | "float" | "bool" | "boolean" | "string";
+<NativeType>          := "int" | "float" | "bool" | "string";
 
 NestedTypeExpr        := NamedType _ GroupedTypeExpr;
 

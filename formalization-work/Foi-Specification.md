@@ -69,7 +69,8 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §6 Suspension and Evaluation Control *(done)*
 - §7 Loops and Comprehensions *(done)*
 - §8 Modules *(done)*
-- §9 Type system *(partial)*
+- §9 Type System *(partial)*
+- §10 Runtime Bootstrap *(partial)*
 
 ---
 
@@ -9397,7 +9398,7 @@ A module's top level is the outermost lexical scope (§8), so a hook
 declared in one module against a namespace constructed in another fails
 that requirement.
 
-Layer-0 bootstrap relaxes the `BuiltIn` restriction in the
+Runtime-bootstrap mode (§10) relaxes the `BuiltIn` restriction in the
 hook-declaration name position (Syntactic-Grammar §13's `DefHookName`
 note), not the same-scope accompaniment requirement.
 
@@ -9635,3 +9636,59 @@ name reachable, and `from` (§9.4) is the only construct that binds it
 into a scope. An `import` of the declaring module does not supply the
 type name either (§9.2.1) -- values and type names cross a module
 boundary by separate constructs.
+
+## §10 Runtime Bootstrap
+
+**Runtime-bootstrap mode** is a compilation mode. Source compiled under
+it is **bootstrap source**: the self-hosted standard library and the
+runtime's own definitions. All other source is **user source**. Every
+rule stated elsewhere in this specification is a user-source rule
+unless it names this section.
+
+### §10.1 Reserved-Name Relaxation
+
+Under runtime-bootstrap mode, the reserved-word sets of the lexical
+grammar do not constrain declaration name positions. `DefHookName`
+(Syntactic-Grammar §13) admits `BuiltIn` at both segments, so
+`defn List~each(..)` and `defn List.entries@(..)` are bootstrap
+declaration forms.
+
+The relaxation reaches name positions only. It does not reach the
+same-scope accompaniment requirement of §3.1.1.2, §3.1.1.3, and
+§3.1.1.4; a hook declared in one module against a namespace
+constructed in another fails that requirement in bootstrap source
+exactly as it does in user source (§8.6).
+
+### §10.2 Record And Tuple Entry Assignment
+
+Under runtime-bootstrap mode, `:=` admits a property path on its
+left-hand side, and assignment through that path replaces the named
+entry of the Record or Tuple in place. `AssignmentExpr`'s access-form
+LHS (Syntactic-Grammar §12) is the surface.
+
+In user source the same form is a compile error: values are immutable
+(§1.5). The grammar admits the form at both; the rejection is
+semantic-layer.
+
+### §10.3 Ambient And Pre-Installed Handlers
+
+The handler bodies for the ambient effect kinds (§6.1.3) and for the
+slot-access kinds (§6.1.5.2) are bootstrap source. Those sections state
+when each is installed and what it resumes with; bootstrap source
+supplies what is installed.
+
+### §10.4 Reserved Effect Roots
+
+Bootstrap source is the provenance §6.1.4.1's admission procedure
+accepts at step 1. All four Effect surfaces -- declaration, perform
+site, handler narrowing, and `:Effects(...)` -- admit `Effect.Host.*`
+in bootstrap source and reject it in user source (§6.1.4).
+
+`Effect.User.Slot.Read` and `Effect.User.Slot.Write` are declared in
+bootstrap source. User source handles them and does not declare them
+(§6.1.5).
+
+**Open:** how the toolchain marks a compilation unit as bootstrap
+source; whether the mode applies per module or per compilation unit
+set; whether a unit set may mix bootstrap and user source; and whether
+relaxations beyond those above apply.

@@ -2211,10 +2211,10 @@ export const DefFuncExpr = production("DefFuncExpr",
 // between segments or before the marker: dotted names are tight
 // and the marker is adjacent to the name.
 //
-// BuiltIn NOT admitted — user source may not declare hooks on
-// built-in namespaces. Self-hosted stdlib that does so is layer-0
-// bootstrap source, admitted by a compiler mode that relaxes
-// BuiltIn. Do not widen this to match DefTypeName.
+// BuiltIn NOT admitted: user source may not declare hooks on
+// built-in namespaces. Self-hosted stdlib that does so is
+// runtime-bootstrap source, admitted by the compiler mode of
+// spec §10.1. Do not widen this to match DefTypeName.
 export const DefHookName = production("DefHookName",
 	and(
 		Identifier,
@@ -3139,14 +3139,12 @@ var KwDeft = tokVal("Keyword", "deft");
 
 // Native type keyword matchers.
 var KwInt     = tokVal("Keyword", "int");
-var KwInteger = tokVal("Keyword", "integer");
 var KwFloat   = tokVal("Keyword", "float");
 var KwBool    = tokVal("Keyword", "bool");
-var KwBoolean = tokVal("Keyword", "boolean");
 var KwString  = tokVal("Keyword", "string");
 
-// <NativeType> := "int" | "integer" | "float" | "bool" | "boolean" | "string";
-var NativeType = or(KwInt, KwInteger, KwFloat, KwBool, KwBoolean, KwString);
+// <NativeType> := "int" | "float" | "bool" | "string";
+var NativeType = or(KwInt, KwFloat, KwBool, KwString);
 
 // NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
 //
