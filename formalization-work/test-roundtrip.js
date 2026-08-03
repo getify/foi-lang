@@ -484,7 +484,6 @@ var handlers = {
 	GatherParameter: (n, r) => "*" + n.name,
 
 	FuncOverClause:   (n, r) => gapFill(":over", n, r),
-	FuncAsClause:     (n, r) => gapFill(":as", n, r),
 	ReturnExpr:       (n, r) => gapFill("^", n, r),
 	FuncBodyExpr:     (n, r) => gapFill("^", n, r),
 	FuncBodyPipeline: (n, r) => gapFill(n.op, n, r),

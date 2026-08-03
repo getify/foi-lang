@@ -35,7 +35,8 @@ token type plus a `value` field constraint.
   for reserved-word value-literals, each gated through its type
   production at the lex layer:
   - `Keyword` values: `"def"`, `"defn"`, `"deft"`, `"import"`,
-    `"export"`, `":as"`, `":over"`, `"int"`, `"float"`, `"bool"`, `"string"`
+    `"export"`, `":as"`, `":over"`, `":Effects"`,
+    `"int"`, `"float"`, `"bool"`, `"string"`, `"Any"`
   - `Native` values: `"true"`, `"false"`, `"empty"`
   - `Builtin` values: `"Id"`, `"None"`, `"Maybe"`, `"Left"`, `"Right"`,
   `"Either"`, `"Done"`, `"Promise"`, `"PushStream"`, `"PullStream"`,
@@ -313,7 +314,23 @@ ExportConciseBinding  := Colon Identifier SingleAccessExpr?;
 ## §4 Variable Definitions / Destructuring
 
 ```ebnf
-DefVarStmt                    := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+(* DeclTypeClause is the container-type annotation on a declaration.
+   It is CUDDLED to the introducing keyword -- no trivia between
+   `def` / `defn` and the `{` -- so `def {int} v: 3;` is a parse
+   error. The inner is a bare NamedType (§18); there is no `:as`
+   inside the braces.
+
+   Three attachment sites, spelled identically at each: DefVarStmt
+   (below), and DefFuncExpr / DefHookDecl (§13).
+
+   A `def` initializer may additionally carry its own `:as` tail
+   through AsExpr (§5), which types the VALUE rather than the
+   container: `def{Rec} <:a, :b>: myRecord :as Rec;`. The two are
+   independent -- either, both, or neither. *)
+
+DeclTypeClause                := OpenBrace _ NamedType _ CloseBrace;
+
+DefVarStmt                    := "def" DeclTypeClause? _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
 
 DestructureTarget             := OpenAngle _ <DestructureDefList> _ CloseAngle;
 <DestructureDefList>          := <RecordDestructureDefList> | <TupleDestructureDefList>;
@@ -1143,12 +1160,18 @@ AssignmentExpr        := ((IdentBase SingleAccessExpr) | Identifier) _ Colon Equ
 ## §13 Function Definitions
 
 ```ebnf
-(* :as on a function is FuncAsClause (typing the function value
-   itself), not a trailing AsAnnotationExpr. *)
+(* A declaration's container type is a cuddled DeclTypeClause (§4)
+   on the introducing `defn`: `defn{Double} double(x) ^x * 2;`. It
+   attaches identically at all three declaration forms in this
+   section -- named, anonymous, and hook.
 
-DefFuncExpr           := "defn" (_ Identifier)?
+   There is no `:as` tail on a function declaration. A function
+   VALUE is annotated by paren-wrapping, which reaches GroupedExpr's
+   own (_ AsAnnotationExpr)? tail: `(defn(x) ^x) :as Foo`. *)
+
+DefFuncExpr           := "defn" DeclTypeClause? (_ Identifier)?
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-                         (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+                         (_ FuncPrecondList)? (_ FuncOverClause)?
                          _ FuncBody;
 
 (* DefHookDecl is statement-only — admitted from <Stmt> (§1), not
@@ -1205,8 +1228,8 @@ DefFuncExpr           := "defn" (_ Identifier)?
    spacing).
 
    The post-marker signature is identical to DefFuncExpr's — same
-   paramSet+, optional precondition list, :over clause, :as clause,
-   and FuncBody alternatives. Grammar admits `paramSet+`; every
+   paramSet+, optional precondition list, :over clause, and
+   FuncBody alternatives. Grammar admits `paramSet+`; every
    marker family narrows it to exactly one parameter list with no
    gather at the semantic layer. Multi-tier (curried) hook
    declaration is rejected throughout: dispatch pins the outermost
@@ -1247,7 +1270,7 @@ DefFuncExpr           := "defn" (_ Identifier)?
    DefTypeName (§18), which admits BuiltIn at every segment. *)
 DefHookName           := Identifier (Period Identifier)?;
 
-DefHookDecl           := "defn" _ DefHookName
+DefHookDecl           := "defn" DeclTypeClause? _ DefHookName
                          ( At
                          | Percent
                          | Comprehension
@@ -1262,7 +1285,7 @@ DefHookDecl           := "defn" _ DefHookName
                          | (Exmark Equal)
                          )
                          (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-                         (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+                         (_ FuncPrecondList)? (_ FuncOverClause)?
                          _ FuncBody;
 
 ParameterList         := VarDefInitOptImplIn (_ Comma _ VarDefInitOptImplIn)*;
@@ -1271,7 +1294,6 @@ GatherParameter       := Star Identifier;
 <FuncPrecondList>     := FuncPrecond (_ FuncPrecond)*;
 FuncPrecond           := CondClause _ Colon _ ExprNoBlock;
 FuncOverClause        := ":over" _ OpenParen _ Identifier (_ Comma _ Identifier)* _ CloseParen;
-FuncAsClause          := ":as" _ Identifier;
 
 <FuncBody>            := FuncBodyExpr | FuncBodyPipeline | FuncBodyBlock;
 
@@ -1283,9 +1305,8 @@ FuncAsClause          := ":as" _ Identifier;
    entire FlowBinExpr tier (ComprOp / PipelineOp / ComposeOp
    chains) are NOT admitted directly — they either extend
    rightward without a visual close marker (chains, `:as` tails,
-   assignment RHS), collide with adjacent function-signature
-   syntax (function `:as` vs body `:as`), or resemble the block
-   body form too closely (bare `^{...}` vs `defn f(x) { ... }`).
+   assignment RHS), or resemble the block body form too closely
+   (bare `^{...}` vs `defn f(x) { ... }`).
    Each rejected form paren-wraps through GroupedExpr:
    `^(x :as int)`, `^(?[c]: x)`, `^(x := 5)`, `^(defn(y)^y)`,
    `^(x ~map f)`, `^(x #> g)`, `^({x;})`. Match forms
@@ -1387,9 +1408,6 @@ DefFuncExpr shaper-shape notes:
   plus parens, commas, and any internal trivia in `.delims`). Not
   folded — the structural punctuation around `:over(...)` would
   otherwise be lost.
-- `as` is shape-polymorphic, same fold-or-keep rule as AsExpr's
-  `inner.as` (see §5): bare Identifier when FuncAsClause has no
-  delims, the full FuncAsClause wrapper when it does.
 
 ## §14 Conditionals / Guards
 
@@ -1784,7 +1802,7 @@ UnionTypeExpr         := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
 
 NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*)
                        | NativeType;
-<NativeType>          := "int" | "float" | "bool" | "string";
+<NativeType>          := "int" | "float" | "bool" | "string" | "Any";
 
 NestedTypeExpr        := NamedType _ GroupedTypeExpr;
 

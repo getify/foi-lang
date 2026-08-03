@@ -180,6 +180,30 @@ export const samples = [
 	{ label: "DefVarStmt: destructure target (named)",   src: "def <a: x, b: y>: foo;" },
 	{ label: "DefVarStmt: import init",              src: 'def x: import "./foo.foi";' },
 
+	// DeclTypeClause on `def` — container typing. Cuddled to the
+	// keyword; the inner is a bare NamedType (native, bare, dotted,
+	// or BuiltIn-rooted). NestedTypeExpr, UnionTypeExpr,
+	// DataStructTypeExpr and FuncTypeExpr are all reachable from
+	// TypeExpr but NOT from here — a container's declared type is a
+	// NAME, and a compound type gets a `deft` of its own. See
+	// failSamples in test-parser.js.
+	{ label: "DeclTypeClause: def{int}",               src: "def{int} v: 3;" },
+	{ label: "DeclTypeClause: def{float}",             src: "def{float} v: 3.14;" },
+	{ label: "DeclTypeClause: def{bool}",              src: "def{bool} v: true;" },
+	{ label: "DeclTypeClause: def{string}",            src: 'def{string} v: "hi";' },
+	{ label: "DeclTypeClause: def{Any}",               src: "def{Any} v: 3;" },
+	{ label: "DeclTypeClause: bare NamedType",         src: "def{Foo} v: mk();" },
+	{ label: "DeclTypeClause: dotted NamedType",       src: "def{Either.Right} v: mk();" },
+	{ label: "DeclTypeClause: BuiltIn NamedType",      src: "def{List} xs: mk();" },
+	{ label: "DeclTypeClause: destructure target",     src: "def{Rec} <:a, :b>: payload;" },
+	{ label: "DeclTypeClause: import init",            src: 'def{Mod} m: import "./foo.foi";' },
+
+	// The clause and the `:as` tail are independent — the clause
+	// types the CONTAINER, the tail types the VALUE. Either, both,
+	// or neither.
+	{ label: "DeclTypeClause + :as tail on init",      src: "def{Rec} r: payload :as Rec;" },
+	{ label: "DeclTypeClause + :as tail (native)",     src: "def{int} v: 3 :as int;" },
+
 	// DestructureTarget / DestructureNamedDef / DestructureConciseDef / DestructureCapture
 	{ label: "Destructure named, no access",          src: "def < a: src >: payload;" },
 	{ label: "Destructure named, with access",        src: "def < a: src.x >: payload;" },
@@ -847,7 +871,28 @@ export const samples = [
 	{ label: "defn: named + params + expr body",     src: "defn add(x, y) ^x + y;" },
 	{ label: "defn: curried (2 paramSets)",          src: "defn curried(x)(y) ^x;" },
 	{ label: "defn: :over clause",                   src: "defn ovr(x) :over(y, z) ^x;" },
-	{ label: "defn: :as clause + empty params",      src: "defn typed() :as MyType ^empty;" },
+
+	// DeclTypeClause on `defn` — cuddled to the keyword and ahead
+	// of the optional name, so it spells identically across the
+	// named, anonymous, and hook forms. There is no `:as` tail on
+	// a function DECLARATION; a function VALUE is annotated by
+	// paren-wrapping, which reaches GroupedExpr's own
+	// (_ AsAnnotationExpr)? tail (last entry below).
+	{ label: "defn: DeclTypeClause + empty params",  src: "defn{MyType} typed() ^empty;" },
+	{ label: "defn: DeclTypeClause + named",         src: "defn{Double} double(x) ^x * 2;" },
+	{ label: "defn: DeclTypeClause + anonymous",     src: "defn{Thunk}() ^42;" },
+	{ label: "defn: DeclTypeClause + curried",       src: "defn{Adder} add(x)(y) ^x + y;" },
+	{ label: "defn: DeclTypeClause + :over",         src: "defn{Ovr} ovr(x) :over(y, z) ^x;" },
+	{ label: "defn: DeclTypeClause + FuncPrecond",   src: "defn{Clamp} clamped(x) ?[x ?< 0]: 0 ^x;" },
+	{ label: "defn: DeclTypeClause + block body",    src: "defn{Blk} blk(x) { x; };" },
+	{ label: "defn: DeclTypeClause + pipeline body", src: "defn{Pipe} pipe(x) #> log;" },
+	{ label: "defn: DeclTypeClause + gather param",  src: "defn{Gath} gather(*args) ^args;" },
+	{ label: "defn: DeclTypeClause native inner",    src: "defn{int} n() ^42;" },
+	{ label: "defn: DeclTypeClause dotted inner",    src: "defn{Either.Right} r() ^empty;" },
+	{ label: "defn: DeclTypeClause Any inner",       src: "defn{Any} a(x) ^x;" },
+
+	{ label: "defn: paren-wrap for value annotation", src: "def f: (defn(x) ^x) :as Foo;" },
+
 	{ label: "defn: pipeline body",                  src: "defn pipe(x) #> log;" },
 	{ label: "defn: gather parameter",               src: "defn gather(*args) ^args;" },
 	{ label: "defn: with FuncPrecond",               src: "defn clamped(x) ?[x ?< 0]: 0 ^x;" },
@@ -952,8 +997,8 @@ export const samples = [
 	// clauses (FuncPrecondList, FuncAsClause).
 	{ label: "FuncBodyExpr: precond + DoComprExpr body",
 	  src: "defn foo(x) ?[x ?< 0]: 0 ^IO ~<< { x };" },
-	{ label: "FuncBodyExpr: FuncAsClause + DoComprExpr body",
-	  src: "defn foo() :as MyIO ^IO ~<< { def x:: 1; };" },
+	{ label: "FuncBodyExpr: DeclTypeClause + DoComprExpr body",
+	  src: "defn{MyIO} foo() ^IO ~<< { def x:: 1; };" },
 
 	// DefHookDecl cluster — `defn` + name + marker (@, %, or
 	// comprehension: ~<, ~each, ~map, ~ap, ~filter, ~fold, ~foldR,
@@ -961,7 +1006,9 @@ export const samples = [
 	// expression-position usage is a parse error (see failSamples
 	// in test-parser.js). The post-marker signature mirrors
 	// DefFuncExpr's full feature set — curried paramSets,
-	// FuncPrecondList, :over, :as, all three FuncBody forms.
+	// FuncPrecondList, :over, all three FuncBody forms. A cuddled
+	// DeclTypeClause attaches ahead of the name, same as on a
+	// plain `defn`.
 	//
 	// Aliases at declaration position (`~chain`, `~bind`, `~flatMap`)
 	// parse cleanly (Comprehension token admits them) but are
@@ -982,7 +1029,17 @@ export const samples = [
 	{ label: "DefHookDecl: @ curried (2 paramSets)",         src: "defn Foo@(x)(y) ^x;" },
 	{ label: "DefHookDecl: % curried (2 paramSets)",         src: "defn Bar%(self)(env) ^env;" },
 	{ label: "DefHookDecl: @ :over clause",                  src: "defn Foo@(x) :over(y, z) ^x;" },
-	{ label: "DefHookDecl: @ :as clause + empty params",     src: "defn Foo@() :as MyType ^empty;" },
+
+	{ label: "DefHookDecl: @ DeclTypeClause + empty params", src: "defn{MyType} Foo@() ^empty;" },
+	{ label: "DefHookDecl: DeclTypeClause + @ marker",       src: "defn{FooT} Foo@(x) ^x;" },
+	{ label: "DefHookDecl: DeclTypeClause + % marker",       src: "defn{BarT} Bar%(self, env) ^env;" },
+	{ label: "DefHookDecl: DeclTypeClause + ~map marker",    src: "defn{FooT} Foo~map(inst, fn) ^inst;" },
+	{ label: "DefHookDecl: DeclTypeClause + ~< marker",      src: "defn{FooT} Foo~<(inst, fn) ^fn(inst);" },
+	{ label: "DefHookDecl: DeclTypeClause + ?= marker",      src: "defn{FooT} Foo?=(a, b) ^a ?= b;" },
+	{ label: "DefHookDecl: DeclTypeClause + dotted name",    src: "defn{FooT} Foo.bar@(v) ^v;" },
+	{ label: "DefHookDecl: DeclTypeClause + :over",          src: "defn{FooT} Foo@(x) :over(y, z) ^x;" },
+	{ label: "DefHookDecl: DeclTypeClause + FuncPrecond",    src: "defn{FooT} Foo@(x) ?[x ?< 0]: 0 ^x;" },
+
 	{ label: "DefHookDecl: @ pipeline body",                 src: "defn Foo@(x) #> log;" },
 	{ label: "DefHookDecl: @ gather parameter",              src: "defn Foo@(*args) ^args;" },
 	{ label: "DefHookDecl: @ with FuncPrecond",              src: "defn Foo@(x) ?[x ?< 0]: 0 ^x;" },
@@ -994,8 +1051,8 @@ export const samples = [
 	// semantic rule; grammar admits the label before any marker.
 	{ label: "DefHookDecl: dotted name + @ marker",
 	  src: "defn Foo.bar@(v) ^v;" },
-	{ label: "DefHookDecl: dotted name + @ + :as clause",
-	  src: "defn Foo.bar@() :as StateGetT ^< 1, 1 >;" },
+	{ label: "DefHookDecl: dotted name + @ + DeclTypeClause",
+	  src: "defn{StateGetT} Foo.bar@() ^< 1, 1 >;" },
 	{ label: "DefHookDecl: dotted name + block body",
 	  src: "defn Foo.bar@(v) { v; };" },
 
@@ -1038,8 +1095,8 @@ export const samples = [
 	  src: "defn Foo?=(a, b) ^a ?= b;" },
 	{ label: "DefHookDecl: != marker (Exmark Equal composite; semantic reject)",
 	  src: "defn Foo!=(a, b) ^a != b;" },
-	{ label: "DefHookDecl: + with :as clause",
-	  src: "defn Foo+(a, b) :as Foo ^a;" },
+	{ label: "DefHookDecl: + with DeclTypeClause",
+	  src: "defn{Foo} Foo+(a, b) ^a;" },
 	{ label: "DefHookDecl: + with :over clause",
 	  src: "defn Foo+(a, b) :over(acc) ^a;" },
 	{ label: "DefHookDecl: ?= with FuncPrecond",
@@ -1463,6 +1520,18 @@ export const samples = [
 	{ label: "DefTypeStmt: NamedType (dotted)",                src: "deft E Either.Right;" },
 	{ label: "DefTypeStmt: NamedType (BuiltIn.Ident)",         src: "deft S List.Inner;" },
 
+	// `Any` — fifth native type. Capitalized where the other four
+	// are lowercase: the lowercase four name concrete runtime
+	// representations, `Any` names the absence of a narrowing
+	// constraint. Reserved either way — `def Any: 5;` is a parse
+	// error (see failSamples). Reachable everywhere NamedType is.
+	{ label: "NativeType Any: deft A Any",                     src: "deft A Any;" },
+	{ label: "NativeType Any: :as tail",                       src: "x :as Any;" },
+	{ label: "NativeType Any: union arm",                      src: "deft V Any | Foo;" },
+	{ label: "NativeType Any: FuncTypeExpr arg + return",      src: "deft F (Any, int) ^Any;" },
+	{ label: "NativeType Any: NestedTypeExpr arg",             src: "deft L List{Any};" },
+	{ label: "NativeType Any: DataStructTypeExpr field",       src: "deft P <x: Any, y: int>;" },
+
 	// UnionTypeExpr — bare 2-arm and 3-arm
 	{ label: "DefTypeStmt: UnionTypeExpr (2-arm)",             src: "deft R Ok | Err;" },
 	{ label: "DefTypeStmt: UnionTypeExpr (3-arm mixed)",       src: "deft V int | string | Foo;" },
@@ -1620,7 +1689,7 @@ export const samples = [
 		"defn fact@(n) { n; }; " +
 		"defn curried(x)(y) ^x; " +
 		"defn over_ex(x) :over(y, z) ^x; " +
-		"defn typed() :as MyType ^empty; " +
+		"defn{MyType} typed() ^empty; " +
 		"defn pipe(x) #> log; " +
 		"defn gather(*args) ^args;" },
 
@@ -1773,7 +1842,8 @@ export const samples = [
 	// α-WRAPPER — adaptive wrapper retention for :as / :over
 	{ label: "α-wrap: AsExpr keeps wrapper",       src: "foo :as int;",                      opts: { preserveSoftDelims: true } },
 	{ label: "α-wrap: GroupedExpr keeps wrapper",  src: "(x) :as int;",                      opts: { preserveSoftDelims: true } },
-	{ label: "α-wrap: FuncAsClause keeps wrapper", src: "defn f() :as Int ^x;",              opts: { preserveSoftDelims: true } },
+	{ label: "α-wrap: DeclTypeClause always keeps wrapper", src: "defn{Int} f() ^x;",        opts: { preserveSoftDelims: true } },
+	{ label: "α-wrap: DeclTypeClause w/ inner WS",          src: "def{ int } v: 3;",         opts: { preserveSoftDelims: true } },
 	{ label: "α-wrap: FuncOverClause w/ inner WS", src: "defn ovr(x) :over(y, z) ^x;",       opts: { preserveSoftDelims: true } },
 
 	// α-NESTED-AS — investigate filed clobber on (x :as int) :as bool.

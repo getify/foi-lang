@@ -481,10 +481,40 @@ export const DestructureTarget = production("DestructureTarget",
 	and(OpenAngle, delim(), DestructureDefList, delim(), CloseAngle)
 );
 
-// DefVarStmt := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+// DeclTypeClause := OpenBrace _ NamedType _ CloseBrace;
+//
+// Container-type annotation on a declaration. CUDDLED to the
+// introducing keyword — every attachment site spells it
+// `optional(DeclTypeClause)` with NO delim() before it, so
+// `def {int} v: 3;` is a parse error while `def{int} v: 3;`
+// parses. Three sites: DefVarStmt (below), DefFuncExpr and
+// DefHookDecl (§13).
+//
+// NamedType is §18; forward-ref via lazy, same convention as
+// AsAnnotationExpr's. The inner is a bare type — no `:as` inside
+// the braces.
+//
+// Distinct from GroupedTypeExpr (§18) despite the shared brace
+// shape: GroupedTypeExpr is an unwrap-shaper that lifts its
+// braces onto the inner node's delims, while DeclTypeClause is a
+// real node that owns its braces. It is also never reachable from
+// a type-expression position — only from the three declaration
+// keywords.
+export const DeclTypeClause = production("DeclTypeClause",
+	and(OpenBrace, delim(), lazy(() => NamedType), delim(), CloseBrace)
+);
+
+// DefVarStmt := "def" DeclTypeClause? _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+//
+// DefBlockStmt is ordered before this in <Stmt> and opens
+// `"def" _ BlockDefsInitOpt` — it fails at the missing OpenParen
+// when it sees a cuddled OpenBrace, so the fall-through to
+// DefVarStmt is unchanged by the new clause.
 export const DefVarStmt = production("DefVarStmt",
 	and(
-		KwDef, delim(),
+		KwDef,
+		optional(DeclTypeClause),
+		delim(),
 		or(Identifier, DestructureTarget),
 		delim(), Colon, delim(),
 		or(lazy(() => Expr), ImportExpr)
@@ -2052,14 +2082,6 @@ export const FuncOverClause = production("FuncOverClause",
 	)
 );
 
-// FuncAsClause := ":as" _ Identifier;
-//
-// Identifier, NOT NamedType — FuncAsClause is its own thing,
-// distinct from AsAnnotationExpr's `:as NamedType`.
-export const FuncAsClause = production("FuncAsClause",
-	and(KwAs, delim(), Identifier)
-);
-
 // ReturnExpr := Caret _ Expr;
 export const ReturnExpr = production("ReturnExpr",
 	and(Caret, delim(), Expr)
@@ -2175,13 +2197,22 @@ export const FuncBodyBlock = production("FuncBodyBlock",
 // OpenBrace (Block).
 var FuncBody = or(FuncBodyExpr, FuncBodyPipeline, FuncBodyBlock);
 
-// DefFuncExpr := "defn" (_ Identifier)?
+// DefFuncExpr := "defn" DeclTypeClause? (_ Identifier)?
 //                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+//                (_ FuncPrecondList)? (_ FuncOverClause)?
 //                _ FuncBody;
 //
-// `:as` on a defn is FuncAsClause, NOT a trailing OptAsAnnotation —
-// DefFuncExpr does not carry any `(_ AsAnnotationExpr)?` tail.
+// No `:as` tail of any kind. DefFuncExpr carries neither
+// FuncAsClause (removed) nor OptAsAnnotation. A function VALUE is
+// annotated by paren-wrapping, which reaches GroupedExpr's own
+// `(_ AsAnnotationExpr)?` tail: `(defn(x) ^x) :as Foo`. The bare
+// `defn(x) ^x :as Foo` does not parse — DefFuncExpr is not in
+// <AsableExpr>.
+//
+// DeclTypeClause is cuddled (no delim() before the optional), and
+// precedes the optional name, so it attaches identically to all
+// three forms: `defn{T} f(x) ^x`, `defn{T}(x) ^x`, and — via
+// DefHookDecl below — `defn{T} Foo@(x) ^x`.
 //
 // Legacy `@` marker (`defn Foo@(x) ^...`) removed — hook-bearing
 // declarations now go through DefHookDecl (statement-only, §1).
@@ -2191,6 +2222,7 @@ var FuncBody = or(FuncBodyExpr, FuncBodyPipeline, FuncBodyBlock);
 export const DefFuncExpr = production("DefFuncExpr",
 	and(
 		KwDefn,
+		optional(DeclTypeClause),
 		optional(and(delim(), Identifier)),
 		many(and(
 			delim(), OpenParen, delim(),
@@ -2199,7 +2231,6 @@ export const DefFuncExpr = production("DefFuncExpr",
 		)),
 		optional(and(delim(), FuncPrecondList)),
 		optional(and(delim(), FuncOverClause)),
-		optional(and(delim(), FuncAsClause)),
 		delim(), FuncBody
 	)
 );
@@ -2222,10 +2253,22 @@ export const DefHookName = production("DefHookName",
 	)
 );
 
-// DefHookDecl := "defn" _ DefHookName
-//                (At | Percent | Comprehension | (Tilde OpenAngle))
+// DefHookDecl := "defn" DeclTypeClause? _ DefHookName
+//                ( At
+//                | Percent
+//                | Comprehension
+//                | (Tilde OpenAngle OpenAngle)
+//                | (Tilde OpenAngle Star)
+//                | (Tilde OpenAngle)
+//                | Plus
+//                | Hyphen
+//                | Star
+//                | ForwardSlash
+//                | (Qmark Equal)
+//                | (Exmark Equal)
+//                )
 //                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-//                (_ FuncPrecondList)? (_ FuncOverClause)? (_ FuncAsClause)?
+//                (_ FuncPrecondList)? (_ FuncOverClause)?
 //                _ FuncBody;
 //
 // Statement-only — admitted from <Stmt> (§1), not from <Expr>.
@@ -2307,7 +2350,9 @@ export const DefHookName = production("DefHookName",
 // bare Star arm only when the marker slot does not begin with Tilde.
 export const DefHookDecl = production("DefHookDecl",
     and(
-        KwDefn, delim(),
+        KwDefn,
+        optional(DeclTypeClause),
+        delim(),
         DefHookName,
         or(
             At,
@@ -2330,7 +2375,6 @@ export const DefHookDecl = production("DefHookDecl",
         )),
         optional(and(delim(), FuncPrecondList)),
         optional(and(delim(), FuncOverClause)),
-        optional(and(delim(), FuncAsClause)),
         delim(), FuncBody
     )
 );
@@ -3142,9 +3186,16 @@ var KwInt     = tokVal("Keyword", "int");
 var KwFloat   = tokVal("Keyword", "float");
 var KwBool    = tokVal("Keyword", "bool");
 var KwString  = tokVal("Keyword", "string");
+var KwAny     = tokVal("Keyword", "Any");
 
-// <NativeType> := "int" | "float" | "bool" | "string";
-var NativeType = or(KwInt, KwFloat, KwBool, KwString);
+// <NativeType> := "int" | "float" | "bool" | "string" | "Any";
+//
+// `Any` is capitalized where the other four are lowercase. The
+// lowercase four name concrete runtime representations; `Any`
+// names the absence of a narrowing constraint, so it reads as a
+// synthetic type rather than a primitive one. Reserved either
+// way — `def Any: 5;` is a parse error, same as `def int: 5;`.
+var NativeType = or(KwInt, KwFloat, KwBool, KwString, KwAny);
 
 // NamedType := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*) | NativeType;
 //

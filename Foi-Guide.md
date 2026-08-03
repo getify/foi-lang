@@ -5489,15 +5489,15 @@ Recall from the [Generators](#generators) section:
 
 ### Tracking Effects
 
-**Foi** tracks effects on function type declarations, similar to how mutable-closure intent is tracked on the function signature with `:over`. A function that *directly* (not through other function calls) performs a non-ambient effect must attach (via `:as`) a type declaration whose `:Effects(...)` clause names that effect:
+**Foi** tracks effects on function type declarations, similar to how mutable-closure intent is tracked on the function signature with `:over`. A function that *directly* (not through other function calls) performs a non-ambient effect must declare a type whose `:Effects(...)` clause names that effect, in a brace cuddled to `defn`:
 
 ```java
 deft AskName(int) :Effects(User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.User.Ask% id;
+defn{AskName} askName(id) ^Effect.User.Ask% id;
 ```
 
-Performing `Effect.User.Ask` in `askName()`'s body without that `:as AskName` attachment is a compile error: the "emit-edge" declaration is required wherever an effect is first performed.
+Performing `Effect.User.Ask` in `askName()`'s body without that `{AskName}` declaration is a compile error: the "emit-edge" declaration is required wherever an effect is first performed.
 
 Intermediate callers don't have to keep re-declaring the effect. If `greetUser` calls `askName` but doesn't itself perform anything new, no declaration is required on `greetUser`; the compiler propagates the effect surface up the call stack silently. Coverage is verified per call stack; somewhere before the outermost boundary, a `~<*` handler for `Ask` must exist. Where in the chain that handler lives is up to you.
 
@@ -5521,9 +5521,13 @@ The ambient category is deliberately narrow. Effects with a resume value the cal
 
 ## Type Annotations
 
-Type annotations in **Foi** are applied to values/expressions (not to variables, etc). These are optional, as **Foi** uses type inference wherever possible. But applying them can often improve the performance optimizations the **Foi** compiler can produce.
+Type annotations in **Foi** are optional; the compiler infers wherever it can. Writing them can improve the optimizations the compiler produces -- and, more to the point, they're how you narrow what a binding is allowed to hold.
 
-A type annotation always begins with the `:as` keyword:
+There are two annotation surfaces, and they say different things.
+
+### Annotating a Value
+
+A value annotation begins with the `:as` keyword and applies to a value or expression:
 
 ```java
 def age: 42 :as int;
@@ -5539,46 +5543,52 @@ deft OrderStatus empty | "pending" | "shipped";
 def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
 
-Function signatures may optionally be typed via custom types:
+### Declaring a Binding's Type
+
+A declaration annotation is a type name in braces, cuddled to the `def` or `defn` keyword that introduces the binding:
+
+```java
+def{int} count: 0;
+```
+
+That isn't a claim about the initializer -- it's a claim about the *slot*. `count` holds an `int` now and after every reassignment.
+
+Function declarations take the same brace, and that's how a function gets a signature:
 
 ```java
 deft InterestingFunc (int,string) ^empty;
 
-defn whatever(id,name) :as InterestingFunc {
+defn{InterestingFunc} whatever(id,name) {
     // ..
 };
 ```
 
-The `?as` operator corresponds to the `:as` type annotation keyword; it's a boolean operator that returns `true` if a value/expression matches the indicated type, `false` otherwise:
+The brace goes on the keyword, not after the parameter list, and there's no space before it -- `defn {InterestingFunc} whatever(..)` won't parse.
+
+### When You Don't Write One
+
+A binding with no brace has the type `Any`. It holds anything, for as long as it lives:
 
 ```java
-def age: 42;
-
-age ?as int;                // true
-
-(age :as bool) ?as int;     // false
+def x: 3;
+x := "3";           // fine
 ```
 
-This operator is useful in pattern matching:
+That's the whole answer to "is **Foi** strict or loose about types?" -- there's no compiler flag, no strictness mode, no severity dial. An unannotated binding is genuinely unconstrained, and narrowing it is something you do by writing the type. Adding braces to a program can only introduce errors; taking them away can only remove them.
+
+`Any` is capitalized because it isn't a runtime representation the way `int`, `float`, `bool`, and `string` are. It names the *absence* of a constraint rather than the presence of a shape.
+
+### Both At Once
+
+A `def` can carry both, and they're independent:
 
 ```java
-deft SimpleFunc (int) ^empty;
-deft InterestingFunc (int,string) ^empty;
+deft Rec <a: int, b: string>;
 
-def result1: ?(myFn){
-    ?[?as SimpleFunc]: myFn(42);
-    ?[?as InterestingFunc]: myFn(42,"Kyle");
-    ?: myFn()
-};
-
-// or:
-
-def result2: ?{
-    ?[myFn ?as SimpleFunc]: myFn(42);
-    ?[myFn ?as InterestingFunc]: myFn(42,"Kyle");
-    ?: myFn()
-};
+def{Rec} <:a, :b>: payload :as Rec;
 ```
+
+The brace types the container; the `:as` tail types the value the initializer produced. Either, both, or neither. When a destructure target carries a brace, the type distributes across the entries the same way the destructure does -- by field name in record-mode, by position in tuple-mode.
 
 ## License
 

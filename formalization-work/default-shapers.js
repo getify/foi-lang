@@ -980,19 +980,53 @@ export const defaultShapers = {
 	// §4 VARIABLE DEFINITIONS / DESTRUCTURING
 	// =============================================================
 
-	// DefVarStmt := "def" _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
+	// DeclTypeClause := OpenBrace _ NamedType _ CloseBrace;
+	//
+	// Braces are structural → delims; the NamedType child is kept
+	// intact at `annotation`.
+	//
+	// NOT shape-polymorphic. FuncAsClause (removed) collapsed to a
+	// bare Identifier when it carried no delims, because the `:as`
+	// keyword dropped and left the wrapper contentless.
+	// DeclTypeClause always owns two brace tokens, so the wrapper
+	// is always load-bearing and the node is always emitted. Read
+	// the inner type at `node.declType.annotation` with no
+	// normalization step.
+	DeclTypeClause(frame,parts) {
+		var annotation;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) annotation = p;
+			else delims.push(p); // OpenBrace, CloseBrace
+		}
+		return withDelims({ type: "DeclTypeClause", annotation }, delims);
+	},
+
+	// DefVarStmt := "def" DeclTypeClause? _ (Identifier | DestructureTarget) _ Colon _ (Expr | ImportExpr);
 	//
 	// "def" keyword drops; Colon is structural → delims.
+	//
+	// DeclTypeClause is routed out by type before the positional
+	// [target, init] destructure — it arrives first in source order
+	// and would otherwise land in the target slot.
 	DefVarStmt(frame,parts) {
+		var declType;
 		var nodes = [];
 		var delims = [];
 		for (let p of parts) {
-			if (isNode(p)) nodes.push(p);
+			if (isNode(p)) {
+				if (p.type === "DeclTypeClause") { declType = p; continue; }
+				nodes.push(p);
+			}
 			else if (p.type === "Keyword") continue; // "def"
 			else delims.push(p); // Colon
 		}
 		var [ target, init ] = nodes;
-		return withDelims({ type: "DefVarStmt", target, init }, delims);
+		var node = { type: "DefVarStmt" };
+		if (declType) node.declType = declType;
+		node.target = target;
+		node.init = init;
+		return withDelims(node, delims);
 	},
 
 	// DestructureNamedDef := Identifier _ Colon _ (Identifier | BracketExpr) MultiAccessExpr?;
@@ -1218,9 +1252,6 @@ export const defaultShapers = {
 	// has-delims case preserves the soft trivia for source-fidelity
 	// consumers. Consumers can normalize with:
 	//   var annotation = as.type === "AsAnnotationExpr" ? as.annotation : as;
-	//
-	// Same adaptive shape applies to GroupedExpr.as (via
-	// shapeGrouped) and DefFuncExpr.as (via the FuncAsClause arm).
 	AsExpr(frame,parts) {
 		var inner, as;
 		for (let p of parts) {
@@ -2456,19 +2487,6 @@ export const defaultShapers = {
 		return withDelims({ type: "FuncOverClause", names }, delims);
 	},
 
-	// FuncAsClause := ":as" _ Identifier;
-	//
-	// ":as" keyword drops (anchored in field-name semantics on the
-	// parent — DefFuncExpr.as presence means user wrote `:as`).
-	// No structural delims at this level; under preserveSoftDelims:true
-	// the machinery auto-merges any WS between `:as` and the
-	// Identifier onto this node's delims, which DefFuncExpr's
-	// adaptive unwrap then decides whether to keep or fold (see
-	// DefFuncExpr).
-	FuncAsClause(frame,parts) {
-		return { type: "FuncAsClause", annotation: parts.find(isNode) };
-	},
-
 	// ReturnExpr := Caret _ Expr;
 	//
 	// Caret drops (anchored in type tag — unary `^expr` return
@@ -2590,28 +2608,31 @@ export const defaultShapers = {
 	FuncBodyStmtSemi   (frame,parts) { return shapeStmtSemi(parts); },
 	FuncBodyStmtSemiOpt(frame,parts) { return shapeStmtSemi(parts); },
 
-	// DefFuncExpr := "defn" (_ Identifier At?)?
+	// DefFuncExpr := "defn" DeclTypeClause? (_ Identifier)?
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
+	//                (_ <FuncPrecondList>)? (_ FuncOverClause)?
 	//                _ <FuncBody>;
 	//
-	// "defn" keyword drops; At (when present, the method @
-	// marker) drops as it's captured into `at: true`. Parens
-	// are structural → delims; an empty paren-pair still
-	// synthesizes a zero-content ParameterList (per the empty-
-	// merged convention with end:null).
+	// "defn" keyword drops. Parens are structural → delims; an
+	// empty paren-pair still synthesizes a zero-content
+	// ParameterList (per the empty-merged convention with
+	// end:null).
 	//
 	// Field shapes:
+	//   - `declType` is always the full DeclTypeClause node — it
+	//     owns its braces, so there is no unwrap case and no
+	//     normalization step. Inner type at
+	//     `node.declType.annotation`.
 	//   - `over` is always the full FuncOverClause node (carries
 	//     `.names`, parens / commas / internal trivia in `.delims`).
 	//     Earlier versions folded to `over: Identifier[]` and lost
 	//     the structural punctuation; rolled back.
-	//   - `as` is shape-polymorphic, same rule as AsExpr's `inner.as`:
-	//     bare Identifier when FuncAsClause has no delims, the full
-	//     FuncAsClause wrapper when it does. Normalize with:
-	//       var annotation = as.type === "FuncAsClause" ? as.annotation : as;
+	//
+	// The `at` capture is gone with the legacy `@` marker — the
+	// production has admitted no At at this level since hook decls
+	// moved to DefHookDecl, so the branch was unreachable.
 	DefFuncExpr(frame,parts) {
-		var name, at, over, as, body;
+		var name, declType, over, body;
 		var paramSets = [];
 		var preconditions = [];
 		var delims = [];
@@ -2622,7 +2643,6 @@ export const defaultShapers = {
 		for (let p of parts) {
 			if (!isNode(p)) {
 				if (p.type === "Keyword" && p.value === "defn") continue;
-				if (p.type === "At") { at = true; continue; }
 				if (p.type === "OpenParen") {
 					lastOpenParen = p;
 					currentSet = null;
@@ -2652,6 +2672,7 @@ export const defaultShapers = {
 				continue;
 			}
 			// Nodes
+			if (p.type === "DeclTypeClause") { declType = p; continue; }
 			if (p.type === "Identifier" && !name && paramSets.length === 0 && !lastOpenParen) {
 				name = p;
 				continue;
@@ -2662,7 +2683,6 @@ export const defaultShapers = {
 			}
 			if (p.type === "FuncPrecond")        { preconditions.push(p); continue; }
 			if (p.type === "FuncOverClause")     { over = p; continue; }
-			if (p.type === "FuncAsClause")       { as = p.delims ? p : p.annotation; continue; }
 			if (
 				p.type === "FuncBodyExpr" ||
 				p.type === "FuncBodyPipeline" ||
@@ -2674,12 +2694,11 @@ export const defaultShapers = {
 		}
 
 		var node = { type: "DefFuncExpr" };
+		if (declType) node.declType = declType;
 		if (name) node.name = name;
-		if (at) node.at = true;
 		node.paramSets = paramSets;
 		if (preconditions.length > 0) node.preconditions = preconditions;
 		if (over) node.over = over;
-		if (as) node.as = as;
 		node.body = body;
 		return withDelims(node, delims);
 	},
@@ -2700,17 +2719,23 @@ export const defaultShapers = {
 		return withDelims({ type: "DefHookName", namespace, label }, delims);
 	},
 
-	// DefHookDecl := "defn" _ DefHookName
+	// DefHookDecl := "defn" DeclTypeClause? _ DefHookName
 	//                ( At
 	//                | Percent
 	//                | Comprehension
 	//                | (Tilde OpenAngle OpenAngle)
 	//                | (Tilde OpenAngle Star)
 	//                | (Tilde OpenAngle)
+	//                | Plus
+	//                | Hyphen
+	//                | Star
+	//                | ForwardSlash
+	//                | (Qmark Equal)
+	//                | (Exmark Equal)
 	//                )
 	//                (_ OpenParen _ (ParameterList | GatherParameter)? _ CloseParen)+
-	//                (_ <FuncPrecondList>)? (_ FuncOverClause)? (_ FuncAsClause)?
-	//                _ <FuncBody>;
+	//                (_ FuncPrecondList)? (_ FuncOverClause)?
+	//                _ FuncBody;
 	//
 	// Mirrors DefFuncExpr's shape minus the optional `at` flag,
 	// plus a REQUIRED `marker` field carrying the surface glyph
@@ -2746,7 +2771,7 @@ export const defaultShapers = {
 	//     convention. Normalize with:
 	//       var annotation = as.type === "FuncAsClause" ? as.annotation : as;
 	DefHookDecl(frame,parts) {
-		var name, over, as, body;
+		var name, declType, over, body;
 		var marker = "";
 		var paramSets = [];
 		var preconditions = [];
@@ -2811,6 +2836,13 @@ export const defaultShapers = {
 				continue;
 			}
 			// Nodes
+			//
+			// DeclTypeClause routes first — it precedes the name in
+			// source order and would otherwise be caught by the
+			// name-capture guard's `!lastOpenParen` condition. Its
+			// braces are shielded inside its own frame, so they
+			// never reach the marker accumulator above.
+			if (p.type === "DeclTypeClause") { declType = p; continue; }
 			if (
 				(p.type === "Identifier" || p.type === "DefHookName") &&
 				!name && paramSets.length === 0 && !lastOpenParen
@@ -2824,7 +2856,6 @@ export const defaultShapers = {
 			}
 			if (p.type === "FuncPrecond")        { preconditions.push(p); continue; }
 			if (p.type === "FuncOverClause")     { over = p; continue; }
-			if (p.type === "FuncAsClause")       { as = p.delims ? p : p.annotation; continue; }
 			if (
 				p.type === "FuncBodyExpr" ||
 				p.type === "FuncBodyPipeline" ||
@@ -2835,11 +2866,13 @@ export const defaultShapers = {
 			}
 		}
 
-		var node = { type: "DefHookDecl", name, marker };
+		var node = { type: "DefHookDecl" };
+		if (declType) node.declType = declType;
+		node.name = name;
+		node.marker = marker;
 		node.paramSets = paramSets;
 		if (preconditions.length > 0) node.preconditions = preconditions;
 		if (over) node.over = over;
-		if (as) node.as = as;
 		node.body = body;
 		return withDelims(node, delims);
 	},

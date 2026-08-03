@@ -470,6 +470,43 @@ var failSamples = [
 	// type-reference positions (:as RHS, FuncTypeExpr return).
 	'def x: y :as Point from "./g.foi";',
 	'deft F (int) ^Point from "./g.foi";',
+
+	// === DeclTypeClause negatives — §4 / §13 ===
+	// Cuddling is required. Every attachment site spells the clause
+	// `optional(DeclTypeClause)` with no delim() before it, so any
+	// trivia between the keyword and the `{` breaks the parse.
+	"def {int} v: 3;",
+	"defn {T} f(x) ^x;",
+	"defn {T} Foo@(x) ^x;",
+
+	// Inner is a bare NamedType only — no NestedTypeExpr, union,
+	// data-struct, function type, or literal.
+	"def{List{int}} xs: mk();",
+	"def{int | string} v: 3;",
+	"def{<x: int>} r: mk();",
+	"def{(int) ^bool} f: mk();",
+	'def{"yes"} s: mk();',
+
+	// A container type with no name is meaningless.
+	"def{} v: 3;",
+	"defn{} f(x) ^x;",
+
+	// One clause per declaration.
+	"def{int}{string} v: 3;",
+
+	// The clause precedes the name; it does not float.
+	"def v{int}: 3;",
+	"defn f{T}(x) ^x;",
+
+	// === `Any` reserved-word negatives — §18 <NativeType> ===
+
+	// `Any` is a Keyword, so it is excluded from every identifier
+	// position: binding names, parameter names, and DefTypeName
+	// (which admits Identifier | BuiltIn only).
+	"def Any: 5;",
+	"defn Any(x) ^x;",
+	"deft Any int;",
+	"defn f(Any) ^Any;",
 ];
 
 var passed = 0;

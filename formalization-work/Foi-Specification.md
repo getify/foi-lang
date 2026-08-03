@@ -527,6 +527,21 @@ The `def y: 42` statement has `42` as its completion value; that value is adopte
 
 **Do-comprehension exception.** Inside a `~<<` or `~<*` block (§7), a single-colon `def x: expr` statement is a local binding whose completion value does not participate in the block's monadic composition; it is neither `~<`-chained nor collected as a terminal value. To bind a name to a monadic step's unwrapped result, use the double-colon form `def x:: expr` instead. See §7 for the do-block's statement categories in full.
 
+#### §2.1.4 Declared Type
+
+A `def` statement may carry a declared type in a brace clause cuddled
+to the keyword (Syntactic-Grammar `DeclTypeClause` at §4):
+
+```java
+def{int} count: 0;
+```
+
+The declared type is the binding's range -- the set of values it may
+hold across reassignments. Its absence implies `Any`, admitting any
+value. The full semantic, its interaction with the initializer's `:as`
+tail, and its distribution over a destructure target are specified in
+§9.6.2.
+
 ### §2.2 The `Lazy@` Construct
 
 A `Lazy@` expression (Syntactic-Grammar `AtCallExpr` against the `Lazy` name, with compile-time-privileged semantics) defers the resolution of one or more identifier references until those identifiers have been bound in the current scope's `def` section.
@@ -2288,7 +2303,7 @@ In this example, both the `Left@` call and the `factorial(..)` recursive call ar
 
 ### §3.6 Mutable Closure-Capture Declaration: `:over`
 
-A function literal may carry a `:over (name, name, ...)` clause (Syntactic-Grammar `FuncOverClause` at §13) between the function's preconditions (if any) and its body (but before any `:as`):
+A function literal may carry a `:over (name, name, ...)` clause (Syntactic-Grammar `FuncOverClause` at §13) between the function's preconditions (if any) and its body:
 
 ```java
 defn lookup(id) :over (cache) {
@@ -2328,21 +2343,48 @@ def pi: \3.14159;                        // never reassigned → constant
 defn area(r) ^pi * r * r;               // no :over needed
 ```
 
-### §3.7 Type Annotation: `:as`
+### §3.7 Declared Type: `{ }`
 
-A function literal may carry a `:as Type` clause (Syntactic-Grammar `FuncAsClause` at §13):
+A function declaration optionally carries its type in a brace clause
+cuddled to the `defn` keyword (Syntactic-Grammar `DeclTypeClause` at
+§4):
 
 ```java
 // deft AddFunc (int,int) ^int
 
-defn add(x, y) :as AddFunc ^x + y;
+defn{AddFunc} add(x, y) ^x + y;
 ```
 
-`:as` on a function always references a function type (§9). For §3's purposes:
+The clause attaches identically at all three literal forms of §3.1 and
+at every hook-declaration form (§3.1.1.1 through §3.1.1.4):
 
-- `:as Type` is transparent at runtime; it imposes no behavior beyond what §9 specifies.
-- `:as` appears once, after any `:over` clause and before the body.
-- The type slot admits only a bare `Identifier`, not the broader `NamedType` production used in `AsAnnotationExpr` (§5). To annotate with a compound type expression, declare a `deft` binding for that type and reference it by name.
+```java
+defn{AddFunc} add(x, y) ^x + y;              // declaration
+def add2: defn{AddFunc} add(x, y) ^x + y;    // named expression
+def add3: defn{AddFunc}(x, y) ^x + y;        // anonymous
+defn{ListCtorT} List@(v) ^< value: v >;      // hook
+```
+
+The brace names a function type (§9). For §3's purposes:
+
+- The declared type is transparent at runtime; it imposes no behavior
+  beyond what §9 specifies.
+- The clause is cuddled: `defn {AddFunc} add(x, y) ^x + y;` is a parse
+  error. Trivia between the closing brace and the name is admitted.
+- The type slot admits a bare `NamedType` -- native, bare, dotted, or
+  `BuiltIn`-rooted. A compound type expression reaches this position
+  through a `deft` binding that names it.
+
+A function *value* carries its annotation on a paren-wrapped
+expression, reaching `GroupedExpr`'s own `:as` tail (§5):
+
+```java
+def f: (defn(x) ^x) :as Identity;
+```
+
+The two surfaces are distinct positions with distinct meanings: the
+brace declares the range of the binding the declaration introduces
+(§9.6.2), while `:as` annotates the value an expression produces.
 
 ### §3.8 The `@`-Call Operator
 
@@ -2440,6 +2482,8 @@ The value-identity behavior in value position is what the operator does when the
 #### §3.8.4 Namespace-Value Identity
 
 A namespace name is a first-class value (per §3.8's four-way collapse: identity, constructor, dispatch target, plus value-position use). At value position, a namespace value participates in `?=` structural-equality comparison with identity semantics: two namespace values are `?=`-equal exactly when they name the same namespace.
+
+A namespace value is **compile-time-determined**: its identity is the namespace it names, fixed at the declaration, with no content to read. Graph-layer collection carries it for this reason (§9.3).
 
 ```java
 List ?= List;                    // true
@@ -3001,6 +3045,8 @@ Every hook invocation receives, as its trailing positional argument, a value tha
 The tuple's length signals nesting depth; the shape is always a tuple, uniformly, including at plain-LHS sites. Entries are namespace values themselves; per §3.8's four-way collapse, a namespace name is a first-class value, and namespace-value identity comparison via `?=` is specified at §3.8.
 
 **Emission source.** For static-LHS call sites (a bare namespace name or a compound-LHS type expression at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS type expression. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's owning-namespace tag; the tag was established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
+
+For a call against a reference extracted by `.@` (§3.8.2), `ty` is fixed at the extraction site: `def cons: Foo.@;` captures `< Foo >` into the reference, and every `cons@x` emits that tuple. The extraction site is a static-LHS position, so the tuple is a compile-time literal there.
 
 **Hook declaration.** A hook that specializes on `ty` declares a trailing parameter to receive it:
 
@@ -4511,11 +4557,11 @@ A namespace `Tally` whose instances track a compounding count
 alongside a tag:
 
 ```java
-deft TallyStep(Tally, string) :Effects(Effect.User.Slot) ^int;
+deft TallyStep(Tally, string) :Effects(User.Slot) ^int;
 
 defn Tally@(initTag) ^< tag: initTag >;
 
-defn Tally%(inst, newTag) :as TallyStep {
+defn{TallyStep} Tally%(inst, newTag) { {
     def current: Effect.User.Slot.Read% inst;
     def prevCount: ?{ [current ?= empty]: 0; : current.count };
     def next: < count: prevCount + 1, tag: newTag >;
@@ -4592,7 +4638,7 @@ kind with the same payload shape but a sealed partition per §6.1.4.
 User source cannot perform, handle, narrow against, or name
 `Effect.Host.Slot.*` in `:Effects(...)` -- all four effect sites are
 rejected per §6.1.4's `Effect.Host.*` partition rule. The
-`:Effects(Effect.Host.Slot)` spelling is therefore reachable only
+`:Effects(Host.Slot)` spelling is therefore reachable only
 from compiler-authored stdlib code paths, never from user source.
 The partition exists to give the runtime the same slot-storage
 discipline as user code without user-observable side effects.
@@ -4692,7 +4738,7 @@ for the lifetime of a program run:
 **Partition.** `Effect.Host.Counter` is sealed per §6.1.4's
 `Effect.Host.*` rule: user source can neither declare, perform,
 handle, nor name it in `:Effects(...)`. The
-`:Effects(Effect.Host.Counter)` spelling is reachable only from
+`:Effects(Host.Counter)` spelling is reachable only from
 compiler-authored paths (§6.1.4.1 step 1), exactly as
 `Effect.Host.Slot` is (§6.1.5.5). There is no user-facing interception
 point for this kind.
@@ -7654,9 +7700,9 @@ attached to a `deft` function-type expression (§18) between the
 parameter list and the return type:
 
 ```java
-deft AskName(int) :Effects(Effect.User.Ask) ^string;
-deft LogTwice(int) :Effects(Effect.Sys.Log) ^empty;
-deft Composite(int) :Effects(Effect.User.Ask, Effect.User.Retry) ^bool;
+deft AskName(int) :Effects(User.Ask) ^string;
+deft LogTwice(int) :Effects(Sys.Log) ^empty;
+deft Composite(int) :Effects(User.Ask, User.Retry) ^bool;
 ```
 
 Each comma-separated entry names an effect-kind path the function
@@ -7695,8 +7741,8 @@ resolves as written, and any other first segment resolves under
 then rewrite -- and the pair is total over every admitted entry
 spelling.
 
-**`Any` is reserved at this clause.** One entry name is checked before
-normalization and never rewritten:
+**`Any` is the whole-budget entry.** One entry is a native type
+keyword (§9) rather than a path, and normalization passes over it:
 
 ```java
 deft FilterPredT(Any) :Effects(Any) ^bool;
@@ -7705,14 +7751,16 @@ deft FilterPredT(Any) :Effects(Any) ^bool;
 `:Effects(Any)` declares that the function admits **any** effect
 budget. It is the surface a stdlib type uses for a user-supplied
 callback slot, where the declaring code cannot know what the user's
-function performs. Because normalization would otherwise carry `Any`
-to `Effect.User.Any` -- a perfectly ordinary user-declarable path --
-the name is reserved here specifically, in the same manner as the
-reserved roots of §6.1.4.
+function performs.
+
+Normalization is stated over an entry's leftmost *segment*. `Any`
+carries no segments, so the rule has nothing to read and the entry
+survives to the semantic layer as written. The exclusion is by shape,
+not by a reserved-name check against the entry text.
 
 `Any` is admitted **only as the clause's sole entry**. The clause is
 an AND-list, and `Any` subsumes every effect kind, so a mixed form
-such as `:Effects(Any, Effect.User.Ask)` is rejected.
+such as `:Effects(Any, User.Ask)` is rejected.
 
 This is a declaration surface only. It does not relax §6.13.2's
 emit-edge rule for the function that supplies the callback, and it
@@ -7721,49 +7769,49 @@ callback still traces outward to an enclosing `~<*` exactly as it
 would otherwise. Whether a given function conforms to a slot declared
 `:Effects(Any)` is a type-conformance question, covered in §9.
 
-Entries prefix-match per §6.1.4: `:Effects(Effect.User.IO)` declares
+Entries prefix-match per §6.1.4: `:Effects(User.IO)` declares
 that the function may perform `Effect.User.IO` or any
 `Effect.User.IO.*` descendant. To narrow, name more-specific paths:
 
 ```java
-deft ReadFile(string) :Effects(Effect.User.IO.Read) ^string;
+deft ReadFile(string) :Effects(User.IO.Read) ^string;
 deft Multi(int) :Effects(
-    Effect.User.Ask,
-    Effect.User.IO.Read,
-    Effect.User.MyModule.CustomOp
+    User.Ask,
+    User.IO.Read,
+    User.MyModule.CustomOp
 ) ^bool;
 ```
 
-`:Effects(Effect.User.IO.Read, Effect.User.IO.Write)` declares those
+`:Effects(User.IO.Read, User.IO.Write)` declares those
 two subtrees without also declaring the rest of `Effect.User.IO.*`.
 
 The `:Effects(...)` clause is admitted on `deft` function-type
-expressions only. It is not admitted directly on `defn`. To attach a
-declared effect set to a function value, use `:as` with a type that
-carries the clause:
+expressions only. A function declaration reaches a declared effect set
+through its declared type (§3.7), naming a type that carries the
+clause:
 
 ```java
-deft AskName(int) :Effects(Effect.User.Ask) ^string;
+deft AskName(int) :Effects(User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.User.Ask% id;
+defn{AskName} askName(id) ^Effect.User.Ask% id;
 ```
 
 #### §6.13.2 Emit-Edge Declaration
 
-A function that **directly performs** a non-ambient effect must include an `:as` type attachment whose `:Effects(...)` list includes that effect. This is the **emit-edge rule**, and it is mandatory: absence of a matching declaration at an emit-edge is a compile error.
+A function that **directly performs** a non-ambient effect must carry a declared type (§3.7) whose `:Effects(...)` list includes that effect. This is the **emit-edge rule**, and it is mandatory: absence of a matching declaration at an emit-edge is a compile error.
 
 "Directly performs" means the function's own body contains a perform site (via `%` on an effect-kinded LHS, per §6.2, or via the `<::` sugar of §6.2.2) for the effect in question. Performs that occur only in callees are not direct; they belong to those callees' emit-edge declarations.
 
-Inline blocks are part of the enclosing function's own body. A comprehension block-operand (§3.10.9.2), a pipeline-RHS block, a match consequent, and a guarded-expression body are blocks, not functions: they carry no `:as` attachment, no `:over` clause, and no declaration surface of any kind. A perform site inside one is a direct perform of the function that lexically contains the block, and declares there. That a comprehension hook invokes the block does not make it a callee; a callee is a function value with its own declared surface, and a block has none. This parallels `:over` (§2.11), which likewise attaches only at function declarations while inline blocks capture from the enclosing scope implicitly.
+Inline blocks are part of the enclosing function's own body. A comprehension block-operand (§3.10.9.2), a pipeline-RHS block, a match consequent, and a guarded-expression body are blocks, not functions: they carry no declared type, no `:over` clause, and no declaration surface of any kind. A perform site inside one is a direct perform of the function that lexically contains the block, and declares there. That a comprehension hook invokes the block does not make it a callee; a callee is a function value with its own declared surface, and a block has none. This parallels `:over` (§2.11), which likewise attaches only at function declarations while inline blocks capture from the enclosing scope implicitly.
 
 A perform site at module top level -- inside a block or not -- has no enclosing function and therefore no emit-edge. Coverage (§6.13.4) applies to it independently of declaration.
 
 ```java
-deft AskName(int) :Effects(Effect.User.Ask) ^string;
+deft AskName(int) :Effects(User.Ask) ^string;
 
-defn askName(id) :as AskName ^Effect.User.Ask% id;    // legal: emit-edge declared
+defn{AskName} askName(id) ^Effect.User.Ask% id;    // legal: emit-edge declared
 
-defn askNameUndeclared(id) ^Effect.User.Ask% id;      // COMPILE ERROR
+defn askNameUndeclared(id) ^Effect.User.Ask% id;   // COMPILE ERROR
 ```
 
 The compile error localizes to the emit-edge function's definition, naming the specific effect kind that lacks declaration.
@@ -7771,9 +7819,9 @@ The compile error localizes to the emit-edge function's definition, naming the s
 Over-declaration is legal. A `deft` may declare more effects than the function body actually performs; the extra effects broaden the caller-facing contract without changing behavior:
 
 ```java
-deft AskAndMaybeRetry(int) :Effects(Effect.User.Ask, Effect.User.Retry) ^string;
+deft AskAndMaybeRetry(int) :Effects(User.Ask, User.Retry) ^string;
 
-defn askOnly(id) :as AskAndMaybeRetry ^Effect.User.Ask% id;   // legal
+defn{AskAndMaybeRetry} askOnly(id) ^Effect.User.Ask% id;   // legal
 // Body performs only Ask; Retry is declared but never emitted.
 ```
 
@@ -7783,13 +7831,13 @@ Under-declaration -- declaring fewer effects than actually emitted -- is not leg
 
 #### §6.13.3 Propagation and Inference
 
-A function that **only calls other functions** (performs no direct emits, or only ambient ones) does not require a `:Effects(...)` bearing type attachment. The compiler infers its applicable effect set from the union of its callees' declared effects, minus any effects handled by `~<*` scopes lexically enclosing the call sites.
+A function that **only calls other functions** (performs no direct emits, or only ambient ones) does not require a declared type bearing a `:Effects(...)` clause. The compiler infers its applicable effect set from the union of its callees' declared effects, minus any effects handled by `~<*` scopes lexically enclosing the call sites.
 
 ```java
-deft AskName(int) :Effects(Effect.User.Ask) ^string;
-defn askName(id) :as AskName ^Effect.User.Ask% id;
+deft AskName(int) :Effects(User.Ask) ^string;
+defn{AskName} askName(id) ^Effect.User.Ask% id;
 
-defn greetUser(id) {    // no :as, no declared effects
+defn greetUser(id) {    // no declared type, no declared effects
     // compiler infers Effect.User.Ask in scope
     def name: askName(id);
 
@@ -7805,14 +7853,15 @@ includes `Ask` (propagated from `askName`). No emit-edge declaration is
 required on `greetUser`; the tracking continues silently up the call
 chain.
 
-The `:Effects(...)` clause on a type attached to an effect-bearing function **must** name all of the function's **lexical direct
-performs** -- perform sites appearing in its own body via `%` on an
-effect-kinded LHS or via the `<::` sugar (§6.2.2). Propagated effects
-from callees are never required in the declaration; the compiler tracks
-propagation internally per §6.13.4's coverage verification. A function
-like `greetUser` above -- calling `askName` but performing no direct
-emit itself -- omits the clause entirely, since §6.13.1 requires at
-least one entry and the empty set is expressed by absence.
+The `:Effects(...)` clause on an effect-bearing function's declared type
+**must** name all of the function's **lexical direct performs** --
+perform sites appearing in its own body via `%` on an effect-kinded LHS
+or via the `<::` sugar (§6.2.2). Propagated effects from callees are
+never required in the declaration; the compiler tracks propagation
+internally per §6.13.4's coverage verification. A function like
+`greetUser` above -- calling `askName` but performing no direct emit
+itself -- omits the clause entirely, since §6.13.1 requires at least one
+entry and the empty set is expressed by absence.
 
 Naming a propagated effect is nonetheless **permitted**, under
 §6.13.2's over-declaration allowance: the entry broadens the
@@ -7857,8 +7906,8 @@ The compiler verifies **coverage** for every non-ambient effect that propagates.
 Coverage is **per-call-stack, not per-function**. A given intermediate function need not itself wrap with a handler; the requirement is only that *some* enclosing frame in the propagation path handles every emitted effect:
 
 ```java
-deft AskName(int) :Effects(Effect.User.Ask) ^string;
-defn askName(id) :as AskName ^Effect.User.Ask% id;
+deft AskName(int) :Effects(User.Ask) ^string;
+defn{AskName} askName(id) ^Effect.User.Ask% id;
 
 def result: (Effect.User.Ask ~<* (eff:: greetUser(42), ret) {
     ?(eff){
@@ -7925,7 +7974,7 @@ rules):
 
 ```java
 // legal, documentary; no compile effect
-deft LogsProgress(int) :Effects(Effect.Sys.Log) ^empty;
+deft LogsProgress(int) :Effects(Sys.Log) ^empty;
 ```
 
 **NOTE:** Effects with Left-carrying resume (any perform whose value
@@ -7975,7 +8024,7 @@ resume naming what to do with that work's result.
 deft ContThunk() ^Any;
 deft ContResume(Any) ^Any;
 deft ContPair < ContThunk, ContResume >;
-deft ContConstruct(ContPair) :Effects(Effect.Host.Slot.Write) ^ContinuationTrampoline;
+deft ContConstruct(ContPair) :Effects(Host.Slot.Write) ^ContinuationTrampoline;
 
 defn ContinuationTrampoline@(pair) :as ContConstruct {
     def inst: <>;
@@ -8034,7 +8083,7 @@ frames those resumes would otherwise occupy.
    bounce.
 
 ```java
-deft ContBounce(ContinuationTrampoline) :Effects(Effect.Host.Slot.Read) ^Any;
+deft ContBounce(ContinuationTrampoline) :Effects(Host.Slot.Read) ^Any;
 
 defn ContinuationTrampoline%(inst) :as ContBounce {
     def stack: empty;
@@ -9407,33 +9456,56 @@ note), not the same-scope accompaniment requirement.
 This section specifies type names: how they are declared, how a
 reference resolves to a declaration, how a name crosses a module
 boundary, and what an assertion against a resolved name tests. Type
-expression semantics, the distinctness and subsumption relations,
-inference, and overload selection are open; §9.7 enumerates them.
+expression semantics, the subsumption relation, and inference are
+open; §9.7 enumerates them.
+
+A type is declared by `deft` (§9.2) or by `defn Name@(..)`
+(§3.1.1.1). There is no third surface.
 
 ### §9.1 Type Names And Scopes
 
-A `deft` declaration registers its name in the scope containing it.
+A type declaration registers its name in the scope containing it.
 Scopes chain innermost outward; a module's outermost scope is the last
 link (§8).
 
-#### §9.1.1 `deft` Is A Declaration
+Two constructs declare a type:
 
-`deft` has no runtime effect. Three consequences:
+- **`deft`** (§9.2) declares a type and nothing else.
+- **`defn Name@(..)`** (§3.1.1.1) declares a type and produces the
+  namespace's unit constructor. Per §3.8's four-way collapse, `Name` is
+  one entity: type, namespace, constructor, and typeclass.
 
-- **Conditionals do not gate it and loops do not repeat it.** A `deft`
-  inside a match consequent registers in that consequent's scope
-  whether or not the arm is ever taken. A `deft` in a loop body
-  declares once, not once per iteration. A scope is a lexical region,
-  not a dynamic activation.
+A namespace has no separate `deft`. A `deft Foo` in a scope where `defn Foo@(..)` also appears is a redeclaration error (§9.5). A constructor's type is its declared type (§3.7), naming an ordinary type:
 
-- **A `deft` name is in scope throughout its entire lexical scope**,
-  not only textually below itself. Registration and overload rules
-  operate on a scope's whole declaration *set* at once, never on a
-  running textual prefix.
+```java
+deft ListCtorT(int) ^List;
+
+defn{ListCtorT} List@(v) ^< value: v >;
+```
+
+#### §9.1.1 A Type Declaration Has No Runtime Effect
+
+The type half of a declaration has no runtime effect. Three
+consequences:
+
+- **Conditionals do not gate it and loops do not repeat it.** A
+  declaration inside a match consequent registers in that consequent's
+  scope whether or not the arm is ever taken. A declaration in a loop
+  body declares once, not once per iteration. A scope is a lexical
+  region, not a dynamic activation.
+
+- **A declared name is in scope throughout its entire lexical scope**,
+  not only textually below itself. Registration rules operate on a
+  scope's whole declaration *set* at once, never on a running textual
+  prefix.
 
 - **Resolution requires no evaluation.** Resolving a name at a source
   position is a scope-chain walk over syntax: no execution, no
   cross-module reads.
+
+`defn Name@(..)` additionally binds a function value, which is an
+ordinary `defn` binding subject to §2.8's hoisting and constancy rules.
+The two halves register together and cannot be separated.
 
 **Implementation note.** A resolver collects a scope's declaration set
 before resolving any name within it.
@@ -9444,8 +9516,8 @@ before resolving any name within it.
 registered in a scope or it is not. There is no partial shadowing, and
 declaration sets do not merge across scopes.
 
-1. The first `deft` of a name in a lexical scope shadows **the entirety
-   of that name** from any outer scope.
+1. A type declaration of a name in a lexical scope shadows **the
+   entirety of that name** from any outer scope.
 2. Resolution searches the lexical scope chain outward. The first scope
    in which the name is registered wins.
 3. Lexical chain exhausted ⇒ **unresolved name**, a compile error at
@@ -9535,19 +9607,24 @@ specifier is never computable.
 
 ### §9.3 The Graph Layer
 
-Every **top-level** `deft` type declaration in every module of the
-compilation unit set (§8.1) is collected implicitly into the **graph
-layer**. Collection covers all three right-hand shapes (§9.2): fresh
-declarations, local aliases, and graph reaches alike. A `deft` at any
-inner scope never escapes its file.
+Every **top-level** type declaration in every module of the compilation
+unit set (§8.1) is collected implicitly into the **graph layer**.
+Collection covers both declaration surfaces: `deft` in all three of its
+right-hand shapes (§9.2) -- fresh declarations, local aliases, and
+graph reaches alike -- and `defn Name@(..)` (§3.1.1.1). A declaration
+at any inner scope never escapes its file.
 
 Graph entries are keyed by the declaring module's **canonical path**
 (§8.4.1). Two modules declaring `Foo` produce two distinct entries
 distinguished by origin.
 
-Graph construction collects every `deft` and resolves every `from`
+Graph construction collects every declaration and resolves every `from`
 clause by syntactic walk, with no evaluation. Collection is total and
 requires no ordering, so import cycles are benign for types.
+
+A `defn Name@(..)` entry carries the namespace value alongside the type
+name. A namespace value is compile-time-determined (§3.8.4), so
+collecting it reads no value and evaluates nothing.
 
 Collection makes a name **reachable** by a `from` clause (§9.4). It
 does not place the name in any scope; a graph entry is reachable and
@@ -9571,21 +9648,40 @@ not the target module was ever imported.
 `from` is **strictly a `deft` tail**. It is not admitted at arbitrary
 type-reference positions.
 
-Once bound, the name is an ordinary lexical type name; registration,
-shadowing, and overload rules are §9.1.2 and §9.5.
+**A reach binds whatever the entry holds.** By declaration surface:
 
-### §9.5 Overloads
+- A `deft`-declared entry binds a type name.
+- A `defn Name@(..)`-declared entry binds the type name, the namespace
+  value, and the namespace's complete hook set -- the `@` constructor,
+  every labeled constructor, and every `%`, comprehension, arithmetic,
+  and equality hook declared on it (§3.1.1.1--§3.1.1.4).
 
-Multiple `deft`s of one name in one scope are **overloads**. They must
-have distinct type shapes; non-distinct overloads are a compile error.
-What makes two type shapes distinct is a §9.7 predicate.
+There is no per-hook reach. Instance-LHS dispatch resolves no name at
+all: `xs ~map fn` reads `xs`'s `__ns` (§9.6). Static-LHS positions --
+`Foo@ x`, a labeled `Foo.from@ x`, and `Foo ~<< {..}` -- resolve `Foo`
+in the reaching scope and reach the corresponding hook through it.
 
-An overload set cannot be extended. A lexical `deft Foo` adding one
-overload hides every `Foo` overload an outer scope registered or
-reached; a set is replaced wholesale, or bound whole.
+A hook's declared type rides with the entry; the checker holds it
+whether or not a name for it was reached. Reaching a name for that type is an ordinary `deft X from ".."` against the type named in the hook's declaration (§3.7).
 
-**`from` binds the whole overload set as a unit.** A reach of a name
-with N overloads at the target module binds all N.
+Once bound, the name is an ordinary lexical type name; registration and
+shadowing rules are §9.1.2 and §9.5.
+
+### §9.5 One Declaration Per Name
+
+A name has at most one type declaration in a scope. A second is a
+compile error, at any nesting depth:
+
+- two `deft Foo` declarations
+- `deft Foo` together with `defn Foo@(..)`
+- two `defn Foo@(..)` declarations
+
+Different scopes are ordinary shadowing (§9.1.2).
+
+**Constructors are not overloadable.** Each constructor name admits
+exactly one `defn` declaration. A labeled constructor is a distinct
+name: `defn Maybe@(..)` and `defn Maybe.from@(..)` are two names, one
+declaration each (§3.1.1.1).
 
 **Mixing modes in one scope is a compile error.** In a single scope, at
 any nesting depth:
@@ -9593,30 +9689,55 @@ any nesting depth:
 - a fresh-or-alias `deft Foo ...` together with a `deft Foo from ".."`
 - two `deft Foo from ".."` clauses reaching different modules
 
-Different scopes are ordinary shadowing. This check is scope-local and
-syntactic, decidable without the distinctness predicate.
+These are instances of the one-declaration rule, named separately
+because the diagnostic differs. Every check in this section is
+scope-local and syntactic.
 
-**Resolution precedes selection.** §9.1.2 resolves the *name* to a
-scope. Selection chooses among that scope's set by type shape, and is
-open (§9.7). Once a scope wins, an overload set in which nothing is
-satisfiable is a selection failure there, not a reason to continue
-walking outward.
+**A declared function type carries one return type.** A function whose
+result type varies with its argument type declares the union; use sites
+narrow:
 
-### §9.6 Type Assertion
+```java
+deft Parse (int | string) ^int | string;
 
-`:as` and `?as` (§5) are the positions where a type name is written
-down. Dispatch reads the value's `__ns` (§3.8) and involves no name.
+defn{Parse} parse(v) ^?(v){
+    [?as int]:    v + 0;
+    [?as string]: v;
+};
+```
+
+Argument-count variation is the `?` optional-argument modifier
+(Syntactic-Grammar §18), not a second declaration.
+
+### §9.6 Written Type Positions
+
+Three positions write a type name down: `:as` and `?as` (§5), which
+annotate and test a value, and the declared-type brace (§3.7,
+§9.6.2), which types a binding. Dispatch reads the value's `__ns`
+(§3.8) and involves no name.
 
 `?as Foo` tests whether the value's `__ns` is the entity `Foo` resolves
 to **at that source position**, not whether the value belongs to some
 namespace spelled `Foo`.
 
-Exactly one resolution failure exists here: a name resolving in no
-lexical scope, diagnosed at the reference (§9.1.2).
+Exactly one resolution failure exists at all three positions: a name
+resolving in no lexical scope, diagnosed at the reference (§9.1.2).
 
 #### §9.6.1 All Types Are Explicitly Reached
 
-There is no ambient type layer. Using `List` at a `:as` or `?as`
+Five native types are lexical keywords: `int`, `float`, `bool`,
+`string`, and `Any`. A keyword is available at every written type
+position without reaching, registers in no scope, and shadows nothing.
+`DefTypeName` (Syntactic-Grammar §18) admits `Identifier` and
+`BuiltIn` at each segment, so `deft int ...` and `deft Any ...` fail
+at the name position as parse errors.
+
+The four lowercase natives name concrete runtime representations.
+`Any` names the absence of a narrowing constraint, and its
+capitalization marks that difference: it is a synthetic type with no
+representation of its own.
+
+Every other type name is reached. Using `List` at a written type
 position requires reaching it:
 
 ```java
@@ -9628,14 +9749,113 @@ xs ?as List;
 **`BuiltIn` lexical status does not imply availability.** `List`,
 `Channel`, `Promise`, etc, all lex as `BuiltIn`. That classification is
 a lexical-grammar fact; it registers nothing in any scope. An unreached
-`List` at a `:as` or `?as` position exhausts the lexical chain and is an
+`List` at a written type position exhausts the lexical chain and is an
 unresolved name (§9.1.2), diagnosed at the reference.
 
 Graph-layer collection (§9.3) does not close the gap: collection makes a
 name reachable, and `from` (§9.4) is the only construct that binds it
 into a scope. An `import` of the declaring module does not supply the
-type name either (§9.2.1) -- values and type names cross a module
-boundary by separate constructs.
+type name either (§9.2.1). A reach carries the namespace value with the
+type name (§9.4); `import` carries every other exported value.
+
+#### §9.6.2 Container Typing
+
+A `def`, `defn`, or hook declaration may carry a declared type in a
+brace clause cuddled to the introducing keyword (Syntactic-Grammar
+`DeclTypeClause` at §4; §3.7 for the function forms):
+
+```java
+def{int} count: 0;
+defn{AddFunc} add(x, y) ^x + y;
+```
+
+The declared type is the binding's **range**: the set of values the
+binding may hold across its entire lifetime.
+
+**An unannotated container has implied type `Any`.** It holds any
+value, for the whole life of the binding:
+
+```java
+def x: 3;
+x := "3";                    // well-formed
+```
+
+The brace is the opt-in. A binding narrower than `Any` is one the
+author wrote a type on. Removing a brace from a program turns errors
+into non-errors and never the reverse.
+
+**Range and value type coincide at constant bindings.** `defn` and
+`deft` are structurally constant (§2.3.1), and a `def` with no `:=`
+in its scope is observably constant (§2.3); each holds one value
+forever, so its range is that value's type. The brace is admitted at
+all of them uniformly and carries no additional constraint there --
+the same shape as §6.13.2's over-declaration allowance.
+
+**The container type and the value annotation are independent.** A
+`def` initializer carries its own `:as` tail through `AsExpr` (§5),
+typing the value the initializer produces:
+
+```java
+def{Rec} <:a, :b>: payload :as Rec;
+```
+
+Either, both, or neither may appear. Where both appear, the value type
+must conform to the container type -- a directional subsumption
+question, value to container, deferred to §9.7.
+
+**A destructure target admits the brace, and the type distributes by
+the target's own extraction mechanism** (§2.13). Record-mode entries
+draw by field name, tuple-mode entries by position. A renamed entry
+draws by its source path: in `def{Rec} <first: items.0>: src;`, `first`
+takes `Rec.items.0`. A `#capture` entry takes the whole type. A
+computed-source entry (`<k: [expr]>`) has no static key and falls back
+to implied `Any`. An entry the type pattern does not cover is an error
+at that entry.
+
+### §9.7 Open
+
+The following are unspecified. Each is a rule this specification owes.
+
+**Type-expression semantics.** §9 specifies type *names*. The shapes a
+`TypeExpr` admits (Syntactic-Grammar §18) have no stated meaning. Three
+sub-questions are separable:
+
+- **Applied types.** `NestedTypeExpr` applies a single type argument
+  (`List{int}`). No declaration surface states that a type takes an
+  argument: `DefTypeName` is a dotted name with no parameter list, and
+  there is no type-variable form.
+- **Record and Tuple types.** `DataStructTypeExpr` admits named and
+  positional entries in one list with no mode discrimination. The
+  value-side destructure grammar (§2.13) rejects that mixing.
+  Container-type distribution over a destructure target (§9.6.2) has
+  no defined behavior against a mixed-mode type: the target commits to
+  one mode, and a mixed type supplies no consistent key for either.
+- **Literal types.** `EmptyLit`, `PlainStr`, `NumberLit`, and
+  `BooleanLit` are `NoUnionTypeExpr` arms.
+
+**Subsumption.** When a value of one type is admitted where another is
+required. Consumers: union membership (§9.2), effect-set conformance
+below, `:as` checking, and value-to-container conformance (§9.6.2).
+
+**Narrowing through `?as` arms.** The type of a binding inside a match
+arm whose clause is a `?as` test (§5). Every item here that reasons
+about a value's type inside a branch depends on this one.
+
+**Inference.** A binding's type when no `:as` is written (§2.14.1), and
+whether an inferred type carries `:over`-derived constancy (§2.14.2).
+
+**`:as` timing and failure.** Whether the annotation is checked at parse
+time, at a separate elaboration pass, lazily at use, or at runtime; and
+what happens when the value does not satisfy the type (§2.14.1).
+
+**Empty `< >` typing.** The type-level representation of a value
+polymorphic between Record and Tuple slots (§1.5.5, §2.14.5).
+Operational semantics are settled; the type-level treatment is open.
+
+**Coverage-gap diagnostic.** The optional check §5 describes as
+§9-gated: deciding coverage of a dependent match requires enumerating a
+type's inhabitants, and deciding tautology over independent clause
+conditions requires reasoning about those conditions' types.
 
 ## §10 Runtime Bootstrap
 
