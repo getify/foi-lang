@@ -376,6 +376,10 @@ The error is reported at the `export` entry, and names where the offending assig
 
 **Note:** An entry carrying an access path (`{ :config.timeout }`) *does* read a value, making it a consuming operation. If its path reaches a `def` declared later in the section, that's a forward reference and needs `Lazy@` (see [Lazy Forward References](#lazy-forward-references)).
 
+Definition sections settle across *all* your modules together, not one module at a time. Every module's definition section runs, then every pending forward reference resolves, then the export Records get built. That's what lets two modules reference each other's bindings without one of them having to go first.
+
+The flip side: if two modules each do something observable in their definition sections -- a `log`, anything with a side effect -- nothing fixes which one you see first. Within a single module, source order holds. Across modules, it doesn't. Don't write code that depends on it.
+
 ## Function Calls
 
 The traditional function call-form (e.g., `log("Hello")`) always requires `(    )` around the argument list, and must immediately follow the function name (no whitespace). If there are no arguments to pass, the call looks like `someFn()`.
@@ -2397,7 +2401,7 @@ defn Runner@(fn) ^< :fn >;
 defn Runner%(dInst,arg) ^dInst.fn(arg);
 ```
 
-The `defn ...%` form *must* be accompanied in the same scope with a `defn ...@` of the same name.
+The `defn ...%` form *must* be accompanied in the same scope by a declaration of that name -- either a `defn ...@` unit constructor, as here, or a `deft` of the same name (see [Hooks on a Shared Type](#hooks-on-a-shared-type)). You hang hooks only on types you declared yourself.
 
 This opts *instances* constructed by the `Runner@` unit constructor into a dispatch by the special `%` effector call-operator, to this function (passing the instance and, optionally any argument):
 
@@ -2436,7 +2440,7 @@ wrapped ~map (defn(v) ^v * 2);          // Container@ 84
 wrapped ~< (defn(v) ^Container@v * 2);  // Container@ 84
 ```
 
-Like `%`, a `~`-suffix declaration must be accompanied in the same scope by a `defn Name@(..)` of the same name; the hook installs onto that namespace. `Container`, `Container@`, `Container~map`, `Container~<`, and any other comprehension-suffix form on the same identifier all share one namespace.
+Like `%`, a `~`-suffix declaration must be accompanied in the same scope by a declaration of that name -- a `defn Name@(..)` or a `deft Name` ([Hooks on a Shared Type](#hooks-on-a-shared-type)); the hook installs onto that namespace. `Container`, `Container@`, `Container~map`, `Container~<`, and any other comprehension-suffix form on the same identifier all share one namespace.
 
 The `~<` hook has surface aliases at call sites -- `~chain`, `~bind`, and `~flatMap` all dispatch through the same hook -- but declaration uses only the canonical `~<`.
 
@@ -2471,7 +2475,7 @@ v1 ?= (Vector@ < x: 1, y: 2 >);     // true
 v1 != v2;                           // true
 ```
 
-Like `%` and `~`-suffix declarations, an operator-marked `defn` requires an accompanying `defn Name@(..)` on the same identifier -- the hook installs onto that namespace. `Vector`, `Vector@`, `Vector+`, `Vector?=`, and any other operator-suffix form on the same identifier all share one namespace.
+Like `%` and `~`-suffix declarations, an operator-marked `defn` requires an accompanying declaration on the same identifier -- a `defn Name@(..)` or a `deft Name` ([Hooks on a Shared Type](#hooks-on-a-shared-type)); the hook installs onto that namespace. `Vector`, `Vector@`, `Vector+`, `Vector?=`, and any other operator-suffix form on the same identifier all share one namespace.
 
 The admitted markers are `+`, `-`, `*`, `/`, and `?=`. Each hook takes two parameters: the left operand (an instance of the declaring namespace) and the right operand. When the left operand at a call site is an instance of the declaring namespace, the hook fires. If the left operand's namespace hasn't declared the operator, the call is rejected at compile time -- there's no silent fallback to numeric behavior on user types.
 
@@ -2489,6 +2493,48 @@ vectorLT(v1,v2);            // true
 **NOTE:** When a namespace declares `+` but doesn't declare its own `~fold` / `~foldR` hook, fold comprehensions over instances of the namespace default to composing the `+` hook -- accumulator threaded, `+` applied left-to-right (or right-to-left for `~foldR`). A sum-type namespace declaring just `+` gets a natural `~fold` for free.
 
 Operator hook declaration and the full dispatch mechanism are covered in depth in the specification (§3.1.1.4).
+
+### Hooks on a Shared Type
+
+Every hook so far has hung on a namespace you made with a unit constructor. There's a second way: declare a type with `deft` that names other types, and hang the hook there. Members of that type reach it.
+
+```java
+defn Meters@(n) ^< meters: n >;
+defn Feet@(n) ^< meters: (n * 0.3048) >;
+defn Yards@(n) ^< meters: (n * 0.9144) >;
+
+deft Length Meters | Feet | Yards;
+```
+
+Each constructor converts on the way in, so all three carry the same field and differ only in the units they were written with. `Length` names them as its members. It has no `Length@` and never will -- there's nothing to construct, since what you construct is a `Meters`, a `Feet`, or a `Yards`. What it *can* carry is hooks:
+
+```java
+defn Length+(a,b) ^Meters@ (a.meters + b.meters);
+defn Length?=(a,b) ^a.meters ?= b.meters;
+```
+
+```java
+(Feet@ 10) + (Yards@ 2);        // Meters@ 4.8768
+(Feet@ 3) ?= (Yards@ 1);        // true
+```
+
+Neither `Feet` nor `Yards` declares `+` or `?=`. Dispatch walks up to `Length` and finds them there -- written once, for the whole family, instead of nine near-identical hooks across three namespaces.
+
+**A member's own hook wins.** If `Feet` declared its own `+`, that one would fire whenever a `Feet` instance is the left operand, and `Length`'s would still cover the rest. The declaration closest to the value's type is the one that runs, which is what makes a family default worth writing: members override it when they need to.
+
+`?as` follows the same membership:
+
+```java
+def d: Feet@ 10;
+
+d ?as Feet;         // true
+d ?as Length;       // true
+d ?as Yards;        // false
+```
+
+**Membership is by name, not by shape.** `Length` contains those three because you wrote them into the `deft`, not because anything about their contents matches. A separately declared type that happens to hold a `meters` field isn't a member.
+
+**One thing to avoid.** Don't put the same hook on two unrelated types that one type belongs to. If `Feet` is a member of both `Length` and `Serializable` and both declare `?=`, then `someFeet ?= other` has two equally-close answers, and **Foi** rejects the expression rather than picking one. Neither is closer than the other, so there's nothing to prefer. Fix it where the hooks are declared -- drop it from one of them, or give `Feet` its own.
 
 ## Base Unit Functions
 
@@ -5501,6 +5547,8 @@ Performing `Effect.User.Ask` in `askName()`'s body without that `{AskName}` decl
 
 Intermediate callers don't have to keep re-declaring the effect. If `greetUser` calls `askName` but doesn't itself perform anything new, no declaration is required on `greetUser`; the compiler propagates the effect surface up the call stack silently. Coverage is verified per call stack; somewhere before the outermost boundary, a `~<*` handler for `Ask` must exist. Where in the chain that handler lives is up to you.
 
+That freedom narrows at the top of a module. Code sitting directly there -- a definition's initializer, or a plain statement after the definitions -- isn't inside any call, so there's no caller to hand the effect off to. Importing your module doesn't make the importer one either. Handle it in the same statement that performs it. Ambient effects are unaffected -- the runtime's handler is in place before any module loads.
+
 ### Ambient Effects
 
 A small runtime-designated set of effects -- **`Effect.Sys.Log, Effect.Sys.Warn, Effect.Sys.Random, Effect.Sys.CurrentTime`** -- are exempted from the tracking discipline entirely. These are **ambient** effects: they need no `:Effects(...)` declaration on the emit-edge function, and the caller doesn't have to install a `~<*` handler for them:
@@ -5513,7 +5561,7 @@ defn greetUser(id) {
 };
 ```
 
-A **Foi**-provided top-level handler catches ambient performs at the outermost boundary (stdout for `Effect.Sys.Log`, stderr for `Effect.Sys.Warn`, PRNG for `Effect.Sys.Random`, system clock for `Effect.Sys.CurrentTime`). `Effect.Sys.Warn` is its own kind rather than a flavor of `Log` so that you can intercept diagnostics on their own -- silence them in a test run, or route them somewhere louder -- without touching normal output.
+A **Foi**-provided handler wraps your entire program run and catches ambient performs (stdout for `Effect.Sys.Log`, stderr for `Effect.Sys.Warn`, PRNG for `Effect.Sys.Random`, system clock for `Effect.Sys.CurrentTime`). "Entire run" is literal -- it's in place before your modules start loading, so a `log()` in a definition section reaches it exactly as a `log()` deep in a call stack does. `Effect.Sys.Warn` is its own kind rather than a flavor of `Log` so that you can intercept diagnostics on their own -- silence them in a test run, or route them somewhere louder -- without touching normal output.
 
 You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
 

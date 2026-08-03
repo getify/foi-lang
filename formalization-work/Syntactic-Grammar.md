@@ -1247,8 +1247,9 @@ DefFuncExpr           := "defn" DeclTypeClause? (_ Identifier)?
    declarations of the same kind in one scope are not rejected at
    the grammar layer (transpiler emits last-wins; semantic checker
    enforces uniqueness). Comprehension-hook and operator-hook decls
-   additionally require an accompanying `@`-hook decl on the same
-   identifier in the same scope (mirrors `%` hook requirement);
+   additionally require an accompanying declaration of the same
+   identifier in the same scope -- `defn Name@(..)` or `deft Name`,
+   not a `deft ... from ".."` reach (mirrors `%` hook requirement);
    rejection at semantic layer, not grammar. *)
 
 (* Hook name: namespace, plus at most one optional label segment.
@@ -1268,6 +1269,7 @@ DefFuncExpr           := "defn" DeclTypeClause? (_ Identifier)?
    admitted by the compiler mode of Foi-Specification §10.1 -- not
    by this grammar. This is the one place DefHookName diverges from
    DefTypeName (§18), which admits BuiltIn at every segment. *)
+
 DefHookName           := Identifier (Period Identifier)?;
 
 DefHookDecl           := "defn" DeclTypeClause? _ DefHookName

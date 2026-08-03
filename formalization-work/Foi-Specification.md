@@ -639,7 +639,18 @@ def label: "meaning";
 life.meaning;   // 42
 ```
 
-Carry operations during the section do not force their thunk operands. A thunk may flow into a record field, a tuple slot, a closure capture, or a function call argument, and remain unresolved within that position for the duration of the section, provided its referenced identifier(s) are eventually defined later in the same section.
+Carry operations during the section do not force their thunk operands. A thunk may flow into a record field, a tuple slot, a closure capture, or a function call argument, and remain unresolved within that position for the duration of the section, provided its referenced identifier(s) resolve before the force pass.
+
+**At module scope, a pending identifier may name a binding in another module.** The compilation unit set loads in phases (§8.3.1): every module's `def` section completes before the force pass runs, so a reference across the set is pending in exactly the way a reference to a later `def` in the same section is. Two kinds of pending entry result, both shrinking the same pending set by the same procedure:
+
+- **In-section.** The listener fires when that `def` is reached, during phase 1.
+- **Cross-module.** The listener fires when that module's binding resolves, during phase 2.
+
+A cross-module pending entry is keyed on **the binding**, never on the exporting module's export Record. Keying on the Record would require every one of that module's thunks to resolve before any single entry became readable, which deadlocks whenever two modules each need one binding from the other. Keying on the binding is sound because §8.3.1's phase 3 is a projection of bindings that already exist: the Record is assembled from bindings; it is not something bindings wait on.
+
+A cross-module entry still pending when phase 2 completes is a resolution failure, reported per §2.2.5 and §2.2.8.
+
+Cross-module pending is a module-scope phenomenon. An inner scope's section is governed by §2.2.6 unchanged.
 
 #### §2.2.5 End-of-Section Force and Resolution
 
@@ -715,6 +726,10 @@ answer;                     // 42
 ```
 
 There is no scope boundary being crossed here, so the deferred resolution of `seed` and `answer` works as expected.
+
+**The unit-set force pass is not a cross-scope force.** Under §8.3.1's phased load, phase 2 resolves thunks across every module's outermost scope at once, and two modules' outermost scopes are different scopes (§2.10). The restriction above does not reach it. What the restriction forbids is forcing a thunk from *executing code in another scope*, which would require suspending that code and resuming it later. Phase 2 is not executing code in any scope; it is a phase between two of them, running after every module's `def` section has completed and before any module's remaining statements begin. Nothing pauses and nothing resumes.
+
+The restriction applies unchanged to a force reached through a **call** during a module's `def` section. A function body that forces another module's still-pending binding is the ordinary cross-scope case, reported at the force point inside that body, with no compile-time detection promised.
 
 #### §2.2.8 Resolution Failures
 
@@ -1730,9 +1745,13 @@ defn Task@(fn) ^< :fn >;
 defn Task%(tInst,env) ^tInst.fn(env);
 ```
 
-Like `@`, the `%` marker is **not part of the function's name as a binding**; `Task` is the bound name in the enclosing scope, and the `%` marker is a separate AST-recorded flag on the function value. A `%`-marked `defn` does not introduce a binding distinct from `Task` or `Task@`; it installs an effector hook on the same `Task` namespace that an accompanying `defn Task@(..)` constructs against. `Task`, `Task@`, and `Task%` are three syntactic forms over a single binding slot.
+Like `@`, the `%` marker is **not part of the function's name as a binding**; `Task` is the bound name in the enclosing scope, and the `%` marker is a separate AST-recorded flag on the function value. A `%`-marked `defn` does not introduce a binding distinct from `Task` or `Task@`; it installs an effector hook on the same `Task` namespace. `Task`, `Task@`, and `Task%` are three syntactic forms over a single binding slot.
 
-A `defn Name%(..)` declaration is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; the `%` hook installs against the namespace introduced by the `@` hook. A `%`-only declaration is rejected at compile time.
+A `defn Name%(..)` declaration is well-formed only when accompanied in the same scope by a declaration of `Name` -- either a `defn Name@(..)` (§3.1.1.1) or a `deft Name` (§9.2). The requirement is ownership: a hook installs only on a namespace its own scope declares. A `%` hook whose name is declared nowhere in its scope is rejected at compile time.
+
+Under an accompanying `defn Name@(..)`, the hook installs against the namespace that constructor introduces. Under an accompanying `deft Name`, it installs against the declared type; where that type is a union, its members reach the hook as a supertype's hook (§9.2.3). §3.8.5 specifies how a call site resolves to it.
+
+A graph reach (`deft Name from ".."`, §9.4) does not satisfy the requirement. A reach binds a name declared in another module; it declares nothing here (§8.6).
 
 The `%` hook receives an instance as its first parameter and an optional effector argument as its second.
 
@@ -1770,7 +1789,7 @@ Like `@` and `%`, a comprehension marker is **not part of the function's name as
 
 A comprehension-marked `defn` installs a comprehension hook on the namespace named by the identifier. At a comprehension call site, the LHS's owning namespace is inspected for the corresponding hook; if present, the hook is invoked with the LHS instance as its first argument, followed by the operands the comprehension supplies.
 
-A comprehension-marked `defn` is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; a comprehension-only declaration is rejected at compile time. This mirrors the `%` hook requirement (§3.1.1.2).
+A comprehension-marked `defn` is well-formed only when accompanied in the same scope by a declaration of that name -- `defn Name@(..)` or `deft Name`, but not a graph reach. A hook whose name is declared nowhere in its scope is rejected at compile time. This mirrors the `%` hook requirement (§3.1.1.2), which carries the full rule.
 
 **Admitted markers.** The comprehension markers admitted at declaration position fall into three categories:
 
@@ -1821,7 +1840,7 @@ Like `@`, `%`, and the comprehension markers, an operator marker is **not part o
 
 An operator-marked `defn` installs a hook on the namespace named by the identifier. At the corresponding binary call site (`a + b`, `a ?= b`, etc.) whose LHS is an instance of the declaring namespace, the LHS's owning namespace is inspected for the hook; if present, the hook is invoked with the LHS instance as its first argument and the RHS operand as its second. Dispatch follows the LHS-wins rule shared with the rest of the namespace-attached operator family (§3.8): the LHS's namespace identity drives operator selection; the RHS is data supplied to the hook, and the hook body may inspect its shape (via `?as`, `?(rhs)`, etc.) if the operation is not symmetric across operand shapes.
 
-An operator-marked `defn` is well-formed only when accompanied in the same scope by a `defn Name@(..)` of the same name; an operator-only declaration is rejected at compile time. This mirrors the `%` and comprehension hook requirements (§3.1.1.2, §3.1.1.3).
+An operator-marked `defn` is well-formed only when accompanied in the same scope by a declaration of that name -- `defn Name@(..)` or `deft Name`, but not a graph reach. A hook whose name is declared nowhere in its scope is rejected at compile time. This mirrors the `%` and comprehension hook requirements (§3.1.1.2, §3.1.1.3).
 
 **Admitted markers.** The operator markers admitted at declaration position fall into two categories:
 
@@ -2513,6 +2532,25 @@ def ty: < List, Promise >;
 **NOTE:** The dependent match atoms in the above snippet rely on implicit `?=` -- matching `ty` to `< List, Promise >`, for example -- but `?=` could have been explicitly added: `[?= < List, Promise >]`.
 
 The primary consumer of this mechanism is the dispatch-type introspection surface (§3.10.9.7), where hooks receive a Tuple of namespace values reflecting compound-LHS shape and dispatch on it via pattern match.
+
+#### §3.8.5 Hook Resolution Through Membership
+
+A hook is declared on a namespace (§3.1.1) and installs there. A namespace declared by `deft` may be a union (§9.2.3), and its members reach its hooks: dispatch does not stop at the value's own `__ns`.
+
+At a dispatch site -- `%` (§3.9), a comprehension marker (§3.10.9), or an arithmetic or `?=` marker (§3.1.1.4) -- resolution is one step, not a chain of fallbacks:
+
+1. After alias normalization (§3.10.9.1), collect every type reachable from the value's `__ns` by membership (§9.2.3), the `__ns` itself included, that declares a hook for the marker at hand. Call this the **candidate set**.
+2. If the candidate set is empty, the marker's own missing-hook rule applies unchanged: `%` is a type error (§3.9.1); a Tier 1 comprehension is rejected and a Tier 2 comprehension expands its language-provided default (§3.10.9.3); an arithmetic or `?=` marker is rejected (§3.1.1.4). A Tier 2 default composes over the namespace's declared primitives, and each primitive it reaches resolves by this same procedure.
+3. If the candidate set has a unique **most specific** member -- one that is a member of every other candidate -- the hook declared there is invoked.
+4. Otherwise the expression is rejected at compile time. The diagnostic names the value's namespace, the marker, and each incomparable candidate with its declaring module.
+
+**Most-specific-wins is forced, not chosen.** A namespace's own hook is a candidate at membership distance zero, and a union it belongs to may declare the same marker. If the nearer declaration did not win, a namespace could never carry a hook that a union above it also carries: a union could never supply a default that a member overrides, and delegation would have no use. The rule that makes distance zero win is the same rule at every distance.
+
+Step 4 therefore fires only when two candidates are genuinely incomparable -- the value's namespace belongs to two unions, neither a member of the other, and both declare the marker. Declaration order does not change the answer, which is why this rejects rather than picking.
+
+The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it, so under the rules stated here no annotation redirects resolution; §9.7 owes the answer as part of `:as` checking. Until it lands, a step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own.
+
+**Constructors do not participate.** The `@` marker dispatches on a namespace handle rather than on an instance's `__ns` (§3.8), and a union declares no constructor (§9.2.3). `U@ x` against a union is rejected whether or not `U`'s members declare constructors.
 
 ### §3.9 The `%` Effector Call Operator
 
@@ -4537,15 +4575,18 @@ Slot access is performed through two effect kinds under
   `empty` resume carries no information; it does not indicate an
   unresumed perform.
 
-**Slot kinds are not ambient.** The runtime installs a slot-access
-handler at every outermost `%` invocation, so **coverage** (§6.13.4)
-is pre-satisfied and no user-side `~<*` is ever required. The
-**emit-edge rule** (§6.13.2) applies in full: a hook whose body
-performs slot access declares it, exactly as it would any other
-tracked effect. The ambient category (§6.13.5) is the four
-`Effect.Sys.*` kinds and nothing else; slots are pre-covered, not
-exempt from declaration. A namespace's statefulness is visible at
-its declared surface.
+**Slot kinds are not ambient.** The runtime's slot-access handler
+scope wraps the whole program run, on the same terms as the ambient
+handler scope (§6.13.5), so **coverage** (§6.13.4) is pre-satisfied
+and no user-side `~<*` is ever required. It wraps the run rather
+than each outermost `%` invocation because a `def` section
+constructing a stateful instance performs slot access during module
+initialization, which is not a `%` invocation. The **emit-edge
+rule** (§6.13.2) applies in full: a hook whose body performs slot
+access declares it, exactly as it would any other tracked effect.
+The ambient category (§6.13.5) is the four `Effect.Sys.*` kinds and
+nothing else; slots are pre-covered, not exempt from declaration. A
+namespace's statefulness is visible at its declared surface.
 
 Spell the declaration entry at the granularity the hook uses: name
 the `Effect.User.Slot` prefix when the hook both reads and writes,
@@ -7920,9 +7961,15 @@ The `Effect.User.Ask ~<* (eff:: ..., ret) { ... }` handler encloses the
 call to `greetUser`, which transitively performs `Effect.User.Ask`.
 Coverage is satisfied; the outermost `%` invocation is well-formed.
 
-If no such handler exists on any path from a perform-site to the outermost `%` boundary, the compile error includes the call stack from the perform-site (naming the effect kind) to the outermost `%` invocation, indicating which effect escaped without handling.
+Ambient effects are pre-covered by the runtime handler scope wrapping the program run (§6.13.5); they are excluded from the coverage trace entirely.
 
-Ambient effects are pre-covered by the runtime top-level handler installed at every outermost `%` invocation (§6.13.5); they are excluded from the coverage trace entirely.
+`Effect.User.Slot.*` is pre-covered by the same mechanism -- the runtime's slot-access handler scope wraps the program run on the same terms (§6.1.5.2) -- and is likewise excluded from the coverage trace. The two categories differ at declaration, not at coverage: ambients are exempt from the emit-edge rule (§6.13.2), while slot performs must be declared like any other tracked effect.
+
+**Module top level has no outermost `%` boundary.** A perform site outside every function -- in a module's `def` section (§8.3.1, phase 1) or in a module's remaining statements (phase 4) -- sits inside no `%` invocation, so the outward trace has no terminus to reach. The coverage rule applies there with **the enclosing top-level statement** substituted for the missing boundary: a tracked perform at module top level must be caught by a `~<*` handler lexically within the statement containing it. For a `def`, that statement is the binding's initializer. A trace that leaves its statement without meeting one is a coverage failure, reported at the perform site.
+
+**The module graph is not a call stack.** An `import` relation does not place the importing module's frames beneath the imported module's; nothing outside a module's own top level is ever in the propagation path of a perform occurring there. An effect reaching the top of a module has nowhere further to go, which is why the statement is the last place a handler could be.
+
+This is the coverage rule with one substitution, not a prohibition on effects at module top level. Top-level code may perform and self-handle freely; what it cannot do is emit a tracked effect and rely on something outside itself to catch it.
 
 `Effect.User.Slot.*` is pre-covered by the same mechanism -- the runtime installs a slot-access handler at every outermost `%` invocation (§6.1.5.2) -- and is likewise excluded from the coverage trace. The two categories differ at declaration, not at coverage: ambients are exempt from the emit-edge rule (§6.13.2), while slot performs must be declared like any other tracked effect.
 
@@ -7943,10 +7990,18 @@ effects are:
 - `Effect.Sys.CurrentTime`: default handler: system clock.
 
 Ambient effects are handled by a runtime-installed handler scope
-wrapping every outermost `%` invocation. Callers need not declare
-ambients in `:Effects(...)`; the emit-edge rule (§6.13.2) does not
-apply to them, nor does the coverage requirement (§6.13.4) apply to
-them.
+wrapping **the whole program run**: established before the
+compilation unit set begins loading (§8.3.1, phase 1) and torn down
+after the last module's remaining statements complete. Every perform
+site in the program is inside it, in a `def` section or anywhere
+else. Callers need not declare ambients in `:Effects(...)`; the
+emit-edge rule (§6.13.2) does not apply to them, nor does the
+coverage requirement (§6.13.4) apply to them.
+
+The scope wraps the run rather than each outermost `%` invocation
+because module initialization is not a `%` invocation. A `def`
+section performing `Effect.Sys.Log` would otherwise reach no handler
+at all.
 
 A user may shadow the ambient handler for a bounded region by
 establishing a `~<*` scope for that effect kind lexically above a
@@ -9308,17 +9363,36 @@ lexical `name`. The concise-with-access form `{ :a.b }` registers the
 The named form `{ target: source }` registers `target` and references
 `source`, with an optional access tail.
 
-**Abstract execution (module load):**
+**Abstract execution (unit-set load).** The phases below run across the
+compilation unit set (§8.1), not per module. Every module completes a
+phase before any module begins the next.
 
-1. The module's `def` section is evaluated per §2.2, in source order.
-2. At the end of the `def` section, the force pass of §2.2.5 runs; no
-   thunk survives it (§2.2.11).
-3. The export Record is constructed: for each registered entry, in
-   source order, the entry's lexical reference is read (including any
-   access path) and stored under the entry's exported name.
-4. The module's remaining statements evaluate.
+1. Each module's `def` section is evaluated per §2.2, in that module's
+   source order.
+2. The force pass of §2.2.5 runs once, over the outermost scope of
+   every module in the set. It is demand-driven in dependency order
+   across the whole set -- not module-by-module, and not source order.
+   No thunk survives it (§2.2.11).
+3. Each module's export Record is constructed: for each registered
+   entry, in source order, the entry's lexical reference is read
+   (including any access path) and stored under the entry's exported
+   name.
+4. Each module's remaining statements evaluate.
 
-Step 3 occurs after step 2; an export entry never observes a thunk.
+Phase 3 occurs after phase 2; an export entry never observes a thunk.
+
+**The phase boundary is what makes an import cycle resolvable.** A
+module's `def` section may reference a binding in a module that
+imports it. The reference is pending through phase 1 and resolves in
+phase 2, which runs only once every module's section has completed.
+§2.2.4 specifies the pending kind this uses, and why it keys on the
+binding rather than on the export Record.
+
+**Cross-module ordering of `def`-section side effects is
+indeterminate.** Phase 1 fixes source order within a module and fixes
+nothing across modules; phase 2 reorders by dependency. A program
+whose observable behavior depends on which module's `def` section ran
+first relies on something this specification does not fix.
 
 #### §8.3.2 Exported Names Must Be Constants
 
@@ -9438,14 +9512,21 @@ diagnostic names **both** declaring modules and their source positions.
 
 ### §8.6 Hook Coherence Across Modules
 
-The module declaring a namespace's `@` unit constructor is the only
-module that may declare hooks on that namespace.
+The module declaring a namespace is the only module that may declare
+hooks on it. A namespace is declared by `defn Name@(..)` (§3.1.1.1) or
+by `deft Name` (§9.2); either confers ownership.
 
 §3.1.1.2, §3.1.1.3, and §3.1.1.4 each require a hook declaration to be
-accompanied *in the same scope* by a `defn Name@(..)` of the same name.
-A module's top level is the outermost lexical scope (§8), so a hook
-declared in one module against a namespace constructed in another fails
+accompanied *in the same scope* by a declaration of that name. A
+module's top level is the outermost lexical scope (§8), so a hook
+declared in one module against a namespace declared in another fails
 that requirement.
+
+**A reach is not a declaration.** `deft Name from ".."` (§9.4) binds a
+name the target module declared; it declares nothing in the reaching
+scope. A hook declared beside a reach is rejected on the same rule --
+this is what confines hooks to the owning module now that a `deft`
+satisfies accompaniment.
 
 Runtime-bootstrap mode (§10) relaxes the `BuiltIn` restriction in the
 hook-declaration name position (Syntactic-Grammar §13's `DefHookName`
@@ -9605,6 +9686,46 @@ spelling at this position. It is not in the reserved keyword set.
 `DefTypeFrom` takes `PlainStr`, matching `ImportExpr` (§8.2); a
 specifier is never computable.
 
+#### §9.2.3 Union Membership
+
+A **union type** is a `deft` whose declaration is a `UnionTypeExpr`
+(Syntactic-Grammar §18), including the one-entry braced form above.
+Each entry is a type reference, resolved by ordinary lexical lookup
+(§9.1.2) at the declaration.
+
+`T` is a **member** of `U` when `U` is a union type and either:
+
+1. an entry of `U` resolves to `T`, or
+2. an entry of `U` resolves to a type `T` is a member of.
+
+Membership is **nominal**. An entry names a declaration, and the
+relation holds between declarations. Two structurally identical types
+declared separately are unrelated, and a type is not a member of a
+union by resembling one of its entries.
+
+Native types (§9.6.1) participate as entries -- `deft V int | Foo;`
+makes `int` a member of `V` -- and declare no memberships of their
+own.
+
+**The relation is decidable and terminating.** A compilation unit
+set's declaration set is finite and fixed before any resolution
+(§9.3), and a membership walk visits each type at most once. A
+declaration cycle (`deft A { B };` beside `deft B { A };`) makes each
+a member of the other and terminates like any other shape; it is not
+an error at this layer.
+
+**An entry that names no declaration contributes no membership.** A
+union may mix data-shape and function-type entries with named ones:
+`deft Foo { (int) ^int | Bar }` makes `Bar` a member of `Foo` and
+leaves the function-type entry naming nothing. Whether a value
+matching that entry is admitted where `Foo` is required is
+subsumption, which §9.7 owes.
+
+Membership is what `?as` tests against a union (§9.6) and what hook
+resolution walks (§3.8.5). A union mints a namespace and no
+constructor: `U@ x` is rejected because no `defn U@(..)` exists
+(§9.5), and membership supplies none.
+
 ### §9.3 The Graph Layer
 
 Every **top-level** type declaration in every module of the compilation
@@ -9716,9 +9837,12 @@ annotate and test a value, and the declared-type brace (§3.7,
 §9.6.2), which types a binding. Dispatch reads the value's `__ns`
 (§3.8) and involves no name.
 
-`?as Foo` tests whether the value's `__ns` is the entity `Foo` resolves
-to **at that source position**, not whether the value belongs to some
-namespace spelled `Foo`.
+`?as Foo` resolves `Foo` **at that source position** and tests the
+value's `__ns` against the entity it resolves to, not against some
+namespace spelled `Foo` elsewhere. The test succeeds when the `__ns`
+is that entity, and when the `__ns` is a **member** of it (§9.2.3). A
+`?as` against a union succeeds for every member, at any membership
+depth.
 
 Exactly one resolution failure exists at all three positions: a name
 resolving in no lexical scope, diagnosed at the reference (§9.1.2).
@@ -9834,8 +9958,11 @@ sub-questions are separable:
   `BooleanLit` are `NoUnionTypeExpr` arms.
 
 **Subsumption.** When a value of one type is admitted where another is
-required. Consumers: union membership (§9.2), effect-set conformance
-below, `:as` checking, and value-to-container conformance (§9.6.2).
+required. Consumers: effect-set conformance below, `:as` checking, and
+value-to-container conformance (§9.6.2). Nominal union membership is
+specified at §9.2.3 and is not this relation; subsumption decides the
+cases membership does not reach, including a union entry that names no
+declaration.
 
 **Narrowing through `?as` arms.** The type of a binding inside a match
 arm whose clause is a `?as` test (§5). Every item here that reasons
