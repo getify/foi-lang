@@ -5591,20 +5591,24 @@ deft OrderStatus empty | "pending" | "shipped";
 def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
 
+The check happens at compile time, on the same pass that works out the rest of the types. If the value can't be what you said it is, that's a compile error at the annotation itself.
+
 ### Declaring a Binding's Type
 
-A declaration annotation is a type name in braces, cuddled to the `def` or `defn` keyword that introduces the binding:
+A declaration annotation is a type name in `{ }` curly braces, immediately next to the `def` or `defn` keyword (no whitespace) that introduces the binding:
 
 ```java
 def{int} count: 0;
 ```
 
-That isn't a claim about the initializer -- it's a claim about the *slot*. `count` holds an `int` now and after every reassignment.
+That isn't a claim about the initializer -- it's a claim about the *container* (variable). `count` holds an `int` now and after every reassignment. A reassignment that doesn't agree is an error.
 
-Function declarations take the same brace, and that's how a function gets a signature:
+**NOTE:** The `{ .. }` annotation only takes type names (as defined by `deft`), not full type annotation syntax. So `def{int}` is fine, but `def{int | string}` is not allowed; `deft IntStrT int | string` and `def{IntStrT}` is how you express that.
+
+Function declarations (`defn`) take the same brace annotation, and that's how a function gets a signature:
 
 ```java
-deft InterestingFunc (int,string) ^empty;
+deft InterestingFunc(int,string) ^empty;
 
 defn{InterestingFunc} whatever(id,name) {
     // ..
@@ -5613,22 +5617,22 @@ defn{InterestingFunc} whatever(id,name) {
 
 The brace goes on the keyword, not after the parameter list, and there's no space before it -- `defn {InterestingFunc} whatever(..)` won't parse.
 
-### When You Don't Write One
+### Omitting Declaration Type Annotations
 
-A binding with no brace has the type `Any`. It holds anything, for as long as it lives:
+A binding with no brace has the type `Any` (i.e., implied `{Any}`). It holds anything, for as long as it lives:
 
 ```java
 def x: 3;
 x := "3";           // fine
 ```
 
-That's the whole answer to "is **Foi** strict or loose about types?" -- there's no compiler flag, no strictness mode, no severity dial. An unannotated binding is genuinely unconstrained, and narrowing it is something you do by writing the type. Adding braces to a program can only introduce errors; taking them away can only remove them.
+If you're wondering: is **Foi** strict or loose about types? The answer is, there's no compiler flag, no strictness mode, no severity dial. An unannotated binding is genuinely unconstrained, and narrowing/locking it is something you can opt into by writing the declaration annotation. Adding declaration annotations to a program can only surface errors; taking them away can only hide/suppress them.
 
-`Any` is capitalized because it isn't a runtime representation the way `int`, `float`, `bool`, and `string` are. It names the *absence* of a constraint rather than the presence of a shape.
+`Any` is capitalized because it isn't a runtime representation the way `int`, `float`, `bool`, and `string` are. It names the *absence* of a constraint (aka, the union of all possible types) rather than the presence of a specific shape.
 
 ### Both At Once
 
-A `def` can carry both, and they're independent:
+A `def` can carry both annotation types, and they're independent:
 
 ```java
 deft Rec <a: int, b: string>;
@@ -5638,8 +5642,72 @@ def{Rec} <:a, :b>: payload :as Rec;
 
 The brace types the container; the `:as` tail types the value the initializer produced. Either, both, or neither. When a destructure target carries a brace, the type distributes across the entries the same way the destructure does -- by field name in record-mode, by position in tuple-mode.
 
+### Type Inferencing
+
+An unannotated definition holds anything; but that's a rule about the *slot*, not a statement that the compiler is in the dark about what's in it. Usually it knows exactly.
+
+The type inferencing draws on three kinds of *evidence*, in order of how much it trusts them: what you wrote (a brace, a `:as`, a `?as` test that passed), then how the value was made (a literal, a `Foo@` construction, the declared return type of something you called), then how the value gets used (reading `.name` off it means there's a `name` in there). That last one only comes into play when nothing better is available. A use tells you what the value would have to be for the line to work -- and if the line has a typo in it, that isn't something you want the compiler believing.
+
+```java
+def x: 1;    // inference: int
+
+def y: getValue() :as string;   // inference: string
+
+def z: person.firstName;        // inference: Record < :firstName >
+```
+
+A function type signature you didn't explicitly declare gets filled in from your call sites and from its body return expression (if any). Due to function hoisting, a call can sit above the declaration it reaches, so this is fine:
+
+```java
+def y: double(3);
+
+defn double(x) ^x * 2;
+```
+
+The compiler reads `3` as the answer for `x` in `double(..)`, and hands `int` back out to `y`. The **first** call it reads is the one that decides. A later call passing a string to `double(..)` is an error, and it's reported at that later call -- not inside `double`, which is written correctly.
+
+If `double` really should take both, use a union:
+
+```java
+deft Double(int | string) ^int | string;
+
+defn{Double} double(x) ^?(x){
+    [?as int]:    x * 2;
+    [?as string]: x + x;
+};
+```
+
+**NOTE:** One asymmetry worth knowing about is, you can pin a return type without declaring a signature, by annotating the value you return from the function (e.g., `^(compute() :as int)`). But there's no equivalent type lock for parameters. Parameters *do* have default expressions (`x:? 0`), which can participate in the type *inferencing* for values assigned to that parameter. But locking a parameter to a type requires writing a `deft` for the whole function signature.
+
+### Type Check Narrowing
+
+A `?as` test does double duty. It picks the branch at runtime, and inside that branch the compiler knows the test passed:
+
+```java
+?(input){
+    [?as int]:    input + 1;
+    [?as string]: input + "!";
+};
+```
+
+Inside the first clause `input` is an `int`, so arithmetic on it is fine; inside the second it's a `string`. What the branch learned stays in the branch -- the next clause doesn't inherit it, and neither does anything after the match ends.
+
+The same holds in an independent match or a guard, when the test is exactly a `?as`:
+
+```java
+?[order ?as Refund]: process(order);
+```
+
+Under `?and`, both sides narrow, since both had to hold to get in.
+
+Three shapes look like they should narrow and don't:
+
+- `![...]` and `!as`. Knowing what a value *isn't* doesn't tell you what it is.
+- `?or` between two tests. Either one might have been the one that held.
+- A clause that mixes a type test with something else, like `[?as int, "n/a"]`. It can match on the `"n/a"` with the type test false.
+
 ## License
 
 [![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
 
-All code and documentation are (c) 2022-2023 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).
+All code and documentation are (c) 2022-2026 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).

@@ -1634,11 +1634,11 @@ def age: 42 :as int;
 
 Settled: the annotation is part of the parsed AST and does not change the value the expression evaluates to.
 
-Open: whether the annotation is checked at parse time, at a separate elaboration pass, lazily at use, or at runtime; the failure mode when the value does not satisfy the type; how `:as` participates in inference. Covered in §9.
+The annotation is checked statically, on the type-elaboration pass, and a value the annotation does not admit is a compile error at the annotation; `:as` participates in inference as a rank-1 evidence entry. Specified at §9.7.6.
 
 #### §2.14.2 `:over` and constancy
 
-Per §2.3, the operational condition for constancy is "no `:=` reassignment in scope." The `:over` operational semantics -- when it must appear on a function that closes over a mutable binding, and its interaction with nested closures -- are specified in §3.6. Its interaction with type inference (whether inferred types carry `:over`-derived constancy metadata, cross-module re-export behavior) is covered in §9.
+Per §2.3, the operational condition for constancy is "no `:=` reassignment in scope." The `:over` operational semantics -- when it must appear on a function that closes over a mutable binding, and its interaction with nested closures -- are specified in §3.6. An inferred type carries no constancy metadata, and none crosses a module boundary: constancy is a property of the binding, read lexically per §2.3, and it feeds inference rather than riding on the type (§9.7.3).
 
 #### §2.14.3 Effect tracking on bindings
 
@@ -2279,16 +2279,27 @@ For multi-parameter (curried) function definitions with preconditions, the compi
 Consider these two function definitions:
 
 ```java
-defn add(x)(y)(z)
+deft Add(int) ^{
+    Left | {(int) ^{
+        Left | {(int) ^{Left | int}}}
+    }
+};
+deft Mult(int) ^{(int) ^{(int) ^{Left | int}}};
+
+defn{Add} add(x)(y)(z)
     ?[x ?< 0]: Left@ "Undefined"
     ?[y ?< 0]: Left@ "Undefined"
     ?[z ?< 0]: Left@ "Undefined"
     ^x + y + z;
 
-defn mult(x)(y)(z)
+defn{Mult} mult(x)(y)(z)
     ?[(?or)(x ?< 0,y ?< 0,z ?< 0)]: Left@ "Undefined"
     ^x * y * z;
 ```
+
+Each declared type places its union at exactly the tiers its
+preconditions reach: `Left` joins the return at every tier of
+`Add`'s chain, and only at `Mult`'s innermost return.
 
 Now consider these call-sites:
 
@@ -2548,7 +2559,7 @@ At a dispatch site -- `%` (§3.9), a comprehension marker (§3.10.9), or an arit
 
 Step 4 therefore fires only when two candidates are genuinely incomparable -- the value's namespace belongs to two unions, neither a member of the other, and both declare the marker. Declaration order does not change the answer, which is why this rejects rather than picking.
 
-The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it, so under the rules stated here no annotation redirects resolution; §9.7 owes the answer as part of `:as` checking. Until it lands, a step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own.
+The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it (§9.7.6), so no annotation redirects resolution. A step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own. Whether a disambiguation surface should exist at all is §9.9's.
 
 **Constructors do not participate.** The `@` marker dispatches on a namespace handle rather than on an instance's `__ns` (§3.8), and a union declares no constructor (§9.2.3). `U@ x` against a union is rejected whether or not `U`'s members declare constructors.
 
@@ -7807,8 +7818,7 @@ This is a declaration surface only. It does not relax §6.13.2's
 emit-edge rule for the function that supplies the callback, and it
 does not relax §6.13.4's coverage rule: a perform inside the supplied
 callback still traces outward to an enclosing `~<*` exactly as it
-would otherwise. Whether a given function conforms to a slot declared
-`:Effects(Any)` is a type-conformance question, covered in §9.
+would otherwise. Whether a given function conforms to a slot declared `:Effects(Any)` is a type-conformance question, deferred to §9.9.
 
 Entries prefix-match per §6.1.4: `:Effects(User.IO)` declares
 that the function may perform `Effect.User.IO` or any
@@ -9536,9 +9546,9 @@ note), not the same-scope accompaniment requirement.
 
 This section specifies type names: how they are declared, how a
 reference resolves to a declaration, how a name crosses a module
-boundary, and what an assertion against a resolved name tests. Type
-expression semantics, the subsumption relation, and inference are
-open; §9.7 enumerates them.
+boundary, what an assertion against a resolved name tests, and how a
+type is derived where none is written. Type expression semantics and
+the subsumption relation are open; §9.9 enumerates them.
 
 A type is declared by `deft` (§9.2) or by `defn Name@(..)`
 (§3.1.1.1). There is no third surface.
@@ -9719,7 +9729,7 @@ union may mix data-shape and function-type entries with named ones:
 `deft Foo { (int) ^int | Bar }` makes `Bar` a member of `Foo` and
 leaves the function-type entry naming nothing. Whether a value
 matching that entry is admitted where `Foo` is required is
-subsumption, which §9.7 owes.
+subsumption, which §9.9 owes.
 
 Membership is what `?as` tests against a union (§9.6) and what hook
 resolution walks (§3.8.5). A union mints a namespace and no
@@ -9925,7 +9935,7 @@ def{Rec} <:a, :b>: payload :as Rec;
 
 Either, both, or neither may appear. Where both appear, the value type
 must conform to the container type -- a directional subsumption
-question, value to container, deferred to §9.7.
+question, value to container, deferred to §9.9.
 
 **A destructure target admits the brace, and the type distributes by
 the target's own extraction mechanism** (§2.13). Record-mode entries
@@ -9936,7 +9946,427 @@ computed-source entry (`<k: [expr]>`) has no static key and falls back
 to implied `Any`. An entry the type pattern does not cover is an error
 at that entry.
 
-### §9.7 Open
+### §9.7 Inference
+
+Every expression has a **view**: the type these rules derive for it at
+its source position. A view is a compile-time fact. It is not carried
+on the value and it is not consulted by dispatch, which reads the
+value's `__ns` (§9.6, §3.8.5).
+
+A view is derived from **evidence**, held in a **view stack** -- an
+ordered record of what the program says about that expression's type,
+keyed by where each piece was written. A stack is provenance, not
+multiplicity: an expression has one view, and the stack records what
+supports it.
+
+Stacks attach at **every expression node**, not only at bindings. In
+`1 + 2.3` the two literals are evidence about how the sum resolves;
+each literal's own type is not the whole of what the resolution needs.
+Most stacks hold one entry and collapse to it. Bindings, parameters,
+and destructure entries differ from other expressions only in that
+they accumulate evidence from several sites.
+
+#### §9.7.1 Evidence Ranks
+
+Four ranks, most authoritative first:
+
+1. **Explicit.** A declared type (§9.6.2), a `:as` annotation (§5),
+   and a `?as`-arm narrowing (§9.8).
+2. **Construction.** A literal, an `@` construction, a call's declared
+   return type, a parameter default expression (§9.7.4).
+3. **Structural usage.** A use that requires a shape: `x.name` implies
+   an entry named `name`; a comprehension implies a namespace
+   declaring that hook.
+4. **`Any`.** Not an entry. `Any` is the **empty stack** -- what
+   remains when nothing narrower is provable.
+
+Position arbitrates only *within* a rank, and each rank carries its
+own rule.
+
+**Rank 1 orders by enclosure.** An entry written *at* an expression
+sits above one written over a region *containing* it. Rank 1 is not
+singular: a `:as` inside a narrowed arm and the arm's own narrowing
+are both rank-1 entries, and the inner one wins because it is closer
+both lexically and semantically. Nested narrowings stack outward to
+inward.
+
+**Rank 2 orders lexically.** Rank-2 entries are peers with no
+containment relation between them, so source order decides. The
+first-call-wins rule for signature positions (§9.7.3) is this rule
+applied at a parameter.
+
+**Rank 3 narrows from `Any` and never contradicts.** Construction
+evidence states what the value *is*. Usage evidence states what the
+value *would have to be* for the line to work, which is evidence only
+under the assumption that the line is correct -- and that is the thing
+in question. The ranking preserves the distinction, so a typo reports
+at the typo. A usage incompatible with a live rank-2 fact is a defect
+diagnosed at the usage.
+
+#### §9.7.2 Stack Mechanics And Consumers
+
+**One entry per site.** Entries are keyed by rank and source position.
+A pass that re-derives a fact it already recorded replaces its own
+entry rather than pushing a second. A stack is therefore bounded by
+the number of sites that mention the expression, which is what supplies
+§9.7.3's termination condition.
+
+**The top** is the highest-ranked entry, tiebroken by that rank's rule.
+It is not the most recently pushed; pass order does not reach the
+answer.
+
+**Downward consultation narrows within the top only.** A consumer may
+read lower entries to refine the view *inside* the top entry's type. A
+lower entry that would move the view outside the top is a **conflict**,
+reported at that entry's site, never applied as a refinement.
+
+Consumers, enumerated:
+
+- **Checking and conformance** read the top and nothing else.
+- **Diagnostics** read the whole stack, so a message can name both the
+  entry that fixed the type and the site that disagreed.
+- **Refinement** reads the top plus every lower entry compatible with
+  it.
+
+**Dispatch is not a consumer.** A marker resolves against the value's
+`__ns` through §3.8.5's candidate-set procedure. Where a compiler can
+determine that `__ns` statically it may resolve the site at compile
+time, and the top view is what it reads to do so; where it cannot, the
+site resolves at runtime. Neither path is altered by anything in this
+section, and no view rewrites a `__ns`.
+
+**Annotation checking falls out of the conflict rule.** An annotated
+function carries a rank-1 entry above its inferred rank-2 layers, so
+a body disagreeing with its own `deft` is an ordinary top-versus-lower
+conflict. No separate validation pass exists for it.
+
+#### §9.7.3 The Fixpoint
+
+Inference runs over the **whole compilation unit set** (§8.1), in
+passes, to a fixpoint.
+
+`defn` hoists (§2.8), so a call may precede the declaration it reaches:
+
+```java
+def y: foo(3);
+def z: "hello" + y;
+
+defn foo(x) ^x;
+```
+
+Pass 1 records structural evidence. Pass 2 carries the call site's
+argument inward and fixes `foo`'s parameter. Pass 3 carries `foo`'s
+now-known return type back outward to `y`, and from `y` into the `+`.
+A single traversal in either direction reaches part of this and stops.
+
+**Pass order is lexical and top-down.** It is not a reachability trace
+and not a dependency-sorted walk. That is what makes the analysis
+specifiable and a diagnostic explainable: the order a reader sees is
+the order the analysis takes. Link-time whole-unit-set analysis is
+already required by §8.5.1.
+
+**Convergence.** A pass that changes no stack is the last pass. Each
+site owns at most one entry per rank (§9.7.2), so no stack grows
+without bound and the pass count is finite.
+
+**Declared types and inference are one analysis.** A declared type is a
+rank-1 entry the fixpoint must satisfy; inference fills the positions
+no declaration covers. Both are checked on the same pass.
+
+**First call wins.** The lexically first evidence-bearing call fixes an
+unannotated signature position. A later call whose argument does not
+conform is an error **at that later call**. The diagnostic lands where
+the disagreement is visible, rather than inside a body that is correct
+as written.
+
+**An inference cycle grounds at `Any`.** A declared function type
+breaks a cycle: once one participant's signature is written, the rest
+resolve against it. Mutually recursive functions with no declared type
+among them converge with nothing established, and their signature
+positions are `Any`. A mutually recursive *declaration* needs no base
+case -- nominal name resolution grounds immediately (§9.2.3).
+
+**Cross-module.** Only top-level exports cross a module boundary. A
+module's export surface is itself a fixed point, computed in dependency
+order and cached per module; the dependency relation is **per binding**,
+the same granularity §2.2.4 uses for cross-module pending. A cycle in
+the module graph resolves whenever the binding-level graph beneath it
+is acyclic.
+
+**A binding's write set is lexically bounded.** A `def`'s value comes
+from its initializer, from every `:=` in the declaring scope, and from
+every `:=` inside a function naming it in `:over` (§3.6). `:over`
+requires lexical visibility, so every writer sits in the declaring
+scope's subtree. No alias analysis is involved, and an importing module
+cannot write an exported `def`.
+
+**Constancy feeds inference and is not carried in a type.** Constancy
+is a property of the binding, read lexically per §2.3: an observably
+constant binding has one write, so its view is exact. An inferred type
+carries no constancy marker, and none crosses a module boundary --
+the constancy of an exported binding is re-read from the declaring
+module's text, where the write-set rule above already fixes it.
+
+#### §9.7.4 Evidence Sites
+
+**Call arguments flow inward; declared return types flow outward.**
+An argument is evidence about the parameter it binds; a callee's
+declared return type is evidence about every call of it.
+
+**A return has a value-side route.** `^(expr :as T)` annotates the
+returned value, and the return type follows from it. No declaration of
+surrounding signature is needed.
+
+**A precondition consequent is evidence at a return position.** A
+matching precondition supplies the call's result and the body is not
+entered (§3.5), so its consequent produces a function result without
+reaching the `^`. The consequent is rank-2 construction evidence at
+the return position of the tier the precondition lifts to (§3.5.1).
+
+Nothing in the ordering is new. Where the function carries no
+declared type, preconditions precede the body lexically, so the first
+consequent fixes the return position and a body that diverges is an
+error at the body -- the fixed-once rule below, applied at a return.
+Where the function's declared type states a return, that declaration
+is the rank-1 entry and each consequent is a lower one; a consequent
+the declared return does not admit is a conflict reported at that
+consequent (§9.7.2).
+
+**A consequent shaped differently from the body requires a declared
+return type.** `?[x ?< 0]: Left@ "Undefined"` above a body returning
+an `int` diverges at the return position. A function whose result
+type varies declares it, and use sites narrow (§9.5).
+
+**A parameter has no value-side route.** `:? expr` is a runtime default
+(§3.10.2), not a type slot, and the native types are keywords rather
+than values. A parameter's *written* type comes only from the
+function's declared type (§3.7). The asymmetry is deliberate: pinning
+a return costs one annotation, and pinning one parameter costs the
+whole signature.
+
+**Every parameter already admits `empty`.** An omitted or `skip`
+argument binds `empty` (§3.10.1). A default expression replaces that
+binding with the default's value, so a default's contribution is its
+own type standing in place of `empty`. `env :? empty` supplies `empty`
+where `empty` was already reachable and therefore contributes nothing;
+the stdlib idiom is inert under the general rule and needs no
+exception.
+
+**A default and a call never compete.** A default evaluates only at
+calls that supply nothing at that position -- exactly the calls that
+carry no evidence there. The two describe disjoint sets of calls, and
+the parameter's view admits both. Defaults are read in parameter order;
+§3.10.2 admits backward references only, so the reading terminates.
+
+**A default is a write when the position is typed, and evidence
+otherwise.** Where the function's declared type covers the parameter,
+the default is a value written into that slot, conformance-checked and
+diagnosed **at the default expression**. Where it does not, the default
+is rank-2 evidence. Never both. Adding a default to a previously
+uncovered parameter can therefore turn a clean program into an error.
+
+**The same dual holds inside a destructure, at entry granularity.**
+§9.6.2 distributes a container type per entry; an entry's `:? default`
+is checked against that entry's slice, not against the whole type. A
+computed-source entry has no static key and falls back to implied
+`Any` (§9.6.2), so its default remains evidence even under a brace.
+
+**Assignments and sub-property uses are evidence sites.** A `:=` is
+construction evidence about the assigned binding. A `.x` use is
+structural-usage evidence about its source -- inference flowing
+backward out of a use, the mirror of a call argument flowing inward to
+a parameter.
+
+**Signature positions are fixed once; variable slots take a join.**
+A parameter or return position is fixed by first-wins (§9.7.3), and a
+later divergence is an error. A `def` slot genuinely varies -- §9.6.2
+makes `def x: 3; x := "3";` well-formed -- so its view is the join of
+every write reaching it. A write inside a conditional may not have
+executed, and the join is what the binding's whole lifetime supports.
+
+**A spread argument supplies no signature-fixing evidence** unless the
+spread source's length and per-position entries are statically known
+(§3.10.5). The ordering in §9.7.3 ranks over evidence-bearing calls
+only, so a shapeless spread call is skipped when a signature is being
+fixed, and checked once the signature settles from elsewhere.
+
+#### §9.7.5 Projection
+
+**A pick's view is the projection of its source's view.** This is one
+rule, not a family:
+
+- `.name` (§2.12.1) projects that entry's type.
+- `.[S..E]` (§2.12.3) projects the slice.
+- `.<a, b>` (§2.12.4) projects the subset.
+- `.<%k>` (§2.12.5) projects the entry the key names, when the key is
+  statically known.
+- `.<&ks>` (§2.12.6) has no static keys and projects `Any`.
+- `< &original, field: v >` (§1.5) projects the merge of the spread
+  and the written entries in **source order**. A spread is admitted at
+  any entry position, so the merge is order-sensitive rather than
+  base-plus-overrides.
+
+Projection is decidable now. §9.9's Record and Tuple item blocks the
+surface for *writing* such a type down; it does not block deriving one.
+The parameter-side asymmetry appears here too: inference may hold a
+projected shape that no declaration surface currently expresses.
+
+**Depth is arbitrary and the walk terminates.** Forward projection
+consumes one path segment per step and is trivially finite. Building a
+constraint backward out of a usage over a shape that closes on itself
+is the case that needs a rule, and it is the one §9.2.3 already applies
+nominally: **a shape is visited, not expanded.** Each type in the walk
+is visited once, and a type may be a fixed point the shape graph closes
+on. This is the sharp case rather than an exotic one -- `Lazy@` (§2.2)
+makes genuinely circular *values* constructible, so the value graph
+need not be well-founded for the type walk to terminate.
+
+#### §9.7.6 `:as` Checking
+
+`:as` asserts that a value is of the annotated type. Checking serves
+that assertion: it reports what it can disprove and adopts what it
+cannot reach.
+
+A `:as` is a rank-1 entry participating in the fixpoint (§9.7.1), so
+the annotation sits above every lower-ranked layer at its expression.
+Evidence incompatible with it is a **conflict** in §9.7.2's sense: a
+compile error at the annotation, naming the annotated type and the
+evidence that disagrees. Whether a given value type is admitted under
+a given annotation is subsumption, which §9.9 owes.
+
+**Disproof is the trigger.** An annotation the analysis can neither
+confirm nor contradict is adopted, and the expression's view is the
+annotated type:
+
+```java
+deft Config from "./config.foi";
+
+def{Config} settings: decode(raw) :as Config;
+```
+
+Where `decode`'s return position carries no narrower evidence, nothing
+establishes that its result is a `Config`, and nothing contradicts it
+either. That silence reports nothing. `"hello" :as int` is the other
+case: the evidence contradicts the annotation, and the conflict rule
+above fires at the annotation.
+
+**"Now or later" is one continuum with one verdict.** An annotation
+the elaboration pass discharges is settled at compile time. An
+annotation it adopts without discharging carries a runtime assertion
+(§9.7.7). Both are the same check arriving at the same answer, and the
+pass discharges the part it can reach.
+
+**`:as` annotates a value; it does not redirect dispatch.** Dispatch
+reads `__ns` (§9.6) and an annotation does not rewrite it, so an
+annotation written at a dispatch site does not select among §3.8.5's
+candidates. A step-4 rejection there is resolved at the declarations.
+Whether an annotation should supply a disambiguation surface at all is
+§9.9's.
+
+#### §9.7.7 Adopted Annotations At Runtime
+
+An annotation §9.7.6 adopts without discharging is preserved as a
+**runtime assertion** at that expression, testing the value against
+the annotated type when the expression evaluates. Emission is the
+default; omitting it is the deliberate act.
+
+**A failed assertion aborts the run.** It produces no value, no
+`Left`, and no effect. No handler catches it, no arm receives it, and
+nothing downstream executes. The abort names the source position of
+the annotation that failed.
+
+This is the first construct in Foi that terminates a run abnormally,
+and §6.1.1's guarantee stands. That guarantee rules out an ambient
+error *path* -- a route by which failure arrives as something
+surrounding code receives, and which every expression must therefore
+be written to account for. An abort opens no such route: no view
+widens, no return type gains an arm, and no composition changes shape.
+
+**Assertions subtract verification, never semantics.** A program that
+runs to completion with emission enabled behaves identically with it
+disabled. No optimization may read an assertion as license for a
+representation choice, since the assertion may not have been emitted.
+
+**Emission is per-region and keyed on the annotation's own source
+position**, decided at compile time. An annotation outside the
+emitting region contributes evidence to the fixpoint and emits
+nothing: the claim is taken and not verified, the same trade a
+declaration file makes in any language that separates the two.
+
+**Conflict filtering follows from that key.** A conflict is filtered
+only when every site in it lies outside the emitting region. A
+contradiction between a program and a library it uses has at least
+one site inside, and blocks compilation.
+
+**The region's extent is a build input** this specification does not
+define, in the same posture as §8.1's compilation unit set. Pulling
+everything in and keeping everything external out are both admitted.
+
+This is configuration in the sense §5.5's coverage-gap diagnostic
+already is: it selects how much of the verification sweep runs, and
+changes neither what the checker concludes nor what a program means.
+Syntax remains the whole surface for the latter.
+
+### §9.8 Narrowing
+
+A `?as` test establishes something about the tested value's type, and
+the branch it guards may rely on it. This section fixes what the branch
+learns and for how long.
+
+**A narrowing is a rank-1 evidence entry with lexical extent**
+(§9.7.1). Entering the narrowed region pushes the entry; leaving it
+pops. The entry form is what keeps lower layers consultable, so an
+access justified by evidence from outside the narrowing remains
+justified inside it. Because rank 1 orders by enclosure, a `:as`
+written inside a narrowed region sits above the narrowing, and nested
+narrowings stack outward to inward.
+
+**Dependent match.** A clause `[?as Foo]:` narrows over that clause's
+consequent. The narrowed expression is the topic reference `#`
+(§5.2.2), and, when the topic expression is a bare identifier, that
+identifier as well:
+
+```java
+?(v){
+    [?as int]:    v + 0;         // v narrowed to int
+    [?as string]: v;             // v narrowed to string
+};
+```
+
+The extent is the consequent -- never a later clause, never the else
+consequent, never anything after the match. Per §5.2.2.1 the topic is
+not bound at the atoms, so no narrowing is in force there either.
+
+**A multi-atom clause narrows only when every atom is a type test.** A
+clause is an OR-list (§5.2.1): it matches when *any* atom matches.
+`[?as int, ?as float]` narrows to the union of the two, since a type
+test held on either path. `[?as int, 0]` narrows nothing -- the clause
+can match on the bare atom with the type test false.
+
+**Negated and disjunctive forms narrow nothing.** A `!` clause polarity
+and a `!as` atom each establish that the value is *not* some type.
+Subtracting a type has no form in the type language, so the region
+receives no entry. A `?or` between two type tests is the same case one
+level up: neither operand is known to have held.
+
+**Independent match and guards.** An independent clause (§5.1) or a
+guard (§4.2) whose test is exactly `x ?as Foo` narrows `x` over its
+consequent. Under `?and`, each conjunct of that shape narrows, since
+every conjunct held:
+
+```java
+?{
+    [x ?as Foo ?and y ?as Bar]:
+        combine(x, y);
+};
+```
+
+**A narrowing is evidence, not a runtime mechanism.** The test that
+executes is `?as`'s own, against `__ns` (§9.6). Narrowing changes what
+the checker knows inside the region and changes nothing about what
+runs.
+
+### §9.9 Open
 
 The following are unspecified. Each is a rule this specification owes.
 
@@ -9954,26 +10384,43 @@ sub-questions are separable:
   Container-type distribution over a destructure target (§9.6.2) has
   no defined behavior against a mixed-mode type: the target commits to
   one mode, and a mixed type supplies no consistent key for either.
+  Inference derives such shapes by projection (§9.7.5); what is
+  missing is the surface for writing one down.
 - **Literal types.** `EmptyLit`, `PlainStr`, `NumberLit`, and
-  `BooleanLit` are `NoUnionTypeExpr` arms.
+  `BooleanLit` are `NoUnionTypeExpr` arms. `empty` is a type
+  independently of this item: `?T` reads as `T | empty` (§9.5), which
+  requires it.
 
 **Subsumption.** When a value of one type is admitted where another is
-required. Consumers: effect-set conformance below, `:as` checking, and
-value-to-container conformance (§9.6.2). Nominal union membership is
-specified at §9.2.3 and is not this relation; subsumption decides the
-cases membership does not reach, including a union entry that names no
-declaration.
+required. Consumers: effect-set conformance below, `:as` checking
+(§9.7.6), and value-to-container conformance (§9.6.2). Nominal union
+membership is specified at §9.2.3 and is not this relation; subsumption
+decides the cases membership does not reach, including a union entry
+that names no declaration.
 
-**Narrowing through `?as` arms.** The type of a binding inside a match
-arm whose clause is a `?as` test (§5). Every item here that reasons
-about a value's type inside a branch depends on this one.
+**Effect-set conformance.** Whether a function conforms to a slot whose
+declared type carries a given `:Effects(...)` clause, deferred here by
+§6.13.1. The three declarable budgets -- clause absent, clause with
+entries, and `:Effects(Any)` -- stand in some containment relation over
+prefix subtrees (§6.1.4), and this section owes it.
 
-**Inference.** A binding's type when no `:as` is written (§2.14.1), and
-whether an inferred type carries `:over`-derived constancy (§2.14.2).
+**Annotation at a dispatch site.** Whether a written type annotation
+ever participates in marker resolution. §9.7.6 states that it does not
+under the rules as written, which leaves §3.8.5's step-4 incomparable
+case resolved only at the declarations.
 
-**`:as` timing and failure.** Whether the annotation is checked at parse
-time, at a separate elaboration pass, lazily at use, or at runtime; and
-what happens when the value does not satisfy the type (§2.14.1).
+**Intermediate-tier return positions.** A multi-tier `defn` (§3.2.5)
+produces a function value at every tier before the last. §9.7.4 types
+the return position a precondition lifting to the final tier reaches.
+A precondition lifting to an earlier tier (§3.5.1) supplies that
+tier's result in place of the next tier's function value, and no rule
+states how a tier chain's intermediate results are typed.
+
+**Signature first-call-wins against per-call-site effect
+specialization.** §9.7.3 fixes an unannotated value signature at its
+first evidence-bearing call, while §6.13.3 resolves an undeclared
+function's effect surface separately at each call site. Whether the two
+should reconcile, and in which direction, is undecided.
 
 **Empty `< >` typing.** The type-level representation of a value
 polymorphic between Record and Tuple slots (§1.5.5, §2.14.5).
