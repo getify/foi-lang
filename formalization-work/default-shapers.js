@@ -3184,6 +3184,22 @@ export const defaultShapers = {
 		return withDelims({ type: "BraceNarrowing", prefix, entries }, delims);
 	},
 
+	// DoComprLHSCompound := DoComprLHSName OpenBrace _ <DoComprLHSArg> _ CloseBrace;
+	//
+	// `base` is the first node, `arg` the second — a DoComprLHSName
+	// or a nested DoComprLHSCompound. Braces are structural →
+	// delims; emitGeneric walks pieces in source order and
+	// reconstructs the `{...}` shape.
+	DoComprLHSCompound(frame,parts) {
+		var nodes = parts.filter(isNode);
+		var [ base, arg ] = nodes;
+		var delims = [];
+		for (let p of parts) {
+			if (!isNode(p)) delims.push(p); // OpenBrace, CloseBrace
+		}
+		return withDelims({ type: "DoComprLHSCompound", base, arg }, delims);
+	},
+
 	// DoComprExpr := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
 	//
 	// `~<<` tokens (Tilde + OpenAngle + OpenAngle) are the
@@ -3467,15 +3483,6 @@ export const defaultShapers = {
 		return liftWrapperDelims(inner, wrapperDelims);
 	},
 
-	// NestedTypeExpr := NamedType _ GroupedTypeExpr;
-	//
-	// No structural tokens at this level (the GroupedTypeExpr
-	// child's braces vanish via its unwrap).
-	NestedTypeExpr(frame,parts) {
-		var [ base, arg ] = parts.filter(isNode);
-		return { type: "NestedTypeExpr", base, arg };
-	},
-
 	// UnionTypeExpr := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
 	//
 	// Pipe separators are structural → delims.
@@ -3516,17 +3523,27 @@ export const defaultShapers = {
 		return withDelims({ type: "DataStructFieldType", name, fieldType }, delims);
 	},
 
-	// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
+	// DataStructFinalValType := Star Colon? (NoUnionTypeExpr | GroupedTypeExpr);
 	//
-	// Star (rest sigil) is structural → delims.
+	// Star and Colon (the `*` / `*:` rest sigil) are structural →
+	// delims. `named` attaches AFTER `fieldType` and only on the
+	// Colon arm, so the positional-rest AST is byte-identical and
+	// any roundtrip movement on an existing sample is a real
+	// regression rather than churn.
 	DataStructFinalValType(frame,parts) {
 		var fieldType;
+		var named = false;
 		var delims = [];
 		for (let p of parts) {
 			if (isNode(p)) fieldType = p;
-			else delims.push(p); // Star
+			else {
+				if (p.type === "Colon") named = true;
+				delims.push(p); // Star, Colon
+			}
 		}
-		return withDelims({ type: "DataStructFinalValType", fieldType }, delims);
+		var node = { type: "DataStructFinalValType", fieldType };
+		if (named) node.named = true;
+		return withDelims(node, delims);
 	},
 
 	// EffectsClause := ":Effects" _ OpenParen _ NamedType (_ Comma _ NamedType)* (_ Comma)? _ CloseParen;

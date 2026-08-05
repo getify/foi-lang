@@ -507,6 +507,23 @@ var failSamples = [
 	"defn Any(x) ^x;",
 	"deft Any int;",
 	"defn f(Any) ^Any;",
+
+	// `*:` is a cuddled sigil — a delim between Star and Colon
+	// leaves the type position unreachable.
+	"deft S <* :int>;",
+
+	// One rest per type; a second is not a DataStructTypeEntry, so
+	// the entry-list arm cannot reach it.
+	"deft S <*int, *:int>;",
+
+	// DoComprLHSCompound cuddles its brace to the name.
+	"List {Promise} ~<< { x; };",
+
+	// The argument names a namespace; NativeType is unreachable.
+	"List{int} ~<< { x; };",
+
+	// Compound LHS is not an arm of DoLoopComprLHS.
+	"Channel{Promise} ~<* { x; };",
 ];
 
 var passed = 0;

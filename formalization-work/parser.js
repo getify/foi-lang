@@ -2757,13 +2757,44 @@ export const DoBlockExpr = production("DoBlockExpr",
 	{ preserveInnerDelim: true }
 );
 
-// <DoComprLHS>     := DoComprLHSName;
+// DoComprLHSCompound := DoComprLHSName OpenBrace _ DoComprLHSArg _ CloseBrace;
+// <DoComprLHSArg>    := DoComprLHSCompound | DoComprLHSName;
+//
+// Compound dispatch LHS — `List{Promise} ~<<`. The brace is CUDDLED
+// to the name (no delim() before OpenBrace); interior trivia is
+// admitted. Recursion runs through DoComprLHSArg, so
+// `List{List{Promise}}` parses; the recursive reference sits after a
+// non-nullable DoComprLHSName, so there is no left recursion and the
+// lazy() is a definition-order forward-ref only.
+//
+// The argument's alphabet is DoComprLHSName's, so NativeType is
+// unreachable at every segment — the position names a namespace,
+// not a value constraint.
+var DoComprLHSArg = or(lazy(() => DoComprLHSCompound), DoComprLHSName);
+
+export const DoComprLHSCompound = production("DoComprLHSCompound",
+	and(
+		DoComprLHSName,
+		OpenBrace, delim(),
+		DoComprLHSArg,
+		delim(), CloseBrace
+	)
+);
+
+// <DoComprLHS>     := DoComprLHSCompound | DoComprLHSName;
 // <DoLoopComprLHS> := BraceNarrowing | DoComprLHSName;
 //
-// LHS shapes for do-comprehensions. Bind (`~<<`) admits bare or
-// dotted namespace paths only. Loop (`~<*`) additionally admits
-// the handler-narrowing brace form `Effect.<A, B>` (§6.3.1) via
-// the shared BraceNarrowing production.
+// LHS shapes for do-comprehensions. Bind (`~<<`) admits a bare or
+// dotted namespace path or a compound form. Loop (`~<*`) admits a
+// bare or dotted path or the handler-narrowing brace form
+// `Effect.<A, B>` (§6.3.1) via the shared BraceNarrowing production;
+// compound is not an arm there, per §6 opener.
+//
+// PEG note on DoComprLHS: DoComprLHSCompound first — both
+// alternatives start with DoComprLHSName, and the compound arm
+// requires the cuddled OpenBrace to follow. On `List ~<< {..}` the
+// compound arm fails at the OpenBrace and backtracks to the bare
+// arm. Same shape as DoLoopComprLHS below.
 //
 // PEG note on DoLoopComprLHS: BraceNarrowing first — both
 // alternatives start with DoComprLHSName; the brace form requires
@@ -2775,7 +2806,7 @@ export const DoBlockExpr = production("DoBlockExpr",
 // Type-LHS only per Slot 15's axis lock. Iterable drainage over
 // List/Iter/PullStream lives at `~<<`; `~<*` retains producer-
 // broadcast admissions (Channel, PushStream, effect handler scopes).
-var DoComprLHS     = DoComprLHSName;
+var DoComprLHS     = or(DoComprLHSCompound, DoComprLHSName);
 var DoLoopComprLHS = or(BraceNarrowing, DoComprLHSName);
 
 // DoComprExpr := DoComprLHS _ Tilde OpenAngle OpenAngle _ DoBlockExpr;
@@ -3207,11 +3238,6 @@ export const NamedType = production("NamedType",
 	)
 );
 
-// NestedTypeExpr := NamedType _ GroupedTypeExpr;
-export const NestedTypeExpr = production("NestedTypeExpr",
-	and(NamedType, delim(), lazy(() => GroupedTypeExpr))
-);
-
 var KwEffects = tokVal("Keyword", ":Effects");
 
 // EffectsClause := ":Effects" _ OpenParen _ NamedType (_ Comma _ NamedType)* (_ Comma)? _ CloseParen;
@@ -3242,13 +3268,13 @@ export const EffectsClause = production("EffectsClause",
 	)
 );
 
-// <NoUnionTypeExpr> := NestedTypeExpr | NamedType
+// <NoUnionTypeExpr> := NamedType
 //                    | EmptyLit | PlainStr | NumberLit | BooleanLit
 //                    | DataStructTypeExpr;
 //
-// PEG: NestedTypeExpr before NamedType (longer; same NamedType opener).
-// Other arms disjoint by opener (literals by token type/value;
-// DataStruct opens with OpenAngle).
+// Arms disjoint by opener (NamedType on General / Builtin / native
+// Keyword; literals by token type/value; DataStruct opens with
+// OpenAngle).
 //
 // GroupedTypeExpr is NOT an arm here. The brace-grouped form is
 // reached as an explicit `(NoUnionTypeExpr | GroupedTypeExpr)`
@@ -3259,7 +3285,6 @@ export const EffectsClause = production("EffectsClause",
 // DataStructValueType / DataStructFinalValType / NestedTypeExpr-arg
 // where the strict-B brace rule wants it rejected.
 var NoUnionTypeExpr = or(
-	NestedTypeExpr,
 	NamedType,
 	EmptyLit,
 	PlainStr,
@@ -3307,13 +3332,19 @@ export const DataStructFieldType = production("DataStructFieldType",
 	and(Identifier, delim(), Colon, delim(), DataStructValueType)
 );
 
-// DataStructFinalValType := Star (NoUnionTypeExpr | GroupedTypeExpr);
+// DataStructFinalValType := Star Colon? (NoUnionTypeExpr | GroupedTypeExpr);
 //
 // Strict-B brace rule: `*{T|U}` parallel to `?{T|U}` / `^{T|U}`.
 // Bare union at rest-position is rejected for uniformity, not
 // because the position is ambiguous.
+//
+// `*:` is a cuddled two-token sigil — no delim() between Star and
+// Colon, and none before the type. The Colon selects the named-width
+// rest (`*:T`) over the positional one (`*T`), matching the colon's
+// role as the named-mode marker at the value side (`<:a, :b>` vs
+// `<a, b>`).
 export const DataStructFinalValType = production("DataStructFinalValType",
-	and(Star, or(NoUnionTypeExpr, GroupedTypeExpr))
+	and(Star, optional(Colon), or(NoUnionTypeExpr, GroupedTypeExpr))
 );
 
 // <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;

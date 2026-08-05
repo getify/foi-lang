@@ -3093,11 +3093,11 @@ Every hook invocation receives, as its trailing positional argument, a value tha
 
 - Plain-LHS: `xs ~map fn`, where `xs` is a `List` instance, emits `< List >` (a 1-tuple).
 - Single-level compound: `List{Promise} ~<< {..}` emits `< List, Promise >` (a 2-tuple).
-- Nested compound: `List{Promise{Int}} ~<< {..}` emits `< List, < Promise, Int > >` (the second entry is itself a 2-tuple).
+- Nested compound: `List{List{Promise}} ~<< {..}` emits `< List, < List, Promise > >` (the second entry is itself a 2-tuple).
 
 The tuple's length signals nesting depth; the shape is always a tuple, uniformly, including at plain-LHS sites. Entries are namespace values themselves; per §3.8's four-way collapse, a namespace name is a first-class value, and namespace-value identity comparison via `?=` is specified at §3.8.
 
-**Emission source.** For static-LHS call sites (a bare namespace name or a compound-LHS type expression at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS type expression. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's owning-namespace tag; the tag was established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
+**Emission source.** For static-LHS call sites (a bare namespace name or a compound LHS form at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's owning-namespace tag; the tag was established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
 
 For a call against a reference extracted by `.@` (§3.8.2), `ty` is fixed at the extraction site: `def cons: Foo.@;` captures `< Foo >` into the reference, and every `cons@x` emits that tuple. The extraction site is a static-LHS position, so the tuple is a compile-time literal there.
 
@@ -3126,8 +3126,8 @@ defn Foo~map(inst, fn, ty) {
     ?(ty){
         [?= < Foo, Bar >]:
             fooBarMap(inst, fn);
-        [?= < Foo, < Bar, Int > >]:
-            fooBarIntMap(inst, fn);
+        [?= < Foo, < Bar, Baz > >]:
+            fooBarBazMap(inst, fn);
         :
             fooPlainMap(inst, fn);
     }
@@ -4198,7 +4198,7 @@ The remaining pieces this section specifies:
 
 - **`~<*`**: an external producer drives. The block body observes emissions that arrive from a source outside the block's control; the composition terminates when the source closes. Applies to `PushStream`, `Channel`, and the effect handler scopes established by §6.3.
 
-Both operators require a *type* on the LHS -- either a bare type name (`Promise`) or a compound type expression (e.g., `List{Promise}`, per §18). A value on the LHS is a static error. Type-LHS resolves the composition's dispatch to a specific hook at compile time, consistent with Foi's other static-first commitments (universal proper tail calls §3.4, mandatory effect tracking §6.13, compile-time precondition dispatch §3.5).
+Both operators require a *type* on the LHS -- either a bare type name (`Promise`) or a compound form (`List{Promise}`, per §16). A value on the LHS is a static error. Type-LHS resolves the composition's dispatch to a specific hook at compile time, consistent with Foi's other static-first commitments (universal proper tail calls §3.4, mandatory effect tracking §6.13, compile-time precondition dispatch §3.5).
 
 Compound-LHS carries semantic meaning on `~<<`: an inner `Promise` annotation on an iterating outer triggers per-element awaiting behavior (each element is awaited before the block body executes for it); on the composing outer `IO`, the optional `IO{Promise}` annotation documents the native Promise-transformer behavior specified in §6.12.5. Compound-LHS is not admitted on `~<*`; the observer-of-emissions form has no auto-lift semantics.
 
@@ -9554,8 +9554,8 @@ This section specifies type names: how they are declared, how a
 reference resolves to a declaration, how a name crosses a module
 boundary, what an assertion against a resolved name tests, how a type
 is derived where none is written, and when a value of one type is
-admitted where another is required. Type expression semantics are
-open; §9.10 enumerates them.
+admitted where another is required. §9.10 enumerates what remains
+open.
 
 A type is declared by `deft` (§9.2) or by `defn Name@(..)`
 (§3.1.1.1). There is no third surface.
@@ -9862,73 +9862,14 @@ is that entity, and when the `__ns` is a **member** of it (§9.2.3). A
 depth.
 
 **A transparent type resolves to a shape, and the test reads the
-shape.** A `deft` naming a native, a data shape, a function type, or
-an applied type mints no namespace (§9.2, §9.9.2); `?as` against it
-tests the value against that shape -- the number for `int`, the entry
-set for a data shape (§9.6.3) -- exactly as it does against the
-keyword or against the inline expression.
+shape.** A `deft` naming a native, a data shape, or a function type
+mints no namespace (§9.2, §9.9.2); `?as` against it tests the value
+against that shape -- the number for `int`, the entry set for a data
+shape (§9.6.3) -- exactly as it does against the keyword or against
+the inline expression.
 
 Exactly one resolution failure exists at all three positions: a name
 resolving in no lexical scope, diagnosed at the reference (§9.1.2).
-
-#### §9.6.3 Data Shape Types
-
-A `DataStructTypeExpr` (Syntactic-Grammar §18) describes a structured
-value (§1.5) by its entries. Three entry forms appear in the list:
-
-- A **named entry** `name: T` declares a named entry `name` whose
-  value satisfies `T`.
-- A **positional entry**, a bare `T`, declares a positional slot. The
-  type's positional entries take indices in their own order, as
-  §1.5.1 assigns them at a literal: the index advances at positional
-  entries and at no others, so `<a: int, string>` declares a named
-  `a` and index `0`.
-- A **rest entry** `*T`, admitted in final position only, declares
-  zero or more further entries, each satisfying `T`.
-
-**A value satisfies the type when its entries are exactly the ones
-declared.** Every named entry the type declares is present and
-satisfies its type, every positional index the type declares is
-present and satisfies its type, and the value carries no entry the
-type does not declare.
-
-```java
-deft Point <x: int, y: int>;
-
-< x: 1, y: 2 >;              // satisfies Point
-< x: 1, y: 2, z: 3 >;        // does not
-< x: 1 >;                    // does not
-```
-
-**A rest entry is the width opt-in.** With `*T` present, the declared
-entries must still be present and satisfying, and every remaining
-entry -- named or positional -- must satisfy `T`:
-
-```java
-deft AtLeastX <x: int, *Any>;
-
-< x: 1 >;                    // satisfies AtLeastX
-< x: 1, y: "b" >;            // satisfies AtLeastX
-< y: "b" >;                  // does not
-```
-
-**A data shape type declares no mode.** Record and Tuple are settled
-at the value by whether any named entry is present (§1.5.1), and the
-type's own entries settle it without a separate marker: a type
-declaring a named entry admits only Records, and a type declaring only
-positional entries admits only Tuples unless a rest entry widens it.
-
-**`< >` declares no entries and no rest**, so it admits exactly the
-empty structured value (§1.5.5) -- the one value that is both the
-empty Record and the empty Tuple. The empty case needs no
-disambiguation, because a data shape type declares no mode to
-disambiguate.
-
-**A data shape type is transparent.** It names a shape rather than
-minting a namespace, so both relations of §9.9 read through it.
-Transparency belongs to what the declaration names and not to how it
-was written: `deft Point <x: int, y: int>;` and an inline
-`<x: int, y: int>` denote the same type.
 
 #### §9.6.1 All Types Are Explicitly Reached
 
@@ -10036,6 +9977,107 @@ computed-source entry (`<k: [expr]>`) has no static key and falls back
 to implied `Any`. An entry the type pattern does not cover is an error
 at that entry.
 
+#### §9.6.3 Data Shape Types
+
+A `DataStructTypeExpr` (Syntactic-Grammar §18) describes a structured
+value (§1.5) by its entries. Four entry forms appear in the list:
+
+- A **named entry** `name: T` declares a named entry `name` whose
+  value satisfies `T`.
+- A **positional entry**, a bare `T`, declares a positional slot. The
+  type's positional entries take indices in their own order, as
+  §1.5.1 assigns them at a literal: the index advances at positional
+  entries and at no others, so `<a: int, string>` declares a named
+  `a` and index `0`.
+- A **positional rest entry** `*T`, admitted in final position only,
+  declares zero or more further positional entries, each satisfying
+  `T`.
+- A **named rest entry** `*:T`, admitted in final position only,
+  declares zero or more further named entries, each satisfying `T`.
+
+A type carries at most one rest entry.
+
+**A value satisfies the type when its entries are exactly the ones
+declared.** Every named entry the type declares is present and
+satisfies its type, every positional index the type declares is
+present and satisfies its type, and the value carries no entry the
+type does not declare.
+
+```java
+deft Point <x: int, y: int>;
+
+< x: 1, y: 2 >;              // satisfies Point
+< x: 1, y: 2, z: 3 >;        // does not
+< x: 1 >;                    // does not
+```
+
+**A rest entry is the width opt-in, on one axis.** With a rest entry
+present, the declared entries must still be present and satisfying,
+and every remaining entry on the rest's own axis must satisfy its
+type. A positional rest admits further positional entries and no
+named ones; a named rest admits further named entries and no
+positional ones:
+
+```java
+deft AtLeastX <x: int, *:Any>;
+
+< x: 1 >;                    // satisfies AtLeastX
+< x: 1, y: "b" >;            // satisfies AtLeastX
+< y: "b" >;                  // does not
+
+deft Ints <*int>;
+
+< 1, 2, 3 >;                 // satisfies Ints
+< a: 1 >;                    // does not
+```
+
+**The entries lock the mode.** Record and Tuple are settled at the
+value by whether any named entry is present (§1.5.1), and a type's
+entries settle it the same way, the rest entry's axis included. A
+type declaring a named entry or a named rest admits only Records; a
+type declaring only positional entries and at most a positional rest
+admits only Tuples. `<a: int, *int>` is a Record with a named `a` and
+open positional width; `<a: int, *:int>` is a Record with a named `a`
+and open named width.
+
+**`< >` declares no entries and no rest**, so it admits exactly the
+empty structured value (§1.5.5) -- the one value that is both the
+empty Record and the empty Tuple. It is the one data shape type that
+settles no mode, because it declares no entry to settle it with.
+
+**A data shape type is transparent.** It names a shape rather than
+minting a namespace, so both relations of §9.9 read through it.
+Transparency belongs to what the declaration names and not to how it
+was written: `deft Point <x: int, y: int>;` and an inline
+`<x: int, y: int>` denote the same type.
+
+#### §9.6.4 Literal Types
+
+A literal at a written type position names **exactly one value**: the
+value that literal denotes. `EmptyLit`, `PlainStr`, `NumberLit`, and
+`BooleanLit` are `NoUnionTypeExpr` arms (Syntactic-Grammar §18), so a
+literal type is written at a `deft` right-hand side and at the type
+positions reachable from one -- union entries, data shape entry types,
+and function-type argument and return slots.
+
+```java
+deft FortyTwo 42;
+deft OrderStatus empty | "pending" | "shipped";
+```
+
+**A literal type is keyed on the value, not the spelling.** §1.3 states
+that the spelling of a numeric literal carries no type of its own, and
+a literal type inherits that: `42`, `42.0`, and `\h2A` write the same
+type. Two string literals denoting the same string write the same type,
+delimiter escaping (§1.4.1) included.
+
+**A literal type is transparent**, in §9.9.2's sense. It names a value
+rather than minting a namespace, and a value carries no `__ns` naming
+the `deft` that wrote it down.
+
+`empty` is a literal type by this rule, and the one §9.9.1 already
+states rules for.
+
 ### §9.7 Inference
 
 Every expression has a **view**: the type these rules derive for it at
@@ -10063,7 +10105,9 @@ Four ranks, most authoritative first:
 1. **Explicit.** A declared type (§9.6.2), a `:as` annotation (§5),
    and a `?as`-arm narrowing (§9.8).
 2. **Construction.** A literal, an `@` construction, a call's declared
-   return type, a parameter default expression (§9.7.4).
+   return type, a parameter default expression (§9.7.4). A literal's
+   entry is its literal type (§9.6.4), which §9.7.4 widens at the
+   sites that derive a range.
 3. **Structural usage.** A use that requires a shape: `x.name` implies
    an entry named `name`; a comprehension implies a namespace
    declaring that hook.
@@ -10273,6 +10317,31 @@ later divergence is an error. A `def` slot genuinely varies -- §9.6.2
 makes `def x: 3; x := "3";` well-formed -- so its view is the join of
 every write reaching it. A write inside a conditional may not have
 executed, and the join is what the binding's whole lifetime supports.
+
+**A literal view widens to its native at those three sites.** A
+parameter fixed by first-wins, a return position fixed the same way,
+and a slot's join each derive a **range**: what the position holds
+across every execution, which §9.6.2 already distinguishes from the
+type of one value written into it. A literal is one observed value, so
+its literal type (§9.6.4) is evidence about that write and not about
+the range, and the entry those three sites record is the literal's
+native:
+
+```java
+defn f(s) ^s;
+
+f("pending");
+f("shipped");                // well-formed
+```
+
+`f`'s parameter is fixed at `string`. Were the view unwidened, the
+first call would fix it at `"pending"` and the second would be a
+divergence error. The same reading joins `def x: 42; x := 41;` to
+`int` rather than to `42 | 41`.
+
+Widening reaches these sites and no others. A literal written into a
+position that already carries a range is checked against that range
+(§9.6.2, §9.7.6), and the literal type is what §9.9 relates there.
 
 **A spread argument supplies no signature-fixing evidence** unless the
 spread source's length and per-position entries are statically known
@@ -10647,51 +10716,60 @@ a stdlib type uses where the budget is the caller's (§6.13.1).
 A data shape type (§9.6.3) is disjoint from every type that is not a
 data shape type.
 
+A rest entry covers only its own axis (§9.6.3): a positional rest
+covers positional entries, a named rest covers named ones. Both
+relations below read "covers" that way.
+
 **`S` is admitted under `T`** when all of the following hold:
 
 - Every named entry and every positional index `T` declares, `S`
   declares, and `S`'s type there is admitted under `T`'s.
-- Every entry `S` declares that `T` does not is admitted under `T`'s
-  rest type; absent a rest entry on `T`, `S` declares no such entry.
-- `S`'s rest type, if any, is admitted under `T`'s rest type; absent a
-  rest entry on `T`, `S` carries none.
+- Every entry `S` declares that `T` does not is covered by `T`'s rest
+  entry and admitted under its type; absent a rest entry covering
+  that entry's axis, `S` declares no such entry.
+- `S`'s rest entry, if any, is on the same axis as `T`'s and its type
+  is admitted under `T`'s; absent a rest entry on `T`, `S` carries
+  none.
 
 **`S` and `T` are disjoint** when a shared named entry or a shared
-positional index carries disjoint types, or when one declares an entry
-the other neither declares nor covers with a rest entry.
+positional index carries disjoint types, or when one declares an
+entry the other neither declares nor covers with a rest entry.
 
 `<a: int>` and `<a: string>` are disjoint. `<a: int>` and
-`<a: int, b: string>` are disjoint. `<a: int, *Any>` admits
-`<a: int, b: string>` and refutes neither it nor `<a: int>`. `< >` is
-admitted under every data shape type whose entries are all covered by
-a rest entry, and is disjoint from every one that declares an entry.
+`<a: int, b: string>` are disjoint. `<a: int, *:Any>` admits
+`<a: int, b: string>` and refutes neither it nor `<a: int>`, while
+`<a: int, *Any>` is disjoint from `<a: int, b: string>` -- its rest
+covers the positional axis and `b` is named. `< >` is admitted under
+every data shape type whose entries are all covered by a rest entry,
+and is disjoint from every one that declares an entry.
 
-#### §9.9.6 Applied Types
+#### §9.9.6 Literal Types
 
-`NestedTypeExpr` has no stated meaning (§9.10), so no rule above
-reaches it and no rule refutes it. An applied type is admitted under
-`Any`, and against every other type it is the middle case at every
-consumer: adopted, asserted, and reported at neither end. A name whose
-declaration is an applied form carries the same treatment, since a
-transparent declaration names whatever its right-hand side names
-(§9.6.3).
+A literal type (§9.6.4) names exactly one value. Three rules:
+
+- A literal type is admitted under the native its value satisfies.
+  Numbers follow §9.9.1: a whole-number literal is admitted under
+  `int` and under `float`, a non-whole one under `float` alone.
+- A literal type is admitted under another literal type only when the
+  two name the same value, in which case they are the same type.
+- Two literal types naming different values are disjoint, and a
+  literal type is disjoint from every type its value does not satisfy.
+
+A native is not admitted under a literal type, and the two are not
+disjoint. `int` and `42` overlap, so `n :as FortyTwo` where `n`'s view
+is `int` is the middle case -- adopted, carrying a runtime assertion
+(§9.7.7).
+
+`empty` is the literal type §9.9.1 states these rules for directly.
+
+Literal types compose through the sections above without addition. A
+union of them relates by §9.9.2, and one at a data shape entry relates
+by §9.9.5 -- `deft Ok <status: 200, body: string>;` is disjoint from
+`<status: 201, body: string>` at the shared named entry.
 
 ### §9.10 Open
 
 The following are unspecified. Each is a rule this specification owes.
-
-**Type-expression semantics.** Two `TypeExpr` shapes have no stated
-meaning:
-
-- **Applied types.** `NestedTypeExpr` applies a single type argument
-  (`List{int}`). No declaration surface states that a type takes an
-  argument: `DefTypeName` is a dotted name with no parameter list, and
-  there is no type-variable form. §9.9.6 names what subsumption cannot
-  decide until it does.
-- **Literal types.** `EmptyLit`, `PlainStr`, `NumberLit`, and
-  `BooleanLit` are `NoUnionTypeExpr` arms. `empty` is a type
-  independently of this item: `?T` reads as `T | empty` (§9.5), which
-  requires it.
 
 **Annotation at a dispatch site.** Whether a written type annotation
 ever participates in marker resolution. §9.7.6 states that it does not

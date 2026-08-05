@@ -1490,8 +1490,10 @@ or use the def-block form directly.
 ## §16 Do-Comprehensions
 
 ```ebnf
-<DoComprLHS>            := DoComprLHSName;
+<DoComprLHS>            := DoComprLHSCompound | DoComprLHSName;
 DoComprLHSName          := (Identifier | BuiltIn) (Period (Identifier | BuiltIn))*;
+DoComprLHSCompound      := DoComprLHSName OpenBrace _ DoComprLHSArg _ CloseBrace;
+<DoComprLHSArg>         := DoComprLHSCompound | DoComprLHSName;
 
 <DoLoopComprLHS>        := BraceNarrowing | DoComprLHSName;
 BraceNarrowing          := DoComprLHSName Period OpenAngle _ DoComprLHSName (_ Comma _ DoComprLHSName)* (_ Comma)? _ CloseAngle;
@@ -1517,9 +1519,30 @@ DoFinalUnwrapExpr       := Dollar _ ExprNoBlock (_ Semicolon)*;
 DoLoopComprExpr         := DoLoopComprLHS _ Tilde OpenAngle Star _ DoBlockExpr;
 ```
 
-Note: `DoComprExpr` and `DoLoopComprExpr` share the LHS (a bare type
-name via `<DoComprLHS>`) and the RHS shape (`DoBlockExpr` — an
-optional defs-init followed by a block body).
+Note: `DoComprExpr` and `DoLoopComprExpr` share the RHS shape
+(`DoBlockExpr` — an optional defs-init followed by a block body) and
+differ on the LHS. `<DoComprLHS>` admits a bare-or-dotted name or a
+compound form (`List{Promise}`); `<DoLoopComprLHS>` admits a
+bare-or-dotted name or the brace-narrowing form
+(`Effect.<Ask, Retry>`).
+
+Note: `DoComprLHSCompound` cuddles its brace to the name — no `_`
+before `OpenBrace` — and recurses on itself through
+`<DoComprLHSArg>`, so `List{List{Promise}}` parses. PEG: the
+compound arm precedes the bare arm in `<DoComprLHS>`; both open with
+`DoComprLHSName`, and the compound arm requires the cuddled brace to
+follow, so `List ~<< {..}` backtracks cleanly to the bare arm. The
+recursive reference sits after a non-nullable `DoComprLHSName`, so
+no left-recursion arises.
+
+The recursion's base is `DoComprLHSName`, whose alphabet excludes
+`NativeType` — the argument position names a namespace, so
+`List{int}` is a parse error at both segments for the same reason
+the outer position rejects it.
+
+`DoComprLHSCompound` is not an arm of `<DoLoopComprLHS>`. Per §6
+opener, compound LHS is not admitted on `~<*`: the
+observer-of-emissions form has no auto-lift semantics.
 
 Note: `BraceNarrowing` is a shared production referenced at three
 sites, all OR-semantic ("any of these prefix subtrees"):
@@ -1753,15 +1776,15 @@ unwrap-shaper pattern as `AsExpr` (§5) and `DepCondBoolExpr` arm-3
    strings in type position, `int :as bool` chains, etc.).
 
    Brace-grouping rule: `{...}` appears in type expressions only where
-   syntactically required: NestedTypeExpr's type-argument site, and
-   the position immediately after a `?`, `*`, or `^` modifier when the
-   inner type is a union or function. Bare types are required
-   everywhere else — decorative bracing of a non-union, non-function
-   type in those non-modifier positions is a parse error. (A narrow
-   leakage: `(?{int})`, `(*{int})`, and `^{int}` technically parse
-   because the modifier-position arms accept GroupedTypeExpr broadly;
-   the strict reading is "don't brace a non-union/non-function" — this
-   is conventionally discouraged but not grammar-rejected.) *)
+   syntactically required: the position immediately after a `?`, `*`,
+   `*:`, or `^` modifier when the inner type is a union or function.
+   Bare types are required everywhere else — decorative bracing of a
+   non-union, non-function type in those non-modifier positions is a
+   parse error. (A narrow leakage: `(?{int})`, `(*{int})`, and `^{int}`
+   technically parse because the modifier-position arms accept
+   GroupedTypeExpr broadly; the strict reading is "don't brace a
+   non-union/non-function" — this is conventionally discouraged but
+   not grammar-rejected.) *)
 
 DefTypeStmt           := "deft" _ DefTypeName _ ( (NamedType _ DefTypeFrom)
                                                 | DefTypeFrom
@@ -1795,15 +1818,13 @@ DefTypeFrom           := "from" _ PlainStr;
 <NoFuncTypeExpr>      := UnionTypeExpr | NoUnionTypeExpr;
 UnionTypeExpr         := NoUnionTypeExpr (_ Pipe _ NoUnionTypeExpr)+;
 
-<NoUnionTypeExpr>     := NestedTypeExpr | NamedType
+<NoUnionTypeExpr>     := NamedType
                        | EmptyLit | PlainStr | NumberLit | BooleanLit
                        | DataStructTypeExpr;
 
 NamedType             := ((Identifier | BuiltIn) (Period (Identifier | BuiltIn))*)
                        | NativeType;
 <NativeType>          := "int" | "float" | "bool" | "string" | "Any";
-
-NestedTypeExpr        := NamedType _ GroupedTypeExpr;
 
 GroupedTypeExpr       := OpenBrace _ (FuncTypeExpr | UnionTypeExpr (_ Pipe)?
                                     | NoUnionTypeExpr) _ CloseBrace;
@@ -1814,7 +1835,7 @@ DataStructTypeExpr    := OpenAngle _ DataStructTypeList? _ (Comma _)? CloseAngle
 <DataStructTypeEntry> := DataStructFieldType | DataStructValueType;
 <DataStructValueType> := NoFuncTypeExpr;
 DataStructFieldType   := Identifier _ Colon _ DataStructValueType;
-DataStructFinalValType:= Star (NoUnionTypeExpr | GroupedTypeExpr);
+DataStructFinalValType:= Star Colon? (NoUnionTypeExpr | GroupedTypeExpr);
 
 FuncTypeExpr          := OpenParen _ FuncTypeArgList? _ (Comma _)? CloseParen _ (EffectsClause _)? Caret _ Qmark? _ (NoUnionTypeExpr | GroupedTypeExpr);
 <FuncTypeArgList>     := (FuncTypeArg (_ Comma _ FuncTypeArg)* (_ Comma _ FuncTypeFinalArg)?)

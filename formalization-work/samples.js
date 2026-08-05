@@ -1253,6 +1253,17 @@ export const samples = [
 	{ label: "DoComprExpr: dotted LHS Effect.Foo",
 	  src: "Effect.Foo ~<< { 42; };" },
 
+	// DoComprLHSCompound at ~<< — compound dispatch LHS. The brace
+	// cuddles the name, the argument names a namespace, and it nests.
+	{ label: "DoComprExpr: compound LHS List{Promise}",
+	  src: "List{Promise} ~<< { x; };" },
+	{ label: "DoComprExpr: compound LHS nested",
+	  src: "List{List{Promise}} ~<< { x; };" },
+	{ label: "DoComprExpr: compound LHS dotted argument",
+	  src: "List{Foo.Bar} ~<< { x; };" },
+	{ label: "DoComprExpr: compound LHS w/defs",
+	  src: "List{Promise} ~<< (r:: prs) { r; };" },
+
 	// DoLoopComprLHS dotted at ~<* — Effect handler for single
 	// prefix subtree (§6.3.1).
 	{ label: "DoLoopComprExpr: dotted LHS Effect.Ask",
@@ -1527,21 +1538,24 @@ export const samples = [
 	{ label: "NativeType Any: :as tail",                       src: "x :as Any;" },
 	{ label: "NativeType Any: union arm",                      src: "deft V Any | Foo;" },
 	{ label: "NativeType Any: FuncTypeExpr arg + return",      src: "deft F (Any, int) ^Any;" },
-	{ label: "NativeType Any: NestedTypeExpr arg",             src: "deft L List{Any};" },
 	{ label: "NativeType Any: DataStructTypeExpr field",       src: "deft P <x: Any, y: int>;" },
+	{ label: "NativeType Any: named rest entry",               src: "deft R <*:Any>;" },
 
 	// UnionTypeExpr — bare 2-arm and 3-arm
 	{ label: "DefTypeStmt: UnionTypeExpr (2-arm)",             src: "deft R Ok | Err;" },
 	{ label: "DefTypeStmt: UnionTypeExpr (3-arm mixed)",       src: "deft V int | string | Foo;" },
 
-	// NestedTypeExpr — single-arg and union-arg (unwrapped GroupedTypeExpr)
-	{ label: "DefTypeStmt: NestedTypeExpr (single arg)",       src: "deft L List{int};" },
-	{ label: "DefTypeStmt: NestedTypeExpr (union arg)",        src: "deft E Either{Foo | Bar};" },
-
 	// DataStructTypeExpr — positional values, named fields, rest with braced union
 	{ label: "DefTypeStmt: DataStructTypeExpr (positional)",   src: "deft P <int, string>;" },
 	{ label: "DefTypeStmt: DataStructTypeExpr (fields+rest)",  src: "deft S <x: int, y: string, *{bool | int}>;" },
 	{ label: "DefTypeStmt: DataStructTypeExpr (empty)",        src: "deft E <>;" },
+
+	// DataStructFinalValType — positional rest `*T` beside named
+	// rest `*:T`. The rest kind is what locks the type's mode.
+	{ label: "DataStructFinalValType: positional rest only",   src: "deft L <*int>;" },
+	{ label: "DataStructFinalValType: named rest only",        src: "deft L <*:int>;" },
+	{ label: "DataStructFinalValType: named rest + fields",    src: "deft S <x: int, y: string, *:{bool | int}>;" },
+	{ label: "DataStructFinalValType: entries + positional rest", src: "deft T <int, int, *int>;" },
 
 	// FuncTypeExpr — basic and complex (optional arg, optional braced-union return, rest)
 	{ label: "DefTypeStmt: FuncTypeExpr (basic)",              src: "deft F (int, string) ^ bool;" },
@@ -1737,7 +1751,6 @@ export const samples = [
 		"deft Adder (int, int) ^int; " +
 		"deft Nullary () ^empty; " +
 		"deft Optional (?X) ^?Y; " +
-		"deft Wrapped List{int}; " +
 		"deft Dotted Either.Right; " +
 		"deft Complex (string, *{(int) ^int}) ^{\"yes\" | \"no\"}; " +
 		"deft G <*int>; " +

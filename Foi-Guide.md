@@ -5591,6 +5591,30 @@ deft OrderStatus empty | "pending" | "shipped";
 def myStatus: getOrderStatus(order) :as OrderStatus;
 ```
 
+**Shapes work too.** A `deft` can name a Record or Tuple shape, and it's an exact match by default -- the value carries those entries and no others:
+
+```java
+deft Point <x: int, y: int>;
+
+< x: 1, y: 2 >;                 // matches Point
+< x: 1, y: 2, z: 3 >;           // doesn't -- extra entry
+< x: 1 >;                       // doesn't -- missing y
+```
+
+To leave room for more, put a `*` entry last. `*T` leaves room for more positional entries; `*:T` leaves room for more named ones:
+
+```java
+deft Coords <*int>;
+deft AtLeastX <x: int, *:Any>;
+
+< 1, 2, 3 >;                    // matches Coords
+< >;                            // matches Coords
+< x: 1 >;                       // matches AtLeastX
+< x: 1, label: "start" >;       // matches AtLeastX
+```
+
+One or the other, not both -- there's no way to write a shape that's open to extra names *and* extra positions at the same time.
+
 The check happens at compile time, on the same pass that works out the rest of the types. If the value can't be what you said it is, that's a compile error at the annotation itself.
 
 ### Declaring a Binding's Type
