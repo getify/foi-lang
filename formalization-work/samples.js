@@ -17,17 +17,17 @@ export const samples = [
 	{ label: "NumberLit: -5",                        src: "-5;" },
 	{ label: "NumberLit: -5 :as int",                src: "-5 :as int;" },
 
-	// NumberLit escape forms — the five EscapedNumber dispatch arms
-	// reachable from syn NumberLit at value position. Four emit
-	// Escape + Number (Hex, Octal, Binary, Monadic, plus EscapePlain's
+	// NumberLit escape forms — the four EscapedNumber dispatch arms
+	// reachable from syn NumberLit at value position. Three emit
+	// Escape + Number (Hex, Octal, Binary, plus EscapePlain's
 	// BareNumber inner covering signed `\-1_000` and decimal
-	// `\100_000.25`); the fifth (EscapePlain + PositiveIntegerLitWithSep,
+	// `\100_000.25`); the fourth (EscapePlain + PositiveIntegerLitWithSep,
 	// unsigned `\5_000`) emits Escape + PositiveIntegerLit and reaches
 	// value position via NumberLit's widened first-alt. The dedicated
 	// `\5_000` cluster below verifies that path through OperandExpr
 	// and call-arg contexts; §17 ExplicitPropDef key samples cover
-	// the PropertyExpr-position reach. The sixth lex arm (EscapeUnicode,
-	// `\u<hex>`) is excluded — admitted only inside InterpExpr via
+	// the PropertyExpr-position reach. The EscapeUnicode arm
+	// (`\u<hex>`) is excluded — admitted only inside InterpExpr via
 	// UnicodeCharLit.
 	//
 	// Signed-integer-with-sep (`\-1_000`) goes through BareNumber's
@@ -41,7 +41,6 @@ export const samples = [
 	{ label: "NumberLit: \\b-1100 (binary negative)",             src: "\\b-1100;" },
 	{ label: "NumberLit: \\-1_000 (sep'd signed integer)",        src: "\\-1_000;" },
 	{ label: "NumberLit: \\100_000_003.25 (sep'd decimal)",       src: "\\100_000_003.25;" },
-	{ label: "NumberLit: \\@FFFF (monadic, fallback)",            src: "\\@FFFF;" },
 
 	// NumberLit `\u263A` form — NARROWED. No longer reachable at value
 	// position; admitted only as the sole contents of an interpolation
@@ -69,7 +68,6 @@ export const samples = [
 	{ label: "InterpStr: slot binary escape",             src: '`"hi `\\b1100` there";' },
 	{ label: "InterpStr: slot sep'd signed int",          src: '`"hi `\\-1_000` there";' },
 	{ label: "InterpStr: slot sep'd decimal",             src: '`"hi `\\100_000.25` there";' },
-	{ label: "InterpStr: slot monadic fallback",          src: '`"hi `\\@FFFF` there";' },
 
 	// Other leaf forms inside slot
 	{ label: "InterpStr: slot bare Identifier",           src: '`"hi `name` there";' },

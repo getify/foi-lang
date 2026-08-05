@@ -94,7 +94,7 @@ var ch = (c, onMatch) => terminal(x => x === c, onMatch);
 //   SYMB_NAMES_EXCLUDED_FROM_C: name is in C (for char lookup via
 //     C.Escape etc.) but no symb.<Name> production is generated —
 //     a different binding handles the production. Currently just
-//     Escape, which is superseded by EscapePlain (one of the eight
+//     Escape, which is superseded by EscapePlain (one of the seven
 //     Escape variants defined below; see Lexical-Grammar.md).
 // =============================================================
 
@@ -146,13 +146,13 @@ for (let [name, c] of Object.entries(C)) {
 // =============================================================
 // ESCAPE VARIANTS
 //
-// Eight productions, all emitting Escape tokens with distinguishing
+// Seven productions, all emitting Escape tokens with distinguishing
 // values. EscapePlain is the only one spread standalone into
 // BaseTokenOr (for a lone "\"); the others fire only from inside
 // specific contexts (string-form openers, EscapedNumber dispatch).
 //
 // At the EBNF level these are named aliases (EscapeBacktick,
-// EscapeHex, etc.); the impl emits all eight as Escape tokens
+// EscapeHex, etc.); the impl emits all seven as Escape tokens
 // (production name "Escape"), distinguished by value. See
 // Lexical-Grammar.md preamble for the alias pattern.
 // =============================================================
@@ -164,7 +164,6 @@ export const EscapeHex             = production("Escape", and(ch(C.Escape), ch("
 export const EscapeUnicode         = production("Escape", and(ch(C.Escape), ch("u")));
 export const EscapeOctal           = production("Escape", and(ch(C.Escape), ch("o")));
 export const EscapeBinary          = production("Escape", and(ch(C.Escape), ch("b")));
-export const EscapeMonadic         = production("Escape", and(ch(C.Escape), ch(C.At)));
 
 
 // =============================================================
@@ -191,8 +190,8 @@ export const DoubleColon  = production("DoubleColon",  and(ch(C.Colon), ch(C.Col
 // earlier `EscapedNumber` dispatch fails cleanly on `\/`: its
 // EscapePlain arm commits the `\`, then or(PositiveIntegerLit-
 // WithSep, BareNumber, General) all fail on `/`, rolling the
-// whole arm back. Other Escape arms (`\h`, `\u`, `\o`, `\b`,
-// `\@`) require a different second char, so they pass through
+// whole arm back. Other Escape arms (`\h`, `\u`, `\o`, `\b`)
+// require a different second char, so they pass through
 // without consuming. Same for SpacingInterpStr (`\` + backtick)
 // and SpacingEscapedStr (`\` + `"`) — second-char-disjoint from
 // Valley.
@@ -280,15 +279,6 @@ var BareNumBody       = and(
 );
 
 var HexDigits         = many(terminal(isHexDigit));
-var HexDigitsWithSep  = and(
-	HexDigits,
-	any(or(terminal(isHexDigit), ch("_")))
-);
-var MonadNumBody      = and(
-	optional(ch(C.Hyphen)),
-	HexDigitsWithSep,
-	optional(and(ch(C.Period), HexDigitsWithSep))
-);
 
 
 // Number variants — six productions emitting Number tokens with
@@ -298,12 +288,6 @@ export const HexNumber     = production("Number", and(optional(ch(C.Hyphen)), He
 export const UnicodeNumber = production("Number", and(HexDigits, NotIdentCont));
 export const OctalNumber   = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isOctDigit)), NotIdentCont));
 export const BinaryNumber  = production("Number", and(optional(ch(C.Hyphen)), many(terminal(isBinDigit)), NotIdentCont));
-export const MonadNumber = production("Number",
-	or(
-		and(optional(ch(C.Hyphen)), HexDigitsWithSep, ch(C.Period), HexDigitsWithSep),
-		and(optional(ch(C.Hyphen)), HexDigitsWithSep, NotIdentCont)
-	)
-);
 export const BareNumber = production("Number",
 	or(
 		// Decimal: commits.
@@ -357,7 +341,6 @@ export const EscapedNumber = or(
 	and(EscapeUnicode, or(UnicodeNumber, General)),
 	and(EscapeOctal,   or(OctalNumber,   General)),
 	and(EscapeBinary,  or(BinaryNumber,  General)),
-	and(EscapeMonadic, or(MonadNumber,   General)),
 	and(EscapePlain,   or(PositiveIntegerLitWithSep, BareNumber, General))
 );
 // =============================================================

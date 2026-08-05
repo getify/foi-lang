@@ -216,18 +216,18 @@ PipelineTopic       := Hash;
    Lexical-Grammar.md).
 
    <EscapedNumberLit> names the two-token shape the syn consumes when
-   the lex's hidden <EscapedNumber> dispatcher matches. The lex
-   dispatcher has six arms, but only FIVE are reachable at value
-   position via NumberLit — the EscapeUnicode arm is excluded here
-   and admitted exclusively from inside InterpExpr (§2, see UnicodeCharLit
-   below). The \u<hex> form is a character escape, not a numeric
-   literal; it produces a single-codepoint string and is meaningful
-   only as the sole contents of an interpolation slot.
+   the lex's hidden <EscapedNumber> dispatcher matches.
+   <EscapeNonUnicode> admits four Escape variants. EscapeUnicode
+   (`\u<hex>`) is excluded: it is a character escape rather than a
+   numeric literal, producing a single-codepoint string, and it is
+   admitted exclusively from inside InterpExpr (§2, see UnicodeCharLit
+   below) as the sole contents of an interpolation slot. The lexer
+   recognizes it anywhere in source; the narrowness is the syn's.
 
-   Of the five admitted arms: four produce Escape + Number
-   (Hex/Octal/Binary/Monadic, plus EscapePlain's BareNumber inner —
-   all aliases for the Number token type per Lexical-Grammar.md
-   Notes 5/7); the fifth (EscapePlain paired with
+   Of the four admitted arms: three produce Escape + Number
+   (Hex/Octal/Binary, plus EscapePlain's BareNumber inner — all
+   aliases for the Number token type per Lexical-Grammar.md
+   Notes 5/7); the fourth (EscapePlain paired with
    PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
    (alias pattern per Note 6; this routing keeps the same token type
    feeding <PositiveIntLit> at PropertyExpr-key positions). The syn
@@ -241,7 +241,7 @@ PipelineTopic       := Hash;
    plus the EscapePlain-paired form, but no signs and no \u. *)
 NumberLit          := EscapedNumberLit | Number | IntegerLit;
 <EscapedNumberLit> := EscapeNonUnicode (Number | PositiveIntegerLit);
-<EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapeMonadic | EscapePlain;
+<EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapePlain;
 
 BooleanLit         := "true" | "false";
 EmptyLit           := "empty";
@@ -1608,17 +1608,15 @@ ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupl
      visually collides with the outer ExplicitPropDef separator;
      paren-wrap admits via the OperandExpr → BareOperandExpr →
      BareOperandExprNoEmpty → DataStructLit path)
-   - Monadic escapes (`%\@FF` — meaningless stringification)
    - EmptyLit (`%empty` — no storage slot for missing value)
 
    The numeric bare arm <ComputedPropNumberLit> admits NumberLit
-   (§2) minus monadic (`\@FF`) and unicode (`\u<hex>`) — both
-   categorically not numeric. Both signs and both shapes
-   (integer/decimal) admitted; PropertyExpr's positive-only
-   narrowness doesn't apply here since computed keys aren't
-   dual-purposed as positional index lookups. See the
-   <ComputedPropNumberLit> production block below for the full
-   per-arm breakdown.
+   (§2) minus unicode (`\u<hex>`), a character escape rather than a
+   numeric literal. Both signs and both shapes (integer/decimal)
+   admitted; PropertyExpr's positive-only narrowness doesn't apply
+   here since computed keys aren't dual-purposed as positional index
+   lookups. See the <ComputedPropNumberLit> production block below
+   for the full per-arm breakdown.
 
    AnglePickEntry (§6) shares this ComputedPropName, so the
    same alphabet applies in pick context: `.<%(a + b)>` and
@@ -1636,10 +1634,9 @@ ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupl
 <ComputedPropBare>       := BooleanLit | StringLit | <ComputedPropNumberLit> | ComputedPropAccessChain;
 
 (* <ComputedPropNumberLit>: numeric-literal alphabet at the computed-
-   key bare arm. Admits every NumberLit shape except monadic (`\@FF`)
-   and unicode (`\u<hex>`) — both categorically not numeric (monadic
-   = arbitrary-precision / out of bootstrap scope; unicode = char
-   escape, narrowed at value position to InterpExpr-slot only).
+   key bare arm. Admits every NumberLit shape except unicode
+   (`\u<hex>`), a character escape rather than a numeric literal,
+   narrowed at value position to InterpExpr-slot only.
 
    Both signs and both shapes (integer/decimal) admitted:
      - Bare integers via PositiveIntLit / NegativeIntegerLit (their

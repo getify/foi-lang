@@ -87,25 +87,24 @@ var PositiveIntegerLitTok = tokType("PositiveIntegerLit");
 var NegativeIntegerLitTok = tokType("NegativeIntegerLit");
 var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 
-// NumberLit         := EscapedNumberLit | Number | IntegerLit;
+// // NumberLit         := EscapedNumberLit | Number | IntegerLit;
 // <EscapedNumberLit> := EscapeNonUnicode (Number | PositiveIntegerLit);
-// <EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapeMonadic | EscapePlain;
+// <EscapeNonUnicode> := EscapeHex | EscapeOctal | EscapeBinary | EscapePlain;
 //
 // No `:as` tail — annotation comes via AsExpr (§5) where applicable.
 //
 // <EscapedNumberLit> names the two-token shape the syn consumes when
-// the lex's hidden <EscapedNumber> dispatcher matched. The lex dispatcher
-// has six arms; FIVE are reachable here at value position. The sixth
-// (EscapeUnicode) is excluded — \u<hex> is a character escape, not a
-// numeric literal, and is admitted exclusively from inside InterpExpr
-// (see UnicodeCharLit, defined alongside InterpExpr below). The narrow
-// `or(...)` over the five non-\u Escape values is what enforces this
-// at the parser layer; the lexer still emits Escape("\\u") + Number
-// anywhere in source.
+// the lex's hidden <EscapedNumber> dispatcher matched. EscapeNonUnicode
+// admits four Escape variants. EscapeUnicode is excluded — \u<hex> is
+// a character escape, not a numeric literal, and is admitted
+// exclusively from inside InterpExpr (see UnicodeCharLit, defined
+// alongside InterpExpr below). The narrow `or(...)` is what enforces
+// that at the parser layer; the lexer still emits Escape("\\u") +
+// Number anywhere in source.
 //
-// Of the five: four produce Escape + Number (Hex/Octal/Binary/Monadic,
-// plus EscapePlain's BareNumber inner — all aliases for Number per
-// Lexical-Grammar.md Notes 5/7); the fifth (EscapePlain paired with
+// Of the four: three produce Escape + Number (Hex/Octal/Binary, plus
+// EscapePlain's BareNumber inner — all aliases for Number per
+// Lexical-Grammar.md Notes 5/7); the fourth (EscapePlain paired with
 // PositiveIntegerLitWithSep) produces Escape + PositiveIntegerLit
 // (alias pattern per Note 6; routes through PositiveIntegerLit so the
 // same token type feeds <PositiveIntLit> at PropertyExpr-key positions).
@@ -127,13 +126,11 @@ var IntegerLit            = or(NegativeIntegerLitTok, PositiveIntegerLitTok);
 var EscapeHexTok       = tokVal("Escape", "\\h");
 var EscapeOctalTok     = tokVal("Escape", "\\o");
 var EscapeBinaryTok    = tokVal("Escape", "\\b");
-var EscapeMonadicTok   = tokVal("Escape", "\\@");
 var EscapePlainTok     = tokVal("Escape", "\\");
 var EscapeNonUnicode   = or(
 	EscapeHexTok,
 	EscapeOctalTok,
 	EscapeBinaryTok,
-	EscapeMonadicTok,
 	EscapePlainTok
 );
 
@@ -2887,10 +2884,9 @@ export const ComputedPropParenExpr = production("ComputedPropParenExpr",
 //                          | (EscapePlain Number);
 //
 // Numeric-literal alphabet for the computed-key bare arm. Admits
-// every NumberLit shape EXCEPT monadic (`\@FF`) and unicode
-// (`\u<hex>`) — both categorically not numeric (monadic =
-// arbitrary-precision / out of bootstrap scope; unicode = char
-// escape, narrowed to InterpExpr-slot at value position).
+// every NumberLit shape EXCEPT unicode (`\u<hex>`) — a character
+// escape rather than a numeric literal, narrowed to InterpExpr-slot
+// at value position.
 //
 // Reach:
 //   - Bare integers: `42`, `-5` — via PositiveIntLit and
@@ -2910,7 +2906,6 @@ export const ComputedPropParenExpr = production("ComputedPropParenExpr",
 //     integer-shaped by lex contract
 //
 // Deliberately excluded (no Escape variant present in the or):
-//   - Monadic (`\@FF`, `\@FF.AA` — EscapeMonadicTok not in arms)
 //   - Unicode (`\u263A` — EscapeUnicodeTok not in arms)
 //   - EmptyLit (`%empty` — not numeric; not handled here either)
 //

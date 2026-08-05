@@ -159,14 +159,6 @@ Hexadecimal, Octal, and Binary integers can be specified with respective prefixe
 \b110000000111010;      // 24634
 ```
 
-You can also specify an arbitrarily large (or small) precision value by prefixing with `\@`:
-
-```java
-\@9999999999999999.9;   // Number{9999999999999999.9}
-```
-
-Such values are held in a `Number` [monadic instance](#monads-and-friends). To perform mathematical operations with such values, an arbitrary-precision library must be used.
-
 **Note:** One special numeric prefix is `\u`, which produces a string (of one or more characters) from the numeric hexadecimal representation of its Unicode code-point. So the numeric literal `\u263A` produces the single-character string `"☺"`. **HOWEVER**, this escape form is *only* available inside [interpolated string literal](#strings) expressions.
 
 ### Booleans

@@ -26,14 +26,14 @@ grammar (`Syntactic-Grammar.md`).
 token type differs from the EBNF name — they are aliases for
 clarity at the grammar level. Four families:
 
-- Eight Escape variants — `EscapeBacktick`, `EscapePlain`,
+- Seven Escape variants — `EscapeBacktick`, `EscapePlain`,
   `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`,
-  `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit
-  `Escape` tokens with distinguishing values.
-- Six Number variants — `HexNumber`, `UnicodeNumber`,
-  `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` —
-  all emit `Number` tokens, paired with their corresponding
-  Escape variant in `<EscapedNumber>` dispatch. The standalone
+  `EscapeOctal`, `EscapeBinary` — all emit `Escape` tokens
+  with distinguishing values.
+- Five Number variants — `HexNumber`, `UnicodeNumber`,
+  `OctalNumber`, `BinaryNumber`, `BareNumber` — all emit
+  `Number` tokens, paired with their corresponding Escape
+  variant in `<EscapedNumber>` dispatch. The standalone
   `Number` (decimal source-level numbers) emits its own type.
 - Two `PositiveIntegerLit` variants — `PositiveIntegerLit`
   (bare top-level) and `PositiveIntegerLitWithSep` (paired with
@@ -177,19 +177,16 @@ PositiveIntegerLitWithSep := DigitsWithSep !("." Digit) !IdentCont;   (* emitted
 
 (* Number variant aliases — each emits a Number token with
    content shape matching the Escape opener's digit class.
-   Integer-only forms (and the integer branch of MonadNumber /
-   BareNumber) carry !IdentCont per Note 10. *)
+   Integer-only forms (and the integer branch of BareNumber)
+   carry !IdentCont per Note 10. *)
 HexNumber               := "-"? HexDigit+ !IdentCont;     (* emitted as Number *)
 UnicodeNumber           := HexDigit+ !IdentCont;          (* emitted as Number; Note 6 *)
 OctalNumber             := "-"? OctDigit+ !IdentCont;     (* emitted as Number *)
 BinaryNumber            := "-"? BinDigit+ !IdentCont;     (* emitted as Number *)
-MonadNumber             := ("-"? HexDigitsWithSep "." HexDigitsWithSep)
-                         | ("-"? HexDigitsWithSep !IdentCont);  (* emitted as Number *)
 BareNumber              := ("-"? DigitsWithSep "." DigitsWithSep)
                          | ("-"? DigitsWithSep !IdentCont);     (* emitted as Number *)
 
 <DigitsWithSep>         := Digit+ (Digit | "_")*;
-<HexDigitsWithSep>      := HexDigit+ (HexDigit | "_")*;
 
 <HexDigit>              := #"[0-9a-fA-F]";
 <OctDigit>              := #"[0-7]";
@@ -204,13 +201,12 @@ BareNumber              := ("-"? DigitsWithSep "." DigitsWithSep)
                          | (EscapeUnicode (UnicodeNumber | General))
                          | (EscapeOctal   (OctalNumber   | General))
                          | (EscapeBinary  (BinaryNumber  | General))
-                         | (EscapeMonadic (MonadNumber   | General))
                          | (EscapePlain   (PositiveIntegerLitWithSep | BareNumber | General));
 
 
 (*************** Escape Variants ***************)
 
-(* Eight productions emitting Escape tokens with distinguishing
+(* Seven productions emitting Escape tokens with distinguishing
    values. EscapePlain is the only one spread standalone in
    <Token> (for a lone "\"); the others fire only from inside
    specific contexts (string-form openers, EscapedNumber). *)
@@ -222,7 +218,6 @@ EscapeHex               := "\\" "h";     (* emitted as Escape, value "\h" *)
 EscapeUnicode           := "\\" "u";     (* emitted as Escape, value "\u" *)
 EscapeOctal             := "\\" "o";     (* emitted as Escape, value "\o" *)
 EscapeBinary            := "\\" "b";     (* emitted as Escape, value "\b" *)
-EscapeMonadic           := "\\" "@";     (* emitted as Escape, value "\@" *)
 
 
 (*************** Multi-Char Operators ***************)
@@ -394,7 +389,7 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
 
     Number and the Number variants paired with hyphen-accepting
     Escape openers (HexNumber, OctalNumber, BinaryNumber,
-    MonadNumber, BareNumber) all accept an optional leading `-`.
+    BareNumber) all accept an optional leading `-`.
     For the standalone Number the combinator uses positive
     lookahead on the digit; the `-` is consumed and becomes part
     of the Number's value. This handles `-5` at start-of-input
@@ -434,7 +429,6 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     EscapeUnicode           value "\u"     (two chars)
     EscapeOctal             value "\o"     (two chars)
     EscapeBinary            value "\b"     (two chars)
-    EscapeMonadic           value "\@"     (two chars)
     ```
 
     All eight emit single Escape tokens in the output stream.
@@ -518,7 +512,6 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     PositiveIntegerLit, NegativeIntegerLit, PositiveIntegerLitWithSep,
     Number (integer branch only — NumberBody),
     HexNumber, UnicodeNumber, OctalNumber, BinaryNumber,
-    MonadNumber (integer branch only),
     BareNumber  (integer branch only)
     ```
 

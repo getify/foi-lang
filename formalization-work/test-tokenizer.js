@@ -71,8 +71,6 @@ const KNOWN_DIVERGENT = new Map([
 		"Documented 'Known Divergences' (Lexical-Grammar.md): new emits Escape('\\') + General('h'); legacy emits Escape('\\h'). Combinator lexer commits fully or not at all on multi-char escapes; legacy partial-commits and emits the multi-char Escape even when no content follows" ],
 	[ "\\u-5",
 		"Documented 'Known Divergences': new emits Escape('\\') + General('u') + Hyphen + Number(5); legacy emits Escape('\\u') + Hyphen + Number(5). Same partial-commit asymmetry — when `-` follows `\\u`, General fallback in EscapedNumber fails (`-` not IdentStart), so the whole arm rolls back" ],
-	[ "\\@-",
-		"Documented 'Known Divergences': new emits Escape('\\') + At + Hyphen; legacy emits Escape('\\@') + Number('-'). Same partial-commit asymmetry. Legacy's bare-hyphen-as-Number value is also dubious in its own right" ],
 	[ "\\-123_456",
 		"Legacy splits Escape('\\') + Number('-123') + General('_456'); new emits Escape('\\') + Number('-123_456'). Legacy's hyphen branch of EscapePlain+number doesn't carry through underscore-separator support — an internal asymmetry (legacy handles '\\123_456' fine)." ],
 	[ "\\-123_456.78_9",
@@ -81,8 +79,6 @@ const KNOWN_DIVERGENT = new Map([
 		"Escaped analog of the documented '-5foo' divergence. New: Escape('\\') + Hyphen + General('5foo') — the whole EscapePlain arm rolls back atomically (BareNumber fails NotIdentCont, General fails IdentStart on '-'). Legacy: Escape('\\') + Number(-5) + General('foo')" ],
 	[ "\\h-Fxyz",
 		"Sign + digit-leading-identifier in escaped hex form. New applies NotIdentCont uniformly to HexNumber, so the whole EscapeHex arm rolls back when an IdentCont follows the hex digits; legacy doesn't enforce it and commits to Escape('\\h') + Number('-F') + General('xyz')" ],
-	[ "\\@-5foo",
-		"Same as \\h-Fxyz but for MonadNumber. New: Escape('\\') + At + Hyphen + General('5foo'). Legacy: Escape('\\@') + Number('-5f') + General('oo') — note legacy consumes the 'f' as a hex digit since MonadNumber accepts hex" ],
 	[ "\\\"A single line\n    string with whitespace collapsing, defined across multiple\n  lines\"",
 		"Legacy bug: emits Keyword('string') for the substring 'string' inside a spacing-escaped string body — the KEYWORDS gate leaks into string content. New correctly emits String('string') per SpacingEscapedStrChars (typed-identifier productions never fire inside string-form bodies)" ],
 	[ "`\"Special number: `-3.1415962`\n   Name: `name`\n   Greeting: `\\`\"Hello world\"`\n   Reaction: `\\\"Yay!\"`\n   Reply: `\"Ok.\"`\n!\"",
@@ -479,7 +475,7 @@ async function runTests() {
 
 		// Escaped-number / identifier boundary. PositiveIntegerLitWithSep
 		// and BareNumber were patched with NotIdentCont; the hex / octal /
-		// binary / monadic / unicode escape variants were NOT. These probes
+		// binary / unicode escape variants were NOT. These probes
 		// reveal whether the boundary needs broader application.
 		"\\1_000foo",                          // PositiveIntegerLitWithSep (patched) + ident
 		"\\5.5foo",                            // BareNumber decimal branch — should split cleanly
@@ -487,7 +483,6 @@ async function runTests() {
 		"\\b101xyz",                           // BinaryNumber (unpatched) + ident
 		"\\o7xyz",                             // OctalNumber (unpatched) + ident
 		"\\u41xyz",                            // UnicodeNumber (unpatched) + ident
-		"\\@FFxyz",                            // MonadNumber (unpatched) + ident
 
 		// Malformed escape inputs (from Lexical-Grammar.md "Known
 		// Divergences" table). Tests how the lexer handles multi-char
@@ -498,22 +493,14 @@ async function runTests() {
 		"\\h",                                 // KNOWN_DIVERGENT — EOF after \h
 		"\\u-5",                               // KNOWN_DIVERGENT — `-` not IdentStart
 		"\\h_foo",                             // resolved by General fallback — regression test
-		"\\@-",                                // KNOWN_DIVERGENT — `-` not IdentStart
 
 		// Escaped numbers
 		"\\h1A2",
-		"\\@99",
 		"\\b1010",
 		"\\h-5",
 		"\\o-7",
 		"\\b-1",
 		"\\u263A",
-		"\\@FF",
-		"\\@-FF",
-		"\\@5_FF",
-		"\\@5.5",
-		"\\@-5",
-		"\\@5_000_003.25",
 		"\\1_234_567",
 		"\\1_234_567.890_123",
 		"\\5_",
@@ -537,15 +524,11 @@ async function runTests() {
 		"\\hf123",                             // EscapeHex + HexNumber (positive, full hex span)
 		"\\h-f123",                            // EscapeHex + HexNumber(-)
 		"\\o-123",                             // EscapeOctal + OctalNumber(-)
-		"\\@123_456.78_9",                     // EscapeMonadic + MonadNumber (positive decimal with sep)
-		"\\@-f123",                            // EscapeMonadic + MonadNumber(-hex)
-		"\\@-123_456.78_9",                    // EscapeMonadic + MonadNumber(-decimal with sep)
 
 		// Boundary: negative escaped number followed by identifier-cont.
 		// Probes whether NotIdentCont composes with the sign branch correctly.
 		"\\-5foo",                             // does decimal-branch fallback fire? expect: ?
 		"\\h-Fxyz",                            // negative hex + ident continuation
-		"\\@-5foo",                            // negative monad + ident continuation
 
 		// Tilde-adjacent identifier probes. Tilde is NOT in
 		// IdentCont/IdentStart (post-~-removal), so `~`-adjacent

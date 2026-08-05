@@ -124,9 +124,9 @@ Explicit boolean coercion from other value types is available via the unary `?` 
 
 ### §1.3 Numbers
 
-Foi numeric literals (Lexical-Grammar `NumberLit`) cover integers (`42`, `-3`) and decimals (`3.14`, `-0.001`). They may also be expressed in typed radixes: octal (`\o755`, `\o-755`), hexadecimal (`\hA3`, `\h-ff`), and binary (`\b01011101`, `\b-1100`). All typed-radix forms admit an optional leading sign inside the escape body.
+Foi has one numeric value space: exact rational numbers of arbitrary precision. Every numeric value is a ratio of two integers, held exactly, with no bound on either.
 
-**Negative zero.** Foi preserves IEEE-754 negative zero as a value distinct from positive zero. `0 / -3` produces `-0`; `0 ?= -0` is `false`. Structural equality treats `0` and `-0` as unequal; arithmetic identities that produce `-0` in IEEE-754 produce `-0` in Foi.
+Foi numeric literals (Lexical-Grammar `NumberLit`) cover integers (`42`, `-3`) and decimals (`3.14`, `-0.001`). They may also be expressed in typed radixes: octal (`\o755`, `\o-755`), hexadecimal (`\hA3`, `\h-ff`), and binary (`\b01011101`, `\b-1100`). All typed-radix forms admit an optional leading sign inside the escape body. Every literal a program can write is finite, hence a terminating decimal, hence exactly a rational; a literal denotes the number it spells.
 
 Numeric literals may also carry underscore separators for readability, but only via an explicit `\` escape:
 
@@ -136,11 +136,17 @@ Numeric literals may also carry underscore separators for readability, but only 
 
 Bare top-level integers and decimals do not admit separators; `100_000` written without the leading `\` is not a numeric literal.
 
-A further escape form `\@<digits>` (hex-digit alphabet, with optional sign, separators, and fractional part; e.g. `\@FFFF`, `\@-FF_FF.AA`) is the **monadic** numeric literal. Unlike the other escape forms, this does not construct a primitive number; it constructs a monadic-wrapped numeric value, conceptually arbitrary-precision. The bootstrap stubs this form; full semantics are deferred to the monad story.
+**`int` is a constraint on a number, not a representation.** It names the whole numbers within the one value space. `42` and `42.0` both denote the whole number 42 and both satisfy `int`; `3.14` satisfies neither `int` nor any narrowing of it. The spelling of a literal is a surface choice and carries no type of its own.
 
-Arithmetic operations (`+`, `/`, etc) produce numeric values.
+**Arithmetic follows the value, not the operands.** Addition, subtraction, and multiplication of whole numbers produce whole numbers. Division is the one arithmetic operation whose result may leave the whole numbers: `6 / 3` is whole and `6 / 4` is not, with no difference in how the operands were written.
 
-**Open:** the precise numeric tower -- distinct integer/float types vs. unified Number, arbitrary-precision integers, rational extensions, and the exact runtime contract of `\@`-monadic literals -- is not yet settled. The bootstrap inherits JS's unified number type.
+Structural equality is exact throughout. `0.1 + 0.2 ?= 0.3` is `true`, and `(1 / 3) * 3 ?= 1` is `true`. There is no NaN, no infinity, and no signed zero.
+
+Division by zero produces a `Left` (§6.7) holding a message. It is the only arithmetic operation with no answer to return.
+
+**Operations whose results are irrational** -- `sqrt`, the transcendental functions, and the circle constant among them -- take a requested precision and produce the exact rational at that precision. The precision parameter carries a default, so an unqualified call is well-formed; the result is exactly the rational it reports, and successive results at different precisions are different numbers.
+
+**Open:** what `float` names within the one value space -- whether the unconstrained numbers, of which the whole numbers are a part, or the non-whole numbers as a sibling constraint to `int` -- is not yet settled. The answer determines whether `42 ?as float` holds and how a `deft V int | float;` reads (§9.2.3, §9.9).
 
 ### §1.4 Strings
 
@@ -9866,10 +9872,13 @@ position without reaching, registers in no scope, and shadows nothing.
 `BuiltIn` at each segment, so `deft int ...` and `deft Any ...` fail
 at the name position as parse errors.
 
-The four lowercase natives name concrete runtime representations.
-`Any` names the absence of a narrowing constraint, and its
-capitalization marks that difference: it is a synthetic type with no
-representation of its own.
+The four lowercase natives name constraints a value satisfies.
+`bool` and `string` each name a kind of value. `int` and `float`
+each constrain a number within the single numeric value space
+(§1.3) rather than selecting between representations. `Any` names
+the absence of a narrowing constraint, and its capitalization
+marks that difference: every value satisfies it, and it narrows
+nothing.
 
 Every other type name is reached. Using `List` at a written type
 position requires reaching it:

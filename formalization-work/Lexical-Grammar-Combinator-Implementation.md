@@ -101,16 +101,16 @@ node. The mapping is mechanical: angle-bracketed ⟺ bare
 **Alias families.** Several unbracketed names are aliases for
 productions whose emitted token type differs from the EBNF name:
 
-- **Eight Escape variants** — `EscapeBacktick`, `EscapePlain`,
+- **Seven Escape variants** — `EscapeBacktick`, `EscapePlain`,
   `EscapeSpacingBacktick`, `EscapeHex`, `EscapeUnicode`,
-  `EscapeOctal`, `EscapeBinary`, `EscapeMonadic` — all emit
-  `Escape` tokens distinguished by value. See §9.
-- **Six Number variants** — `HexNumber`, `UnicodeNumber`,
-  `OctalNumber`, `BinaryNumber`, `MonadNumber`, `BareNumber` —
-  all emit `Number` tokens, each paired with its corresponding
-  Escape variant inside `EscapedNumber`. The standalone
-  source-level decimal Number production (JS binding `NumberLit`,
-  EBNF name `Number`) also emits `Number`.
+  `EscapeOctal`, `EscapeBinary` — all emit `Escape` tokens
+  distinguished by value. See §9.
+- **Five Number variants** — `HexNumber`, `UnicodeNumber`,
+  `OctalNumber`, `BinaryNumber`, `BareNumber` — all emit
+  `Number` tokens, each paired with its corresponding Escape
+  variant inside `EscapedNumber`. The standalone source-level
+  decimal Number production (JS binding `NumberLit`, EBNF name
+  `Number`) also emits `Number`.
 - **`PositiveIntegerLitWithSep`** is an alias for
   `PositiveIntegerLit` — separator-bearing form paired with
   `EscapePlain` inside `EscapedNumber`; emits a
@@ -151,7 +151,6 @@ EscapedNumber = or(
     and(EscapeUnicode, or(UnicodeNumber, General)),
     and(EscapeOctal,   or(OctalNumber,   General)),
     and(EscapeBinary,  or(BinaryNumber,  General)),
-    and(EscapeMonadic, or(MonadNumber,   General)),
     and(EscapePlain,   or(PositiveIntegerLitWithSep, BareNumber, General))
 );
 ```
@@ -276,14 +275,13 @@ Productions carrying `NotIdentCont`:
 PositiveIntegerLit,  NegativeIntegerLit,  PositiveIntegerLitWithSep,
 NumberLit (integer branch only),
 HexNumber,  UnicodeNumber,  OctalNumber,  BinaryNumber,
-MonadNumber (integer branch only),
 BareNumber  (integer branch only)
 ```
 
-The decimal branches of `NumberLit`, `MonadNumber`, and
-`BareNumber` do NOT need the guard — once `.` is consumed and a
-fractional digit run follows, the position is unambiguously
-inside a number. The structural split for `NumberLit`:
+The decimal branches of `NumberLit` and `BareNumber` do NOT need
+the guard — once `.` is consumed and a fractional digit run follows,
+the position is unambiguously inside a number. The structural split
+for `NumberLit`:
 
 ```js
 export const NumberLit = production("Number",
@@ -504,7 +502,7 @@ ensures the escape is recognized.
 
 ## 9. Escape Token Emission
 
-The lexer emits `Escape` tokens via eight named productions,
+The lexer emits `Escape` tokens via seven named productions,
 distinguished by value. Each is a JS binding mapping to
 `production("Escape", ...)`:
 
@@ -521,7 +519,6 @@ EscapeHex               "\h"     opener of EscapedNumber's HexNumber arm
 EscapeUnicode           "\u"     opener of EscapedNumber's UnicodeNumber arm
 EscapeOctal             "\o"     opener of EscapedNumber's OctalNumber arm
 EscapeBinary            "\b"     opener of EscapedNumber's BinaryNumber arm
-EscapeMonadic           "\@"     opener of EscapedNumber's MonadNumber arm
 ```
 
 The string-form openers (`EscapeBacktick`,
@@ -748,7 +745,7 @@ The two exclusion sets serve different purposes:
   productions) but no `symb.Name` production is generated. A
   different binding takes over the standalone role. Currently
   just `Escape`, whose standalone slot is filled by `EscapePlain`
-  (defined separately as one of the eight named Escape variants;
+  (defined separately as one of the seven named Escape variants;
   see §9). `EscapePlain` is spread into `BaseTokenOr` explicitly,
   just before the `symb` spread.
 

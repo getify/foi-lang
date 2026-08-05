@@ -560,7 +560,7 @@ function stepSpacingEscapedStr(state) {
 // Order matches tokenizer.js's BaseTokenOr for `\`-leading:
 //   1. SpacingInterpStr  (\` + ")
 //   2. SpacingEscapedStr (\")
-//   3. EscapedNumber arms (\h, \u, \o, \b, \@, \) — each
+//   3. EscapedNumber arms (\h, \u, \o, \b, \) — each
 //      arm is atomic: opener + (number | General) or
 //      whole-arm rollback.
 //   4. Valley (\/)
@@ -598,7 +598,6 @@ function stepBackslash(state) {
 	if (tryEscapedNumberArm(state, c1, "u", "\\u", "unicode"))  return true;
 	if (tryEscapedNumberArm(state, c1, "o", "\\o", "octal"))    return true;
 	if (tryEscapedNumberArm(state, c1, "b", "\\b", "binary"))   return true;
-	if (tryEscapedNumberArm(state, c1, "@", "\\@", "monadic"))  return true;
 	if (tryEscapedPlainArm(state))                              return true;
 
 	// Valley: \/
@@ -681,33 +680,19 @@ function tryEscapedPlainArm(state) {
 	return false;
 }
 
-// Scan the content for a typed escape (hex/unicode/octal/binary
-// /monadic). Returns end position (exclusive) or innerStart if
-// no content matched. Sign rules per Lexical-Grammar.md Note 5:
-// hex/octal/binary/monadic admit optional leading "-"; unicode
-// does not.
+// Scan the content for a typed escape (hex/unicode/octal/binary).
+// Returns end position (exclusive) or innerStart if no content
+// matched. Sign rules per Lexical-Grammar.md Note 5: hex/octal/
+// binary admit optional leading "-"; unicode does not.
 function scanTypedNumberContent(src, start, kind) {
 	var p = start;
 	var predicate;
 	if (kind === "hex" || kind === "unicode") predicate = isHexDigit;
 	else if (kind === "octal")                predicate = isOctDigit;
 	else if (kind === "binary")               predicate = isBinDigit;
-	else if (kind === "monadic")              predicate = isHexDigit;
 	else return start;
 
 	if (kind !== "unicode" && src[p] === "-") p++;
-
-	// Monadic uses with-sep + optional fractional part.
-	if (kind === "monadic") {
-		let digsEnd = scanDigitsWithSep(src, p, predicate);
-		if (digsEnd === p) return start;
-		p = digsEnd;
-		if (src[p] === "." && predicate(src[p + 1] || "")) {
-			p++;
-			p = scanDigitsWithSep(src, p, predicate);
-		}
-		return p;
-	}
 
 	// Plain typed digits (no separators in the inner content for
 	// hex/unicode/octal/binary).
