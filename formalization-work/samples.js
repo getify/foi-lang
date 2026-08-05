@@ -1519,8 +1519,8 @@ export const samples = [
 	{ label: "DefTypeStmt: NamedType (BuiltIn.Ident)",         src: "deft S List.Inner;" },
 
 	// `Any` — fifth native type. Capitalized where the other four
-	// are lowercase: the lowercase four name concrete runtime
-	// representations, `Any` names the absence of a narrowing
+	// are lowercase: the lowercase four name constraints a value
+	// satisfies, `Any` names the absence of a narrowing
 	// constraint. Reserved either way — `def Any: 5;` is a parse
 	// error (see failSamples). Reachable everywhere NamedType is.
 	{ label: "NativeType Any: deft A Any",                     src: "deft A Any;" },
@@ -1541,6 +1541,7 @@ export const samples = [
 	// DataStructTypeExpr — positional values, named fields, rest with braced union
 	{ label: "DefTypeStmt: DataStructTypeExpr (positional)",   src: "deft P <int, string>;" },
 	{ label: "DefTypeStmt: DataStructTypeExpr (fields+rest)",  src: "deft S <x: int, y: string, *{bool | int}>;" },
+	{ label: "DefTypeStmt: DataStructTypeExpr (empty)",        src: "deft E <>;" },
 
 	// FuncTypeExpr — basic and complex (optional arg, optional braced-union return, rest)
 	{ label: "DefTypeStmt: FuncTypeExpr (basic)",              src: "deft F (int, string) ^ bool;" },

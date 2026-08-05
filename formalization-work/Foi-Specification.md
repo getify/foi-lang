@@ -136,7 +136,7 @@ Numeric literals may also carry underscore separators for readability, but only 
 
 Bare top-level integers and decimals do not admit separators; `100_000` written without the leading `\` is not a numeric literal.
 
-**`int` is a constraint on a number, not a representation.** It names the whole numbers within the one value space. `42` and `42.0` both denote the whole number 42 and both satisfy `int`; `3.14` satisfies neither `int` nor any narrowing of it. The spelling of a literal is a surface choice and carries no type of its own.
+**`int` and `float` are constraints on a number, not representations.** `float` names every number in the one value space; `int` names the whole numbers within it. `42`, `42.0`, and `42.3` all satisfy `float`; `42` and `42.0` both denote the whole number 42 and both satisfy `int`; `42.3` satisfies `float` and not `int`. Every `int` is a `float`, and not every `float` is an `int`. The spelling of a literal is a surface choice and carries no type of its own.
 
 **Arithmetic follows the value, not the operands.** Addition, subtraction, and multiplication of whole numbers produce whole numbers. Division is the one arithmetic operation whose result may leave the whole numbers: `6 / 3` is whole and `6 / 4` is not, with no difference in how the operands were written.
 
@@ -145,8 +145,6 @@ Structural equality is exact throughout. `0.1 + 0.2 ?= 0.3` is `true`, and `(1 /
 Division by zero produces a `Left` (§6.7) holding a message. It is the only arithmetic operation with no answer to return.
 
 **Operations whose results are irrational** -- `sqrt`, the transcendental functions, and the circle constant among them -- take a requested precision and produce the exact rational at that precision. The precision parameter carries a default, so an unqualified call is well-formed; the result is exactly the rational it reports, and successive results at different precisions are different numbers.
-
-**Open:** what `float` names within the one value space -- whether the unconstrained numbers, of which the whole numbers are a part, or the non-whole numbers as a sibling constraint to `int` -- is not yet settled. The answer determines whether `42 ?as float` holds and how a `deft V int | float;` reads (§9.2.3, §9.9).
 
 ### §1.4 Strings
 
@@ -413,7 +411,7 @@ A spread entry `&src` lifts entries from `src` into the enclosing structure. The
 
 When spread into another structure, `< >` contributes nothing regardless of the enclosing context's type. The empty Record and empty Tuple are the same value at the literal level; the type system does not need to disambiguate at the empty case.
 
-**Open:** whether `< >`'s polymorphism is internally represented as a union type, a structural any-of-either, or a single distinguished empty value is a type-system question (§9). The operational semantic -- admits both pick forms, behaves correctly under either spread -- is settled.
+At the type level, `< >` is a single value and the data shape type `< >` names it (§9.6.3). A data shape type declares no Record-or-Tuple mode, so nothing needs disambiguating at the empty case.
 
 ### §1.6 Functions As Values
 
@@ -2565,7 +2563,7 @@ At a dispatch site -- `%` (§3.9), a comprehension marker (§3.10.9), or an arit
 
 Step 4 therefore fires only when two candidates are genuinely incomparable -- the value's namespace belongs to two unions, neither a member of the other, and both declare the marker. Declaration order does not change the answer, which is why this rejects rather than picking.
 
-The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it (§9.7.6), so no annotation redirects resolution. A step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own. Whether a disambiguation surface should exist at all is §9.9's.
+The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it (§9.7.6), so no annotation redirects resolution. A step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own. Whether a disambiguation surface should exist at all is §9.10's.
 
 **Constructors do not participate.** The `@` marker dispatches on a namespace handle rather than on an instance's `__ns` (§3.8), and a union declares no constructor (§9.2.3). `U@ x` against a union is rejected whether or not `U`'s members declare constructors.
 
@@ -7824,7 +7822,9 @@ This is a declaration surface only. It does not relax §6.13.2's
 emit-edge rule for the function that supplies the callback, and it
 does not relax §6.13.4's coverage rule: a perform inside the supplied
 callback still traces outward to an enclosing `~<*` exactly as it
-would otherwise. Whether a given function conforms to a slot declared `:Effects(Any)` is a type-conformance question, deferred to §9.9.
+would otherwise. would otherwise. Whether a given function conforms to
+a slot declared `:Effects(Any)` is effect-set conformance, specified
+at §9.9.4.
 
 Entries prefix-match per §6.1.4: `:Effects(User.IO)` declares
 that the function may perform `Effect.User.IO` or any
@@ -9552,9 +9552,10 @@ note), not the same-scope accompaniment requirement.
 
 This section specifies type names: how they are declared, how a
 reference resolves to a declaration, how a name crosses a module
-boundary, what an assertion against a resolved name tests, and how a
-type is derived where none is written. Type expression semantics and
-the subsumption relation are open; §9.9 enumerates them.
+boundary, what an assertion against a resolved name tests, how a type
+is derived where none is written, and when a value of one type is
+admitted where another is required. Type expression semantics are
+open; §9.10 enumerates them.
 
 A type is declared by `deft` (§9.2) or by `defn Name@(..)`
 (§3.1.1.1). There is no third surface.
@@ -9735,7 +9736,7 @@ union may mix data-shape and function-type entries with named ones:
 `deft Foo { (int) ^int | Bar }` makes `Bar` a member of `Foo` and
 leaves the function-type entry naming nothing. Whether a value
 matching that entry is admitted where `Foo` is required is
-subsumption, which §9.9 owes.
+subsumption (§9.9).
 
 Membership is what `?as` tests against a union (§9.6) and what hook
 resolution walks (§3.8.5). A union mints a namespace and no
@@ -9860,8 +9861,74 @@ is that entity, and when the `__ns` is a **member** of it (§9.2.3). A
 `?as` against a union succeeds for every member, at any membership
 depth.
 
+**A transparent type resolves to a shape, and the test reads the
+shape.** A `deft` naming a native, a data shape, a function type, or
+an applied type mints no namespace (§9.2, §9.9.2); `?as` against it
+tests the value against that shape -- the number for `int`, the entry
+set for a data shape (§9.6.3) -- exactly as it does against the
+keyword or against the inline expression.
+
 Exactly one resolution failure exists at all three positions: a name
 resolving in no lexical scope, diagnosed at the reference (§9.1.2).
+
+#### §9.6.3 Data Shape Types
+
+A `DataStructTypeExpr` (Syntactic-Grammar §18) describes a structured
+value (§1.5) by its entries. Three entry forms appear in the list:
+
+- A **named entry** `name: T` declares a named entry `name` whose
+  value satisfies `T`.
+- A **positional entry**, a bare `T`, declares a positional slot. The
+  type's positional entries take indices in their own order, as
+  §1.5.1 assigns them at a literal: the index advances at positional
+  entries and at no others, so `<a: int, string>` declares a named
+  `a` and index `0`.
+- A **rest entry** `*T`, admitted in final position only, declares
+  zero or more further entries, each satisfying `T`.
+
+**A value satisfies the type when its entries are exactly the ones
+declared.** Every named entry the type declares is present and
+satisfies its type, every positional index the type declares is
+present and satisfies its type, and the value carries no entry the
+type does not declare.
+
+```java
+deft Point <x: int, y: int>;
+
+< x: 1, y: 2 >;              // satisfies Point
+< x: 1, y: 2, z: 3 >;        // does not
+< x: 1 >;                    // does not
+```
+
+**A rest entry is the width opt-in.** With `*T` present, the declared
+entries must still be present and satisfying, and every remaining
+entry -- named or positional -- must satisfy `T`:
+
+```java
+deft AtLeastX <x: int, *Any>;
+
+< x: 1 >;                    // satisfies AtLeastX
+< x: 1, y: "b" >;            // satisfies AtLeastX
+< y: "b" >;                  // does not
+```
+
+**A data shape type declares no mode.** Record and Tuple are settled
+at the value by whether any named entry is present (§1.5.1), and the
+type's own entries settle it without a separate marker: a type
+declaring a named entry admits only Records, and a type declaring only
+positional entries admits only Tuples unless a rest entry widens it.
+
+**`< >` declares no entries and no rest**, so it admits exactly the
+empty structured value (§1.5.5) -- the one value that is both the
+empty Record and the empty Tuple. The empty case needs no
+disambiguation, because a data shape type declares no mode to
+disambiguate.
+
+**A data shape type is transparent.** It names a shape rather than
+minting a namespace, so both relations of §9.9 read through it.
+Transparency belongs to what the declaration names and not to how it
+was written: `deft Point <x: int, y: int>;` and an inline
+`<x: int, y: int>` denote the same type.
 
 #### §9.6.1 All Types Are Explicitly Reached
 
@@ -9873,9 +9940,9 @@ position without reaching, registers in no scope, and shadows nothing.
 at the name position as parse errors.
 
 The four lowercase natives name constraints a value satisfies.
-`bool` and `string` each name a kind of value. `int` and `float`
-each constrain a number within the single numeric value space
-(§1.3) rather than selecting between representations. `Any` names
+`bool` and `string` each name a kind of value. `float` names every
+number in the single numeric value space (§1.3) and `int` names the
+whole numbers within it; neither selects a representation. `Any` names
 the absence of a narrowing constraint, and its capitalization
 marks that difference: every value satisfies it, and it narrows
 nothing.
@@ -9942,9 +10009,23 @@ typing the value the initializer produces:
 def{Rec} <:a, :b>: payload :as Rec;
 ```
 
-Either, both, or neither may appear. Where both appear, the value type
-must conform to the container type -- a directional subsumption
-question, value to container, deferred to §9.9.
+Either, both, or neither may appear. Where both appear, §9.9 relates
+the two: a written value type disjoint from the container type is a
+compile error at the initializer, and any other pair is adopted.
+
+**Every write is checked against the range on those same terms.** The
+initializer and each `:=` reaching the binding are its writes. A write
+whose view is disjoint from the declared range reports at that write,
+naming the range and the view that disagrees:
+
+```java
+def{int} count: 0;
+count := "3";                // COMPILE ERROR
+```
+
+A write the range admits is discharged; a write it neither admits nor
+refutes carries a runtime assertion (§9.7.7). Under implied `Any`
+nothing is disjoint, so an unannotated container reports at no write.
 
 **A destructure target admits the brace, and the type distributes by
 the target's own extraction mechanism** (§2.13). Record-mode entries
@@ -10215,10 +10296,10 @@ rule, not a family:
   any entry position, so the merge is order-sensitive rather than
   base-plus-overrides.
 
-Projection is decidable now. §9.9's Record and Tuple item blocks the
-surface for *writing* such a type down; it does not block deriving one.
-The parameter-side asymmetry appears here too: inference may hold a
-projected shape that no declaration surface currently expresses.
+Projection is decidable now, and §9.6.3 is the surface for writing
+such a type down. The parameter-side asymmetry appears here too:
+inference may hold a projected shape that no declaration surface
+currently expresses.
 
 **Depth is arbitrary and the walk terminates.** Forward projection
 consumes one path segment per step and is trivially finite. Building a
@@ -10240,8 +10321,8 @@ A `:as` is a rank-1 entry participating in the fixpoint (§9.7.1), so
 the annotation sits above every lower-ranked layer at its expression.
 Evidence incompatible with it is a **conflict** in §9.7.2's sense: a
 compile error at the annotation, naming the annotated type and the
-evidence that disagrees. Whether a given value type is admitted under
-a given annotation is subsumption, which §9.9 owes.
+evidence that disagrees. Incompatibility is disjointness and admission
+is subsumption; §9.9 specifies both.
 
 **Disproof is the trigger.** An annotation the analysis can neither
 confirm nor contradict is adopted, and the expression's view is the
@@ -10260,8 +10341,8 @@ case: the evidence contradicts the annotation, and the conflict rule
 above fires at the annotation.
 
 **"Now or later" is one continuum with one verdict.** An annotation
-the elaboration pass discharges is settled at compile time. An
-annotation it adopts without discharging carries a runtime assertion
+whose value type §9.9 admits under it is discharged at compile time.
+An annotation adopted without discharging carries a runtime assertion
 (§9.7.7). Both are the same check arriving at the same answer, and the
 pass discharges the part it can reach.
 
@@ -10270,7 +10351,7 @@ reads `__ns` (§9.6) and an annotation does not rewrite it, so an
 annotation written at a dispatch site does not select among §3.8.5's
 candidates. A step-4 rejection there is resolved at the declarations.
 Whether an annotation should supply a disambiguation surface at all is
-§9.9's.
+§9.10's.
 
 #### §9.7.7 Adopted Annotations At Runtime
 
@@ -10375,43 +10456,242 @@ executes is `?as`'s own, against `__ns` (§9.6). Narrowing changes what
 the checker knows inside the region and changes nothing about what
 runs.
 
-### §9.9 Open
+### §9.9 Subsumption
+
+Two relations hold between types, and every consumer in this
+specification reads one of them.
+
+**Subsumption.** `S` is **admitted under** `T` when every value of
+`S` is a value of `T`.
+
+**Disjointness.** `S` and `T` are **disjoint** when no value is of
+both.
+
+They are not each other's negation. Two types may overlap without
+either being admitted under the other, and that middle case is where
+most of what a program writes lands.
+
+**Admission establishes; disjointness refutes.** A requirement site
+asks the first, and establishing it is what lets the elaboration pass
+discharge a check. A check site asks the second: §9.7.2's conflict is
+disjointness, and §9.7.6's disproof trigger is this relation and no
+other.
+
+The three cases partition, and every written type position resolves
+into exactly one:
+
+- Value type admitted under the written type: discharged at compile
+  time, with no assertion emitted (§9.7.7).
+- Value type disjoint from the written type: a compile error at that
+  position, naming both.
+- Neither: adopted, carrying a runtime assertion (§9.7.7).
+
+**Both relations are decidable over the forms this section reaches,
+and both terminate.** A compilation unit set's declaration set is
+finite and fixed before any resolution (§9.3), and each walk visits a
+type at most once -- §9.2.3's construction, for §9.2.3's reason.
+
+#### §9.9.1 Natives And `Any`
+
+`Any` names the absence of a narrowing constraint (§9.6.1). Three
+rules are the whole of its behavior:
+
+- Every type is admitted under `Any`.
+- `Any` is admitted under `Any` and under nothing else.
+- `Any` is disjoint from nothing.
+
+This is what implied-`{Any}` rests on (§9.6.2). An unannotated
+container reports at no write, because every value type is admitted
+under its range. A value whose view is `Any` is refuted by no written
+type, so it reaches any declared position carrying an assertion rather
+than an error -- which is §9.7.6's `decode(raw) :as Config`.
+
+`bool` and `string` each name a kind of value. Each is disjoint from
+the other, from `empty`, and from every numeric native, and is
+admitted under none of them.
+
+`empty` names exactly one value; §9.5's `?T` reads as `T | empty` and
+requires it as a type. It is admitted under `Any` and under a union
+carrying it, and is disjoint from every other native.
+
+`int` and `float` constrain a number within the single numeric value
+space (§1.3). `float` names every number in that space; `int` names
+the whole numbers within it. `int` is admitted under `float`, `float`
+is not admitted under `int`, and the two are never disjoint. A value
+whose view is `float` annotated `:as int` is therefore the middle
+case -- adopted, carrying a runtime assertion (§9.7.7) that the number
+is whole. `deft V int | float;` declares a union whose member set
+reduces to `float`.
+
+#### §9.9.2 Nominal Names And Unions
+
+A type's **member set** is the type itself together with every type
+that is a member of it (§9.2.3), transitively. A non-union type's
+member set is the type alone.
+
+A union's entries are nominal declarations, natives, or anonymous type
+forms. §9.2.3's membership relation covers the first two; the third
+names no declaration and enters the member set as a form.
+
+- `S` is admitted under `T` when every element of `S`'s member set is
+  admitted under some element of `T`'s.
+- `S` and `T` are disjoint when every element of `S`'s member set is
+  disjoint from every element of `T`'s.
+
+For two non-union names this reduces to what §9.2.3 already says: `S`
+is admitted under `T` exactly when `S` is `T` or a member of it, and
+the two are disjoint otherwise. Membership is nominal, so a type is
+not a member of a union by resembling one of its entries.
+
+**Nominal comparison applies to the declarations that mint a
+namespace** -- `defn Name@(..)` (§3.1.1.1) and a union `deft`
+(§9.2.3). Every other `deft` is **transparent**: it names whatever its
+right-hand side names, and both relations read through it to that
+shape. `deft A <x: int>;` beside `deft B <x: int>;` compares by
+§9.9.5 rather than by name, and a structured value carries no `__ns`
+naming either declaration.
+
+**Partial intersection is the middle case.** With `deft U A | B;`
+beside `deft V B | C;`, neither is admitted under the other and
+neither refutes it, because a `B` value is of both. A value of view
+`U` annotated `:as V` is adopted and asserted.
+
+**An entry that names no declaration participates as a form.** In
+`deft Foo { (int) ^int | Bar }`, §9.2.3 leaves the function-type entry
+naming nothing; §9.9.3 decides a function type against it on both
+relations. This is the case §9.2.3 defers here.
+
+#### §9.9.3 Function Types
+
+A function type is a parameter list and a return type
+(Syntactic-Grammar §18), optionally carrying `:Effects(...)`
+(§6.13.1). A function type is disjoint from every type that is not a
+function type.
+
+**A function type `F` is admitted under `G` when every call `G`
+admits is a call `F` serves.** Three conditions, all required.
+
+**Return, covariant.** `F`'s return type is admitted under `G`'s.
+
+**Parameters, contravariant, position by position.** At each position
+`G` declares, `G`'s parameter type is admitted under `F`'s. At a
+position `F` declares and `G` does not, the call supplies nothing and
+§3.10.1 binds that parameter to `empty` or to its default: `empty`
+must be admitted under `F`'s type there, which the `?` modifier
+supplies (§9.5), or the parameter carries a default and §9.7.4
+governs it. A position `F` does not declare is discarded (§3.10.1) and
+constrains nothing. A gather parameter (§3.2.4) takes every remaining
+position, and each remaining position of `G` must be admitted under
+the gather's type.
+
+**Effects.** `F`'s declared effect set is admitted under `G`'s, per
+§9.9.4.
+
+**Contravariance at the parameters is forced, not chosen.** A caller
+holding a `G` passes what `G` declares. If `F`'s parameter at that
+position were narrower, such a call would hand `F` a value `F`'s own
+signature excludes, and no later position would report it. The
+direction follows from what a call through the slot may do, and the
+return direction follows from what such a call may receive.
+
+**Two function types are disjoint when no single value is of both:**
+their return types are disjoint, or a position both declare carries
+disjoint parameter types. Argument count never refutes -- §3.10.1
+fills missing positions with `empty` and discards surplus ones, so no
+arity distinguishes one function value from another.
+
+#### §9.9.4 Effect Sets
+
+An effect set is what a `:Effects(...)` clause declares (§6.13.1),
+read as the union of its entries' prefix subtrees (§6.1.4). Three
+budgets are declarable, and they order:
+
+- **Clause absent** is the empty set, admitted under every budget.
+- **A clause with entries** is the union of those subtrees. `F` is
+  admitted under `G` when every entry of `F` lies under some entry of
+  `G`. Containment is over prefix subtrees, not name strings:
+  `:Effects(User.IO.Read)` is admitted under a slot declaring
+  `:Effects(User.IO)`.
+- **`:Effects(Any)`** is the whole space. Every budget is admitted
+  under it, and it is admitted under nothing else.
+
+`Any` behaves here exactly as it does over types (§9.9.1), and for the
+same reason: it names the absence of a narrowing constraint.
+
+Conformance runs one way. A supplied function is admitted under a slot
+when the function's set is contained in the slot's, so absent conforms
+to entries and entries conform to `Any`, and none of the three
+conforms leftward.
+
+**Ambients enter no set.** §6.13.5 exempts them from the discipline,
+so a function whose only performs are ambient carries the
+clause-absent budget and is admitted everywhere.
+
+**An unrecoverable effect set is not admitted.** Where a supplied
+function value's effect set cannot be recovered -- it arrived through
+a call whose own declared surface carries none, or across a boundary
+that erased it -- no containment is established, and the slot rejects
+at that supply site. A declared type naming the function's budget
+supplies the set.
+
+This is the one place in this section that reports on absence of proof
+rather than on disproof, and the reason is that the continuum §9.7.7
+opens has no far end here. A value's type is testable when the program
+runs; a function's effect budget is not, so an undischarged effect
+claim has nothing that would later discharge it. A slot declaring
+`:Effects(Any)` constrains nothing and rejects nothing, which is what
+a stdlib type uses where the budget is the caller's (§6.13.1).
+
+#### §9.9.5 Data Shapes
+
+A data shape type (§9.6.3) is disjoint from every type that is not a
+data shape type.
+
+**`S` is admitted under `T`** when all of the following hold:
+
+- Every named entry and every positional index `T` declares, `S`
+  declares, and `S`'s type there is admitted under `T`'s.
+- Every entry `S` declares that `T` does not is admitted under `T`'s
+  rest type; absent a rest entry on `T`, `S` declares no such entry.
+- `S`'s rest type, if any, is admitted under `T`'s rest type; absent a
+  rest entry on `T`, `S` carries none.
+
+**`S` and `T` are disjoint** when a shared named entry or a shared
+positional index carries disjoint types, or when one declares an entry
+the other neither declares nor covers with a rest entry.
+
+`<a: int>` and `<a: string>` are disjoint. `<a: int>` and
+`<a: int, b: string>` are disjoint. `<a: int, *Any>` admits
+`<a: int, b: string>` and refutes neither it nor `<a: int>`. `< >` is
+admitted under every data shape type whose entries are all covered by
+a rest entry, and is disjoint from every one that declares an entry.
+
+#### §9.9.6 Applied Types
+
+`NestedTypeExpr` has no stated meaning (§9.10), so no rule above
+reaches it and no rule refutes it. An applied type is admitted under
+`Any`, and against every other type it is the middle case at every
+consumer: adopted, asserted, and reported at neither end. A name whose
+declaration is an applied form carries the same treatment, since a
+transparent declaration names whatever its right-hand side names
+(§9.6.3).
+
+### §9.10 Open
 
 The following are unspecified. Each is a rule this specification owes.
 
-**Type-expression semantics.** §9 specifies type *names*. The shapes a
-`TypeExpr` admits (Syntactic-Grammar §18) have no stated meaning. Three
-sub-questions are separable:
+**Type-expression semantics.** Two `TypeExpr` shapes have no stated
+meaning:
 
 - **Applied types.** `NestedTypeExpr` applies a single type argument
   (`List{int}`). No declaration surface states that a type takes an
   argument: `DefTypeName` is a dotted name with no parameter list, and
-  there is no type-variable form.
-- **Record and Tuple types.** `DataStructTypeExpr` admits named and
-  positional entries in one list with no mode discrimination. The
-  value-side destructure grammar (§2.13) rejects that mixing.
-  Container-type distribution over a destructure target (§9.6.2) has
-  no defined behavior against a mixed-mode type: the target commits to
-  one mode, and a mixed type supplies no consistent key for either.
-  Inference derives such shapes by projection (§9.7.5); what is
-  missing is the surface for writing one down.
+  there is no type-variable form. §9.9.6 names what subsumption cannot
+  decide until it does.
 - **Literal types.** `EmptyLit`, `PlainStr`, `NumberLit`, and
   `BooleanLit` are `NoUnionTypeExpr` arms. `empty` is a type
   independently of this item: `?T` reads as `T | empty` (§9.5), which
   requires it.
-
-**Subsumption.** When a value of one type is admitted where another is
-required. Consumers: effect-set conformance below, `:as` checking
-(§9.7.6), and value-to-container conformance (§9.6.2). Nominal union
-membership is specified at §9.2.3 and is not this relation; subsumption
-decides the cases membership does not reach, including a union entry
-that names no declaration.
-
-**Effect-set conformance.** Whether a function conforms to a slot whose
-declared type carries a given `:Effects(...)` clause, deferred here by
-§6.13.1. The three declarable budgets -- clause absent, clause with
-entries, and `:Effects(Any)` -- stand in some containment relation over
-prefix subtrees (§6.1.4), and this section owes it.
 
 **Annotation at a dispatch site.** Whether a written type annotation
 ever participates in marker resolution. §9.7.6 states that it does not
@@ -10430,15 +10710,6 @@ specialization.** §9.7.3 fixes an unannotated value signature at its
 first evidence-bearing call, while §6.13.3 resolves an undeclared
 function's effect surface separately at each call site. Whether the two
 should reconcile, and in which direction, is undecided.
-
-**Empty `< >` typing.** The type-level representation of a value
-polymorphic between Record and Tuple slots (§1.5.5, §2.14.5).
-Operational semantics are settled; the type-level treatment is open.
-
-**Coverage-gap diagnostic.** The optional check §5 describes as
-§9-gated: deciding coverage of a dependent match requires enumerating a
-type's inhabitants, and deciding tautology over independent clause
-conditions requires reasoning about those conditions' types.
 
 ## §10 Runtime Bootstrap
 

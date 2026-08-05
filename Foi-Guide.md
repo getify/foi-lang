@@ -120,30 +120,38 @@ The `empty` value signifies the absence of any other affirmative value.
 
 ### Numbers
 
-Numbers in **Foi** are by default specified in base-10 literals (digits `0-9`), including negative values (with `-`) and decimals (with `.`).
+Numbers in **Foi** are written as base-10 literals (digits `0-9`), including negative values (with `-`) and decimals (with `.`).
 
-`4.0` is a floating point value, whereas `4` is an integer value. These are sometimes interchangeable, and sometimes not.
+There's only one kind of number. `4` and `4.0` are the same value written two ways, and every number is held exactly -- as a ratio of two whole numbers, with no limit on how big either one gets. The arithmetic you learned in school is the arithmetic you get:
 
-There are no special numbers (e.g. `NaN`, `Infinity`) in **Foi**. If a value literal, or operation, produces a number value that does not fit validly into one of the number sub-types (floats, integers, etc), the result is a `Left` (monad instance) holding a message indicating the nature of the failure.
+```java
+0.1 + 0.2 ?= 0.3;       // true
+
+(1 / 3) * 3 ?= 1;       // true
+```
+
+**NOTE:** No more being bitten by `0.1 + 0.2` not being `0.3`!
+
+`int` and `float` are constraints you can write about a number, not two different kinds of number. `float` means "a number"; `int` means "a whole number". Every `int` is a `float`, and not every `float` is an `int`:
+
+```java
+42 ?as float;           // true
+42.0 ?as float;         // true
+42.3 ?as float;         // true
+
+42.0 ?as int;           // true
+42.3 ?as int;           // false
+```
+
+There are no special numbers (`NaN`, `Infinity`) in **Foi**, and no negative zero. Dividing by zero has no answer to give, and a non-numeric operand isn't arithmetic at all; both produce a `Left` (monad instance) holding a message describing what went wrong:
 
 ```java
 6 / 0;                  // Left{"Divide by zero is infinite"}
 
 6 / "a";                // Left{"Non-numeric operand"}
-
-0.0000000000000001;     // Left{"Number precision underflow"}
-
-9999999999999999.9;     // Left{"Number precision overflow"}
 ```
 
-**Foi** does however have a "negative zero" value, consistent with IEEE-754, which is distinct from *regular* zero:
-
-```java
-0 / 3;                  // 0
-0 / -3;                 // -0
-
-0 ?= -0;                // false
-```
+Operations whose answers are irrational -- `sqrt`, the trig functions, the circle constant -- can't land exactly on a ratio, so they take a precision and hand back the exact number at that precision. There's a default, so you only pass one when you care.
 
 To specify a *more readable* numeric literal, using `_` as an arbitrary separator (in any position), prefix the number literal with a `\`:
 
