@@ -142,7 +142,9 @@ Bare top-level integers and decimals do not admit separators; `100_000` written 
 
 Structural equality is exact throughout. `0.1 + 0.2 ?= 0.3` is `true`, and `(1 / 3) * 3 ?= 1` is `true`. There is no NaN, no infinity, and no signed zero.
 
-Division by zero produces a `Left` (§6.7) holding a message. It is the only arithmetic operation with no answer to return.
+**Every arithmetic marker on numbers returns `float`.** A marker is a dispatch site (§3.8.5) and its result type is the type its hook declares (§9.7.1), so `4 * 2` has view `float` even though the value it produces is whole. `int` is a constraint a program writes at a position, never a result the language derives.
+
+Division by zero has no answer to return. It performs `Effect.Sys.Fatal.DivideByZero` (§6.13.5), whose runtime handler terminates the run naming the source position; a program installing its own handler resumes with a value of its choosing. A non-numeric operand does not reach arithmetic at all: the markers take numbers, so an operand whose view disagrees is a compile error at the operand, and one whose view is unproven carries a runtime assertion (§9.7.7).
 
 **Operations whose results are irrational** -- `sqrt`, the transcendental functions, and the circle constant among them -- take a requested precision and produce the exact rational at that precision. The precision parameter carries a default, so an unqualified call is well-formed; the result is exactly the rational it reports, and successive results at different precisions are different numbers.
 
@@ -4401,6 +4403,11 @@ per **Implicit-User rewrite** below.
   (`Effect.Sys.Log% ...`) or handle (`Effect.Sys.Log ~<* ...`) these
   kinds explicitly, or reference them in `:Effects(...)`; declaration
   is rejected because the ambient set is fixed by the runtime.
+- **`Effect.Sys.Fatal.*`** is the sub-root for conditions the language
+  raises rather than a program naming them at a perform site
+  (§6.13.5). It sits under `Sys` on the same admission terms, and
+  prefix-match makes `Effect.Sys.Fatal ~<*` a handler for every fatal
+  condition in a region without enumerating them.
 
 **Reserved-root leaf rejection.** `deft Effect.User`, `deft
 Effect.Host`, and `deft Effect.Sys` (bare top segment, no further
@@ -4599,7 +4606,7 @@ constructing a stateful instance performs slot access during module
 initialization, which is not a `%` invocation. The **emit-edge
 rule** (§6.13.2) applies in full: a hook whose body performs slot
 access declares it, exactly as it would any other tracked effect.
-The ambient category (§6.13.5) is the four `Effect.Sys.*` kinds and
+The ambient category (§6.13.5) is the `Effect.Sys.*` kinds and
 nothing else; slots are pre-covered, not exempt from declaration. A
 namespace's statefulness is visible at its declared surface.
 
@@ -7747,7 +7754,7 @@ Foi's effect system requires **discipline at the declaration surface**: every no
 
 The discipline is intentionally light on ceremony. Declaration is required only where effects are first emitted; the compiler tracks their propagation up the call stack silently; a `~<*` handler somewhere before the outermost `%` boundary satisfies coverage.
 
-A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small stdlib-designated set (`Effect.Sys.Log`, `Effect.Sys.Warn`, `Effect.Sys.Random`, `Effect.Sys.CurrentTime`) is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. §6.13.5 specifies the ambient category.
+A companion category -- **ambient effects** -- is exempted from the discipline entirely. A small runtime-fixed set is handled by a runtime top-level handler; those effects need no signature declaration and no user-side `~<*` coverage. The set divides in two: **resuming ambients** (`Effect.Sys.Log`, `Effect.Sys.Warn`, `Effect.Sys.Random`, `Effect.Sys.CurrentTime`), whose default handlers resume, and **fatal ambients** (`Effect.Sys.Fatal.*`), whose default handlers terminate the run. §6.13.5 specifies both.
 
 #### §6.13.1 The `:Effects(...)` Clause
 
@@ -7822,9 +7829,8 @@ This is a declaration surface only. It does not relax §6.13.2's
 emit-edge rule for the function that supplies the callback, and it
 does not relax §6.13.4's coverage rule: a perform inside the supplied
 callback still traces outward to an enclosing `~<*` exactly as it
-would otherwise. would otherwise. Whether a given function conforms to
-a slot declared `:Effects(Any)` is effect-set conformance, specified
-at §9.9.4.
+would otherwise. Whether a given function conforms to a slot declared
+`:Effects(Any)` is effect-set conformance, specified at §9.9.4.
 
 Entries prefix-match per §6.1.4: `:Effects(User.IO)` declares
 that the function may perform `Effect.User.IO` or any
@@ -7991,8 +7997,10 @@ This is the coverage rule with one substitution, not a prohibition on effects at
 
 #### §6.13.5 Ambient Effects
 
-A small built-in set of effect kinds is **ambient**. The ambient
-effects are:
+A small built-in set of effect kinds is **ambient**. Ambients divide
+into two families by what their runtime-provided handler does.
+
+**Resuming ambients** resume the perform site:
 
 - `Effect.Sys.Log`: default handler: stdout write.
 - `Effect.Sys.Warn`: default handler: stderr write. Payload is a
@@ -8004,6 +8012,37 @@ effects are:
   purpose at its own API boundaries.
 - `Effect.Sys.Random`: default handler: PRNG (seedable at boundary).
 - `Effect.Sys.CurrentTime`: default handler: system clock.
+
+**Fatal ambients** are raised by the language rather than named at a
+perform site a program wrote. Each declares a real resume type, so
+the perform site's view is that type and ordinary code reads
+unchanged; the runtime's handler terminates the run instead of
+resuming, naming the source position:
+
+- `Effect.Sys.Fatal.DivideByZero`: payload is the operand pair;
+  resume type `float` (§1.3).
+- `Effect.Sys.Fatal.Assertion`: payload names the annotated type, the
+  value, and the annotation's source position; resume type is the
+  annotated type (§9.7.7).
+
+Fatal is a property of the default handler and not of the kind. A
+`~<*` over a fatal kind receives the perform like any other and may
+resume, in which case execution continues at the perform site.
+
+**A resumed ambient value is not checked against the declared resume
+type.** The payload flowing into a handler is an ordinary argument
+written at a site the checker can see, and is checked. The value
+flowing back out comes from a handler the perform site never names
+and cannot know, and is not. That is what the category is for: an
+ambient handler is the surface on which a program does the
+exceptional thing, and a resume constrained to the declared type
+could not deliver a `Left` where a `float` was declared. The
+asymmetry is one-directional by construction -- nothing else about
+ambients is untyped.
+
+Nothing downstream is compiled on the assumption: dispatch reads a
+value's `__ns` rather than any view (§9.7.2), and §9.7.7 forbids
+reading an assertion as license for a representation choice.
 
 Ambient effects are handled by a runtime-installed handler scope
 wrapping **the whole program run**: established before the
@@ -8037,6 +8076,10 @@ Inside this scope, `log()` calls (or any direct `Effect.Sys.Log%`
 perform) resolve to the user's `captureForTest` arm; outside, they
 resolve to the runtime default (stdout).
 
+Prefix-match (§6.1.4) applies at a fatal narrowing as it does
+anywhere: `Effect.Sys.Fatal ~<*` catches every fatal kind in the
+region it wraps, and keeps doing so as the set grows.
+
 Declaring an ambient in a `:Effects(...)` clause is legal but
 redundant; the compiler neither requires it nor checks against it.
 Users who wish to document ambient use explicitly at an API boundary
@@ -8048,12 +8091,12 @@ rules):
 deft LogsProgress(int) :Effects(Sys.Log) ^empty;
 ```
 
-**NOTE:** Effects with Left-carrying resume (any perform whose value
-the caller must inspect), effects that write to persistent state, and
-effects that open network or file resources are outside the ambient
-category; they fall under the tracked discipline. The ambient set is
-fixed by the runtime; users cannot mark their own effect kinds as
-ambient.
+**NOTE:** Effects that write to persistent state and effects that
+open network or file resources are outside the ambient category; they
+fall under the tracked discipline. The ambient set is fixed by the
+runtime; users cannot mark their own effect kinds as ambient, and the
+fatal family is raised by the language rather than performed by name
+in user source.
 
 ### §6.14 The Continuation Trampoline
 
@@ -10429,17 +10472,35 @@ An annotation §9.7.6 adopts without discharging is preserved as a
 the annotated type when the expression evaluates. Emission is the
 default; omitting it is the deliberate act.
 
-**A failed assertion aborts the run.** It produces no value, no
-`Left`, and no effect. No handler catches it, no arm receives it, and
-nothing downstream executes. The abort names the source position of
-the annotation that failed.
+**A failed assertion performs `Effect.Sys.Fatal.Assertion`**
+(§6.13.5). The payload names the annotated type, the value, and the
+annotation's source position; the declared resume type is the
+annotated type. The runtime's handler terminates the run, naming that
+position.
 
-This is the first construct in Foi that terminates a run abnormally,
-and §6.1.1's guarantee stands. That guarantee rules out an ambient
-error *path* -- a route by which failure arrives as something
-surrounding code receives, and which every expression must therefore
-be written to account for. An abort opens no such route: no view
-widens, no return type gains an arm, and no composition changes shape.
+§6.1.1's guarantee stands. That guarantee rules out an ambient error
+*path* -- a route by which failure arrives as something surrounding
+code receives, and which every expression must therefore be written to
+account for. A fatal ambient opens no such route: the default
+terminates, so code that installs nothing accounts for nothing. No
+view widens, no return type gains an arm, and no composition changes
+shape.
+
+**A program may handle it.** A `~<*` over
+`Effect.Sys.Fatal.Assertion` receives the perform and resumes with a
+value of its choosing -- a `Left` the call site is written to expect,
+a fallback, anything. §6.13.5 does not check a resumed ambient value
+against the declared resume type, so the resumed value need not
+satisfy the annotation that failed. Downstream of such a handler the
+view is a claim the program has explicitly declined to enforce; that
+is the trade the handler buys, and it is confined to the region the
+handler covers.
+
+Nothing was compiled on the assumption. The rule below forbids reading
+an assertion as license for a representation choice, since it may not
+have been emitted. And an assertion exists because §9.7.6 could not
+prove the claim -- a failure means the view was already wrong, and
+terminating would not make it right.
 
 **Assertions subtract verification, never semantics.** A program that
 runs to completion with emission enabled behaves identically with it

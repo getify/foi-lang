@@ -143,13 +143,29 @@ There's only one kind of number. `4` and `4.0` are the same value written two wa
 42.3 ?as int;           // false
 ```
 
-There are no special numbers (`NaN`, `Infinity`) in **Foi**, and no negative zero. Dividing by zero has no answer to give, and a non-numeric operand isn't arithmetic at all; both produce a `Left` (monad instance) holding a message describing what went wrong:
+There are no special numbers (`NaN`, `Infinity`) in **Foi**, and no negative zero.
+
+Dividing by zero has no answer to give, so it stops your program and tells you where. If that's not what you want at some boundary -- a report that should show a dash instead of dying -- you can catch it and hand back something else; see the ambient effects section.
 
 ```java
-6 / 0;                  // Left{"Divide by zero is infinite"}
-
-6 / "a";                // Left{"Non-numeric operand"}
+6 / 0;                  // stops the run, naming the line
 ```
+
+A non-numeric operand isn't arithmetic at all, and you'll usually hear about it before anything runs. Arithmetic takes numbers, so if **Foi** can see the operand isn't one, that's a compile error right there; if it can't tell yet, you get a check when it runs.
+
+```java
+6 / "a";                // compile error: "a" isn't a number
+```
+
+Arithmetic hands you back a number, and that's all its *type* says -- even when the answer is obviously whole:
+
+```java
+def n: 4 * 2;           // the value is 8; the type is float
+
+def{int} m: 4 * 2;      // allowed, but checked when it runs
+```
+
+`int` is something you write about a position, never something arithmetic gives you.
 
 Operations whose answers are irrational -- `sqrt`, the trig functions, the circle constant -- can't land exactly on a ratio, so they take a precision and hand back the exact number at that precision. There's a default, so you only pass one when you care.
 
@@ -5565,7 +5581,23 @@ A **Foi**-provided handler wraps your entire program run and catches ambient per
 
 You *can* still install your own `~<*` handler for an ambient kind if you want to intercept -- say, to capture log output in a test -- and standard dynamic lookup will find your handler before the runtime's.
 
-The ambient category is deliberately narrow. Effects with a resume value the caller must inspect, effects that write persistent state, and effects that open network or file resources are outside the ambient set by design; those belong to the tracked discipline where callers explicitly acknowledge them. The ambient set is fixed by the runtime; you can't mark your own effect kinds as ambient.
+**Some ambients stop your program.** Dividing by zero and a failed `:as` check are ambient effects too, but the handler **Foi** provides for them ends the run and names the spot instead of resuming. That's the right default -- nobody wants to narrow around every division on the chance a denominator was zero.
+
+They're ordinary effects underneath, so you can catch them:
+
+```java
+Effect.Sys.Fatal ~<* (eff:: computeTotals(order), ret) {
+    ?(eff){
+        [?as Effect.Sys.Fatal.DivideByZero]: ret(0);
+    };
+};
+```
+
+Inside that scope a division by zero resumes with `0` and the work carries on. `Effect.Sys.Fatal` catches all of them at once, so you don't have to list the kinds.
+
+One thing to know before you reach for it: what you pass to `ret` isn't checked. Division says it resumes with a number, and you can resume with a `Left` if that's what your call site is written for. That's the point of these -- they're the way out, so they let you out. It also means the code after that perform is running on a value **Foi** would otherwise have ruled out, and that part's on you.
+
+The ambient category is deliberately narrow. Effects that write persistent state and effects that open network or file resources are outside the ambient set by design; those belong to the tracked discipline where callers explicitly acknowledge them. The ambient set is fixed by the runtime; you can't mark your own effect kinds as ambient, and the stopping ones are raised by the language rather than performed by name in your code.
 
 ## Type Annotations
 
