@@ -169,6 +169,15 @@ def{int} m: 4 * 2;      // allowed, but checked when it runs
 
 Operations whose answers are irrational -- `sqrt`, the trig functions, the circle constant -- can't land exactly on a ratio, so they take a precision and hand back the exact number at that precision. There's a default, so you only pass one when you care.
 
+When a number gets written out -- into a string, say -- you get text that means exactly that number, not a rounded-off version of it. Most numbers you'll meet have a decimal that ends, and that's what you see. The ones that don't come out as a ratio:
+
+```java
+`"half: `1 / 2`";       // half: 0.5
+`"third: `1 / 3`";      // third: 1/3
+```
+
+`1/3` looks unusual the first time. It's the honest answer -- `0.333...` would have to stop somewhere, and wherever it stopped it would no longer be the number you divided.
+
 To specify a *more readable* numeric literal, using `_` as an arbitrary separator (in any position), prefix the number literal with a `\`:
 
 ```java
@@ -245,6 +254,20 @@ To interpolate expressions inside of a string, immediately prefix the string lit
 The interpolated expression (inside the `` ` .. ` ``) can be any valid **Foi** expression.
 
 **Warning:** There's one minor caveat to the above statement. An interpolated expression *cannot* itself contain a bare (`` `".." ``) interpolated string, because the `` `" `` sequence would be a grammar ambiguity (opening another interpolated string, or closing the current interpolated expression and outer string). To nest an interpolated string inside an interpolated expression, you must use a slightly unfortunate work-around. For the inner/nested interpolated string literal, escape it with combined whitespace-collapsing as well (via `` \` ``), as illustrated shortly; fortunately, the `` \`" `` sequence is *not* grammatically ambiguous.
+
+The *value* that expression produces has to be something **Foi** can write out: a string, a number, `true`/`false`, or `empty`. That covers most of what you'd drop into a string anyway.
+
+A Record, a Tuple, or an instance of one of your own types won't interpolate. You get a compile error right at the slot -- as opposed to JS nonsense like `[object Object]`. When you want one of those in a string, call something that returns a string:
+
+```java
+def rec: < x: 1, y: 2 >;
+
+defn showPoint(p) ^`"(`p.x`, `p.y`)";
+
+`"point: `showPoint(rec)`";     // point: (1, 2)
+```
+
+That's the same bargain as `?` and `!` for booleans: **Foi** won't quietly turn your value into something else, so you say how.
 
 Interpolation is also the *best* way to include a Unicode character in a string literal, via its hexadecimal code, using the `\u` numeric prefix:
 

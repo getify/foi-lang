@@ -142,11 +142,20 @@ Bare top-level integers and decimals do not admit separators; `100_000` written 
 
 Structural equality is exact throughout. `0.1 + 0.2 ?= 0.3` is `true`, and `(1 / 3) * 3 ?= 1` is `true`. There is no NaN, no infinity, and no signed zero.
 
-**Every arithmetic marker on numbers returns `float`.** A marker is a dispatch site (§3.8.5) and its result type is the type its hook declares (§9.7.1), so `4 * 2` has view `float` even though the value it produces is whole. `int` is a constraint a program writes at a position, never a result the language derives.
+**Every arithmetic marker on numbers returns `float`.** A marker on non-namespaced operands resolves to the language-level operator rather than to a namespace hook (§3.1.1.4), and each marker carries one result type there, so `4 * 2` has view `float` even though the value it produces is whole (§9.7.1). `int` is a constraint a program writes at a position, never a result the language derives.
 
 Division by zero has no answer to return. It performs `Effect.Sys.Fatal.DivideByZero` (§6.13.5), whose runtime handler terminates the run naming the source position; a program installing its own handler resumes with a value of its choosing. A non-numeric operand does not reach arithmetic at all: the markers take numbers, so an operand whose view disagrees is a compile error at the operand, and one whose view is unproven carries a runtime assertion (§9.7.7).
 
 **Operations whose results are irrational** -- `sqrt`, the transcendental functions, and the circle constant among them -- take a requested precision and produce the exact rational at that precision. The precision parameter carries a default, so an unqualified call is well-formed; the result is exactly the rational it reports, and successive results at different precisions are different numbers.
+
+**A number renders as the text that denotes it exactly.** A number whose denominator in lowest terms has no prime factor other than 2 and 5 has a terminating decimal expansion and renders as that expansion; every other number renders in ratio form, `N/D` in lowest terms with the sign carried on `N`. Both forms are Foi source denoting the number rendered, so a rendering loses nothing:
+
+    1 / 2;              // renders "0.5"
+    1 / 3;              // renders "1/3"
+    -3 / 6;             // renders "-0.5"
+    2 / 3 + 1 / 6;      // renders "5/6"
+
+A rendering is decimal or ratio at every site. A radix-escaped literal renders in decimal, on the same ground as the paragraph above: a spelling carries nothing into the value.
 
 ### §1.4 Strings
 
@@ -167,10 +176,28 @@ An interpolated string (`InterpStr`; structured interleaving of values) parses t
 
 1. For each segment, in source order:
     1. If the segment is literal text, append it to the result.
-    2. If the segment is an interpolated expression, evaluate it in the current environment and append the result as a string.
+    2. If the segment is an interpolated expression, evaluate it in the current environment and append its rendering to the result.
 2. The completed string is the value of the literal.
 
-**Open:** the coercion rule for non-string values embedded in interpolations is not yet locked. The bootstrap relies on JS's stringification, which carries the same footgun as §2.12.4's computed-key issue.
+**Four value categories render**, and an interpolation slot admits those and nothing else:
+
+- A **string** renders as itself.
+- A **boolean** renders as `true` or `false`.
+- **`empty`** renders as `empty`.
+- A **number** renders exactly, per §1.3.
+
+The admission is §9.9's relation, on the same continuum as every other check. A slot whose view is disjoint from all four is a compile error at the slot. A slot whose view is admitted under one of them is discharged at compile time. A slot whose view reaches neither verdict -- `Any` among them -- carries a runtime assertion (§9.7.7).
+
+**Structured values, namespaced instances, and function values have no rendering.** A Record names no textual form the language supplies, and §2.12.5's computed keys meet the same boundary from the other side. Rendering one is an ordinary call returning a string, and a call is an ordinary slot expression:
+
+    def rec: < x: 1, y: 2 >;
+
+    defn showPoint(p) ^`"(`p.x`, `p.y`)";
+
+    `"point: `showPoint(rec)`";
+    // point: (1, 2)
+
+Conversion to string is explicit at the value categories that carry no rendering, in the same manner as conversion to boolean (§1.2).
 
 #### §1.4.1 Delimiter Escaping
 
@@ -10148,9 +10175,12 @@ Four ranks, most authoritative first:
 1. **Explicit.** A declared type (§9.6.2), a `:as` annotation (§5),
    and a `?as`-arm narrowing (§9.8).
 2. **Construction.** A literal, an `@` construction, a call's declared
-   return type, a parameter default expression (§9.7.4). A literal's
-   entry is its literal type (§9.6.4), which §9.7.4 widens at the
-   sites that derive a range.
+   return type, an operator application's result type, a parameter
+   default expression (§9.7.4). A literal's entry is its literal type
+   (§9.6.4), which §9.7.4 widens at the sites that derive a range. An
+   operator application's result type is the declaring hook's where
+   the marker resolves to one (§3.1.1.4), and the language-level
+   operator's where it does not (§1.3).
 3. **Structural usage.** A use that requires a shape: `x.name` implies
    an entry named `name`; a comprehension implies a namespace
    declaring that hook.
