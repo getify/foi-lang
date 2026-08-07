@@ -4691,10 +4691,22 @@ only the hooks that actually touch the slot do.
 The runtime handler resolves each slot access against the namespace
 identity of the hook that **lexically encloses** the perform site.
 The lexical namespace is established at compile time from the
-enclosing hook's declaration form (`defn Tally@`, `defn Tally%`,
-`defn Tally~<`, `defn Tally+`, etc.) and injected at the
-perform-site emit; the effect payload never carries the namespace
-identity as runtime data.
+enclosing hook's declaration form and injected at the perform-site
+emit; the effect payload never carries the namespace identity as
+runtime data.
+
+**Every declaration form attributes to the namespace named at its
+head.** The unit constructor (`defn Tally@`), the effector
+(`defn Tally%`), comprehension hooks (`defn Tally~<`), arithmetic
+and equality hooks (`defn Tally+`, `defn Tally?=`), and **labeled
+constructors** (`defn Tally.from@`) all establish the same
+namespace identity: `Tally`. A labeled constructor's label is a
+selector within the namespace, not a namespace of its own; there is
+no `Tally.from` slot partition distinct from `Tally`'s. §9.4 treats
+labeled constructors as part of the single hook set a graph reach
+delivers, and slot attribution matches -- per-instance state
+written by a labeled constructor is read by every other hook on
+that namespace.
 
 A consequence: a free function declared outside the namespace does
 not inherit its caller's namespace context. If a `Tally` hook
@@ -4705,6 +4717,14 @@ namespace), not `Tally`'s. Slot-touching logic that needs to be
 factored out of a hook body must stay inside a namespace-marked
 hook declaration -- shared logic across hooks composes as inline
 `def`s inside those hooks or passes slot values through parameters.
+
+The converse follows from *lexically encloses*: a function declared
+**inside** a hook body is enclosed by that hook, and its perform
+sites attribute to that hook's namespace wherever it is later
+passed or invoked from. Attribution is fixed at the declaration
+site, never at the call site -- a closure a hook mints over its own
+instance reads and writes that instance's slot correctly even when
+a free function invokes it.
 
 Cross-namespace slot access is structurally impossible: no key
 value exists that could be passed between namespaces, because
@@ -6721,6 +6741,8 @@ Unlike the `Promise ~<<` relay pattern above, the block does not itself invoke `
 
 **NOTE:** The `Channel~<*` hook is self-hosted stdlib code, not runtime-privileged. Its implementation shape: a `defn Channel~<*(comp, ty)` declaration (§3.1.1.3) that establishes an inner `Effect.Host.Do ~<*` scope (prefix-catching `Effect.Host.Do.Bind` and `Effect.Host.Do.Map` per §6.1.4) over `comp` (§6.3), dispatches on `Effect.Host.Do.Bind` by looping `ch.take()` and feeding each resolved `Right` payload through `ret` to resume `comp`, and terminates the loop when a `take` resolves `Left`. `ch.take()` supplies both value emission and close-detection through the same Promise, so no additional runtime primitive is required. Userland namespaces with channel-shaped semantics can declare their own `~<*` hook by the same pattern.
 
+#### §6.9.5 Channel Combinators
+
 Two named constructors coordinate across a list of channels, each producing a one-shot derived `Channel` that receives the coordination outcome and closes.
 
 **`Channel.alts@`** races the input channels; the first source channel to produce a value wins:
@@ -6741,7 +6763,27 @@ winner.take();    // Promise{Left{"Channel Closed"}}
 
 If every source channel closes and drains before any produces a value, `winner` closes with pending takes resolving `Left@ "Channel Closed"`.
 
-**`Channel.every@`** zips the input channels; the derived channel receives a list once every source channel has produced a value:
+**Empty input.** Both combinators reject an empty input list at
+construction, producing an already-closed derived channel that emits
+nothing:
+
+```java
+def winner: Channel.alts@ <>;
+winner.take();    // Promise{Left{"Channel Closed"}}
+
+def all: Channel.every@ <>;
+all.take();       // Promise{Left{"Channel Closed"}}
+```
+
+This matches `Promise.race@` / `Promise.all@` (§6.8.4), which reject
+empty input rather than treating it as vacuously satisfied. For
+`every@` in particular, the vacuous zip reading -- emitting `< >` and
+then closing -- is deliberately not taken: coordination over no sources
+is an error, not a success over zero values. Because these constructors
+return a `Channel` rather than a `Promise`, the rejection is expressed
+as construction-time close rather than as a resolved `Left` payload.
+
+**NOTE:** These are Channel-returning constructors; the derived channel receives a list once every source channel has produced a value:
 
 ```java
 def ch1: Channel@;

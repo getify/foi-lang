@@ -26,7 +26,7 @@ The language is designed for general application programming purposes, but with 
 
 An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently or fully learn **Foi** in several days.
 
-In the following code snippet, you'll might recognize familiar mechanisms like function calls and pattern recognition. There's also some standard FP idioms like partial application and composition (and a monad!). You might also spot a fun trick (operators-as-functions)!
+In the following code snippet, you might recognize familiar mechanisms like function calls and pattern matching. There's also some standard FP idioms like partial application and composition (and a monad!). You might also spot a fun trick (operators-as-functions)!
 
 ```java
 defn arithmetic(op) ^(
