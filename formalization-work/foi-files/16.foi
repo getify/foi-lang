@@ -1,0 +1,10 @@
+def nums: < 10, 20, 30, 40, 50 >;
+def last: nums.-1;
+def secondLast: nums.-2;
+def first: nums.0;
+def fnLast: (.)(nums, -1);
+def fnFirst: (.)(nums, 0);
+def jsBracket: ([])(nums, -1);
+def primedLast: (.')(-1, nums);
+
+console.log(last,secondLast,first,fnLast,fnFirst,jsBracket,primedLast);

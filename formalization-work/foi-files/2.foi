@@ -1,0 +1,16 @@
+def adder: (+);
+def multiplier: (*);
+
+def x: adder(1,2,3,4,5);
+def y: multiplier(1,2,3,4,5);
+def z: adder(x,y);
+
+console.log((?<)(x,y,z));
+console.log((!)(x));
+
+def w: { 3; };
+console.log(`"w: `w`");
+
+console.log(true !and true);
+console.log((!and)(true,true,true,true));
+console.log((!and)(true,true,false,true));

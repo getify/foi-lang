@@ -1,0 +1,18 @@
+def fn: hello|"Kyle"|;
+def ret: fn(3);
+console.log(ret);
+
+defn hello(name,count:? 2) {
+	def num: 21 * count;
+	^?{
+		[count ?<= 3]: {
+			`"
+				Hello `name`!
+				My favorite number is `num`.
+			"
+		};
+
+		: `"Sorry, `count` is too big"
+	}
+}
+

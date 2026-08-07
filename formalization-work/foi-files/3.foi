@@ -1,0 +1,63 @@
+def vals: < 10, 20, 30 >;
+def < a, b, c, #allVals >: vals;
+console.log(`"a:`a`, b:`b`, c:`c`, vals:`allVals`");
+
+def k: "kk";
+
+def <
+	// Base forms (no defaults)
+	X: x,
+	Y: y,
+	:z,
+	:w.four,
+	Q: q.1,
+	#a,
+
+	// Series 2 defaults: fire on missing/empty, no-fire on present
+	:notThere:? "concise-default",       // missing → fires
+	:present:? "should-not-fire",        // present → no fire
+	:w.missing:? "path-default",         // path-missing → fires
+	R: r:? "R-default",                  // missing → fires
+	E: emptySlot:? "E-default",          // source is `empty` → fires
+	Q99: q.99:? "OOB-default",           // tuple index OOB → fires
+	K: [k]:? "K-default",                // computed source, missing → fires
+	Sum: absent:? X + Y                  // default uses earlier bindings
+>: <
+	x: 1, y: 2, z: 3,
+	w: < four: 4, five: 5, six: 6 >,
+	q: <7, 8, 9>,
+	present: "here",
+	emptySlot: empty
+>;
+
+console.log(X, Y, z, four, Q, a);
+console.log(notThere, present, missing, R, E, Q99, K, Sum);
+
+// --- DefBlockStmt: destructure in defs-init clause ---
+def (< :p:? 10, :q >: < q: 22 >) {
+    console.log("DefBlockStmt:", p, q);                              // 10 22
+};
+
+// --- ParameterList: destructure param, default fires per-call ---
+defn describe(< :name:? "anon", :age >) ^name + " is " + age;
+console.log("param missing:", describe(< age: 30 >));                // anon is 30
+console.log("param present:", describe(< name: "Kyle", age: 42 >));  // Kyle is 42
+
+// --- ParameterList: Series 1 parameter-source-tail :? <>
+//     composed with Series 2 per-entry :? — outer :? <> supplies
+//     the empty source, inner per-entry defaults fire per slot.
+defn area(< :w:? 1, :h:? 1 > :? <>) ^w * h;
+console.log("compose:", area(), area(< w: 5 >), area(< w: 3, h: 4 >));   // 1 5 12
+
+// --- ~each body destructure param — KEY TEST:
+//     verifies the IIFE-per-entry `__d` does NOT clobber the
+//     loop's `for (let __v of __src)` iteration variable.
+< <a: 1>, <a: 2, b: 99>, <a: 3> > ~each (< :a, :b:? 0 >) {
+    console.log("each:", a, b);
+    // expected: 1 0 / 2 99 / 3 0
+};
+
+// --- Pipeline #> block RHS with destructure defs-init ---
+< a: 5 > #> (< :a, :b:? "missing" >) {
+    console.log("pipe:", a, b);                                      // 5 missing
+};

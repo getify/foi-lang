@@ -1,0 +1,470 @@
+///
+	TODO app — Foi conversion of the Monio original.
+
+	State substrate: Effect.User.AppState.<Get, Put> effect kind,
+	caught by dispatch()'s ~<* scope. dispatch is closed over the
+	lone curState cell and a Channel-1 mutex; every DOM event runs
+	its handler through dispatch, which serializes and resolves
+	state performs against curState.
+///
+
+
+def nextTodoID: State@ (defn(st) {
+	def todoCounter: (?{
+		[!empty st.todoCounter]: st.todoCounter;
+		: 0
+	}) + 1;
+	^< todoCounter, < &st, :todoCounter > >;
+});
+
+
+
+// -------------------------------------------------------------
+// Entry point
+// -------------------------------------------------------------
+
+(~cata)(defineApp()% < context: document >, handleError, (@));
+
+
+// -------------------------------------------------------------
+// State shape + effect declarations
+// -------------------------------------------------------------
+
+deft AppState <
+	todos: Any,
+	todoCounter: int,
+	newTodoInpEl: Any,
+	todosEl: Any,
+>;
+
+deft Effect.User.AppState.Get() ^AppState;
+deft Effect.User.AppState.Put(AppState) ^empty;
+
+
+// -------------------------------------------------------------
+// Pure helpers
+// -------------------------------------------------------------
+
+defn validateNewTodo(s) ^?{
+	[s ?= ""]: Left@ "Please enter some Todo text";
+	[size(s) ?> 50]: Left@ "Todo is too long";
+	: Right@ s;
+};
+
+defn makeTodoRecord(newTodoText,todoID) ^<
+	id: todoID,
+	todo: newTodoText,
+	complete: false,
+>;
+
+// find <idx, rec> for first todo with matching id; <-1, empty> if none
+defn findTodoEntry(todos, id) ^(~fold)(
+	todos,
+	< -1, empty, 0 >,
+	defn(acc, rec) ^?{
+		[acc.0 ?>= 0]: < acc.0, acc.1, (acc.2 + 1) >;
+		[rec.id ?= id]: < acc.2, rec, (acc.2 + 1) >;
+		: < acc.0, acc.1, (acc.2 + 1) >;
+	}
+);
+
+defn spliceReplace(list, idx, newVal) ^(~fold)(
+	list,
+	< <>, 0 >,
+	defn(acc, elem) ^<
+		(?{
+			[acc.1 ?= idx]: < &acc.0, newVal >;
+			: < &acc.0, elem >;
+		}),
+		(acc.1 + 1),
+	>
+).0;
+
+defn spliceRemove(list, idx) ^(~fold)(
+	list,
+	< <>, 0 >,
+	defn(acc, elem) ^<
+		(?{
+			[acc.1 ?= idx]: acc.0;
+			: < &acc.0, elem >;
+		}),
+		(acc.1 + 1),
+	>
+).0;
+
+
+// -------------------------------------------------------------
+// State effect IO helpers
+//
+// Wrap effect performs in IO so ~<< can bind/chain them. Under
+// dispatch()'s ~<* scope, the Get/Put performs are caught and
+// resumed against curState.
+// -------------------------------------------------------------
+
+deft getStateT() ^IO;
+deft getStateIOT()
+	:Effects(User.AppState.Get)
+	^AppState;
+defn{getStateT} getState() ^(
+	IO@ (defn{getStateIOT}() ^Effect.User.AppState.Get%)
+);
+
+deft applyStateT(State)
+	:Effects(User.AppState.Put)
+	^IO;
+defn{applyStateT} applyState(stateComp) ^IO ~<< {
+	def curState:: getState();
+	def < value, newState >: stateComp% curState;
+	$IO.of@ (Effect.User.AppState.Put% newState);
+	< value, newState >
+};
+
+
+// -------------------------------------------------------------
+// Event listener registration (needs dispatch, so takes it as arg)
+// -------------------------------------------------------------
+
+defn addEventListener(evtName, handlerFn, dispatch)(el) ^IO@ (defn(env) {
+	el.addEventListener(evtName, defn(evt) {
+		(~cata)(dispatch(handlerFn(evt))% env, handleError, (@));
+	});
+});
+
+
+// -------------------------------------------------------------
+// Error handling — Left branches from the outer chain end up here.
+// -------------------------------------------------------------
+
+defn handleError(err) ^log(err);
+
+
+// -------------------------------------------------------------
+// DOM element IO helpers
+// -------------------------------------------------------------
+
+defn getElementById(id) ^IO@ (defn(env) ^(
+	Maybe.from@ env.context.getElementById(id)
+));
+defn querySelector(selector)(el) ^IO@ (defn() ^(
+	Maybe.from@ el.querySelector(selector)
+));
+defn addClass(className)(el) ^IO@ (defn() ^(
+	el.classList.add(className)
+));
+defn removeClass(className)(el) ^IO@ (defn() ^(
+	el.classList.remove(className)
+));
+defn toggleClass(className)(el) ^IO@ (defn() ^(
+	el.classList.toggle(className)
+));
+defn matches(selector)(el) ^IO@ (defn() ^(
+	el.matches(selector)
+));
+defn createElement(elType) ^IO@ (defn(env) ^(
+	env.context.createElement(elType)
+));
+defn removeElement(el) ^IO@ (defn() ^(
+	el.remove()
+));
+defn getAttr(attrName)(el) ^IO@ (defn() ^(
+	el.getAttribute(attrName)
+));
+defn setAttr(attrName,attrVal)(el) ^IO@ (defn() ^(
+	el.setAttribute(attrName, attrVal)
+));
+defn setInnerText(text)(el) ^IO@ (defn() ^(
+	el.innerText(text)
+));
+defn setInnerHTML(html)(el) ^IO@ (defn() ^(
+	el.innerHTML(html)
+));
+defn setValue(val)(el) ^IO@ (defn() ^(
+	el.value(val)
+));
+defn getValue(el) ^IO@ (defn() ^(
+	el.value
+));
+defn appendTo(parentEl)(el) ^IO@ (defn() ^(
+	parentEl.appendChild(el)
+));
+defn scrollToElement(el) ^IO@ (defn() ^(
+	el.scrollIntoView()
+));
+defn focusElement(el) ^IO@ (defn() ^(
+	el.focus()
+));
+
+
+// -------------------------------------------------------------
+// Utility IO helpers
+// -------------------------------------------------------------
+
+defn haltEvent(evt) ^IO@ (defn() {
+	evt.preventDefault();
+	evt.stopPropagation();
+	evt.stopImmediatePropagation();
+});
+
+// takes IO<Maybe<element>>, returns IO<Promise<element>>: Right on
+// present, Left on absent. Under IO's Promise transformer, callers
+// using `def el:: expectElement(...)` bind to element or short-
+// circuit on Left.
+defn expectElement(elMIO, err) ^IO ~<< {
+	def elM:: elMIO;
+	(~fold)(elM, Promise.renege@ err, Promise.honor.@);
+};
+
+defn expectTodoEntry(todoID, errMsg) ^IO ~<< {
+	def state:: getState();
+	def entry: findTodoEntry(state.todos, todoID);
+	?{
+		[entry.0 ?= -1]: Promise.renege@ errMsg;
+		: Promise.honor@ < entry.0, entry.1 >;
+	};
+};
+
+
+// -------------------------------------------------------------
+// State-touching operations
+// -------------------------------------------------------------
+
+defn saveNewTodo(newTodoText) ^IO ~<< {
+	def < newTodoEntry >:: applyState(
+		State ~<< {
+			def todoID:: nextTodoID;
+			def newTodoRecord: makeTodoRecord(newTodoText,todoID);
+			$State.modify@ (defn(st) ^<
+				&st,
+				todos: < &st.todos, newTodoRecord >
+			>);
+			$State.of@ newTodoRecord
+		}
+	);
+	newTodoEntry
+};
+
+defn toggleTodoComplete(todoID) ^IO ~<< {
+	def <todoRecordIdx, todoRecord>:: (
+		expectTodoEntry(todoID, `"Todo (`todoID`) state record not found")
+	);
+
+	// update Todo record
+	def updatedTodoRecord: <
+		&todoRecord,
+
+		// toggle complete flag
+		complete: !todoRecord.complete
+	>;
+
+	// update state
+	def < , updatedState >:: applyState(
+		State.modify@ (defn(st) ^<
+			&st,
+			todos: spliceReplace(st.todos, todoRecordIdx, updatedTodoRecord)
+		>)
+	);
+
+	// update DOM
+	def todoEl:: querySelector\/(`"li[data-id='`todoID`']", updatedState.todosEl) #>
+		expectElement|, `"Todo (`todoID`) element not found"|;
+	$toggleClass\/("complete", todoEl);
+};
+
+defn removeTodo(todoID) ^IO ~<< {
+	def <todoRecordIdx, todoRecord>:: (
+		expectTodoEntry(todoID, `"Todo (`todoID`) state record not found")
+	);
+
+	// update state
+	def < , updatedState >:: applyState(
+		State.modify@ (defn(st) ^<
+			&st,
+			todos: spliceRemove(st.todos, todoRecordIdx)
+		>)
+	);
+
+	// update DOM
+	def todoEl:: expectElement(
+		querySelector\/(`"li[data-id='`todoID`']", updatedState.todosEl),
+		`"Todo (`todoID`) element not found"
+	);
+	$removeElement(todoEl);
+	$displaySuccess(`"Todo ('`todoRecord.todo`') removed");
+};
+
+
+// -------------------------------------------------------------
+// Rendering / display
+// -------------------------------------------------------------
+
+defn clearSuccessError() ^IO ~<< {
+	def errEl:: getElementById("error-msg") #>
+		expectElement|, "Error notification element missing"|;
+	$addClass\/("hidden", errEl);
+	$setInnerText\/("", errEl);
+	def sucEl:: getElementById("success-msg") #>
+		expectElement|, "Success notification element missing"|;
+	$addClass\/("hidden", sucEl);
+	$setInnerText\/("", sucEl);
+};
+
+defn displaySuccess(msg) ^IO ~<< {
+	def errEl:: getElementById("error-msg") #>
+		expectElement|, "Error notification element missing"|;
+	$addClass\/("hidden", errEl);
+	$setInnerText\/("", errEl);
+	def sucEl:: getElementById("success-msg") #>
+		expectElement|, "Success notification element missing"|;
+	$removeClass\/("hidden", sucEl);
+	$setInnerText\/(msg, sucEl);
+	$scrollToElement(sucEl);
+};
+
+defn displayError(err) ^IO ~<< {
+	def sucEl:: getElementById("success-msg") #>
+		expectElement|, "Success notification element missing"|;
+	$addClass\/("hidden", sucEl);
+	$setInnerText\/("", sucEl);
+	def errEl:: getElementById("error-msg") #>
+		expectElement|, "Error notification element missing"|;
+	$removeClass\/("hidden", errEl);
+	$setInnerText\/(err, errEl);
+	$scrollToElement(errEl);
+};
+
+defn renderTodoElement(todoID, todoText) ^IO ~<< {
+	def state:: getState();
+	def liEl:: createElement("li");
+	$setAttr\/("data-id", todoID, liEl);
+	$addClass\/("todo", liEl);
+	$setInnerHTML\/(\`"
+		<label
+			aria-label=""Mark Todo Complete""
+		>
+			<input
+				type=""checkbox""
+				data-id=""`todoID`""
+				class=""mark-todo""
+			>
+			<span></span>
+		</label>
+		<button
+			type=""button""
+			data-id=""`todoID`""
+			class=""btn-remove-todo""
+			aria-label=""Remove Todo""
+		>
+			🗑
+		</button>
+	", liEl);
+	$appendTo\/(state.todosEl, liEl);
+	def spanEl:: querySelector\/("label > span", liEl) #>
+		expectElement|, "Label Span element not found"|;
+	$setInnerText\/(todoText, spanEl);
+	$scrollToElement(liEl);
+};
+
+
+// -------------------------------------------------------------
+// Event handlers
+// -------------------------------------------------------------
+
+defn onFormSubmit(evt) ^IO ~<< {
+	$haltEvent(evt);
+	def state:: getState();
+	def rawText:: getValue(state.newTodoInpEl);
+	def newTodoText: trim(rawText);
+	def validated: validateNewTodo(newTodoText);
+	$?(validated){
+		[?as Left]: IO ~<< {
+			$displayError(validated.value);
+			$focusElement(state.newTodoInpEl);
+		};
+		[?as Right]: IO ~<< {
+			def rec:: saveNewTodo(newTodoText);
+			$renderTodoElement(rec.id, newTodoText);
+			$clearSuccessError();
+			$setValue\/("", state.newTodoInpEl);
+			$focusElement(state.newTodoInpEl);
+		};
+	};
+};
+
+defn onTodosClick(evt) ^IO ~<< {
+	def markTodoMatches:: matches\/(".mark-todo", evt.target);
+	def removeBtnMatches:: matches\/(".btn-remove-todo", evt.target);
+	$?{
+		[markTodoMatches]: IO ~<< {
+			def todoIDStr:: getAttr\/("data-id", evt.target);
+			def todoID: toNumber(todoIDStr);
+			$toggleTodoComplete(todoID);
+		};
+		[removeBtnMatches]: IO ~<< {
+			$haltEvent(evt);
+			def todoIDStr:: getAttr\/("data-id", evt.target);
+			def todoID: toNumber(todoIDStr);
+			$removeTodo(todoID);
+		};
+		: IO.of@ empty;
+	};
+};
+
+
+// -------------------------------------------------------------
+// App setup — owns curState + mutexCh + dispatch in one closure.
+// -------------------------------------------------------------
+
+defn defineApp() {
+	def curState: <
+		todos: <>,
+		todoCounter: 0,
+		newTodoInpEl: empty,
+		todosEl: empty,
+	>;
+	def mutexCh: Channel@ 1;
+
+	^IO ~<< (env) {
+		// prime the mutex — first take() must succeed
+		// note: doesn't block because buffer size 1
+		$mutexCh.put(empty);
+
+		// form: find, wire submit handler, find + focus input
+		def formEl:: getElementById("add-todo") #>
+			expectElement|, "Add Todo form missing"|;
+		$addEventListener\/("submit", onFormSubmit, dispatch, formEl);
+		def inpEl:: querySelector\/("#new-todo", formEl) #>
+			expectElement|, "New Todo input element missing"|;
+		$focusElement(inpEl);
+
+		// todos list: find, wire click handler
+		def todosEl:: getElementById("todos") #>
+			expectElement|, "Todos list element missing"|;
+		$addEventListener\/("click", onTodosClick, dispatch, todosEl);
+
+		// initial state
+		Right@ (
+			curState := < &curState, newTodoInpEl: inpEl, todosEl: todosEl >
+		);
+	};
+
+	// dispatch: run io under the AppState handler with mutex
+	// acquired around the whole thing. serializes concurrent
+	// event-driven dispatches.
+	defn dispatch(io) :over(curState) ^IO ~<< (env) {
+		// acquire the mutex
+		$mutexCh.take();
+		Effect.User.AppState ~<* (eff:: io% env, ret) {
+			?(eff){
+				[?as Effect.User.AppState.Get]: ret(curState);
+				[?as Effect.User.AppState.Put]: {
+					curState := #.value;
+					ret(empty);
+				};
+			};
+		};
+
+		// release the mutex
+		// note: doesn't block because buffer size 1
+		$mutexCh.put(empty);
+	};
+};

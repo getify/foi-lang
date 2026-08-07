@@ -1,0 +1,17 @@
+defn add(x, y) ^x + y;
+defn triple(n) ^n * 3;
+defn getA(r) ^r.a;
+
+defn pipe_mp(x, y) #> add(#, y);
+defn pipe_mixed(x, <:a>) #> add(#, a);
+defn pipe_curried(x)(y) #> add(#, y);
+defn pipe_dest_curried(<:a>)(<:b>) #> getA;
+defn pipe_gather(*args) #> triple;
+
+def r1: pipe_mp(3, 4);
+def r2: pipe_mixed(5, <a: 6>);
+def r3: pipe_curried(7)(8);
+def r4: pipe_dest_curried(<a: 9>)(<b: 10>);
+def r5: pipe_gather(20, 30, 40);
+
+console.log(r1, r2, r3, r4, r5);

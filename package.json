@@ -1,13 +1,19 @@
 {
 	"name": "foi-lang",
-	"version": "0.0.21",
+	"version": "0.1.0",
+	"type": "module",
 	"description": "Foi: a different kind of functional programming language",
 	"repository": "getify/foi-lang",
 	"scripts": {
 		"build:foi-toy-web": "foi-toy/scripts/build-web",
 		"build": "npm run build:foi-toy-web",
 		"start:foi-toy-web": "npx http-server foi-toy/web -p 8080",
-		"start": "npm run start:foi-toy-web"
+		"start": "npm run start:foi-toy-web",
+		"test:grammar": "node formalization-work/grammar-check.js",
+		"test:tokenizer": "node formalization-work/test-tokenizer.js",
+		"test:parser": "node formalization-work/test-parser.js",
+		"test:roundtrip": "node formalization-work/test-roundtrip.js",
+		"test": "npm run test:tokenizer && npm run test:grammar && npm run test:parser"
 	},
 	"devDependencies": {
 		"minimist": "~1.2.7",

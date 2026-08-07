@@ -1,28 +1,31 @@
 #!/usr/bin/env node
 
-"use strict";
+import path from "node:path";
+import fsp from "node:fs/promises";
 
-var path = require("path");
-var fsp = require("fs/promises");
-
-var { build, } = require("moduloze");
-
-var config = {
-    buildESM: true
-};
-
-var depMap = {
-    "src/tokenizer.js": "Tokenizer",
-    "src/highlighter.js": "Highlighter"
-};
-
-const ROOT_DIR = path.join(__dirname,"..");
+const ROOT_DIR = path.join(import.meta.dirname,"..");
 const SRC_DIR = path.join(ROOT_DIR,"src");
 const WEB_DIR = path.join(ROOT_DIR,"web");
 const WEB_JS_DIR = path.join(WEB_DIR,"js");
 
+// Copied src/ -> web/js/. Every import among these is sibling-
+// relative, so they stay resolvable as a flat set with no
+// specifier rewriting. Anything else in web/js/ is authored.
+const COPY_FILES = [
+	"parser-combinators.js",
+	"tokenizer.js",
+	"fast-tokenizer.js",
+	"parser.js",
+	"default-shapers.js",
+	"highlighter.js",
+	"source-context.js",
+];
 
-main().catch(console.log);
+
+main().catch(err => {
+	console.error(err);
+	process.exitCode = 1;
+});
 
 
 // **********************
@@ -32,18 +35,12 @@ async function main() {
 
 	var [
 		packageJSON,
-		grammarMD,
 		copyrightHeader,
-		tokenizerCode,
-		highlighterCode,
 		tmplHTMLCode,
 		tmplCSSCode,
 	] = await Promise.all([
 		fsp.readFile(path.join(ROOT_DIR,"..","package.json"),"utf-8"),
-		fsp.readFile(path.join(ROOT_DIR,"..","Grammar.md"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"copyright-header.txt"),"utf-8"),
-		fsp.readFile(path.join(SRC_DIR,"tokenizer.js"),"utf-8"),
-		fsp.readFile(path.join(SRC_DIR,"highlighter.js"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"tmpl.html"),"utf-8"),
 		fsp.readFile(path.join(SRC_DIR,"tmpl.css"),"utf-8"),
 	]);
@@ -54,44 +51,26 @@ async function main() {
 	var version = packageJSON.version;
 	var year = (new Date()).getFullYear();
 
-	// extract grammar
-	var grammar = (grammarMD.match(/^```ebnf$\s([^]*?)\s^```$/m) || [null,""])[1];
-
 	// process copyright header
 	copyrightHeader = copyrightHeader
 		.replace(/`/g,"")
 		.replace(/#VERSION#/g,version)
 		.replace(/#YEAR#/g,year);
 
-	// transpile CJS to ESM
-	var { esm: { code: tokenizerESM, }, } = build(
-		config,
-		"src/tokenizer.js",
-		tokenizerCode,
-		depMap
-	);
-	var { esm: { code: highlighterESM, }, } = build(
-		config,
-		"src/highlighter.js",
-		highlighterCode,
-		depMap
-	);
-	tokenizerESM = `${copyrightHeader.replace("#FILENAME#","tokenizer.js")}${tokenizerESM}`;
-	highlighterESM = `${copyrightHeader.replace("#FILENAME#","highlighter.js")}${highlighterESM}`;
-
 	var syntaxColorHTML = tmplHTMLCode.replace("<style></style>",`<style>\n${tmplCSSCode}</style>`);
 
+	await fsp.mkdir(WEB_JS_DIR,{ recursive: true, });
+
 	await Promise.all([
-		fsp.writeFile(path.join(WEB_DIR,"foi-grammar.txt"),grammar,"utf-8"),
 		fsp.writeFile(path.join(WEB_DIR,"syntax-color.html"),syntaxColorHTML,"utf-8"),
-		fsp.writeFile(path.join(WEB_JS_DIR,"tokenizer.js"),tokenizerESM,"utf-8"),
-		fsp.writeFile(path.join(WEB_JS_DIR,"highlighter.js"),highlighterESM,"utf-8"),
+
+		...COPY_FILES.map(async filename => {
+			let code = await fsp.readFile(path.join(SRC_DIR,filename),"utf-8");
+			let header = copyrightHeader.replace("#FILENAME#",filename);
+			await fsp.writeFile(path.join(WEB_JS_DIR,filename),`${header}${code}`,"utf-8");
+		}),
 	]);
 
-	await fsp.copyFile(
-		path.join(SRC_DIR,"grammar-checker.js"),
-		path.join(WEB_JS_DIR,"grammar-checker.js")
-	);
-
+	console.log(`Copied ${COPY_FILES.length} files to web/js/.`);
 	console.log("Complete.");
 }

@@ -1,0 +1,455 @@
+// grammar-check.js — LR cycle detector + orphan detector for the Foi syntactic grammar.
+//
+// Parses the EBNF code blocks out of Syntactic-Grammar.md, builds a
+// directed graph where P → Q iff P can call Q before consuming any
+// token (the "first-call" relation), then runs Tarjan's SCC. Any
+// non-trivial SCC or self-loop is a left-recursion cycle that will
+// blow the stack at parse time.
+//
+// Also builds an "all-refs" graph (every reference in every body,
+// regardless of position) and does BFS from the grammar root
+// (`Program` by default; overridable via CLI). Any production not
+// reachable from the root is an orphan — typically a vestige of a
+// refactor where a production got re-routed or replaced but the
+// original definition wasn't deleted. Orphan check is warning-level,
+// not fatal; LR cycles remain exit-1.
+
+import fs from "node:fs";
+
+
+// =============================================================
+// EBNF EXTRACTION
+// =============================================================
+
+var extractEBNFBlocks = md => {
+	var blocks = [];
+	var re = /```ebnf\n([\s\S]*?)```/g;
+	var m;
+	while ((m = re.exec(md)) !== null) blocks.push(m[1]);
+	return blocks;
+};
+
+var stripComments = s => s.replace(/\(\*[\s\S]*?\*\)/g, "");
+
+// Split block text on top-level `;` (respecting parens and strings).
+var splitProductions = blockText => {
+	var productions = [];
+	var depth = 0;
+	var inString = false;
+	var start = 0;
+	for (let i = 0; i < blockText.length; i++) {
+		let c = blockText[i];
+		if (inString) {
+			if (c === '"') inString = false;
+		}
+		else if (c === '"') inString = true;
+		else if (c === "(") depth++;
+		else if (c === ")") depth--;
+		else if (c === ";" && depth === 0) {
+			productions.push(blockText.slice(start, i + 1));
+			start = i + 1;
+		}
+	}
+	return productions.map(p => p.trim()).filter(p => p.length > 1);
+};
+
+// Parse "Name := body;" or "<Name> := body;"
+var parseProductionHeader = text => {
+	var m = text.match(/^(<?[A-Za-z_][A-Za-z0-9_]*>?)\s*:=\s*([\s\S]*);$/);
+	if (!m) return null;
+	var nameRaw = m[1];
+	var body = m[2].trim();
+	var hidden = nameRaw.startsWith("<");
+	var name = hidden ? nameRaw.slice(1, -1) : nameRaw;
+	return { name, hidden, body };
+};
+
+
+// =============================================================
+// EBNF BODY PARSER
+//   body  := alt
+//   alt   := seq ("|" seq)*
+//   seq   := term+
+//   term  := atom ("?" | "*" | "+")?
+//   atom  := ref | literal | "(" alt ")" | "&" "(" alt ")" | "!" "(" alt ")"
+// =============================================================
+
+var tokenizeBody = body => {
+	var tokens = [];
+	var i = 0;
+	while (i < body.length) {
+		let c = body[i];
+		if (/\s/.test(c)) { i++; continue; }
+		if (c === "<") {
+			let end = body.indexOf(">", i);
+			tokens.push({ type: "ref", value: body.slice(i + 1, end), hidden: true });
+			i = end + 1;
+		}
+		else if (c === '"') {
+			let end = body.indexOf('"', i + 1);
+			tokens.push({ type: "literal", value: body.slice(i + 1, end) });
+			i = end + 1;
+		}
+		else if (/[A-Za-z_]/.test(c)) {
+			let j = i;
+			while (j < body.length && /[A-Za-z0-9_]/.test(body[j])) j++;
+			tokens.push({ type: "ref", value: body.slice(i, j), hidden: false });
+			i = j;
+		}
+		else if ("|()?*+&!".includes(c)) {
+			tokens.push({ type: "op", value: c });
+			i++;
+		}
+		else throw new Error(`Unexpected char '${c}' in body at ${i}`);
+	}
+	return tokens;
+};
+
+var parseBody = tokens => {
+	var pos = 0;
+	var peek = () => tokens[pos];
+	var eatOp = value => {
+		let t = peek();
+		if (!t || t.type !== "op" || t.value !== value) {
+			throw new Error(`Expected op '${value}', got ${JSON.stringify(t)}`);
+		}
+		pos++;
+	};
+	var parseAlt = () => {
+		let seqs = [parseSeq()];
+		while (peek() && peek().type === "op" && peek().value === "|") {
+			pos++;
+			seqs.push(parseSeq());
+		}
+		return seqs.length === 1 ? seqs[0] : { kind: "alt", seqs };
+	};
+	var parseSeq = () => {
+		let terms = [];
+		while (peek() && !(peek().type === "op" && (peek().value === "|" || peek().value === ")"))) {
+			terms.push(parseTerm());
+		}
+		if (terms.length === 0) throw new Error("Empty seq");
+		return terms.length === 1 ? terms[0] : { kind: "seq", terms };
+	};
+	var parseTerm = () => {
+		let a = parseAtom();
+		let t = peek();
+		if (t && t.type === "op" && (t.value === "?" || t.value === "*" || t.value === "+")) {
+			pos++;
+			return { kind: "suffix", op: t.value, inner: a };
+		}
+		return a;
+	};
+	var parseAtom = () => {
+		let t = peek();
+		if (!t) throw new Error("Unexpected end of body");
+		if (t.type === "ref") { pos++; return { kind: "ref", name: t.value }; }
+		if (t.type === "literal") { pos++; return { kind: "literal", value: t.value }; }
+		if (t.type === "op" && t.value === "(") {
+			pos++;
+			let inner = parseAlt();
+			eatOp(")");
+			return inner;
+		}
+		if (t.type === "op" && (t.value === "&" || t.value === "!")) {
+			pos++;
+			eatOp("(");
+			let inner = parseAlt();
+			eatOp(")");
+			return { kind: "lookahead", polarity: t.value, inner };
+		}
+		throw new Error(`Unexpected token in atom: ${JSON.stringify(t)}`);
+	};
+
+	var result = parseAlt();
+	if (pos !== tokens.length) {
+		throw new Error(`Trailing tokens at ${pos}: ${JSON.stringify(tokens.slice(pos))}`);
+	}
+	return result;
+};
+
+
+// =============================================================
+// NULLABILITY, FIRST-CALL, AND ALL-REF ANALYSIS
+//
+// nullable(P):    can P match empty (consume zero tokens)?
+// firstCalls(P):  set of productions reachable BEFORE any token is consumed.
+//                 Used for LR-cycle detection — only first-position edges matter
+//                 there, since LR is "can recurse without consuming."
+// allRefs(P):     set of productions referenced ANYWHERE in P's body, regardless
+//                 of position. Used for orphan / reachability analysis — a
+//                 production referenced after some tokens have been consumed
+//                 is still "live" from the consumer's perspective.
+//
+// For nullable/firstCalls: a token-consuming terminal (any ref not defined as a
+// LHS in this grammar, e.g. OpenParen, Whitespace, General) stops the cascade.
+// A literal "value" also consumes.
+// =============================================================
+
+var analyze = productions => {
+	var prods = new Map(productions.map(p => [ p.name, p ]));
+	var nullable = new Map();
+	var firstCalls = new Map();
+	var allRefs = new Map();
+	for (let p of productions) {
+		nullable.set(p.name, false);
+		firstCalls.set(p.name, new Set());
+		allRefs.set(p.name, new Set());
+	}
+
+	var exprNullable = e => {
+		if (e.kind === "ref") return prods.has(e.name) ? nullable.get(e.name) : false;
+		if (e.kind === "literal") return false;
+		if (e.kind === "suffix") {
+			if (e.op === "?" || e.op === "*") return true;
+			return exprNullable(e.inner);   // "+" is nullable iff inner is
+		}
+		if (e.kind === "lookahead") return true;
+		if (e.kind === "alt") return e.seqs.some(exprNullable);
+		if (e.kind === "seq") return e.terms.every(exprNullable);
+		return false;
+	};
+
+	var exprFirstCalls = e => {
+		var out = new Set();
+		if (e.kind === "ref") {
+			if (prods.has(e.name)) out.add(e.name);
+			return out;
+		}
+		if (e.kind === "literal") return out;
+		if (e.kind === "suffix") {
+			for (let c of exprFirstCalls(e.inner)) out.add(c);
+			return out;
+		}
+		if (e.kind === "lookahead") {
+			for (let c of exprFirstCalls(e.inner)) out.add(c);
+			return out;
+		}
+		if (e.kind === "alt") {
+			for (let s of e.seqs) for (let c of exprFirstCalls(s)) out.add(c);
+			return out;
+		}
+		if (e.kind === "seq") {
+			for (let t of e.terms) {
+				for (let c of exprFirstCalls(t)) out.add(c);
+				if (!exprNullable(t)) break;
+			}
+			return out;
+		}
+		return out;
+	};
+
+	// All-refs: walk the entire body tree, collect every ref regardless of
+	// position. Distinct from exprFirstCalls in two ways: (1) does NOT short-
+	// circuit a seq on first non-nullable term, and (2) does NOT care about
+	// nullability at all — every ref counts.
+	var exprAllRefs = e => {
+		var out = new Set();
+		var walk = node => {
+			if (node.kind === "ref") {
+				if (prods.has(node.name)) out.add(node.name);
+				return;
+			}
+			if (node.kind === "literal") return;
+			if (node.kind === "suffix")    { walk(node.inner); return; }
+			if (node.kind === "lookahead") { walk(node.inner); return; }
+			if (node.kind === "alt") { for (let s of node.seqs)  walk(s); return; }
+			if (node.kind === "seq") { for (let t of node.terms) walk(t); return; }
+		};
+		walk(e);
+		return out;
+	};
+
+	// Fixed-point on nullable (productions can refer to each other).
+	var changed = true;
+	while (changed) {
+		changed = false;
+		for (let p of productions) {
+			let was = nullable.get(p.name);
+			let is = exprNullable(p.bodyAST);
+			if (is !== was) { nullable.set(p.name, is); changed = true; }
+		}
+	}
+
+	// Single-pass for firstCalls and allRefs (immediate edges only; transitive
+	// reachability is handled by SCC analysis / BFS in the callers).
+	for (let p of productions) firstCalls.set(p.name, exprFirstCalls(p.bodyAST));
+	for (let p of productions) allRefs.set(p.name,    exprAllRefs(p.bodyAST));
+
+	return { nullable, firstCalls, allRefs };
+};
+
+
+// =============================================================
+// TARJAN'S SCC
+// =============================================================
+
+var findSCCs = (productions, firstCalls) => {
+	var index = 0;
+	var stack = [];
+	var indices = new Map();
+	var lowlinks = new Map();
+	var onStack = new Set();
+	var sccs = [];
+
+	var strongconnect = v => {
+		indices.set(v, index);
+		lowlinks.set(v, index);
+		index++;
+		stack.push(v);
+		onStack.add(v);
+		for (let w of (firstCalls.get(v) || new Set())) {
+			if (!indices.has(w)) {
+				strongconnect(w);
+				lowlinks.set(v, Math.min(lowlinks.get(v), lowlinks.get(w)));
+			}
+			else if (onStack.has(w)) {
+				lowlinks.set(v, Math.min(lowlinks.get(v), indices.get(w)));
+			}
+		}
+		if (lowlinks.get(v) === indices.get(v)) {
+			let scc = [];
+			let w;
+			do {
+				w = stack.pop();
+				onStack.delete(w);
+				scc.push(w);
+			} while (w !== v);
+			sccs.push(scc);
+		}
+	};
+
+	for (let p of productions) {
+		if (!indices.has(p.name)) strongconnect(p.name);
+	}
+	return sccs;
+};
+
+
+// =============================================================
+// REACHABILITY
+//
+// BFS from `root` through the all-refs graph. Returns a Set of reachable
+// production names, or null if `root` isn't defined in this grammar.
+// Productions defined but not in the returned set are orphans.
+// =============================================================
+
+var reachableFrom = (root, productions, allRefs) => {
+	var names = new Set(productions.map(p => p.name));
+	if (!names.has(root)) return null;
+	var reached = new Set();
+	var stack = [ root ];
+	while (stack.length > 0) {
+		var n = stack.pop();
+		if (reached.has(n)) continue;
+		reached.add(n);
+		for (let r of (allRefs.get(n) || new Set())) {
+			if (!reached.has(r)) stack.push(r);
+		}
+	}
+	return reached;
+};
+
+
+// =============================================================
+// MAIN
+// =============================================================
+
+var srcPath = process.argv[2] || "Syntactic-Grammar.md";
+var ROOT    = process.argv[3] || "Program";
+var src = fs.readFileSync(srcPath, "utf-8");
+
+var blocks = extractEBNFBlocks(src);
+var productions = [];
+var parseErrors = [];
+var placeholders = [];
+
+for (let b of blocks) {
+	let stripped = stripComments(b);
+	for (let pt of splitProductions(stripped)) {
+		let header = parseProductionHeader(pt);
+		if (!header) {
+			parseErrors.push({ text: pt, error: "header parse failed" });
+			continue;
+		}
+		if (/\?\?\?/.test(header.body)) {
+			placeholders.push(header.name);
+			continue;
+		}
+		try {
+			let tokens = tokenizeBody(header.body);
+			let bodyAST = parseBody(tokens);
+			productions.push({ ...header, bodyAST });
+		}
+		catch (e) {
+			parseErrors.push({ name: header.name, body: header.body, error: e.message });
+		}
+	}
+}
+
+console.log(`Parsed ${productions.length} productions from ${srcPath}.`);
+if (placeholders.length > 0) {
+	console.log(`Skipped ${placeholders.length} placeholder(s): ${placeholders.join(", ")}`);
+}
+if (parseErrors.length > 0) {
+	console.log(`\n⚠ ${parseErrors.length} parse error(s):`);
+	for (let e of parseErrors) {
+		console.log(`  - ${e.name || "<unknown>"}: ${e.error}`);
+	}
+}
+
+var { nullable, firstCalls, allRefs } = analyze(productions);
+
+// Accumulate failure across all checks — exit code reflected at end. This
+// replaces the old behavior of exit-1-on-cycles short-circuiting nullable
+// (and now orphan) reports. All three signals always print.
+var failed = false;
+
+// Find LR cycles: non-trivial SCCs or self-loops.
+var sccs = findSCCs(productions, firstCalls);
+var lrCycles = [];
+for (let scc of sccs) {
+	if (scc.length > 1) lrCycles.push(scc);
+	else if (firstCalls.get(scc[0]).has(scc[0])) lrCycles.push(scc);
+}
+
+console.log("\n=== LEFT-RECURSION ANALYSIS ===");
+if (lrCycles.length === 0) {
+	console.log("✓ No left-recursion cycles in the first-call graph.");
+}
+else {
+	console.log(`✗ Found ${lrCycles.length} LR cycle(s):`);
+	for (let c of lrCycles) {
+		console.log(`\n  Cycle (${c.length} node${c.length === 1 ? "" : "s"}): ${c.join(" ↔ ")}`);
+		for (let n of c) {
+			let edges = [...firstCalls.get(n)].filter(t => c.includes(t));
+			console.log(`    ${n} first-calls (within cycle): ${edges.join(", ")}`);
+		}
+	}
+	failed = true;
+}
+
+var nullables = productions.filter(p => nullable.get(p.name)).map(p => p.name);
+console.log(`\n=== NULLABLE PRODUCTIONS (${nullables.length}) ===`);
+console.log(nullables.length ? nullables.join(", ") : "(none)");
+
+// Orphan / reachability check. Promote to fatal by adding `failed = true`
+// in the orphans-found branch if you want CI to fail on dead productions.
+console.log(`\n=== ORPHAN PRODUCTIONS (reachability from '${ROOT}') ===`);
+var reached = reachableFrom(ROOT, productions, allRefs);
+if (reached === null) {
+	console.log(`⚠ Root production '${ROOT}' not found in the grammar — skipping orphan check.`);
+	console.log(`   Override with: node grammar-check.js <spec-path> <root-production>`);
+}
+else {
+	var orphans = productions.filter(p => !reached.has(p.name)).map(p => p.name);
+	if (orphans.length === 0) {
+		console.log(`✓ All ${productions.length} productions reachable from '${ROOT}'.`);
+	}
+	else {
+		console.log(`✗ Found ${orphans.length} orphan production(s) — referenced by no live grammar path:`);
+		for (let o of orphans) console.log(`  - ${o}`);
+	}
+}
+
+if (failed) process.exit(1);

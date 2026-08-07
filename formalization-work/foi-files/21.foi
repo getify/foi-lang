@@ -1,0 +1,18 @@
+defn add(x, y, z) ^x + y + z;
+defn mul(a)(b) ^a * b;
+defn tiered(x)(y, z)(w) ^x + y + z + w;
+
+def addCurried: add/\;
+def mulFlat: mul\/;
+
+console.log(addCurried(1)(2)(3));        // 6
+console.log(addCurried(1, 2, 3));        // 6 (loose-curry pass-through)
+console.log(mulFlat(4, 5));              // 20
+console.log((/\)(add)(10)(20)(30));      // 60
+console.log((\/')(add)(10)(20)(30));     // 60
+console.log((\/)(mul)(7, 8));            // 56
+console.log((/\')(mul)(7, 8));           // 56
+console.log(tiered\/(1, 2, 3, 4));       // 10
+
+console.log((')(addCurried\/)("a","b","c"));	// "cba"
+console.log((/\)(add')("a")("b")("c"));			// "cba"

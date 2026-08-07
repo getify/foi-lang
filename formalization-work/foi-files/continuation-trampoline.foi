@@ -1,0 +1,83 @@
+deft ContThunk() ^any;
+deft ContResume(any) ^any;
+deft ContPair < ContThunk, ContResume >;
+deft ContConstruct(ContPair) :Effects(Effect.Host.Slot.Write) ^ContinuationTrampoline;
+deft ContBounce(ContinuationTrampoline) :Effects(Effect.Host.Slot.Read) ^any;
+
+defn{ContConstruct} ContinuationTrampoline@(pair) {
+	def inst: <>;
+	Effect.Host.Slot.Write% < inst, pair >;
+	^inst
+};
+
+defn{ContBounce} ContinuationTrampoline%(inst) {
+	def stack: empty;
+	def current: inst;
+
+	?[true] ~each {
+		?{
+			[current ?as ContinuationTrampoline]: {
+				def <left, right:? empty>: Effect.Host.Slot.Read% current;
+				?[!empty right]: stack := < right, stack >;
+				current := left();
+				empty
+			};
+			[!empty stack]: {
+				def <resume, rest>: stack;
+				stack := rest;
+				current := resume(current);
+				empty
+			};
+			: Done@
+		};
+	};
+
+	^current
+};
+
+// -- Drive helper: bounce if trampolined, pass through otherwise.
+//    The discrimination is not an optimization. Values arriving
+//    at a drive point may be other namespaces' instances (an IO
+//    executor may produce an IO); an unconditional `%` here would
+//    apply the wrong hook and, for IO, defeat the §6.12.6 leak
+//    diagnosis. Only trampolines bounce.
+
+deft ContRampT(Any) ^Any;
+defn{ContRampT} contRamp(v) ^?{
+	[v ?as ContinuationTrampoline]: v%;
+	: v
+};
+
+
+
+
+// // Sample Usage:
+// // A "deferred" is just a thunk. Composing one wraps the previous
+// // into a continuation pair instead of calling it.
+
+// deft Deferred() ^any;
+// deft MapFn(any) ^any;
+// deft DeferredOf(any) ^Deferred;
+// deft DeferredMap(Deferred, MapFn) ^Deferred;
+// deft DeferredRun(Deferred) ^any;
+
+// defn{DeferredOf} of(v) ^(defn() ^v);
+
+// defn{DeferredMap} map(d, fn) ^(defn() ^ContinuationTrampoline@ < d, fn >);
+
+// defn{DeferredRun} run(d) ^(d() #> contRamp);
+
+
+// defn buildDeep(n) {
+// 	def d: of(0);
+// 	1..n ~each (i) {
+// 		d := map(d, (+)|1|);
+// 	};
+// 	^d;
+// };
+
+// run(buildDeep(100000));    // 100000
+
+
+
+

@@ -1,0 +1,55 @@
+defn Gen.runner@(body) {
+    def insideStep: false;
+    def latestRet: empty;
+    def sticky: empty;
+    def waitingPr: empty;
+    def started: false;
+
+    defn doStep1() :over(started, waitingPr, sticky, latestRet) {
+        started := true;
+        waitingPr := Promise.subj@;
+        Effect.Gen ~<* (eff:: body(), ret) {
+            :: ?(eff){
+                [?as Effect.Gen.Yield]: {
+                    latestRet := ret;
+                    waitingPr% (Right@ #.value);
+                    empty;
+                };
+                [?as Effect.Gen.Return]: {
+                    sticky := Promise.renege@ #.value;
+                    ?{ [!waitingPr.resolved()]: waitingPr% (Left@ #.value); };
+                    Done@ #.value;
+                };
+            };
+        };
+        ^waitingPr.pr;
+    };
+
+    defn doStepN(resumeVal) :over(waitingPr, latestRet) {
+        waitingPr := Promise.subj@;
+        latestRet(resumeVal);
+        ^waitingPr.pr;
+    };
+
+    defn step(resumeVal) :over(insideStep, sticky, started, waitingPr) {
+        ^?{
+            [!empty sticky]:          sticky;
+            [insideStep]:             Promise.renege@ "Previous Iterator Step Running";
+            ![started]: {
+                insideStep := true;
+                def r: doStep1();
+                insideStep := false;
+                r
+            };
+            ![waitingPr.resolved()]:  Promise.renege@ "Previous Iterator Step Incomplete";
+            : {
+                insideStep := true;
+                def r: doStepN(resumeVal);
+                insideStep := false;
+                r
+            };
+        };
+    };
+
+    ^IterP@ step;
+};

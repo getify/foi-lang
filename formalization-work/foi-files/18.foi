@@ -1,0 +1,10 @@
+defn isEven(x) {
+	def y: x / 2;
+	^Math.floor(y) ?= y;
+};
+def isOdd: !isEven;
+
+console.log(isEven(2),isEven(3));
+console.log(isOdd(2),isOdd(3));
+console.log((!isOdd)(2),(!isOdd)(3));
+console.log((!isEven)(2),(!isEven)(3));

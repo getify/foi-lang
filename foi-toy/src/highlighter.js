@@ -1,71 +1,68 @@
-"use strict";
+import { OPERATOR_TYPES, } from "./fast-tokenizer.js";
 
-const { OPERATORS, } = require("./tokenizer.js");
-
-module.exports = {
-	highlight,
-};
-module.exports.highlight = highlight;
+export { highlight, };
+export default highlight;
 
 
 // **********************
 
+// Token-type buckets, keyed to the CSS classes in tmpl.css and
+// syntax-color.html. Checked most-specific first: several of these
+// types are also in OPERATOR_TYPES (Colon, Semicolon, OpenParen,
+// OpenBrace, DoubleQuote, Escape), so the operator arm must come
+// last or it would swallow them.
+const DELIMITER_TYPES = new Set([
+	"Comment", "DoubleQuote", "Backtick", "OpenParen", "CloseParen",
+]);
+const STRING_TYPES = new Set([ "String", "StringEscapedChar", ]);
+const ESCAPE_TYPES = new Set([ "Escape", "OpenBrace", "CloseBrace", ]);
+const KEYWORD_TYPES = new Set([
+	"Keyword", "Colon", "DoubleColon", "Semicolon",
+	"Comprehension", "BooleanOper",
+]);
+const NUMBER_TYPES = new Set([
+	"PositiveIntegerLit", "NegativeIntegerLit", "Number",
+]);
+
+
 async function *highlight(tokens) {
 	for await (let token of tokens) {
-		if (token.type == "WHITESPACE") {
+		if (token.type == "Whitespace") {
 			yield token.value;
+			continue;
 		}
-		else {
-			// make the code HTML safe
-			let value = token.value
-				.replace(/&/g,"&amp;")
-				.replace(/</g,"&lt;")
-				.replace(/>/g,"&gt;");
 
-			// determine CSS class to use for
-			// highlighting each token type
-			let className = (
-				(
-					[
-						"COMMENT", "DOUBLE_QUOTE", "OPEN_PAREN",
-						"CLOSE_PAREN",
-					].includes(token.type)
-				) ? "t0" :
+		// make the code HTML safe
+		let value = token.value
+			.replace(/&/g,"&amp;")
+			.replace(/</g,"&lt;")
+			.replace(/>/g,"&gt;");
 
-				(token.type == "GENERAL") ? "t1" :
-
-				(
-					[ "STRING", "STRING_ESCAPED_CHAR" ]
-						.includes(token.type)
-				) ? "t2" :
-
-				(
-					[ "ESCAPE", "OPEN_BRACE", "CLOSE_BRACE" ]
-						.includes(token.type)
-				) ? "t3" :
-
-				(token.type == "BUILTIN") ? "t4" :
-
-				(token.type == "NATIVE") ? "t5" :
-
-				(
-					token.type == "KEYWORD" ||
-					[
-						"COLON", "DOUBLE_COLON", "SEMICOLON", "COMPREHENSION",
-						"BOOLEAN_OPER",
-					]
-						.includes(token.type)
-				) ? "t6" :
-
-				(token.type == "NUMBER") ? "t7" :
-
-				(OPERATORS.includes(token.type)) ? "t8" :
-
-				// unassigned default, shouldn't happen
-				"oops"
-			);
-
-			yield `<i class="${className}" title="${token.type}">${value}</i>`;
-		}
+		yield `<i class="${classFor(token.type)}" title="${token.type}">${value}</i>`;
 	}
+}
+
+function classFor(type) {
+	return (
+		DELIMITER_TYPES.has(type) ? "t0" :
+
+		(type == "General") ? "t1" :
+
+		STRING_TYPES.has(type) ? "t2" :
+
+		ESCAPE_TYPES.has(type) ? "t3" :
+
+		(type == "Builtin") ? "t4" :
+
+		(type == "Native") ? "t5" :
+
+		KEYWORD_TYPES.has(type) ? "t6" :
+
+		NUMBER_TYPES.has(type) ? "t7" :
+
+		OPERATOR_TYPES.has(type) ? "t8" :
+
+		// unassigned default, shouldn't happen
+		"oops"
+	);
 }

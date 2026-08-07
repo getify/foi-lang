@@ -1,0 +1,27 @@
+def asc: 1..5;
+def desc: 5..1;
+def chars: "a".."e";
+def revChars: "e".."a";
+def single: 3..3;
+
+def fnAsc: (..)(1, 5);
+def fnDesc: (..)(5, 1);
+def fnPrimed: (..')(1, 5);
+def fnChars: (..)("a", "e");
+def fnSpread: (..)(...<3,7>);
+
+console.log(asc);
+console.log(desc);
+console.log(chars);
+console.log(revChars);
+console.log(single);
+
+console.log(fnAsc);
+console.log(fnDesc);
+console.log(fnPrimed);
+console.log(fnChars);
+console.log(fnSpread);
+
+// throws type error
+// def bad: 1.."z";
+// def bad2: "a"..9;

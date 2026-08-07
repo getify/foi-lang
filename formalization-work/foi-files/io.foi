@@ -1,0 +1,1062 @@
+// ============================================================
+// IO (deferred computation with implicit Reader environment
+//     + Promise transformer + Using transformer)
+//   Slot holds < :id, :executor >, plus an optional
+//   :usingRelease field on instances from IO.using@.
+//   Executor signature: (env) -> value.
+//   Reader is read-only within a chain; env changes start a
+//   new IO context via IO.mapEnv@ / IO.withEnv@ / IO.updateEnv@.
+// ============================================================
+
+deft IOT({(Any) ^Any})
+	:Effects(Host.Slot.Write, Host.Counter)
+	^IO;
+defn{IOT} IO@(executor) {
+	def inst: <>;
+	def id: Effect.Host.Counter%;
+	Effect.Host.Slot.Write% <inst, <:id, :executor>>;
+	^inst
+};
+
+deft IOofT(Any) ^IO;
+defn{IOofT} IO.of@(v)
+	^IO@ (defn(env) ^v);
+
+// -- `%`: run executor; unary passes empty env, binary passes
+//    supplied env. Returns whatever the executor produced —
+//    either a bare value or a Promise (transformer lift). --
+
+deft IOEffectorT(IO, ?Any)
+	:Effects(Host.Slot.Read)
+	^Any;
+defn{IOEffectorT} IO%(inst, env :? empty) {
+	def state: Effect.Host.Slot.Read% inst;
+
+	// composition never routes an IO here — `~<`, `~map`, and the
+	// sub-context helpers invoke the executor directly — so a
+	// using-IO arriving here was run without a bind, and its
+	// release is lost
+	?[state ?has "usingRelease"]:
+		Effect.Sys.Warn% "IO.using@ leak: no bind to release";
+
+	// sole drive point for the chain (§6.14.4); the executor may
+	// hand back a ContinuationTrampoline rather than a value
+	^contRamp(state.executor(env))
+};
+
+
+// -- Bind: sequence two IO computations, passing env through
+//    unchanged. Promise-lift when previous step produces a
+//    Promise; env captured in the ~< cb closure. --
+
+deft IOBindT(IO, {(Any) ^IO})
+	:Effects(Host.Slot.Read)
+	^IO;
+defn{IOBindT} IO~<(inst, fn) {
+	def ioSlot: Effect.Host.Slot.Read% inst;
+
+	^IO@ (defn(env) {
+		^ContinuationTrampoline@ <
+			(defn() ^ioSlot.executor(env)),
+			(defn(res) {
+				^?{
+					[res ?as Promise]: res ~< (resV) {
+						processIOStep(resV,env) #> contRamp #> liftPromise;
+					};
+					: processIOStep(res,env)
+				}
+			})
+		>
+	});
+
+
+	// ****************************************
+
+	defn liftPromise(v) ^?(v){
+		[?as Promise]: v;
+		: Promise.honor@ v
+	};
+
+	deft ProcessIOStepT(Any,Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{ProcessIOStepT} processIOStep(res,env) {
+		def next: fn(res);
+		def nextState: Effect.Host.Slot.Read% next;
+		def step: (defn() ^nextState.executor(env));
+
+		// the release must not fire until the downstream work has
+		// actually run — post-conversion `step()` can hand back a
+		// trampoline, so the release rides as the resume, which the
+		// bounce invokes only once a real value has emerged
+		^?{
+			[ioSlot ?has "usingRelease"]:
+				ContinuationTrampoline@ < step, releaseAfter >;
+			: ContinuationTrampoline@ < step >
+		};
+
+
+		// ****************************************
+
+		defn releaseAfter(res2) ^?{
+			[res2 ?as Promise]: (~cata)(
+				res2,
+				defn(res2Err) {
+					ioSlot.usingRelease(res)% env;
+					^Promise.renege@ res2Err
+				},
+				defn(res2V) {
+					ioSlot.usingRelease(res)% env;
+					^Promise.honor@ res2V
+				}
+			);
+			: {
+				ioSlot.usingRelease(res)% env;
+				res2
+			}
+		};
+	};
+};
+
+
+// -- Map: transform the produced value; env passes through
+//    unchanged. Same Promise-lift as ~<. --
+deft IOMapT(IO, {(Any) ^Any})
+	:Effects(Host.Slot.Read)
+	^IO;
+defn{IOMapT} IO~map(inst, fn) {
+	def state: Effect.Host.Slot.Read% inst;
+
+	// mapping a using-IO discards its release: `~map` never
+	// consults one, and the mapped value isn't the resource
+	?{
+		[state ?has "usingRelease"]:
+			Effect.Sys.Warn% "IO.using@ leak: no bind to release";
+	};
+
+	^IO@ (defn(env) {
+		^ContinuationTrampoline@ <
+			(defn() ^state.executor(env)),
+			(defn(prev) {
+				^?{
+					[prev ?as Promise]: prev ~map fn;
+					: fn(prev)
+				}
+			})
+		>
+	})
+};
+
+// -- Reference identity via minted id --
+
+deft IOEqT(IO, IO)
+	:Effects(Host.Slot.Read)
+	^bool;
+defn{IOEqT} IO?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+);
+
+// ============================================================
+// Named IO constructors — Reader environment access
+// ============================================================
+
+// -- Read env as observed value --
+
+deft IOAskT() ^IO;
+defn{IOAskT} IO.ask@()
+	^IO@ (defn(env) ^env);
+
+// -- Project env via fn --
+
+deft IOAsksT({(Any) ^Any}) ^IO;
+defn{IOAsksT} IO.asks@(fn)
+	^IO@ (defn(env) ^fn(env));
+
+
+deft UsingReleaseT(Any) ^IO;
+deft Using < acquire: IO, release: UsingReleaseT >;
+deft IOUsingFactoryT(Using)
+	:Effects(Host.Slot)
+	^IO;
+defn{IOUsingFactoryT} IO.using@(< :acquire, :release >) {
+	def io: IO@ (defn(env) ^(acquire% env));
+	def ioSlot: Effect.Host.Slot.Read% io;
+	Effect.Host.Slot.Write% < io, < &ioSlot, usingRelease: release > >;
+	^io
+};
+
+
+// ============================================================
+// Sub-context helpers — env change starts a new IO context.
+//
+// Each helper is curried: (env-configurator) -> (sub-IO) -> IO.
+// The returned sub-IO transformer, when applied to a sub-IO,
+// yields an outer IO that runs the sub-IO under a derived env.
+// The outer chain's env is unaffected.
+//
+// IO.mapEnv@ is the primitive; withEnv@ and updateEnv@ compose
+// atop it.
+// ============================================================
+
+// -- Type of the returned sub-IO transformer: (IO) -> IO. --
+deft SubIOT(IO)
+	:Effects(Host.Slot)
+	^IO;
+
+// -- mapEnv: derive newEnv via arbitrary fn, run sub-IO under it.
+//    A using sub-IO's release is carried onto the outer IO, wrapped
+//    in the same derivation, so acquire and release both observe
+//    fn(env). Invokes the sub's executor directly rather than via
+//    `%` — machinery must not trip the unbound-using diagnosis. --
+deft IOMapEnvT({(Any) ^Any}) ^SubIOT;
+defn{IOMapEnvT} IO.mapEnv@(fn)
+	^(defn{SubIOT}(subIO) {
+		def subSlot: Effect.Host.Slot.Read% subIO;
+		def outer: IO@ (defn(env) ^(subSlot.executor(fn(env))));
+
+		?{
+			[subSlot ?has "usingRelease"]: {
+				def outerSlot: Effect.Host.Slot.Read% outer;
+				Effect.Host.Slot.Write% <
+					outer,
+					< &outerSlot, usingRelease: hoistedRelease >
+				>;
+			};
+		};
+
+		^outer;
+
+
+		// ****************************************
+
+		defn hoistedRelease(res) ^IO@ (defn(env)
+			^(subSlot.usingRelease(res)% fn(env)));
+	});
+
+// -- withEnv: replace env wholesale, run sub-IO under newEnv. --
+
+deft IOWithEnvT(Any) ^SubIOT;
+defn{IOWithEnvT} IO.withEnv@(newEnv)
+	^IO.mapEnv@ (Function@ newEnv);
+
+// -- updateEnv: merge patch into current env, run sub-IO under it. --
+
+deft IOUpdateEnvT(Any) ^SubIOT;
+defn{IOUpdateEnvT} IO.updateEnv@(patchEnv)
+	^IO.mapEnv@ (defn(env) ^< &env, &patchEnv >);
+
+
+
+// // Sample Usage:
+
+// def something: (
+// 	IO@ (defn(env) ^< env.x, env >)
+// 		~map (*)|2|
+// 		~< IO.of.@
+// );
+
+// something% < x: 21 >;
+// // 42
+
+
+// defn fetchUser() ^IO@(..);
+// defn fetchProfile() ^IO@(..);
+// defn fetchOrders() ^IO@(..);
+
+// def task: IO ~<< {
+//     def user:: fetchUser();
+//     def withUser: IO.updateEnv@(< :user >);
+//     def profile:: withUser(fetchProfile());
+//     def orders:: withUser(fetchOrders());
+//     < :user, :profile, :orders >
+// };
+
+// task% < userID: 123 >;
+// // Promise{<
+// //     userID: 123,
+// //     user: <..>,
+// //     profile: <..>,
+// //     orders: <..>
+// // >}
+
+
+
+// def renderTask: IO ~<< {
+// 	def auth:: authenticate();
+
+// 	def withAuth: IO.updateEnv@ < :auth >;
+// 	def prefs:: withAuth(loadPreferences());
+
+// 	def withAuthPrefs: IO.updateEnv@ < :auth, :prefs >;
+// 	def dashboard:: withAuthPrefs(buildDashboard());
+
+// 	< :dashboard, session: auth, :prefs >
+// };
+
+// renderTask% < token: "abc123" >;
+// // Promise{
+// //     dashboard: < widgets: < "chart", "table" >, layout: "grid" >,
+// //     session: < userID: 42, roles: < "user", "admin" > >,
+// //     prefs: < theme: "dark", locale: "en-US" >
+// // >}
+
+
+// // IO.using@ resource cleanup
+// defn withFile(path) ^(
+// 	IO.using@ <
+// 		acquire: (IO@ (defn(env){
+// 			def res: File.open@ path;
+// 			log(`"`path` opened");
+// 			^res
+// 		})),
+// 		release: (defn(fh) ^IO@ (defn(){
+// 			def res: fh.close();
+// 			log(`"`path` closed");
+// 			^res
+// 		}))
+// 	>
+// );
+
+// IO ~<< {
+// 	def fh:: withFile("/tmp/log.txt");
+// 	def a:: readChunk(fh);
+// 	def b:: readChunk(fh);
+// 	< :a, :b >;
+// };
+
+
+
+
+
+
+// *********************************************
+// ********** PRE-CONT-TRAMPOLINE **************
+// *********************************************
+
+// // ============================================================
+// // IO (deferred computation with implicit Reader environment
+// //     + Promise transformer + Using transformer)
+// //   Slot holds < :id, :executor >, plus an optional
+// //   :usingRelease field on instances from IO.using@.
+// //   Executor signature: (env) -> value.
+// //   Reader is read-only within a chain; env changes start a
+// //   new IO context via IO.mapEnv@ / IO.withEnv@ / IO.updateEnv@.
+// // ============================================================
+
+// deft IOT({(Any) ^Any})
+// 	:Effects(Host.Slot.Write, Host.Counter)
+// 	^IO;
+// defn{IOT} IO@(executor) {
+// 	def inst: <>;
+// 	def id: Effect.Host.Counter%;
+// 	Effect.Host.Slot.Write% <inst, <:id, :executor>>;
+// 	^inst
+// };
+
+// deft IOofT(Any) ^IO;
+// defn{IOofT} IO.of@(v)
+// 	^IO@ (defn(env) ^v);
+
+// // -- `%`: run executor; unary passes empty env, binary passes
+// //    supplied env. Returns whatever the executor produced —
+// //    either a bare value or a Promise (transformer lift). --
+
+// deft IOEffectorT(IO, ?Any)
+// 	:Effects(Host.Slot.Read)
+// 	^Any;
+// defn{IOEffectorT} IO%(inst, env :? empty) {
+// 	def state: Effect.Host.Slot.Read% inst;
+
+// 	// composition never routes an IO here — `~<`, `~map`, and the
+// 	// sub-context helpers invoke the executor directly — so a
+// 	// using-IO arriving here was run without a bind, and its
+// 	// release is lost
+// 	?{
+// 		[state ?has "usingRelease"]:
+// 			Effect.Sys.Warn% "IO.using@ leak: no bind to release";
+// 	};
+
+// 	^state.executor(env)
+// };
+
+
+// // -- Bind: sequence two IO computations, passing env through
+// //    unchanged. Promise-lift when previous step produces a
+// //    Promise; env captured in the ~< cb closure. --
+
+// deft IOBindT(IO, {(Any) ^IO})
+// 	:Effects(Host.Slot.Read)
+// 	^IO;
+// defn{IOBindT} IO~<(inst, fn) {
+// 	def ioSlot: Effect.Host.Slot.Read% inst;
+
+// 	^IO@ (defn(env) {
+// 		def res: ioSlot.executor(env);
+// 		^?{
+// 			[res ?as Promise]: res ~< (resV) {
+// 				processIOStep(resV,env) #> liftPromise;
+// 			};
+// 			: processIOStep(res,env)
+// 		}
+// 	});
+
+
+// 	// ****************************************
+
+// 	defn liftPromise(v) ^?(v){
+// 		[?as Promise]: v;
+// 		: Promise.honor@ v
+// 	};
+
+// 	deft ProcessIOStepT(Any,Any)
+// 		:Effects(Host.Slot.Read)
+// 		^Any;
+// 	defn{ProcessIOStepT} processIOStep(res,env) {
+// 		def next: fn(res);
+// 		def nextState: Effect.Host.Slot.Read% next;
+// 		def res2: nextState.executor(env);
+// 		^?{
+// 			// managing a using-release?
+// 			[ioSlot ?has "usingRelease"]: ?{
+// 				[res2 ?as Promise]: (~cata)(
+// 					res2,
+// 					defn(res2Err) {
+// 						ioSlot.usingRelease(res)% env;
+// 						^Promise.renege@ res2Err
+// 					},
+// 					defn(res2V) {
+// 						ioSlot.usingRelease(res)% env;
+// 						^Promise.honor@ res2V
+// 					}
+// 				);
+// 				: {
+// 					ioSlot.usingRelease(res)% env;
+// 					res2
+// 				}
+// 			};
+// 			: res2
+// 		}
+// 	};
+// };
+
+
+// // -- Map: transform the produced value; env passes through
+// //    unchanged. Same Promise-lift as ~<. --
+// deft IOMapT(IO, {(Any) ^Any})
+// 	:Effects(Host.Slot.Read)
+// 	^IO;
+// defn{IOMapT} IO~map(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+
+// 	// mapping a using-IO discards its release: `~map` never
+// 	// consults one, and the mapped value isn't the resource
+// 	?{
+// 		[state ?has "usingRelease"]:
+// 			Effect.Sys.Warn% "IO.using@ leak: no bind to release";
+// 	};
+
+// 	^IO@ (defn(env) {
+// 		def prev: state.executor(env);
+// 		^?{
+// 			[prev ?as Promise]: prev ~map fn;
+// 			: fn(prev)
+// 		}
+// 	})
+// };
+
+// // -- Reference identity via minted id --
+
+// deft IOEqT(IO, IO)
+// 	:Effects(Host.Slot.Read)
+// 	^bool;
+// defn{IOEqT} IO?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+// );
+
+// // ============================================================
+// // Named IO constructors — Reader environment access
+// // ============================================================
+
+// // -- Read env as observed value --
+
+// deft IOAskT() ^IO;
+// defn{IOAskT} IO.ask@()
+// 	^IO@ (defn(env) ^env);
+
+// // -- Project env via fn --
+
+// deft IOAsksT({(Any) ^Any}) ^IO;
+// defn{IOAsksT} IO.asks@(fn)
+// 	^IO@ (defn(env) ^fn(env));
+
+
+// deft Using < acquire: IO, release: {(Any) ^IO} >;
+// deft IOUsingFactoryT(Using)
+// 	:Effects(Host.Slot)
+// 	^IO;
+// defn{IOUsingFactoryT} IO.using@(< :acquire, :release >) {
+// 	def io: IO@ (defn(env) ^(acquire% env));
+// 	def ioSlot: Effect.Host.Slot.Read% io;
+// 	Effect.Host.Slot.Write% < io, < &ioSlot, usingRelease: release > >;
+// 	^io
+// };
+
+
+// // ============================================================
+// // Sub-context helpers — env change starts a new IO context.
+// //
+// // Each helper is curried: (env-configurator) -> (sub-IO) -> IO.
+// // The returned sub-IO transformer, when applied to a sub-IO,
+// // yields an outer IO that runs the sub-IO under a derived env.
+// // The outer chain's env is unaffected.
+// //
+// // IO.mapEnv@ is the primitive; withEnv@ and updateEnv@ compose
+// // atop it.
+// // ============================================================
+
+// // -- Type of the returned sub-IO transformer: (IO) -> IO. --
+// deft SubIOT(IO)
+// 	:Effects(Host.Slot)
+// 	^IO;
+
+// // -- mapEnv: derive newEnv via arbitrary fn, run sub-IO under it.
+// //    A using sub-IO's release is carried onto the outer IO, wrapped
+// //    in the same derivation, so acquire and release both observe
+// //    fn(env). Invokes the sub's executor directly rather than via
+// //    `%` — machinery must not trip the unbound-using diagnosis. --
+// deft IOMapEnvT({(Any) ^Any}) ^SubIOT;
+// defn{IOMapEnvT} IO.mapEnv@(fn)
+// 	^(defn{SubIOT}(subIO) {
+// 		def subSlot: Effect.Host.Slot.Read% subIO;
+// 		def outer: IO@ (defn(env) ^(subSlot.executor(fn(env))));
+
+// 		?{
+// 			[subSlot ?has "usingRelease"]: {
+// 				def outerSlot: Effect.Host.Slot.Read% outer;
+// 				Effect.Host.Slot.Write% <
+// 					outer,
+// 					< &outerSlot, usingRelease: hoistedRelease >
+// 				>;
+// 			};
+// 		};
+
+// 		^outer
+
+
+// 		// ****************************************
+
+// 		defn hoistedRelease(res) ^IO@ (defn(env)
+// 			^(subSlot.usingRelease(res)% fn(env)));
+// 	});
+
+// // -- withEnv: replace env wholesale, run sub-IO under newEnv. --
+
+// deft IOWithEnvT(Any) ^SubIOT;
+// defn{IOWithEnvT} IO.withEnv@(newEnv)
+// 	^IO.mapEnv@ (Function@ newEnv);
+
+// // -- updateEnv: merge patch into current env, run sub-IO under it. --
+
+// deft IOUpdateEnvT(Any) ^SubIOT;
+// defn{IOUpdateEnvT} IO.updateEnv@(patchEnv)
+// 	^IO.mapEnv@ (defn(env) ^< &env, &patchEnv >);
+
+
+
+
+
+
+// *********************************************
+// ******* PREVIOUS BIND ***********************
+// *********************************************
+
+// deft IOBindT(IO, {(Any) ^IO})
+// 	:Effects(Host.Slot.Read)
+// 	^IO;
+// defn{IOBindT} IO~<(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^IO@ (defn(env) {
+// 		def prev: state.executor(env);
+// 		^?{
+// 			[prev ?as Promise]:
+// 				prev ~< (defn(v) {
+// 					def next: fn(v);
+// 					def nextState: Effect.Host.Slot.Read% next;
+// 					def r: nextState.executor(env);
+// 					^?{
+// 						[r ?as Promise]: r;
+// 						: Promise.honor@ r
+// 					}
+// 				});
+// 			: {
+// 				def next: fn(prev);
+// 				def nextState: Effect.Host.Slot.Read% next;
+// 				nextState.executor(env)
+// 			}
+// 		}
+// 	})
+// };
+
+
+
+// *********************************************
+// ******* OLD SKETCH **************************
+// *********************************************
+
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// defn double(v) ^v * 2;
+// defn inc(v) ^v + 1;
+
+// def one: empty;
+// def two: empty;
+// def three: empty;
+// def four: empty;
+// def strm1: empty;
+// def strm2: empty;
+
+
+// one := IO@ (defn(env) {
+// 	log("env.x: " + env.x);
+// 	def x: double(env.x);
+// 	^inc(x);
+// });
+
+// one.run(< x: 3 >);
+// // 7
+// // env.x: 3
+
+// two = one ~map (v) {
+// 	v + 1;
+// };
+
+// two.run(< x: 4 >);
+// // 10
+// // env.x: 4
+
+// three = two ~< (v) {
+// 	IO@ (defn(env) {
+// 		log("v: " + v + ", env.x: " + env.x + ", env.y: " + env.y);
+// 		^(v * env.x * env.y);
+// 	});
+// };
+
+// four = three ~< (v) {
+// 	IOof@ (v / 10);
+// };
+
+// four.run(< x: 5, y: 7 >);
+// // 42   ... ((((5 * 2) + 1 + 1) * 5 * 7) / 10)
+// // env.x: 5
+// // v: 12, env.x: 5, env.y: 7
+
+
+// // **********************************************
+
+// defn doublePr(v) ^Promise@ (v * 2);
+// defn incPr(v) ^Promise@ (v + 1);
+
+// one := IO@ (defn(env) {
+// 	log("env.x: " + env.x);
+// 	def x: doublePr(env.x);
+// 	^x ~< incPr;
+// });
+
+// one.run(< x: 3 >);
+// // Promise{7}
+// // env.x: 3
+
+// two = one ~map incPr;
+
+// two.run(< x: 4 >);
+// // Promise{10}
+// // env.x: 4
+
+// three = two ~< (v) {
+// 	IO@ (defn(env) {
+// 		log("v: " + v + ", env.x: " + env.x + ", env.y: " + env.y);
+// 		^Promise@ (v * env.x * env.y);
+// 	});
+// };
+
+// four = three ~< (v) {
+// 	Promise@ (IOof@ (v / 10));
+// };
+
+// four.run(< x: 5, y: 7 >);
+// // Promise{42}
+// // env.x: 5
+// // v: 12, env.x: 5, env.y: 7
+
+
+// // **********************************************
+
+// defn doubleCh(v) ^Channel@ (v * 2);
+// defn incCh(v) ^Channel@ (v + 1);
+
+// one := IO@ (defn(env) {
+// 	log("env.x: " + env.x);
+// 	def x: doubleCh(env.x);
+// 	^x ~< incCh;
+// });
+
+// two = one ~map incCh;
+
+// three = two ~< (v) {
+// 	IO@ (defn(env) {
+// 		log("v: " + v + ", env.x: " + env.x + ", env.y: " + env.y);
+// 		^Channel@ (v * env.x * env.y);
+// 	});
+// };
+
+// four = three ~< (v) {
+// 	Channel@ (IOof@ (v / 10));
+// };
+
+// four.run(< x: 5, y: 7 >);
+// // Promise{42}
+// // env.x: 5
+// // v: 12, env.x: 5, env.y: 7
+
+
+// // **********************************************
+
+// defn doublePullS(v) ^PullStream@ (v * 2);
+// defn incPullS(v) ^PullStream@ (v + 1);
+
+// one := IO@ (defn(env) {
+// 	log("env.x: " + env.x);
+// 	def x: doublePullS(env.x);
+// 	^x ~< incPullS;
+// });
+
+// two := one ~map incPullS;
+
+// three = two ~< (v) {
+// 	IO@ (defn(env) {
+// 		log("v: " + v + ", env.x: " + env.x + ", env.y: " + env.y);
+// 		^PullStream@ (v * env.x * env.y);
+// 	});
+// };
+
+// four = three ~< (v) {
+// 	PullStream@ (IOof@ (v / 10));
+// };
+
+// strm1 := four.run(< x: 5, y: 7 >);
+// // PullStream{}
+// // env.x: 5
+
+// strm1.pullInto(1);
+// // Right{1}
+// // v: 12, env.x: 5, env.y: 7
+
+// strm2 := strm1 ~map (v) {
+// 	log("v: " + v);
+// };
+// // PullStream{}
+
+// strm2.pullInto(1);
+// // Right{1}
+// // v: 42
+
+
+// // **********************************************
+
+// defn doublePushS(v) ^PushStream@ (v * 2);
+// defn incPushS(v) ^PushStream@ (v + 1);
+
+// one := IO@ (defn(env) {
+// 	log("env.x: " + env.x);
+// 	def x: doublePushS(env.x);
+// 	^x ~< incPushS;
+// });
+
+// two := one ~map incPushS;
+
+// three = two ~< (v) {
+// 	IO@ (defn(env) {
+// 		log("v: " + v + ", env.x: " + env.x + ", env.y: " + env.y);
+// 		^PushStream@ (v * env.x * env.y);
+// 	});
+// };
+
+// four = three ~< (v) {
+// 	PushStream@ (IOof@ (v / 10));
+// };
+
+// strm1 := four.run(< x: 5, y: 7 >);
+// // PushStream{}
+// // env.x: 5
+// // v: 12, env.x: 5, env.y: 7
+
+// strm2 := strm1 ~map (v) {
+// 	log("v: " + v);
+// };
+// // PushStream{}
+// // v: 42
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// defn getData(v) ^IO(defn(){
+// 	^Promise@ (v * 2);
+// });
+// defn identity(v) ^v;
+
+// def one: empty;
+// def strm1: empty;
+
+
+// // NOTE: this is the uglier non-do-syntax form, for comparison purposes:
+// one :=
+// 	IOof@ empty
+// 	~< defn() ^IO(identity)
+// 	~< (env) {
+// 		def x: env.x;
+// 		getData(env.x) ~< (something) {
+// 			def another: (something + 1) * 3;
+// 			getData(another) ~< (amazing) {
+// 				log(
+// 					"something: " + something +
+// 					", amazing: " + amazing
+// 				);
+// 				IOof@ (something + amazing);
+// 			};
+// 		};
+// 	};
+
+// one.run(< x: 3 >);
+// // Promise{48}
+// // something: 6, amazing: 42
+
+
+// // **********************************************
+
+// // NOTE: here's the nicer do-syntax form:
+// one := IO ~<< (env) {
+// 	def x: env.x;
+// 	def something:: getData(x);
+// 	def another: (something + 1) * 3;
+// 	def amazing:: getData(another);
+// 	log(
+// 		"something: " + something +
+// 		", amazing: " + amazing
+// 	);
+// 	(something + amazing);
+// };
+// // IO{}
+
+// one.run(< x: 3 >);
+// // Promise{48}
+// // something: 6, amazing: 42
+
+
+// // **********************************************
+
+// defn getSomeData(start,count) ^IO(defn(){
+// 	def subj: PushSubject@;
+// 	start..(start+count) ~each (v) {
+// 		subj.push(v * 10);
+// 	};
+// 	^subj.stream;
+// });
+
+// one := IO ~<< (env) {
+// 	def something:: getSomeData(1,env.x);
+// 	def amazing:: getSomeData(something * env.x, env.x - 1);
+// 	log(
+// 		"something: " + something +
+// 		", amazing: " + amazing
+// 	);
+// 	(something + amazing);
+// };
+// // IO{}
+
+// strm1 := one.run(< x: 3 >);
+// // PushStream{}
+// // something: 10, amazing: 300
+// // something: 10, amazing: 310
+// // something: 10, amazing: 320
+// // something: 11, amazing: 330
+// // something: 11, amazing: 340
+// // something: 11, amazing: 350
+// // something: 12, amazing: 360
+// // something: 12, amazing: 370
+// // something: 12, amazing: 380
+
+// strm1 ~map (v) {
+// 	log("v: " + v);
+// };
+// // v: 310
+// // v: 320
+// // v: 330
+// // v: 341
+// // v: 351
+// // v: 361
+// // v: 372
+// // v: 382
+// // v: 392
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// deft IOConstructor(Effect) ^IO;
+// deft Effect(any) ^any;
+// deft IO <
+// 	chain: Chain,
+// 	map: Map,
+// 	run: Run,
+// >;
+// deft IOUnitConstructor(Effect) ^IO;
+// deft IOofConstructor(any) ^IO;
+// deft Chain(ChainCB) ^IO;
+// deft ChainCB(any) ^IO;
+// deft Map(MapCB) ^IO;
+// deft MapCB(any) ^any;
+// deft Run(any) ^any;
+
+// defn{IOUnitConstructor} IO@(effect) {
+// 	^IO(effect);
+// };
+
+// defn{IOofConstructor} IOof@(v) {
+// 	^IO(defn(env) ^v);
+// };
+
+// defn normalizePromise(v)
+// 	![v ?as Promise]: Promise@ v
+// {
+// 	// for perf reasons, flatten nested
+// 	// promises synchronously (as possible)
+// 	?[v ?as Promise ?and v.resolved()] ~each {
+// 		v ~< (val) { v := val; };
+// 	};
+
+// 	^?{
+// 		// pending promise?
+// 		?[v ?as Promise]: (v ~< normalizePromise);
+
+// 		// make sure non-promise is typeLifted to
+// 		// a promise
+// 		?: Promise@ v
+// 	};
+// };
+
+// defn typeLabel(v) ^?(v){
+// 	?[?as PullStream]: "PullStream";
+// 	?[?as PushStream]: "PushStream";
+// 	?[?as Promise]: "Promise";
+// 	?: "Any"
+// };
+
+// defn typeLift(targetType)(v) {
+// 	def sourceIsStream: (v ?as PullStream ?or v ?as PushStream);
+// 	def sourceIsPromise: (v ?as Promise);
+// 	def sourceIsPrimitive: !(sourceIsStream ?or sourceIsPromise);
+// 	def tv: targetType("");
+// 	def targetIsStream: (tv ?as PullStream ?or tv ?as PushStream);
+// 	def targetIsPromise: (tv ?as Promise);
+// 	def bothSameStream: (
+// 		(v ?as PullStream ?and tv ?as PullStream) ?or
+// 		(v ?as PushStream ?and tv ?as PushStream)
+// 	);
+// 	def bothPromise: (sourceIsPromise ?and targetIsPromise);
+
+// 	// normalize any nested promise
+// 	?[sourceIsPromise]: { v := normalizePromise(v); };
+
+// 	^?{
+// 		// PullStream ^PullStream? PushStream ^PushStream?
+// 		?[bothSameStream]: v;
+
+// 		// Promise ^Promise?
+// 		?[bothPromise]: normalizePromise(v);
+
+// 		// Promise ^Stream? Stream ^Stream?
+// 		?[!sourceIsPrimitive ?and targetIsStream]: {
+// 			def subj: ?{
+// 				?[tv ?as PullStream]: PullSubject@;
+// 				?[tv ?as PushStream]: PushSubject@;
+// 			};
+// 			v ~map subj.push;
+// 			subj.stream;
+// 		}
+
+// 		// (primitive) ^Promise? (primitive) ^Stream?
+// 		?[
+// 			sourceIsPrimitive ?and
+// 			(targetIsStream ?or targetIsPromise)
+// 		]: targetType(v);
+
+// 		// type lifting not supported?
+// 		?: {
+// 			def sourceType: typeLabel(v);
+// 			def targetType: typeLabel(tv);
+// 			targetType(
+// 				Left@ (<
+// 					msg: \`"Invalid type lift (`sourceType` ^`targetType`) encountered in chain",
+// 					value: v
+// 				>)
+// 			);
+// 		}
+// 	};
+// };
+
+// defn{IOConstructor} IO(effect) {
+// 	def publicAPI: <
+// 		:chain,
+// 		:map,
+// 		:run,
+// 	>;
+// 	^publicAPI;
+
+// 	// **************************
+
+// 	defn{Chain} chain(fn) {
+// 		^IO@ defn(env) {
+// 			^effect(env) #> handle;
+
+// 			// **************************
+
+// 			defn handle(v) ^?(v){
+// 				?[?as PullStream]: {
+// 					v ~< (fn +> typeLift(PullStream@)) ~< (applyAsIO +> typeLift(PullStream@));
+// 				}
+// 				?[?as PushStream]: {
+// 					v ~< (fn +> typeLift(PushStream@)) ~< (applyAsIO +> typeLift(PushStream@));
+// 				}
+// 				?[?as Promise]: {
+// 					normalizePromise(v) ~< (fn +> typeLift(Promise@)) ~< (applyAsIO +> typeLift(Promise@));
+// 				}
+// 				?[?as Channel]: {
+// 					v.take() ~< (fn +> typeLift(Promise@)) ~< (applyAsIO +> typeLift(Promise@));
+// 				}
+// 				?: {
+// 					?(fn(v)){
+// 						?[?as PullStream]: # ~< (applyAsIO +> typeLift(PullStream@));
+// 						?[?as PushStream]: # ~< (applyAsIO +> typeLift(PushStream@));
+// 						?[?as Promise]: normalizePromise(#) ~< (applyAsIO +> typeLift(Promise@));
+// 						?[?as Channel]: #.take() ~< (applyAsIO +> typeLift(Promise@));
+// 						?: applyAsIO(#)
+// 					};
+// 				}
+// 			};
+
+// 			defn applyAsIO(value) ^?{
+// 				?[value ?as IO]: value.run(env);
+// 				?: Left@ < msg: "IO not produced by chain()", :value >
+// 			};
+// 		};
+// 	};
+
+// 	defn{Map} map(fn) {
+// 		^chain(fn +> IOof@);
+// 	};
+
+// 	defn{Run} run(env) {
+// 		^effect(env);
+// 	};
+// };

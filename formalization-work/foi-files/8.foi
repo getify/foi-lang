@@ -1,0 +1,7 @@
+defn{Foo} foo(x,y,z,w) ?[w ?>= 8]: empty :over(x) { console.log(x,y,z,w); };
+
+console.log(foo(1,...<2,3,4>));
+foo(1,,...<2,3,4>);
+
+def bar: foo|5,...<6,7>|;
+console.log(bar(8));

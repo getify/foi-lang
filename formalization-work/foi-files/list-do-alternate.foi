@@ -1,0 +1,99 @@
+defn List~<<(comp, typ) {
+	^?(typ){
+		[< List >]:          listBindImpl(comp, false);
+		[< List, Promise >]: listBindImpl(comp, true);
+		:                    Left@ "Invalid LHS"
+	};
+};
+
+defn listBindImpl(comp, transformPromise) {
+	def results: <>;
+	def sources: <>;
+	def coord: <>;
+	def curDepth: 0;
+	def firstPass: true;
+	def pending: empty;
+	def more: true;
+
+	defn runPass()
+		:over (curDepth, pending, sources, coord, results, firstPass)
+	{
+		def passP: empty;
+
+		curDepth := 0;
+		pending := empty;
+		passP := Effect.Do ~<* (eff:: comp(), ret) {
+			:: ?(eff){
+				[?as Effect.Do.Bind]: {
+					def d: curDepth;
+					curDepth := curDepth + 1;
+					?{
+						[firstPass]: ?{
+							[transformPromise]: {
+								#.value ~< (rawList) {
+									sources := < &sources, rawList >;
+									coord := < &coord, 0 >;
+									ret(rawList[0]);
+									Promise.honor@ empty;
+								};
+							};
+							: {
+								sources := < &sources, #.value >;
+								coord := < &coord, 0 >;
+								ret(#.value[0]);
+								empty;
+							}
+						};
+						: {
+							ret(sources[d][coord[d]]);
+							empty;
+						}
+					};
+				};
+				[?as Effect.Do.Map]: {
+					pending := < #.value >;
+					Done@ empty;
+				};
+				[?as Effect.Do.Return]: {
+					pending := #.value;
+					Done@ empty;
+				};
+			};
+		};
+
+		^passP ~< {
+			results := < &results, &pending >;
+			firstPass := false;
+			advance();
+			?{
+				[more]: runPass();
+				: Promise.honor@ results;
+			};
+		};
+	};
+
+	defn advance() :over (coord, more) {
+		def d: size(coord) - 1;
+		def carrying: true;
+		?[carrying ?and d ?>= 0] ~each {
+			def nextI: coord[d] + 1;
+			?{
+				[nextI ?< size(sources[d])]: {
+					coord := replaceAt(coord, d, nextI);
+					carrying := false;
+				};
+				: {
+					coord := replaceAt(coord, d, 0);
+					d := d - 1;
+				};
+			};
+		};
+		?[carrying]: more := false;
+	};
+
+	defn replaceAt(list, idx, val) {
+		^< &list, %idx: val >;
+	};
+
+	^runPass();
+};

@@ -1,0 +1,25 @@
+def k: "alpha";
+def n: 7;
+def rec: < a: 1, b: 2, c: 3 >;
+def keys: < "x", "y", "z" >;
+
+def result: <
+	%k: "ident",
+	%"literal": "str",
+	%3.14: "float",
+	%42: "int",
+	%-5: "neg",
+	%\hFF: "hex",
+	%\o17: "oct",
+	%\b1010: "bin",
+	%\5_000: "sep",
+	%true: "t",
+	%false: "f",
+	%rec.a: "access",
+	%keys[0]: "bracket",
+	%("p_" + k): "concat",
+	%(n * 2): "arith",
+	%(4.5): "paren-float"
+>;
+
+console.log(result);

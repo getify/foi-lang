@@ -1,0 +1,279 @@
+// ============================================================
+// State2 (deferred state-threading computation)
+//   Slot holds < :id, :changer >.
+//
+//   Chain depth: a bind/map chain of length N nests N native
+//   `state.changer(s)` calls at %-time. Composition steps reify
+//   as ContinuationTrampoline pairs; `State2%` drives the bounce
+//   via contRamp. Public API and the < value, newState2 > shape
+//   are unchanged.
+// ============================================================
+
+deft State2T({(Any) ^<Any, Any>})
+	:Effects(Host.Slot.Write, Host.Counter)
+	^State2;
+defn{State2T} State2@(changer) {
+	def inst: <>;
+	def id: Effect.Host.Counter%;
+	Effect.Host.Slot.Write% <inst, <:id, :changer>>;
+	^inst
+};
+
+// -- Binary `%`: apply initial state, run the computation --
+//    This is the outermost boundary by construction: stdlib
+//    machinery below invokes `.changer` directly, never via `%`.
+
+deft State2EffectorT(State2, Any)
+	:Effects(Host.Slot.Read)
+	^<Any, Any>;
+defn{State2EffectorT} State2%(inst, initState2) {
+	def state: Effect.Host.Slot.Read% inst;
+	^contRamp(state.changer(initState2));
+};
+
+// -- Bind: sequence two State2 computations, threading state through --
+
+deft State2BindT(State2, {(Any) ^State2})
+	:Effects(Host.Slot.Read)
+	^State2;
+defn{State2BindT} State2~<(inst, fn) {
+	def state: Effect.Host.Slot.Read% inst;
+	deft BindRCont(< Any, Any >)
+		:Effects(Host.Slot.Read)
+		^Any;
+	^State2@ defn(s) {
+		^ContinuationTrampoline@ <
+			(defn() ^state.changer(s)),
+			(defn{BindRCont}(pair) {
+				def <v, s2>: pair;
+				def nextState2: Effect.Host.Slot.Read% fn(v);
+				^nextState2.changer(s2);
+			})
+		>;
+	};
+};
+
+// -- Map: transform the observed value; state passes through unchanged --
+
+deft State2MapT(State2, {(Any) ^Any})
+	:Effects(Host.Slot.Read)
+	^State2;
+defn{State2MapT} State2~map(inst, fn) {
+	def state: Effect.Host.Slot.Read% inst;
+	^State2@ defn(s) {
+		^ContinuationTrampoline@ <
+			(defn() ^state.changer(s)),
+			(defn(pair) {
+				def <v, s2>: pair;
+				^<fn(v), s2>;
+			})
+		>;
+	};
+};
+
+// -- Reference identity via minted id --
+
+deft State2EqT(State2, State2)
+	:Effects(Host.Slot.Read)
+	^bool;
+defn{State2EqT} State2?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+);
+
+// ============================================================
+// Named State2 constructors (§6.7.3)
+//   Base changers return plain tuples — nothing to reify.
+// ============================================================
+
+deft State2GetT() ^State2;
+defn{State2GetT} State2.get@()
+	^State2@ defn(s) ^<s, s>;
+
+deft State2GetsT({(Any) ^Any}) ^State2;
+defn{State2GetsT} State2.gets@(fn)
+	^State2@ defn(s) ^<fn(s), s>;
+
+deft State2OfT(Any) ^State2;
+defn{State2OfT} State2.of@(v)
+	^State2@ defn(s) ^<v, s>;
+
+deft State2PutT(Any) ^State2;
+defn{State2PutT} State2.put@(newState2)
+	^State2@ defn(s) ^<empty, newState2>;
+
+deft State2ModifyT({(Any) ^Any}) ^State2;
+defn{State2ModifyT} State2.modify@(fn)
+	^State2@ defn(s) ^<empty, fn(s)>;
+
+
+
+
+
+// // Sample Usage:
+
+// defn getID(type) ^State2@ (defn(st){
+// 	def typeCount: (?{
+// 		[?empty st[type]] : 0;
+// 		: st[type]
+// 	});
+// 	def newState2: < &st, %type: typeCount + 1 >;
+// 	def id: `"`type`-`newState2[type]`";
+// 	^< id, newState2 >;
+// });
+
+// defn newRecord(type,name)(records) ^(
+// 	getID(type) ~map (id) { < &records, < :id, :name > > }
+// );
+
+// ((State2.of@ <>)
+// 	~< newRecord("author","Kyle")
+// 	~< newRecord("reader","Frank")
+// 	~< newRecord("author","Sarah")
+// 	~< newRecord("reader","Bob")
+// 	~< newRecord("reader","Beth"))
+// % <>;
+// // <
+// // 	<
+// // 		< id: "author-1", name: "Kyle" >,
+// // 		< id: "reader-1", name: "Frank" >,
+// // 		< id: "author-2", name: "Sarah" >,
+// // 		< id: "reader-2", name: "Bob" >,
+// // 		< id: "reader-3", name: "Beth" >
+// // 	>,
+// // 	< author: 2, reader: 3>
+// // >
+
+
+
+// defn makeTodoRecord(newTodoText)(todoID) ^<
+// 	id: todoID,
+// 	todo: newTodoText,
+// 	complete: false
+// >;
+
+// def nextTodoID: State2@ (defn(st){
+// 	def todoCounter: (?{
+// 		[?empty st.todoCounter]: 0;
+// 		: st.todoCounter
+// 	}) + 1;
+// 	^< todoCounter, < &st, :todoCounter > >;
+// });
+
+// defn appendTodoRecord(newTodoRecord) ^State2.modify@ (defn(st) ^<
+// 	&st,
+// 	todos: < &st.todos, newTodoRecord >
+// >);
+
+// defn createTodo(newTodoText) {
+// 	def task: State2 ~<< {
+// 		def todoID:: nextTodoID;
+// 		def todoRecord: makeTodoRecord(newTodoText)(todoID);
+// 		$appendTodoRecord(todoRecord);
+// 	};
+
+// 	^(task% <>);
+// };
+
+// createTodo("Mow the lawn");
+// // <
+// // 	empty,
+// // 	<
+// // 		todoCounter: 1,
+// // 		todos: <
+// // 			< id: 1, todo: "Mow the lawn", complete: false >
+// // 		>
+// // 	>
+// // >
+
+
+
+
+
+// ****************************************************
+// ************* PRE-CONT-TRAMPOLINE ******************
+// ****************************************************
+
+// // ============================================================
+// // State2 (deferred state-threading computation)
+// //   Slot holds < :id, :changer >.
+// // ============================================================
+
+// deft State2T({(Any) ^<Any, Any>})
+// 	:Effects(Host.Slot.Write, Host.Counter)
+// 	^State2;
+// defn{State2T} State2@(changer) {
+// 	def inst: <>;
+// 	def id: Effect.Host.Counter%;
+// 	Effect.Host.Slot.Write% <inst, <:id, :changer>>;
+// 	^inst
+// };
+
+// // -- Binary `%`: apply initial state, run the computation --
+
+// deft State2EffectorT(State2, Any)
+// 	:Effects(Host.Slot.Read)
+// 	^<Any, Any>;
+// defn{State2EffectorT} State2%(inst, initState2) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^state.changer(initState2);
+// };
+
+// // -- Bind: sequence two State2 computations, threading state through --
+
+// deft State2BindT(State2, {(Any) ^State2})
+// 	:Effects(Host.Slot.Read)
+// 	^State2;
+// defn{State2BindT} State2~<(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^State2@ defn(s) {
+// 		def <v, s2>: state.changer(s);
+// 		def nextState2: Effect.Host.Slot.Read% fn(v);
+// 		^nextState2.changer(s2);
+// 	};
+// };
+
+// // -- Map: transform the observed value; state passes through unchanged --
+
+// deft State2MapT(State2, {(Any) ^Any})
+// 	:Effects(Host.Slot.Read)
+// 	^State2;
+// defn{State2MapT} State2~map(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^State2@ defn(s) {
+// 		def <v, s2>: state.changer(s);
+// 		^<fn(v), s2>;
+// 	};
+// };
+
+// // -- Reference identity via minted id --
+
+// deft State2EqT(State2, State2)
+// 	:Effects(Host.Slot.Read)
+// 	^bool;
+// defn{State2EqT} State2?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id;
+// );
+
+// // ============================================================
+// // Named State2 constructors (§6.7.3)
+// // ============================================================
+
+// deft State2GetT() ^State2;
+// defn{State2GetT} State2.get@()
+// 	^State2@ defn(s) ^<s, s>;
+
+// deft State2GetsT({(Any) ^Any}) ^State2;
+// defn{State2GetsT} State2.gets@(fn)
+// 	^State2@ defn(s) ^<fn(s), s>;
+
+// deft State2OfT(Any) ^State2;
+// defn{State2OfT} State2.of@(v)
+// 	^State2@ defn(s) ^<v, s>;
+
+// deft State2PutT(Any) ^State2;
+// defn{State2PutT} State2.put@(newState2)
+// 	^State2@ defn(s) ^<empty, newState2>;
+
+// deft State2ModifyT({(Any) ^Any}) ^State2;
+// defn{State2ModifyT} State2.modify@(fn)
+// 	^State2@ defn(s) ^<empty, fn(s)>;

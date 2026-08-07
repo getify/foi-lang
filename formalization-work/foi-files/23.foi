@@ -1,0 +1,31 @@
+// Number forms in interpolation slots.
+def posInt:    `"pos-int: `42`";
+def negInt:    `"neg-int: `-5`";
+def dec:       `"dec: `3.14`";
+def negDec:    `"neg-dec: `-2.5`";
+def hex:       `"hex: `\hFF`";
+def hexNeg:    `"hex-neg: `\h-1A`";
+def octal:     `"oct: `\o755`";
+def binary:    `"bin: `\b1100`";
+def sepSigned: `"sep-signed: `\-1_000`";
+def sepDec:    `"sep-dec: `\100_000.25`";
+def sepUnsig:  `"sep-unsigned: `\5_000`";
+
+// UnicodeCharLit — BMP and supplementary plane.
+def bmp:       `"smiley: `\u263A`";
+def supp:      `"grin: `\u1F600`";
+
+// Other Expr arms in interpolation slot.
+def sumExpr:   `"sum: `2 + 3`";
+def boolExpr:  `"bool: `true`";
+def emptyExpr: `"emp: `empty`";
+
+// Multi-slot mixing.
+def combined:  `"compound `42` then `\u263A` then `2 + 3`!";
+
+console.log(
+	posInt, negInt, dec, negDec, hex, hexNeg,
+	octal, binary, sepSigned, sepDec, sepUnsig,
+	bmp, supp, sumExpr, boolExpr, emptyExpr,
+	combined
+);

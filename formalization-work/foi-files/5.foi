@@ -1,0 +1,21 @@
+def data: < x: 100, y: 200 >;
+
+def ( < :x > : data ) { x; };
+def ( < X: x, :y > : data ) { X; y; };
+// // not supported yet:
+// x ~map { y; };
+// x ~map (y) { y; };
+// x ~map ( < :y > ) { y; };
+defn foo( x ) #> { x; };
+defn foo( x ) #> { x + #; };
+defn foo( x ) #> ( < :x > ) { x + #; };
+defn foo( x ) #> (x:? 3) { x + #; };
+defn foo( x ) #> (< :x >) { x + #; };
+defn foo( x ) #> (< :x >:? src) { x + #; };
+defn foo( x ) #> { x + #; } #> { #; };
+data #> (x) { x; };
+data #> (x) { x + #; };
+data #> (x:? 3) { x + #; };
+data #> ( < :x > ) { x + #; };
+data #> ( < :x >:? src ) { x + #; };
+data #> ( < :x >:? src ) { x + #; } #> { #; };

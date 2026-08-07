@@ -1,0 +1,14 @@
+def inc: (+)|1|;
+def triple: (*)|3|;
+def half: (/')|2|;
+
+def compute1a: inc +> triple +> half;
+def compute1b: half <+ triple <+ inc;
+def compute2a: (+>)(inc, triple, half);
+def compute2b: (<+)(half, triple, inc);
+
+console.log(compute1a(5),compute1b(5));
+console.log(compute2a(5),compute2b(5));
+
+def fns: < inc, triple, half >;
+console.log((+>)(...fns)(5),(<+')(...fns)(5));

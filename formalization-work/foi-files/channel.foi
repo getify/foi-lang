@@ -1,0 +1,1029 @@
+deft ChannelPutT(Any)
+	:Effects(Host.Slot)
+	^Promise;
+deft ChannelTakeT()
+	:Effects(Host.Slot)
+	^Promise;
+deft ChannelPeekT()
+	:Effects(Host.Slot)
+	^Promise;
+deft ChannelCloseT()
+	:Effects(Host.Slot)
+	^Either;
+
+deft ChannelT(?int)
+	:Effects(Host.Slot.Write, Host.Counter)
+	^Channel;
+defn{ChannelT} Channel@(cap :? 0)
+	![cap ?as int ?and cap ?>= 0]: Left@ "Invalid buffer capacity"
+{
+	def id: Effect.Host.Counter%;
+	def inst:
+		put: putFn,
+		take: takeFn,
+		peek: peekFn,
+		close: closeFn
+	>;
+
+	Effect.Host.Slot.Write% < inst,
+		:id,
+		closed: false,
+		capacity: cap,
+		buffer: <>,
+		putQueue: <>,
+		takeQueue: <>,
+		peekWaiters: <>
+	>>;
+
+	^inst;
+
+	// ***********************
+
+	defn{ChannelPutT} putFn(v) {
+		def state: Effect.Host.Slot.Read% inst;
+
+		^?{
+			[state.closed]:
+				Promise.renege@ "Channel Closed";
+
+			[size(state.takeQueue) ?> 0]: {
+				def takeSubj: state.takeQueue.0;
+				def restTakes: state.takeQueue.[1..];
+				Effect.Host.Slot.Write% < inst, < &state, takeQueue: restTakes >>;
+				takeSubj% (Right@ v);
+				drainPeeks(v);
+				Promise.honor@ true
+			};
+
+			[size(state.buffer) ?< state.capacity]: {
+				Effect.Host.Slot.Write% < inst, < &state, buffer: <[ &state.buffer, v ]>> >;
+				drainPeeks(v);
+				Promise.honor@ true
+			};
+
+			: {
+				def subj: Promise.subj@;
+				Effect.Host.Slot.Write% < inst, < &state, putQueue: <[ &state.putQueue, < :subj, value: v > ]>> >;
+				drainPeeks(v);
+				subj.pr
+			}
+		};
+	};
+
+	defn{ChannelTakeT} takeFn() {
+		def state: Effect.Host.Slot.Read% inst;
+
+		^?{
+			[size(state.buffer) ?> 0]: {
+				def headV: state.buffer.0;
+				def restBuf: state.buffer.[1..];
+				?{
+					[size(state.putQueue) ?> 0]: {
+						def putEntry: state.putQueue.0;
+						Effect.Host.Slot.Write% < inst, < &state,
+							buffer: <[ &restBuf, putEntry.value ]>,
+							putQueue: state.putQueue.[1..]
+						>>;
+						putEntry.subj% (Right@ true);
+					};
+					: Effect.Host.Slot.Write% < inst, < &state, buffer: restBuf >>;
+				};
+				Promise.honor@ headV;
+			};
+
+			[size(state.putQueue) ?> 0]: {
+				def putEntry: state.putQueue.0;
+				def restPuts: state.putQueue.[1..];
+				Effect.Host.Slot.Write% < inst, < &state, putQueue: restPuts >>;
+				putEntry.subj% (Right@ true);
+				Promise.honor@ putEntry.value;
+			};
+
+			[state.closed]:
+				Promise.renege@ "Channel Closed";
+
+			: {
+				def subj: Promise.subj@;
+				Effect.Host.Slot.Write% < inst, < &state, takeQueue: <[ &state.takeQueue, subj ]>> >;
+				subj.pr;
+			}
+		};
+	};
+
+	defn{ChannelPeekT} peekFn() {
+		def state: Effect.Host.Slot.Read% inst;
+
+		^?{
+			[size(state.buffer) ?> 0]:
+				Promise.honor@ state.buffer.0;
+
+			[size(state.putQueue) ?> 0]:
+				Promise.honor@ state.putQueue.0.value;
+
+			[state.closed]:
+				Promise.renege@ "Channel Closed";
+
+			: {
+				def subj: Promise.subj@;
+				Effect.Host.Slot.Write% < inst, < &state, peekWaiters: <[ &state.peekWaiters, subj ]>> >;
+				subj.pr;
+			}
+		};
+	};
+
+	defn{ChannelCloseT} closeFn() {
+		def state: Effect.Host.Slot.Read% inst;
+
+		^?{
+			[state.closed]:
+				Left@ "Channel Closed";
+
+			: {
+				Effect.Host.Slot.Write% < inst, < &state, closed: true, putQueue: <>, takeQueue: <>, peekWaiters: <>> >;
+
+				state.putQueue ~each (entry) {
+					entry.subj% (Left@ "Channel Closed");
+				};
+
+				state.takeQueue ~each (subj) {
+					subj% (Left@ "Channel Closed");
+				};
+
+				?[size(state.buffer) ?= 0]: {
+					state.peekWaiters ~each (subj) {
+						subj% (Left@ "Channel Closed");
+					};
+				};
+
+				Right@ true;
+			}
+		};
+	};
+
+	// internal helper
+	deft drainPeeksT(Any)
+		:Effects(Host.Slot)
+		^empty;
+	defn{drainPeeksT} drainPeeks(v) {
+		def state: Effect.Host.Slot.Read% inst;
+		def waiters: state.peekWaiters;
+		Effect.Host.Slot.Write% < inst, < &state, peekWaiters: <>> >;
+		waiters ~each (subj) {
+			subj% (Right@ v);
+		};
+	};
+};
+
+deft ChannelEqT(Channel, Channel)
+	:Effects(Effect.Host.Slot.Read) ^bool;
+defn{ChannelEqT} Channel?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+);
+
+deft ChannelDoT({(Any)^Any}, Any) ^Promise;
+defn{ChannelDoT} Channel~<*(comp, ty) {
+	^Effect.Host.Do ~<* (eff:: comp, ret) {
+		?(eff){
+			[?as Effect.Host.Do.Bind]: {
+				def ch: #.value;
+				def loopResult: Promise.subj@;
+
+				defn stepIteration() ^ContinuationTrampoline@ < takeOnce >;
+
+				defn takeOnce() {
+					def inline: true;
+					def next: empty;
+					(~cata)(ch.take(), closeArm, valueArm);
+					inline := false;
+					^next;
+
+					// ***********************
+
+					defn valueArm(v) :over (next) {
+						Effect.Host.Do ~<* (eff2:: ret(v), ret2) {
+							?(eff2){
+								[?as Effect.Host.Do.Bind]: Done@ empty;
+								[?as Effect.Host.Do.Map]: Done@ #.value;
+							}
+						};
+						^?{
+							[inline]: next := stepIteration();
+							: contRamp(stepIteration())
+						};
+					};
+
+					defn closeArm(reason) ^loopResult% (Left@ reason);
+				};
+
+				contRamp(stepIteration());
+				Done@ loopResult.pr;
+			};
+
+			[?as Effect.Host.Do.Map]: {
+				// Terminal reached with no v:: ch bind at all —
+				// no channel iteration ever happened.
+				Done@ (Promise.honor@ #.value);
+			};
+		};
+	};
+};
+
+
+
+
+// // Sample Usage:
+
+// def ch: Channel@;
+
+// def consumer: Channel ~<* (v:: ch) {
+//     log(`"Got: `v`");
+// };
+
+// consumer;        // Promise{..pending..}
+
+// // producer side (elsewhere)
+// ch.put(1);       // Got: 1
+// ch.put(2);       // Got: 2
+// ch.close();      // consumer terminates
+
+// consumer;        // Promise{Left{"Channel Closed"}}
+
+
+// def ch: Channel@;
+
+// def pipeline: Promise ~<< {
+//     log("consumer starting");
+//     $Channel ~<* (v:: ch) {
+//         log(`"processing: `v`");
+//     };
+//     log("never gets here (promise short-circuting)");
+// };
+// // consumer starting
+
+// // producer
+// ch.put(10);      // processing: 10
+// ch.put(20);      // processing: 20
+// ch.close();
+
+
+
+// def upstream: Channel@;
+// def downstream: Channel@;
+
+// def relay: Channel ~<* (v:: upstream) {
+//     $downstream.put(v);
+// };
+
+// // producer
+// upstream.put(42);    // (relays through to downstream)
+// upstream.close();    // relay terminates
+
+// // consumer
+// downstream.take();   // Promise{Right{42}}
+
+
+
+
+
+// *********************************************
+// ************ PRE-CONT-TRAMPOLINE ************
+// *********************************************
+
+// deft ChannelPutT(Any)
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// deft ChannelTakeT()
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// deft ChannelPeekT()
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// deft ChannelCloseT()
+// 	:Effects(Host.Slot)
+// 	^Either;
+
+// deft ChannelT(?int) ^Channel;
+// defn{ChannelT} Channel@(cap :? 0)
+// 	![cap ?as int ?and cap ?>= 0]: Left@ "Invalid buffer capacity"
+// {
+// 	def id: Effect.Host.Counter%;
+// 	def inst: <
+// 		put: putFn,
+// 		take: takeFn,
+// 		peek: peekFn,
+// 		close: closeFn
+// 	>;
+
+// 	Effect.Host.Slot.Write% < inst, <
+// 		:id,
+// 		closed: false,
+// 		capacity: cap,
+// 		buffer: <>,
+// 		putQueue: <>,
+// 		takeQueue: <>,
+// 		peekWaiters: <>
+// 	>>;
+
+// 	^inst;
+
+// 	// ***********************
+
+// 	defn{ChannelPutT} putFn(v) {
+// 		def state: Effect.Host.Slot.Read% inst;
+
+// 		^?{
+// 			[state.closed]:
+// 				Promise.renege@ "Channel Closed";
+
+// 			[size(state.takeQueue) ?> 0]: {
+// 				def takeSubj: state.takeQueue.0;
+// 				def restTakes: state.takeQueue.[1..];
+// 				Effect.Host.Slot.Write% < inst, < &state, takeQueue: restTakes >>;
+// 				takeSubj% (Right@ v);
+// 				drainPeeks(v);
+// 				Promise.honor@ true;
+// 			};
+
+// 			[size(state.buffer) ?< state.capacity]: {
+// 				Effect.Host.Slot.Write% < inst, < &state, buffer: <[ &state.buffer, v ]>> >;
+// 				drainPeeks(v);
+// 				Promise.honor@ true;
+// 			};
+
+// 			: {
+// 				def subj: Promise.subj@;
+// 				Effect.Host.Slot.Write% < inst, < &state, putQueue: <[ &state.putQueue, < :subj, value: v > ]>> >;
+// 				drainPeeks(v);
+// 				subj.pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{ChannelTakeT} takeFn() {
+// 		def state: Effect.Host.Slot.Read% inst;
+
+// 		^?{
+// 			[size(state.buffer) ?> 0]: {
+// 				def headV: state.buffer.0;
+// 				def restBuf: state.buffer.[1..];
+// 				?{
+// 					[size(state.putQueue) ?> 0]: {
+// 						def putEntry: state.putQueue.0;
+// 						Effect.Host.Slot.Write% < inst, < &state,
+// 							buffer: <[ &restBuf, putEntry.value ]>,
+// 							putQueue: state.putQueue.[1..]
+// 						>>;
+// 						putEntry.subj% (Right@ true);
+// 					};
+// 					: Effect.Host.Slot.Write% < inst, < &state, buffer: restBuf >>;
+// 				};
+// 				Promise.honor@ headV;
+// 			};
+
+// 			[size(state.putQueue) ?> 0]: {
+// 				def putEntry: state.putQueue.0;
+// 				def restPuts: state.putQueue.[1..];
+// 				Effect.Host.Slot.Write% < inst, < &state, putQueue: restPuts >>;
+// 				putEntry.subj% (Right@ true);
+// 				Promise.honor@ putEntry.value;
+// 			};
+
+// 			[state.closed]:
+// 				Promise.renege@ "Channel Closed";
+
+// 			: {
+// 				def subj: Promise.subj@;
+// 				Effect.Host.Slot.Write% < inst, < &state, takeQueue: <[ &state.takeQueue, subj ]>> >;
+// 				subj.pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{ChannelPeekT} peekFn() {
+// 		def state: Effect.Host.Slot.Read% inst;
+
+// 		^?{
+// 			[size(state.buffer) ?> 0]:
+// 				Promise.honor@ state.buffer.0;
+
+// 			[size(state.putQueue) ?> 0]:
+// 				Promise.honor@ state.putQueue.0.value;
+
+// 			[state.closed]:
+// 				Promise.renege@ "Channel Closed";
+
+// 			: {
+// 				def subj: Promise.subj@;
+// 				Effect.Host.Slot.Write% < inst, < &state, peekWaiters: <[ &state.peekWaiters, subj ]>> >;
+// 				subj.pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{ChannelCloseT} closeFn() {
+// 		def state: Effect.Host.Slot.Read% inst;
+
+// 		^?{
+// 			[state.closed]:
+// 				Left@ "Channel Closed";
+
+// 			: {
+// 				Effect.Host.Slot.Write% < inst, < &state, closed: true, putQueue: <>, takeQueue: <>, peekWaiters: <>> >;
+
+// 				state.putQueue ~each (entry) {
+// 					entry.subj% (Left@ "Channel Closed");
+// 				};
+
+// 				state.takeQueue ~each (subj) {
+// 					subj% (Left@ "Channel Closed");
+// 				};
+
+// 				?[size(state.buffer) ?= 0]: {
+// 					state.peekWaiters ~each (subj) {
+// 						subj% (Left@ "Channel Closed");
+// 					};
+// 				};
+
+// 				Right@ true;
+// 			}
+// 		};
+// 	};
+
+// 	// internal helper
+// 	deft drainPeeksT(Any)
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn drainPeeks(v) {
+// 		def state: Effect.Host.Slot.Read% inst;
+// 		def waiters: state.peekWaiters;
+// 		Effect.Host.Slot.Write% < inst, < &state, peekWaiters: <>> >;
+// 		waiters ~each (subj) {
+// 			subj% (Right@ v);
+// 		};
+// 	};
+// };
+
+// deft ChannelEqT(Channel, Channel)
+// 	:Effects(Effect.Host.Slot.Read) ^bool;
+// defn{ChannelEqT} Channel?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+// );
+
+// deft ChannelDoT({(Any)^Any}, Any) ^Promise;
+// defn{ChannelDoT} Channel~<*(comp, ty) {
+// 	^Effect.Host.Do ~<* (eff:: comp, ret) {
+// 		?(eff){
+// 			[?as Effect.Host.Do.Bind]: {
+// 				def ch: #.value;
+// 				def loopResult: Promise.subj@;
+
+// 				defn stepIteration() {
+// 					(~cata)(
+// 						ch.take(),
+// 						defn(v) {
+// 							// Right: drive comp's body with the taken value,
+// 							// let it run through its Map perform in a sub-scope,
+// 							// then loop for the next emission.
+// 							Effect.Host.Do ~<* (eff2:: ret(v), ret2) {
+// 								?(eff2){
+// 									[?as Effect.Host.Do.Bind]: Done@ empty;
+// 									[?as Effect.Host.Do.Map]: Done@ #.value;
+// 								}
+// 							};
+// 							^stepIteration();
+// 						},
+// 						defn(reason) {
+// 							// Left: channel closed — resolve outer Promise.
+// 							^loopResult% (Left@ reason);
+// 						}
+// 					);
+// 				};
+
+// 				stepIteration();
+// 				Done@ loopResult.pr;
+// 			};
+
+// 			[?as Effect.Host.Do.Map]: {
+// 				// Terminal reached with no v:: ch bind at all —
+// 				// no channel iteration ever happened.
+// 				Done@ (Promise.honor@ #.value);
+// 			};
+// 		};
+// 	};
+// };
+
+
+
+
+// *********************************************
+// ******* OLD SKETCH **************************
+// *********************************************
+
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// def one: Channel@ empty;
+// def onePr: one.take();
+// // Promise{..pending..}
+// def two: Channel@ empty;
+// def three: empty;
+// defn printEV(ev) {
+// 	(| ~cata
+// 		ev,
+// 		log,
+// 		(v) { log("Value: " + v); }
+// 	|);
+// };
+
+// onePr ~map printEV;
+// // Promise{..pending..}
+
+// one.put(42);
+// // Promise{Right{42}}
+// // Value: 42
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// one.put(10);
+// // Promise{..pending..}
+
+// one.take() ~map (printEV +> @@"ok");
+// // Promise{"ok"}
+// // Value: 10
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// one.peek() ~map printEV;
+// // Promise{..pending..}
+
+// onePr := one.put(9);
+// // Promise{..pending..}
+// // Value: 9    (from peek())
+
+// onePr.resolved();
+// // false
+
+// one.take() ~map printEV;
+// // Promise{empty}
+// // Value: 9    (from take())
+
+// onePr.resolved();
+// // true
+
+// // **********************************************
+
+// one := Channel(///bufferSize:/// 3);
+
+// 1..4 ~each (v) {
+// 	def pr: one.put(v);
+// 	log(pr);
+// };
+// // Promise{Right{1}}
+// // Promise{Right{2}}
+// // Promise{Right{3}}
+// // Promise{..pending..}
+
+// one.take() ~map printEV;
+// // Promise{empty}
+// // Value: 1
+
+// one.take() ~map printEV;
+// // Promise{empty}
+// // Value: 2
+
+// one.take() ~map printEV;
+// // Promise{empty}
+// // Value: 3
+
+// one.take() ~map printEV;
+// // Promise{empty}
+// // Value: 4
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// 1..4 ~each (v) {
+// 	def pr: one.put(v);
+// 	log(pr);
+// };
+// // Promise{..pending..}
+// // Promise{..pending..}
+// // Promise{..pending..}
+// // Promise{..pending..}
+
+// drain(one);
+// // Promise{< Right{1}, Right{2}, Right{3}, Right{4} >}
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+// two := Channel@ empty;
+
+// three := alts(one,two);
+// // Promise{..pending..}
+
+// three ~map printEV;
+// // (nothing)
+
+// one.put(5);
+// // Value: 5
+
+// two.put(7);
+
+// three := alts(one,two);
+// // Promise{Right{7}}
+
+// three ~map printEV;
+// // Value: 7
+
+// one.put(11);
+// two.put(12);
+
+// three := alts(one,two);
+// // Promise{Right{11}}
+
+// three := alts(one,two);
+// // Promise{Right{12}}
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// three := one.toPullStream();
+// // PullStream
+
+// three ~map printEV;
+// // PullStream
+
+// one.put(15);
+// // (nothing)
+
+// three.pullInto(1);
+// // Right{1}
+// // Value: 15
+
+// three.pullInto(2);
+// // Left{2}
+
+// one.put(20);
+// // Value: 20
+
+// one.put(21);
+// // Value: 21
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// three := one.toPushStream();
+// // PushStream
+
+// three ~map printEV;
+// // PushStream
+
+// one.put(30);
+// // Value: 30
+
+// one.put(40);
+// // Value: 40
+
+
+// // **********************************************
+
+// one := Channel@ empty;
+
+// one.put(50) ~map printEV;
+// // Promise{..pending..}
+// one.put(51) ~map printEV;
+// // Promise{..pending..}
+// one.put(52) ~map printEV;
+// // Promise{..pending..}
+
+// one.take();
+// // Promise{Right{50}}
+// // Value: 50
+
+// one.close();
+// // Right@true
+// // Channel closed before put allowed   (from put(51))
+// // Channel closed before put allowed   (from put(52))
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// // type definitions
+// deft ChannelConstructor(?int) ^Channel;
+// deft Channel <
+// 	put: Post,
+// 	take: Take,
+// 	peek: Peek,
+// 	close: Close,
+// 	toPullStream: ToPullStream,
+// 	toPushStream: ToPushStream,
+// >;
+// deft Post(any) ^Promise{Either};
+// deft Take() ^Promise{Either};
+// deft Peek() ^Promise{Either};
+// deft Close() ^Either;
+// deft ToPullStream() ^PullStream;
+// deft ToPushStream() ^PushStream;
+// deft ChannelUnitConstructor(any) ^Channel;
+// deft Drain(Channel) ^Promise{List};
+// deft Alts(List{Channel}) ^Promise{Either};
+// deft Every(List{Channel}) ^Promise{Either};
+
+
+// // module-local variables
+
+
+// // module-local functions
+// defn{Drain} drain(ch) {
+// 	// collect only the already-resolved
+// 	// promises from channel
+
+// 	def prList: <>;
+// 	def keepDraining: true;
+
+// 	?[keepDraining] ~each {
+// 		def next: ch.peek();
+// 		?{
+// 			?[next.resolved()]: {
+// 				// set next element via the
+// 				// `prList` def-block
+// 				def pr: ch.take() ~map (ev) {
+// 					(| ~cata ev, List@, List@ |);
+// 				};
+// 				prList := < &prList, pr >;
+// 			}
+// 			?: {
+// 				keepDraining := false;
+// 			}
+// 		};
+// 	};
+
+// 	// monoid-traverse (i.e, transpose List<Promise<List>>
+// 	// to Promise<List>)
+// 	^(| ~cata prList, Promise@ <>, + |);
+// };
+
+// defn{Alts} alts(channels) {
+// 	def subj: PromiseSubject@;
+// 	channels ~each (channel) {
+// 		channel.peek() ~map (ev) {
+// 			?[ev ?as Right ?and !subj.pr.resolved()]: {
+// 				channel.take() ~map (value) {
+// 					subj.resolve(< :value, :channel >);
+// 				};
+// 			};
+// 		};
+// 	};
+// 	^subj.pr;
+// };
+
+// defn{Every} every(channels) {
+// 	def subj: PromiseSubject@;
+// 	def chResCount: 0;
+// 	subscribeChannels();
+// 	^sub.pr;
+
+// 	// ***************************
+
+// 	defn subscribeChannels() :over (chResCount) {
+// 		chResCount := 0;
+// 		channels ~each (channel) {
+// 			channel.peek() ~map (value) {
+// 				chResCount := chResCount + 1;
+// 				checkChannels();
+// 			};
+// 		};
+// 	};
+
+// 	defn checkChannels() {
+// 		?[chResCount ?= size(channels)]: {
+// 			def stillReady: true;
+
+// 			// re-verify all channels have a
+// 			// value ready to take
+// 			channels ~each (channel) {
+// 				![channel.peek().resolved()]: {
+// 					stillReady := false;
+// 				};
+// 			};
+
+// 			?{
+// 				// all channels indeed ready?
+// 				?[stillReady]: Promise ~<< {
+// 					def values: <>;
+// 					def collect:: (channels ~<* (channel) {
+// 						def ev:: channel.take();
+// 						Either ~<< {
+// 							def val:: ev;
+// 							values := < &values, val >;
+// 						};
+// 					});
+// 					subj.resolve(values);
+// 				};
+
+// 				// some channel(s) not actually
+// 				// ready, so start over with
+// 				// subscription?
+// 				?: subscribeChannels()
+// 			};
+// 		};
+// 	};
+// };
+
+// defn{ChannelUnitConstructor} Channel@(v)
+// 	?[?empty v]: Channel()
+// {
+// 	def ch: Channel();
+// 	ch.push(v);
+// 	^ch;
+// };
+
+// defn{ChannelConstructor} Channel(bufferSize: 0) {
+// 	def puts: <>;
+// 	def takes: <>;
+// 	def peeks: <>;
+// 	def derivedStreams: <>;
+// 	def open: true;
+// 	def publicAPI: <
+// 		:put,
+// 		:take,
+// 		:peek,
+// 		:close,
+// 		:toPullStream,
+// 		:toPushStream,
+// 	>;
+// 	bufferSize := max(bufferSize,0);
+// 	^publicAPI;
+
+// 	// **************************
+
+// 	defn{Post} put(v)
+// 		![open]: Promise@ (Left@ "Channel already closed")
+// 		:over (puts,takes,peeks)
+// 	{
+// 		def rv: Right@ v;
+
+// 		// peek(s) already waiting for put?
+// 		peeks ~each (subj) {
+// 			subj.resolve(rv);
+// 		};
+
+// 		^?{
+// 			// take already waiting for put?
+// 			?[size(takes) ?> 0]: {
+// 				def subj: takes.0;
+// 				takes := takes.[1..];
+// 				subj.resolve(rv);
+// 				subj.pr;
+// 			}
+// 			// queue the put for future take?
+// 			?: {
+// 				def subj: PromiseSubject@;
+// 				def pr: ?{
+// 					// use already-resolved promise to
+// 					// indicate that the put was
+// 					// "buffered"?
+// 					?[size(puts) ?< bufferSize]: Promise@ rv;
+
+// 					// post-process the promise to make
+// 					// sure the channel is still open
+// 					// when resolving?
+// 					?: subj.pr ~map (lv) {
+// 						?{
+// 							?[lv ?as Left]: lv;
+// 							![open]: Left@ "Channel closed before take";
+// 							?: rv
+// 						};
+// 					}
+// 				};
+
+// 				subj := < &subj, :pr, peek: rv >;
+// 				puts := < &puts, subj >;
+// 				pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{Take} take()
+// 		![open]: Promise@ (Left@ "Channel already closed")
+// 		:over (puts,takes,peeks)
+// 	{
+// 		^?{
+// 			// put already waiting for take?
+// 			?[size(puts) ?> 0]: {
+// 				def pr: puts.0.pr;
+
+// 				// empty out any peeks
+// 				peeks := <>;
+
+// 				// signal the pending put (taking
+// 				// into account any buffering)
+// 				puts[bufferSize].resolve(puts[bufferSize].peek);
+
+// 				puts := puts.[1..];
+// 				pr;
+// 			}
+// 			// queue the take for future put?
+// 			?: {
+// 				def subj: PromiseSubject@;
+// 				takes := < &takes, subj >;
+// 				subj.pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{Peek} peek()
+// 		![open]: Promise@ (Left@ "Channel already closed")
+// 		:over (peeks)
+// 	{
+// 		^?{
+// 			// put already waiting for take/peek?
+// 			?[size(puts) ?> 0]: {
+// 				Promise@ puts.0.peek;
+// 			}
+// 			?: {
+// 				def subj: PromiseSubject@;
+// 				peeks := < &peeks, subj >;
+// 				subj.pr;
+// 			}
+// 		};
+// 	};
+
+// 	defn{Close} close()
+// 		![open]: Promise@ (Left@ "Channel already closed")
+// 		:over (peeks,takes,puts,open)
+// 	{
+// 		def _peeks: peeks.[0..];
+// 		def _takes: takes.[0..];
+// 		def _puts: puts.[0..];
+// 		def _derivedStreams: derivedStreams.[0..];
+// 		peeks := takes := puts := derivedStreams := empty;
+// 		open := false;
+// 		_peeks ~each (subj) {
+// 			subj.resolve(Left@ "Channel closed before peek allowed");
+// 		};
+// 		_takes ~each (subj) {
+// 			subj.resolve(Left@ "Channel closed before take allowed");
+// 		};
+// 		_puts ~each (subj) {
+// 			subj.resolve(Left@ "Channel closed before put allowed");
+// 		};
+// 		_derivedStreams ~each (subj) {
+// 			![subj.closed()]: subj.close();
+// 		};
+// 		^Right@ true;
+// 	};
+
+// 	defn{ToPullStream} toPullStream()
+// 		![open]: Promise@ (Left@ "Channel already closed")
+// 		:over (derivedStreams)
+// 	{
+// 		def subj: PullSubject@;
+// 		def origStream: subj.stream;
+// 		def origPullInto: origStream.pullInto;
+// 		subj := < &origStream, pullInto: _pullInto >;
+// 		derivedStreams := < &derivedStreams, subj >;
+// 		^subj;
+
+// 		// **********************************
+
+// 		defn{PullInto} _pullInto(takeCount: 1,force: true)
+// 			![takeCount ?> 0]: Left@ "Must pull at least one value"
+// 		{
+// 			0..takeCount ~each {
+// 				take() ~map subj.push;
+// 			};
+// 			^origPullInto(takeCount,force);
+// 		};
+// 	};
+
+// 	defn{ToPushStream} toPushStream()
+// 		:over (derivedStreams)
+// 	{
+// 		def subj: PushSubject@;
+// 		defn pullNext() {
+// 			take() ~map (v) {
+// 				subj.push(v);
+// 				pullNext();
+// 			};
+// 		};
+// 		derivedStreams := < &derivedStreams, subj >;
+// 		pullNext();
+// 		^subj.stream;
+// 	};
+// };

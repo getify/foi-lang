@@ -1,0 +1,19 @@
+def obj: < first: "Kyle", last: "Simpson" >;
+def numbers: < 4, 5, 6 >;
+def name: "first";
+def msg: \`"hello
+	`obj.first`
+	`obj.last`";
+def banner: \"  spaced
+raw  ";
+
+def a: (.)(obj, name);
+def b: (.)(numbers, 1);
+def c: ([])(obj, "last");
+
+def counter: 0;
+counter := counter + 1;
+obj.first := "Brian";
+numbers[0] := 99;
+
+def nested: 10 + (counter := counter + 5);

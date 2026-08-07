@@ -1,0 +1,594 @@
+// test-parser.js — exercises parseFoi against a corpus of source samples.
+//
+// Two lanes:
+//   - passSamples: expected to fully parse without throwing.
+//   - failSamples: expected to throw a SyntaxError whose message starts
+//                  with "Foi parse failed:" (the shape parseFoi emits
+//                  when result.ok === false). The strict shape check
+//                  distinguishes "parser correctly rejected" from
+//                  "an unrelated bug threw something else".
+//
+// Negative-lane outcomes per sample:
+//   - threw with right shape       → negative-passed
+//   - did not throw                → unexpected success (regression)
+//   - threw, but not our SyntaxError shape → unexpected error type
+
+import util from "node:util";
+import { parseFoi } from "../foi-toy/src/parser.js";
+import { samples } from "./samples.js";
+
+
+var passSamples = [
+	...samples.map(sample => ({ label: sample.label, src: sample.src })),
+
+	{ label: "audio player module", src: `export {
+	  :playlist, :clear, :play, :resume, :pause, :stop,
+	  :onPlay, :onTimeUpdate, :onPause, :onStop,
+	};
+
+	def queue: <>;
+	def player: Audio();
+
+	defn onPlayNext(url) ^<>;
+	defn next() ^playlist(queue, false, false, onPlayNext);
+	defn nextLoop() ^playlist(queue, false, true, onPlayNext);
+
+	defn playlist(
+		urls,
+		clear:? false,
+		loop:? false,
+		onNext:? onPlayNext
+	  )
+	  :over(queue,onPlayNext)
+	{
+	  def cb: next;
+	  ?[loop]: cb := nextLoop;
+
+	  onPlayNext := onNext;
+	  ?[clear]: queue := < &urls >;
+
+	  ?{
+		?[size(queue) ?= 0]: {
+		  def upcoming: queue.[1..];
+		  ?[loop]: queue := < &queue, upcoming >;
+
+		  player.src(upcoming);
+		  player.removeEventListener("ended", cb);
+		  player.addEventListener("ended", cb);
+		  player.play();
+		  ?[size(queue) ?> 0]: onNext(upcoming)
+		};
+		?:
+		  player.removeEventListener("ended", cb)
+	  }
+	};
+
+	defn clear() :over(queue) {
+	  queue := <>;
+	  player.removeEventListener("ended", next)
+	};
+
+	defn play(url) {
+	  stop();
+	  player.src(url);
+	  player.play()
+	};
+
+	defn resume() ^player.play();
+
+	defn pause() ^player.pause();
+
+	defn stop() {
+	  player.pause();
+	  player.currentTime(0);
+	  clear()
+	};
+
+	defn onPlay(action) {
+	  defn cb() ^action(player.src);
+	  player.addEventListener("play", cb);
+	  ^defn() ^player.removeEventListener("play", cb)
+	};
+
+	defn onTimeUpdate(action) {
+	  defn cb() ^action(player.src, player.currentTime);
+	  player.addEventListener("timeupdate", cb);
+	  ^defn() ^player.removeEventListener("timeupdate", cb)
+	};
+
+	defn onPause(action) {
+	  defn cb() ^action(player.src);
+	  player.addEventListener("pause", cb);
+	  ^defn() ^player.removeEventListener("pause", cb)
+	};
+
+	defn onStop(action) {
+	  defn cb() ^action(player.src);
+	  player.addEventListener("ended", cb);
+	  ^defn() ^player.removeEventListener("ended", cb)
+	};`,},
+];
+
+
+// Expected-fail samples — nail down the `:as` precedence rule.
+// Each MUST throw a SyntaxError whose message begins with "Foi parse
+// failed:". See the ":as Precedence — First-Class Rule" section of
+// Syntactic-Grammar.md.
+var failSamples = [
+	"x + y :as int;",       // binary cannot carry :as directly
+	"1..5 :as List;",       // range cannot carry :as directly
+	"x..y :as int;",        // same range family
+	"1..;",                 // open-ended ranges have no value semantic outside .[ ]
+	"..5;",                 // same — TrailingRangeExpr at expression position
+	"(1..) :as List;",      // paren-and-annotate also rejected — inner LeadingRangeExpr can't reach BinaryAtom
+	"(..5) :as List;",      // same — inner TrailingRangeExpr
+	"x :as int + y;",       // outer AsExpr matches `x :as int`; `+ y` dangling
+	"x :as int :as bool;",  // no chained :as without parens; AsableExpr excludes AsExpr
+	"(x) :as bool :as char;",         // chained :as on paren — paren-grouping not in AsableExpr, outer :as has nowhere to land
+	"(x :as int) :as bool :as char;", // same — inner :as is fine, outer chain rejected
+	"(x) :as bool :as char :as float;", // already rejected at the 3rd :as pre-fix; locks it as test
+	"def (<:a>) { a };",
+	"f +> (<:a>) { a; };",
+	"(x: 1) { x; };",          // standalone (defs){body} rejected
+	"(x: 1) { x; } :as int;",  // same — BlockExpr not in <AsableExpr> anyway
+	"(x, y) { x; };",          // same
+	"(x: 1, y) { x; };",       // same
+
+	// FuncBodyExpr visual-runway narrowing — the terse `^`-body
+	// form admits DoCompr / DoLoopCompr / MatchExpr / OrDispatch /
+	// GroupedExpr only. Forms that extend rightward without a visual
+	// close marker (AsExpr / GuardedExpr / AssignmentExpr / DefFuncExpr
+	// / FlowBinExpr chains) and BareBlockExpr (visual collision with
+	// FuncBodyBlock) are rejected at terse position. Each paren-wraps
+	// through GroupedExpr — see the positive samples in samples.js.
+
+	// BareBlockExpr at `^`-body — bare `{` directly against `^`
+	// visually collides with FuncBodyBlock.
+	"defn foo() ^{ x; };",
+	"defn foo(x) ^{ x + 1; };",
+
+	// AsExpr at `^`-body — `:as` tail extends rightward, and
+	// collides visually with FuncAsClause. Kyle-flagged footgun:
+	// `defn foo(x) :as one ^x :as two;` is authorable-and-confusing.
+	// Reject unconditionally.
+	"defn foo(x) ^x :as int;",
+	"defn foo(x) :as one ^x :as two;",
+
+	// GuardedExpr at `^`-body — consequent extends rightward.
+	// Paren-wrap: `^(?[c]: x)`.
+	"defn foo(x) ^?[x ?> 0]: 1;",
+	"defn foo(x) ^![x ?< 0]: 0;",
+
+	// AssignmentExpr at `^`-body — RHS is full Expr, extends
+	// rightward. Paren-wrap: `^(y := 5)`.
+	"defn foo() :over(y) ^y := 5;",
+
+	// DefFuncExpr at `^`-body — inner `^body` extends outward
+	// through the `;` and collides with outer function terminator.
+	// Paren-wrap: `^(defn(y) ^y)`. (Also: use curried decl form
+	// `defn foo(x)(y) ^y` when semantically appropriate.)
+	"defn foo() ^defn(y) ^y;",
+	"defn foo() ^defn bar(y) ^y + 1;",
+
+	// FlowBinExpr at `^`-body — Flow-tier chains (ComprOp,
+	// PipelineOp, ComposeOp) extend rightward without a visual
+	// close. Paren-wrap: `^(x ~map f)`, `^(x #> g)`, `^(f +> g)`.
+	"defn foo(xs) ^xs ~map inc;",
+	"defn foo(xs) ^xs ~each log;",
+	"defn foo(x) ^x #> inc;",
+	"defn foo(f) ^f +> g;",
+	"defn foo(f) ^g <+ f;",
+
+	// Series 1: bare `:` at lenient VarDefInitOptImplIn positions
+	// now rejects. The lenient sigil is `:?` (override-on-empty);
+	// bare `:` at these positions retracts the entry's init-optional
+	// and leaves a dangling `:` at the list terminator, failing at
+	// the enclosing `)` match. Covers both Identifier and
+	// DestructureTarget arms, at both ParameterList reach and
+	// BlockDefsInitOptImplIn reach (via FlowRHSImplIn).
+	//
+	// (Note: `:?` at STRICT positions does NOT reject — it parses
+	// as bare `:` init + unary `?...` expression, per the strict
+	// production's `_ Colon _ ExprNoBlock` shape. No strict-side
+	// grammatical rejection to test.)
+	"defn f(x: 3) ^x;",              // bare `:` at ParameterList Identifier entry
+	"defn f(<:a>: src) ^a;",         // bare `:` at ParameterList DestructureTarget source tail
+	"list ~map (x: 3) { x; };",      // bare `:` at BlockDefsInitOptImplIn Identifier entry
+	"list ~map (<:a>: src) { a; };", // bare `:` at BlockDefsInitOptImplIn DestructureTarget source tail
+
+	// [DESTRUCTURE MODE SPLIT] Cross-mode mixing rejected —
+	// record-mode entries (`:name`, `name:`, `#name`) and
+	// tuple-mode entries (bare `name`) cannot appear in the same
+	// destructure target. Both grammar arms fail cleanly, so the
+	// whole DestructureTarget is rejected. Per Foi-Specification.md
+	// §2.13 opener.
+	"def <:a, b>: t;",               // record concise + tuple positional
+	"def <a, :b>: t;",               // tuple positional + record concise
+	"def <a: src, b>: t;",           // record named + tuple positional
+	"def <a, b: src>: t;",           // tuple positional + record named
+	"def <:a, b: src, c>: t;",       // record concise + record named + tuple positional
+	"def <a, b, :c>: t;",            // tuple positional + tuple positional + record concise
+	"def <>: t;",                    // empty destructure — semantically vacuous, grammatically rejected (both arms non-nullable)
+
+	// Series 2: per-entry `:?` default tail negatives —
+	// (i) capture arm grammatically excludes the tail (per
+	// Foi-Specification.md §2.13.3 a capture-with-default is
+	// unreachable — destructure-against-empty errors before
+	// per-entry procedures proceed);
+	// (ii) non-capture tail requires the `Colon Qmark` composite,
+	// bare `:` is not a valid tail sigil;
+	// (iii) default RHS is `ExprNoBlock` — no BareBlockExpr /
+	// block-body default;
+	// (iv) no valid `DestructureDef` arm opens with `:?` — the
+	// tail attaches after a non-capture entry, not standalone.
+	"def < #whole:? 5 >: src;",       // capture-with-default (excluded arm)
+	"def < :foo: 5 >: src;",          // tail sigil `:?` required (bare `:` not admitted)
+	"def < :foo:? { x; } >: src;",    // default RHS is ExprNoBlock (BareBlockExpr rejected)
+	"def < :? 5 >: src;",             // bare `:?` at entry position (no valid opener)
+
+	"10 + x := 5;",
+
+	// Dynamic-pick boundaries — confirm grammar narrowness.
+	//
+	// `&`-in-pick admits PickValue's source alphabet exactly:
+	// IdentBase + optional MultiAccessExpr. Call suffixes not
+	// admitted (Q4=B); inline calls require pre-binding.
+	"foo.<&Object.keys(rec)>;",
+
+	// `%`-in-pick (and `%`-in-ExplicitPropDef) — narrowed
+	// ComputedPropName alphabet per the §17 grammar rewrite.
+	// Bare arm: BooleanLit | StringLit | <ComputedPropNumberLit> |
+	// ComputedPropAccessChain. Paren-wrap arm: OperandExpr inner,
+	// no `:as` tail, no AssignmentExpr / DefFuncExpr / MatchExpr /
+	// BareBlockExpr inner.
+	//
+	// `%5` is now valid (bare positive integer) — moved to
+	// positive samples. The shapes below cover the rejected
+	// edges.
+
+	// Bare-arm: call/at/postfix/pick/range chain segs all rejected
+	// — paren-wrap rewrite required.
+	"<%Maybe@42: 5>;",      // at-call (moved from positives — paren-wrap: %(Maybe@42))
+	"<%None@: 5>;",         // bare None@ (moved from positives — paren-wrap: %(None@))
+	"rec.<%Maybe@42>;",     // at-call in pick (moved from positives — paren-wrap: %(Maybe@42))
+	"<%foo(x): 1>;",        // call suffix — paren-wrap: %(foo(x))
+	"<%foo|x|: 1>;",        // partial-call — paren-wrap: %(foo|x|)
+	"<%foo@x: 1>;",         // at-call with arg — paren-wrap: %(foo@x)
+	"<%foo@: 1>;",          // bare AtExpr — paren-wrap: %(foo@)
+	"<%@: 1>;",             // bare IdentityFunc — paren-wrap: %(@)
+	"<%foo': 1>;",          // postfix primed — paren-wrap: %(foo')
+	"<%foo.<a, b>: 1>;",    // DotAngle (pick) chain seg — paren-wrap: %(foo.<a, b>)
+	"<%foo.[1..3]: 1>;",    // DotBracket (range) chain seg — paren-wrap: %(foo.[1..3])
+
+	// Bare-arm: DataStructLit rejected even at bare top level —
+	// the `:` inside `<x: 1>` collides visually with the outer
+	// ExplicitPropDef separator. Paren-wrap admits.
+	"<%<x: 1>: 1>;",        // bare DataStructLit — paren-wrap: %(<x: 1>)
+
+	// Bare-arm: numeric-literal alphabet narrowed — admits every
+	// NumberLit shape except monadic and unicode escapes.
+	"<%\\@FF: 1>;",         // monadic escape — out of scope
+	"<%\\u263A: 1>;",       // unicode escape — char-shaped, not numeric
+
+	// Bare-arm: EmptyLit rejected (no storage slot for missing value)
+	"<%empty: 1>;",
+
+	// Paren-wrap arm: no outer `:as` tail (collides with outer Colon)
+	"<%(x) :as int: 1>;",
+
+	// Paren-wrap arm: no AsExpr inside (not in OperandExpr)
+	"<%(x :as int): 1>;",
+
+	// Paren-wrap arm: no AssignmentExpr (not in OperandExpr)
+	"<%(x := 5): 1>;",
+
+	// Paren-wrap arm: no DefFuncExpr / MatchExpr / BareBlockExpr
+	// (none reachable from OperandExpr)
+	"<%(defn(x)^x): 1>;",
+	"<%(?{?[c]: 1; ?: 0}): 1>;",
+	"<%({y; }): 1>;",
+	// Mountain (`/\`) / Valley (`\/`) postfix boundaries.
+	//
+	// Locked rules from the curry/uncurry batch:
+	//   - postfix terminates access chain (no dot/bracket after)
+	//   - no trivia between function and the postfix modifier
+	//   - no trivia between modifier and first CallSuffix
+	//   - mutually exclusive with `'` and with each other (no stacking)
+	"foo/\\.bar;",     // postfix terminates access chain (curry)
+	"foo\\/.bar;",     // postfix terminates access chain (uncurry)
+	"foo /\\;",        // adjacency violated — trivia before /\
+	"foo \\/;",        // adjacency violated — trivia before \/
+	"foo/\\ (1);",     // adjacency violated — trivia between /\ and (
+	"foo\\/ (1);",     // adjacency violated — trivia between \/ and (
+	"foo/\\';",        // postfix stacking — /\ then ' (locked C)
+	"foo\\/';",        // postfix stacking — \/ then ' (locked C)
+	"foo/\\\\/;",      // postfix stacking — /\ then \/
+	"foo\\//\\;",      // postfix stacking — \/ then /\
+	// Narrowed \u<hex> — character escape admitted only as the sole
+	// contents of an InterpExpr slot. See parser.js InterpExpr /
+	// UnicodeCharLit and Syntactic-Grammar.md §2.
+	"\\u263A;",                       // \u at value position — rejected
+	"def x: \\u263A;",                // same — RHS of def
+	"f(\\u263A);",                    // same — call argument
+	"\\u263A + 1;",                   // same — binary operand
+	'`"`\\u263A + 1`";',              // escape + binary op
+	'`"`\\u263A.foo`";',              // escape + chain access
+	'`"`1 + \\u263A`";',              // expression then escape
+	'`"`\\u263A \\u263A`";',          // two escapes in one slot
+	'\\`"`\\u263A + 1`";',              // escape + binary op
+	'\\`"`\\u263A.foo`";',              // escape + chain access
+	'\\`"`1 + \\u263A`";',              // expression then escape
+	'\\`"`\\u263A \\u263A`";',          // two escapes in one slot
+
+	'def x: (tmp: 3) { tmp + 1; };',
+	'5 + (tmp: 3) { tmp + 1; };',
+	'?{ ?[x ?< 5]: (<:a>) { use(a); }; ?: 0 };',
+	'?[x ?> y]: (<:a>) { use(a); };',
+
+	// === EffectorCallExpr negatives — `%` chain-tail rejects ===
+
+	// No LHS — `%` requires a source
+	"%task;",
+	"%;",
+	"%(x);",
+
+	// No stacking with PostfixCallTail modifiers — `%` is a chain terminator
+	"task%';",
+	"task%/\\;",
+	"task%\\/;",
+
+	// No access tail after `%` — paren the effector first
+	"task%.field;",
+	"task%[0];",
+	"task%.<a,b>;",
+	"task%.[1..3];",
+
+	// narrowing of special-cased `@` call-operator form
+	"@;",
+	"@ :as Maybe;",
+	"@|42|;",
+
+	// === DefHookDecl negatives ===
+
+	// Strict no-trivia between Identifier and marker — mirrors
+	// `Foo@` adjacency at use sites in AtCallExpr. Same rule for
+	// all six marker shapes (At, Percent, Comprehension, and the
+	// three Tilde-led composites: Tilde+OpenAngle, Tilde+OpenAngle+
+	// OpenAngle, Tilde+OpenAngle+Star).
+	"defn Foo @(x) ^x;",
+	"defn Foo %(self, env) ^env;",
+	"defn Foo ~map(inst, fn) ^inst;",
+	"defn Foo ~<(inst, fn) ^fn(inst);",
+	"defn Foo ~<<(comp, ty) ^comp;",
+	"defn Foo ~<*(comp, ty) ^comp;",
+
+	"defn List~each(inst, fn) ^fn(inst);",
+	"defn List.entries@(xs) ^xs;",
+	"defn Maybe.parse(v) ^v;",
+
+	// Strict no-trivia WITHIN the Tilde-led composite markers
+	// (`~<`, `~<<`, `~<*`) — matches the composite operators' own
+	// adjacency rules at their respective use sites in §10.
+	"defn Foo~ <(inst, fn) ^fn(inst);",
+	"defn Foo~ <<(comp, ty) ^comp;",
+	"defn Foo~< <(comp, ty) ^comp;",
+	"defn Foo~ <*(comp, ty) ^comp;",
+	"defn Foo~< *(comp, ty) ^comp;",
+
+	// Statement-only. At expression position the DefFuncExpr arm
+	// has no marker slot (removed in the refactor), so these fail
+	// cleanly at the marker for all four shapes.
+	"def x: defn Foo@(x) ^x;",
+	"def x: defn Bar%(self, env) ^env;",
+	"def x: defn Foo~map(inst, fn) ^inst;",
+	"def x: defn Foo~<(inst, fn) ^fn(inst);",
+
+	// === AtRefTail (.@) trivia negatives ===
+
+	// Strict no-trivia on BOTH sides of `.@`. The trivia-bearing
+	// shapes never commit to AtRefTail (DotIdentifier requires
+	// Identifier after the Period; AtRefTail requires Period+At
+	// adjacent and not preceded by `_`) — leaves trailing tokens
+	// dangling, fails at Program EOF.
+	"Foo. @;",
+	"Foo .@;",
+
+	// === AtRefTail (.@) terminator negatives ===
+
+	// `.@` is a chain terminator — no stacking with any other tail,
+	// no access tail. Each of these consumes `.@` cleanly into
+	// AtRefExpr; the trailing token (`.`, `%`, `'`) opens no
+	// Stmt/Expr arm, fails at Program EOF.
+	//
+	// (Note: `Foo.@(x);` is intentionally omitted — it parses as
+	// two adjacent stmts `Foo.@` and `(x)`, not a parse error.
+	// The "no adjacency call" claim is a semantic-shape claim,
+	// not a parser-rejection one.)
+	"Foo.@.bar;",
+	"Foo.@%;",
+	"Foo.@';",
+	".@;",
+
+	// bare-block consequents without the `:`
+	"?{ ?[c] { y; } };",
+	"?{ ?[c]: x; ? { y; } };",
+	'?(x){ ?[1]: "a"; ? : "b" };',
+	'?(x){ ?["a"] { y; } };',
+	'?(x){ ?[?= 1]: "one"; ? { log("none"); "?" } };',
+	'?(x){ ?[?>= 0] { log(#); "pos" }; ?: "neg" };',
+
+	// DepCondBoolExpr — bare CompareOp/AndOp/OrOp at atom position
+	// (no RHS) must still reject. The unary arm admits ONLY
+	// NamedUnaryOp (?empty/!empty), not CompareOp or containment ops.
+	"?(x){ [?<]: a };",           // bare CompareOp without RHS
+	"?(x){ [?in]: a };",          // bare containment op without RHS
+	"?(x){ [?has]: a };",         // same
+	"?(x){ [?and]: a };",         // bare AndOp without RHS
+
+	// === DoLoopComprExpr negatives — Slot 15 axis lock: type-LHS only, RHS is DoBlockExpr only ===
+
+	// Non-block RHS: `~<*` no longer admits fn-RHS iter form
+	"xs ~<* fn;",
+	"xs ~<* foo.bar;",
+
+	// === BraceNarrowing negatives — grammar at ?as/!as RHS (§9 TypeCompareBinExpr, §14 DepCondBoolExpr AsTypeOp arm) ===
+
+	// Bare <A, B> without `Effect.` prefix rejected at ?as/!as RHS.
+	// Tuple-type visual collision guard: `<int, string>` at deft
+	// declares a tuple; admitting it as sum-type-narrowing at ?as
+	// would collide. Sum-over-native-types is not committed; a
+	// distinct visual shape would be required.
+	"a ?as <Ask, Retry>;",
+	"a !as <Foo>;",
+	'?(x){ [?as <Ask>]: "y"; };',
+
+	// Empty brace `Effect.<>` rejected — grammar requires ≥1 entry.
+	// A narrowing set with no admitted kinds is meaningless.
+	"a ?as Effect.<>;",
+	'?(eff){ [?as Effect.<>]: "y"; };',
+
+	// NativeType prefix rejected at brace prefix position. The
+	// DoComprLHSName alphabet (Identifier | BuiltIn) excludes native
+	// type keywords (int/bool/string/etc.); a reserved keyword
+	// cannot lead a brace narrowing.
+	"a ?as int.<Foo>;",
+	"a ?as string.<X>;",
+
+	// === DefTypeFrom negatives — §9.2.2 / §9.4 ===
+
+	// Specifier must be PlainStr; a name and an interpolated string
+	// both reject. "A specifier is never computable."
+	'deft Point from name;',
+	'deft Point from `"./`d`.foi";',
+
+	// The `from` tail is terminal — no second reach, no trailing
+	// TypeExpr after it.
+	'deft Coord Point from "./a.foi" from "./b.foi";',
+	'deft Point from "./g.foi" int;',
+
+	// `from` is STRICTLY a `deft` tail — not admitted at arbitrary
+	// type-reference positions (:as RHS, FuncTypeExpr return).
+	'def x: y :as Point from "./g.foi";',
+	'deft F (int) ^Point from "./g.foi";',
+
+	// === DeclTypeClause negatives — §4 / §13 ===
+	// Cuddling is required. Every attachment site spells the clause
+	// `optional(DeclTypeClause)` with no delim() before it, so any
+	// trivia between the keyword and the `{` breaks the parse.
+	"def {int} v: 3;",
+	"defn {T} f(x) ^x;",
+	"defn {T} Foo@(x) ^x;",
+
+	// Inner is a bare NamedType only — no NestedTypeExpr, union,
+	// data-struct, function type, or literal.
+	"def{List{int}} xs: mk();",
+	"def{int | string} v: 3;",
+	"def{<x: int>} r: mk();",
+	"def{(int) ^bool} f: mk();",
+	'def{"yes"} s: mk();',
+
+	// A container type with no name is meaningless.
+	"def{} v: 3;",
+	"defn{} f(x) ^x;",
+
+	// One clause per declaration.
+	"def{int}{string} v: 3;",
+
+	// The clause precedes the name; it does not float.
+	"def v{int}: 3;",
+	"defn f{T}(x) ^x;",
+
+	// === `Any` reserved-word negatives — §18 <NativeType> ===
+
+	// `Any` is a Keyword, so it is excluded from every identifier
+	// position: binding names, parameter names, and DefTypeName
+	// (which admits Identifier | BuiltIn only).
+	"def Any: 5;",
+	"defn Any(x) ^x;",
+	"deft Any int;",
+	"defn f(Any) ^Any;",
+
+	// `*:` is a cuddled sigil — a delim between Star and Colon
+	// leaves the type position unreachable.
+	"deft S <* :int>;",
+
+	// One rest per type; a second is not a DataStructTypeEntry, so
+	// the entry-list arm cannot reach it.
+	"deft S <*int, *:int>;",
+
+	// DoComprLHSCompound cuddles its brace to the name.
+	"List {Promise} ~<< { x; };",
+
+	// The argument names a namespace; NativeType is unreachable.
+	"List{int} ~<< { x; };",
+
+	// Compound LHS is not an arm of DoLoopComprLHS.
+	"Channel{Promise} ~<* { x; };",
+];
+
+var passed = 0;
+var unexpectedFails = [];
+
+for (let i = 0; i < passSamples.length; i++) {
+	let { label, src } = passSamples[i];
+	try {
+		for await (let tree of parseFoi(src,{
+			// preserveSoftDelims: true,
+		})) {
+			// console.log(util.inspect(tree,{depth:50}));
+		}
+		passed++;
+	}
+	catch (err) {
+		unexpectedFails.push({ idx: i, label, src, err: err.message });
+	}
+}
+
+var negativePassed = 0;
+var unexpectedPasses = [];
+var unexpectedErrors = [];
+
+for (let i = 0; i < failSamples.length; i++) {
+	let threw = null;
+	try {
+		for await (let tree of parseFoi(failSamples[i],{})) {
+			// drain — we only care whether the iteration throws at end
+		}
+	}
+	catch (err) {
+		threw = err;
+	}
+	if (threw === null) {
+		unexpectedPasses.push({ idx: i, src: failSamples[i] });
+	}
+	else if (
+		threw instanceof SyntaxError &&
+		threw.message.startsWith("Foi parse failed:")
+	) {
+		negativePassed++;
+	}
+	else {
+		unexpectedErrors.push({ idx: i, src: failSamples[i], err: threw });
+	}
+}
+
+console.log(`${passed}/${passSamples.length} passed`);
+console.log(`${negativePassed}/${failSamples.length} negative-passed`);
+
+for (let f of unexpectedFails) {
+	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
+	console.log(`\n[pos ${f.idx}] ${f.label ?? "<unlabeled>"} — ${f.err}`);
+	console.log(`      ${preview}`);
+}
+
+for (let f of unexpectedPasses) {
+	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
+	console.log(`\n[neg ${f.idx}] unexpected success (expected parse error)`);
+	console.log(`      ${preview}`);
+}
+
+for (let f of unexpectedErrors) {
+	let preview = f.src.length > 80 ? f.src.slice(0, 77) + "..." : f.src;
+	console.log(`\n[neg ${f.idx}] unexpected error type: ${f.err.name}: ${f.err.message}`);
+	console.log(`      ${preview}`);
+}

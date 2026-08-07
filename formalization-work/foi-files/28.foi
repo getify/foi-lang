@@ -1,0 +1,13 @@
+defn Container@(v) ^< value: v >;
+defn Container~<(inst, fn) ^fn(inst.value);
+defn Container~map(inst, fn) ^Container@ fn(inst.value);
+
+defn double(v) ^v * 2;
+
+def wrapped: Container@ 42;
+
+console.log(wrapped ~< double);         // → 84 (unwrapped through ~<)
+console.log(wrapped ~map double);       // → { value: 84, __ns: <Container> }
+console.log(wrapped ~chain double);     // → 84 (alias ~chain normalizes to ~<)
+console.log(wrapped ~bind double);      // → 84 (alias ~bind normalizes to ~<)
+console.log(wrapped ~flatMap double);   // → 84 (alias ~flatMap normalizes to ~<)

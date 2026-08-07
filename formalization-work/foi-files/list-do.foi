@@ -1,0 +1,144 @@
+defn List~<<(comp, typ) {
+    ^?(typ){
+        [< List >]: listBindImpl(comp);
+        [< List, Promise >]: listPromiseBindImpl(comp);
+        : Left@ "Invalid LHS"
+    };
+};
+
+defn listBindImpl(comp) {
+	def results: <>;
+	def sources: <>;
+	def coord: <>;
+	def curDepth: 0;
+	def firstPass: true;
+	def pending: empty;
+	def more: true;
+	def earlyExit: false;
+
+	^runPass();
+
+	defn runPass()
+		:over (curDepth, pending, sources, coord, results, firstPass, more, earlyExit)
+	{
+		curDepth := 0;
+		pending := empty;
+		Effect.Do ~<* (eff:: comp(), ret) {
+			:: ?(eff){
+				[?as Effect.Do.Bind]: {
+					def raw: #.value;
+					?(raw){
+						[?as Done]: {
+							more := false;
+							earlyExit := true;
+							pending := raw.value;
+							Done@ empty
+						};
+						: {
+							def d: curDepth;
+							curDepth := curDepth + 1;
+							?[firstPass]: {
+								sources := < &sources, raw >;
+								coord := < &coord, 0 >;
+							};
+							ret(sources[d][coord[d]]);
+							empty
+						}
+					}
+				};
+				[?as Effect.Do.Map]: {
+					def raw: #.value;
+					?(raw){
+						[?as Done]: {
+							def v: raw.value;
+							more := false;
+							earlyExit := true;
+							pending := ?{
+								[v ?= empty]: <>;
+								: < v >
+							};
+						};
+						: pending := < raw >;
+					};
+					Done@ empty
+				};
+			};
+		};
+
+		results := < &results, &pending >;
+		firstPass := false;
+		advance();
+		^?{
+			[more]: runPass();
+			[earlyExit]: Left@ results;
+			: Right@ results
+		};
+	};
+
+	defn advance() :over (coord, more) {
+		def d: size(coord) - 1;
+		def carrying: true;
+		?[carrying ?and d ?>= 0] ~each {
+			def nextI: coord[d] + 1;
+			?{
+				[nextI ?< size(sources[d])]: {
+					coord := replaceAt(coord, d, nextI);
+					carrying := false;
+				};
+				: {
+					coord := replaceAt(coord, d, 0);
+					d := d - 1;
+				};
+			};
+		};
+		?[carrying]: more := false;
+	};
+
+	defn replaceAt(list, idx, val) {
+		^< &list, %idx: val >;
+	};
+};
+
+defn listPromiseBindImpl(comp) {
+	^(Effect.Do ~<* (eff:: comp(), ret) {
+		:: ?(eff){
+			[?as Effect.Do.Bind]: Done@ #.value;
+			: empty
+		};
+	})
+		~< (srcList) {
+			def acc: <>;
+			def earlyExit: false;
+			(~cata)(
+				(IterP ~<< (v:: IterP@ srcList) {
+					(Effect.Do ~<* (eff:: comp(), ret) {
+						:: ?(eff){
+							[?as Effect.Do.Bind]: { ret(v) };
+							[?as Effect.Do.Map]: {
+								Done@ #.value
+							};
+						};
+					})
+						~< (res) {
+							?(res){
+								[?as Done]: {
+									earlyExit := true;
+									?[res.value ?!= empty]:
+										acc := <&acc, res.value>;
+								};
+								: ?[!earlyExit]: acc := <&acc, res>;
+							};
+							Promise.honor@ empty;
+						}
+				}),
+				defn(leftVal) :over (acc, earlyExit) ^?{
+					[earlyExit]: Promise.renege@ acc;
+					: Promise.renege@ leftVal
+				},
+				defn(_rv) :over (acc, earlyExit) ^?{
+					[earlyExit]: Promise.renege@ acc;
+					: Promise.honor@ acc
+				}
+			);
+		};
+};

@@ -1,0 +1,18 @@
+def arr: < 10, 20, 30, 40, 50 >;
+def rec: < a: 1, b: 2 >;
+
+def idx2:    ([])(arr, 2);
+def idx2p:   ([]')(2, arr);
+
+def inRange:  (?<=>)(10, 25, 50);
+def outRange: (?<=>)(10, 5, 50);
+def negR:     (!<=>)(10, 25, 50);
+
+def inArr:   (?in)(30, arr);
+def notIn:   (!in)(99, arr);
+
+def hasA:    (?has)(rec, "a");
+def hasZ:    (?has)(rec, "z");
+def notHasZ: (!has)(rec, "z");
+
+console.log(idx2, idx2p, inRange, outRange, negR, inArr, notIn, hasA, hasZ, notHasZ);

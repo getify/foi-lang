@@ -1,0 +1,16 @@
+def x: @2;
+def y: @ x;
+def f: (@);
+def z: f(7);
+def v: (@)|42|;
+defn Foo@(x)^x*2;
+def w: Foo @ 3;
+def q: < Bar: Foo >;
+def u: q.Bar@13;
+def g: (@)|empty|;
+def h: (@)();
+def j: (@)(4);
+def k: (@)(Foo,5);
+def m: (@')(6,Foo);
+
+console.log(x,y,z,v(),w,u,g(),h,j,k,m);

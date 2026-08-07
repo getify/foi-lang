@@ -1,0 +1,167 @@
+// ============================================================
+// Id (identity monad)
+// ============================================================
+
+deft IdT(Any) :Effects(Effect.Host.Slot.Write) ^Id;
+defn{IdT} Id@(v) {
+	def inst: <>;
+	Effect.Host.Slot.Write% <inst, v>;
+	^inst
+};
+
+deft IdBindT(Id, {(Any) ^Maybe})
+	:Effects(Effect.Host.Slot.Read) ^Maybe;
+defn{IdBindT} Id~<(inst, fn)
+	^fn(Effect.Host.Slot.Read% inst);
+
+deft IdMapT(Id, {(Any) ^Any})
+	:Effects(Effect.Host.Slot.Read) ^Id;
+defn{IdMapT} Id~map(inst, fn)
+	^Id@ fn(Effect.Host.Slot.Read% inst);
+
+deft IdApT(Id, Maybe)
+	:Effects(Effect.Host.Slot.Read) ^Maybe;
+defn{IdApT} Id~ap(fnInst, valInst)
+	?[valInst ?as None]: valInst
+	^Id@ (Effect.Host.Slot.Read% fnInst)(Effect.Host.Slot.Read% valInst);
+
+deft IdCataT(Id, {() ^Any}, {(Any) ^Any})
+	:Effects(Effect.Host.Slot.Read) ^Any;
+defn{IdCataT} Id~cata(inst, defaultThunk, valueFn)
+	^valueFn(Effect.Host.Slot.Read% inst);
+
+deft IdEqT(Id, Any)
+	:Effects(Effect.Host.Slot.Read) ^bool;
+defn{IdEqT} Id?=(a, b) ^?{
+	[b ?as Id]: (Effect.Host.Slot.Read% a) ?= (Effect.Host.Slot.Read% b);
+	: false
+};
+
+// ============================================================
+// None (empty monad — no state, no slot access)
+// ============================================================
+
+deft NoneT() ^None;
+defn{NoneT} None@() ^< >;
+
+deft NoneBindT(None, {(Any) ^Maybe}) ^None;
+defn{NoneBindT} None~<(inst, fn) ^inst;
+
+deft NoneMapT(None, {(Any) ^Any}) ^None;
+defn{NoneMapT} None~map(inst, fn) ^inst;
+
+deft NoneApT(None, Maybe) ^None;
+defn{NoneApT} None~ap(fnInst, valInst) ^fnInst;
+
+deft NoneCataT(None, {() ^Any}, {(Any) ^Any}) ^Any;
+defn{NoneCataT} None~cata(inst, defaultThunk, valueFn)
+	^defaultThunk();
+
+deft NoneEqT(None, Any) ^bool;
+defn{NoneEqT} None?=(a, b) ^b ?as None;
+
+// ============================================================
+// Right (Either's success arm)
+// ============================================================
+
+deft RightT(Any) :Effects(Effect.Host.Slot.Write) ^Right;
+defn{RightT} Right@(v) {
+	def inst: <>;
+	Effect.Host.Slot.Write% <inst, v>;
+	^inst
+};
+
+deft RightBindT(Right, {(Any) ^Either})
+	:Effects(Effect.Host.Slot.Read) ^Either;
+defn{RightBindT} Right~<(inst, fn)
+	^fn(Effect.Host.Slot.Read% inst);
+
+deft RightMapT(Right, {(Any) ^Any})
+	:Effects(Effect.Host.Slot.Read) ^Right;
+defn{RightMapT} Right~map(inst, fn)
+	^Right@ fn(Effect.Host.Slot.Read% inst);
+
+deft RightApT(Right, Either)
+	:Effects(Effect.Host.Slot.Read) ^Either;
+defn{RightApT} Right~ap(fnInst, valInst)
+	?[valInst ?as Left]: valInst
+	^Right@ (Effect.Host.Slot.Read% fnInst)(Effect.Host.Slot.Read% valInst);
+
+deft RightCataT(Right, {(Any) ^Any}, {(Any) ^Any})
+	:Effects(Effect.Host.Slot.Read) ^Any;
+defn{RightCataT} Right~cata(inst, leftFn, rightFn)
+	^rightFn(Effect.Host.Slot.Read% inst);
+
+deft RightEqT(Right, Any)
+	:Effects(Effect.Host.Slot.Read) ^bool;
+defn{RightEqT} Right?=(a, b) ^?{
+	[b ?as Right]: (Effect.Host.Slot.Read% a) ?= (Effect.Host.Slot.Read% b);
+	: false
+};
+
+// ============================================================
+// Left (Either's failure arm — carries reason)
+// ============================================================
+
+deft LeftT(Any) :Effects(Effect.Host.Slot.Write) ^Left;
+defn{LeftT} Left@(reason) {
+	def inst: <>;
+	Effect.Host.Slot.Write% <inst, reason>;
+	^inst
+};
+
+deft LeftBindT(Left, {(Any) ^Either}) ^Left;
+defn{LeftBindT} Left~<(inst, fn) ^inst;
+
+deft LeftMapT(Left, {(Any) ^Any}) ^Left;
+defn{LeftMapT} Left~map(inst, fn) ^inst;
+
+deft LeftApT(Left, Either) ^Left;
+defn{LeftApT} Left~ap(fnInst, valInst) ^fnInst;
+
+deft LeftCataT(Left, {(Any) ^Any}, {(Any) ^Any})
+	:Effects(Effect.Host.Slot.Read) ^Any;
+defn{LeftCataT} Left~cata(inst, leftFn, rightFn)
+	^leftFn(Effect.Host.Slot.Read% inst);
+
+deft LeftEqT(Left, Any)
+	:Effects(Effect.Host.Slot.Read) ^bool;
+defn{LeftEqT} Left?=(a, b) ^?{
+	[b ?as Left]: (Effect.Host.Slot.Read% a) ?= (Effect.Host.Slot.Read% b);
+	: false
+};
+
+// ============================================================
+// Maybe (sum of Id and None)
+// ============================================================
+
+deft Maybe { Id | None };
+
+deft MaybeT(Any) ^Id;
+defn{MaybeT} Maybe@(v) ^Id@ v;
+
+deft MaybeIdT(Any) ^Id;
+defn{MaybeIdT} Maybe.Id@(v) ^Id@ v;
+
+deft MaybeNoneT() ^None;
+defn{MaybeNoneT} Maybe.None@() ^None@;
+
+deft MaybeFromT(Any) ^Maybe;
+defn{MaybeFromT} Maybe.from@(v)
+	?[?empty v]: None@
+	^Id@ v;
+
+// ============================================================
+// Either (sum of Right and Left)
+// ============================================================
+
+deft Either { Right | Left };
+
+deft EitherT(Any) ^Right;
+defn{EitherT} Either@(v) ^Right@ v;
+
+deft EitherRightT(Any) ^Right;
+defn{EitherRightT} Either.Right@(v) ^Right@ v;
+
+deft EitherLeftT(Any) ^Left;
+defn{EitherLeftT} Either.Left@(r) ^Left@ r;

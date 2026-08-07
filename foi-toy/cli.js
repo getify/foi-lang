@@ -1,25 +1,24 @@
-"use strict";
+import path from "node:path";
+import util from "node:util";
+import fsp from "node:fs/promises";
 
-var util = require("util");
-var path = require("path");
-var fs = require("fs");
-var fsp = require("fs/promises");
-var { PassThrough } = require("node:stream");
-var { Worker } = require("node:worker_threads");
-var args = require("minimist")(process.argv.slice(2));
+import minimist from "minimist";
 
-const ROOT_DIR = __dirname;
+import { tokenize, } from "./src/fast-tokenizer.js";
+import { parseFoi, } from "./src/parser.js";
+import { highlight, } from "./src/highlighter.js";
+import { sourceContext, } from "./src/source-context.js";
+
+var args = minimist(process.argv.slice(2));
+
+const ROOT_DIR = import.meta.dirname;
 const SRC_DIR = path.join(ROOT_DIR,"src");
-const WEB_JS_DIR = path.join(ROOT_DIR,"web","js");
-
-const { tokenize, } = require(path.join(__dirname,"src","tokenizer.js"));
-const { highlight, } = require(path.join(__dirname,"src","highlighter.js"));
-
-var outStream = process.stdout;
-var worker;
 
 
-main().catch(console.log);
+main().catch(err => {
+	console.error(err);
+	process.exitCode = 1;
+});
 
 
 // **********************
@@ -28,103 +27,91 @@ async function main() {
 	if (!args.file) {
 		console.log("Foi-Toy: experimental Foi tool");
 		console.error("Missing --file=.. parameter.");
+		process.exitCode = 1;
 		return;
 	}
 
 	var sourceFilePath = path.resolve(process.cwd(),args.file);
-	var sourceFile;
+	var source = await fsp.readFile(sourceFilePath,"utf-8");
+	var tokens;
 
-	if (args.validate) {
-		let grammarMD;
-		[ grammarMD, sourceFile, ] = await Promise.all([
-			fsp.readFile(path.join(ROOT_DIR,"..","Grammar.md"),"utf-8"),
-			fsp.readFile(sourceFilePath,"utf-8"),
-		]);
-		let grammar = (grammarMD.match(/^```ebnf$\s([^]*?)\s^```$/m) || [null,""])[1];
+	// Lex up front: the token list feeds both the parse and the
+	// render, and nothing downstream is meaningful without it.
+	try {
+		tokens = tokenize(source);
+	}
+	catch (err) {
+		reportFailure("Tokenize",err,source);
+		process.exitCode = 1;
+		return;
+	}
 
-		out("Validating... ");
+	// The parse runs when either flag needs it, and only once.
+	var ast = null;
 
-		outStream = new PassThrough({ highWaterMark: 65535, });
-
-		// validate the grammar via a worker
-		worker = new Worker(path.join(SRC_DIR,"grammar-checker-worker.js"));
-		let checkPr = new Promise(res => worker.once("message",data => {
-			worker.terminate();
-			res(onWorkerMessage(data));
-		}));
-		worker.postMessage({ grammar, input: sourceFile });
-
-		tokenizeFile(sourceFile);
-
-		// valid input?
-		if (await checkPr) {
-			outStream.pipe(process.stdout);
+	if (args.validate || args.ast) {
+		if (args.validate) {
+			await out("Validating... ");
 		}
-		else {
-			process.exit(1);
+		try {
+			// Re-use the tokens already produced rather than lexing
+			// twice; the array is re-iterable, so this is safe.
+			ast = [];
+			for await (let node of parseFoi(source,{ tokenizer: () => tokens, })) {
+				ast.push(node);
+			}
+		}
+		catch (err) {
+			if (args.validate) {
+				await out("\n");
+			}
+			reportFailure("Parse",err,source);
+			process.exitCode = 1;
+			return;
+		}
+		if (args.validate) {
+			await out("OK!\n");
 		}
 	}
+
+	if (args.ast) {
+		await out(`${JSON.stringify(ast,null,2)}\n`);
+	}
 	else {
-		sourceFile = fs.createReadStream(sourceFilePath,"utf-8");
-		tokenizeFile(sourceFile);
+		await renderTokens(tokens);
 	}
 }
 
-async function tokenizeFile(sourceFile) {
-	var tokens = tokenize(sourceFile);
-
+async function renderTokens(tokens) {
 	if (args.color) {
 		let [ tmplHTML, tmplCSS, ] = await Promise.all([
-			fsp.readFile(path.join(__dirname,"src","tmpl.html"),"utf-8"),
-			fsp.readFile(path.join(__dirname,"src","tmpl.css"),"utf-8"),
+			fsp.readFile(path.join(SRC_DIR,"tmpl.html"),"utf-8"),
+			fsp.readFile(path.join(SRC_DIR,"tmpl.css"),"utf-8"),
 		]);
 		let tmplParts = tmplHTML.split(/\<\/?(?:pre|style)\>/);
 
 		await out(`${tmplParts[0]}<style>\n${tmplCSS}</style>${tmplParts[2]}<pre>`);
 
-		await yieldEventLoop();
-
 		for await (let htmlChunk of highlight(tokens)) {
 			await out(htmlChunk);
-			await yieldEventLoop();
 		}
 
 		await out(`</pre>${tmplParts[4]}`);
 	}
 	else {
-		for await (let token of tokens) {
+		for (let token of tokens) {
 			await out(`${util.inspect(token)}\n`);
 		}
 	}
 }
 
-async function out(str,useStream = outStream) {
-	var written = false;
-	while (!written) {
-		if (!useStream.write(str)) {
-			await new Promise(res => useStream.once("drain",res));
-		}
-		else {
-			written = true;
-		}
-	}
+function reportFailure(label,err,source) {
+	console.error(`${label} error: ${err.message}`);
+	console.error(sourceContext(source,err.pos));
 }
 
-function onWorkerMessage(data) {
-	if (data.valid) {
-		out(`OK!\n`,process.stdout);
-		return true;
+async function out(str) {
+	if (!process.stdout.write(str)) {
+		await new Promise(res => process.stdout.once("drain",res));
 	}
-	else if (data.invalid) {
-		out(`${data.invalid}\n`,process.stdout);
-		return false;
-	}
-	else {
-		out(data,process.stdout);
-		return false;
-	}
-}
-
-function yieldEventLoop() {
-	return new Promise(res => setImmediate(res));
 }
