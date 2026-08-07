@@ -1,0 +1,16 @@
+def x: <1,2,3,4,5>;
+def y: <a:6,b:7,c:8,d:9,e:10>;
+
+console.log(x.[1..3],x.<1,2,3>,y.<b,c,e>);
+
+def keys: <"a","d">;
+def moreKeys: < "b", "e" >;
+def bKeyStr: "b";
+def nested: < cKey: "c" >;
+console.log(y.< &keys, %moreKeys.1, %bKeyStr, %nested.cKey >);
+
+def foo: (.[2..4]);
+def bar: (.<a,d>);
+def baz: (.< &keys, %moreKeys.1, %bKeyStr, %nested.cKey >);
+
+console.log(foo(x),bar(y),baz(y));

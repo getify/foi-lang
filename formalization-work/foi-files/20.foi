@@ -1,0 +1,22 @@
+def name: "Kyle";
+def age: 25;
+def coll: <1,2,3>;
+def rec: <a: 1, b: 2>;
+def other: true;
+
+def s1: ?(name){ ?["Kyle"]: "hi"; : "bye" };
+def s2: ?(name){ ?["Kyle","Fred"]: "hi"; : "bye" };
+def s3: ?(age){ ?[?= 18]: "exact"; ?[?>= 18]: "adult"; : "minor" };
+def s4: ?(age){ ?[!< 18, ?= 0]: "ok"; : "no" };
+def s5: ?(name){ !["Kyle"]: "stranger"; : "friend" };
+def s6: ?(age){ ![?< 18, ?= 100]: "mid"; : "edge" };
+def s7: ?(name){ ["Kyle"]: "hi"; : "bye" };
+def s8: ?(2){ ?[?in coll]: "found"; : "missing" };
+def s9: ?(rec){ ?[?has "a"]: "yes"; : "no" };
+def s10: ?(name){ ?["Kyle"]: #; : "no" };
+def s11: ?(age){ ?[?>= 18]: { console.log(#); "adult" }; : "minor" };
+def s12: ?(name){ ?["Kyle"]: ?(age){ ?[?>= 18]: #; : 0 }; : 0 };
+def s13: ?(name){ ?[?as int]: "i"; : "?" };
+def s14: ?(name){ ?[(?and other)]: "both"; : "no" };
+
+console.log(s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14);

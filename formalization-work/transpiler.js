@@ -20,7 +20,7 @@
 // =============================================================
 
 import { readFileSync } from "node:fs";
-import { parseFoi } from "./parser.js";
+import { parseFoi } from "../foi-toy/src/parser.js";
 
 
 // =============================================================

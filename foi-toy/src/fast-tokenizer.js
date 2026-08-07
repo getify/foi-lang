@@ -115,6 +115,16 @@ var EXPR_ENDING_OP_NAMES = new Set([
 	"CloseParen", "CloseBrace", "Hash", "Pipe",
 ]);
 
+// Token types naming an operator or punctuation glyph rather than
+// a word, literal, or trivia. Single-char names derive from `C` so
+// the two stay in step; the rest are emitted by their own dispatch
+// routines and have no entry there.
+export const OPERATOR_TYPES = new Set([
+	...Object.keys(C),
+	"TriplePeriod", "DoublePeriod", "DoubleColon",
+	"Mountain", "Valley", "ForwardSlash",
+]);
+
 
 // =============================================================
 // CHAR PREDICATES
@@ -169,10 +179,12 @@ export function tokenize(src) {
 				throw new Error(`tokenize: unknown mode ${mode}`);
 		}
 		if (!ok) {
-			throw new Error(
+			let err = new Error(
 				`tokenize: cannot advance at position ${state.pos}, ` +
 				`char=${JSON.stringify(src[state.pos])}, mode=${mode}`
 			);
+			err.pos = state.pos;
+			throw err;
 		}
 	}
 	return state.tokens;

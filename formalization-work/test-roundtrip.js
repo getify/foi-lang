@@ -27,7 +27,7 @@
 // chain back to operands+ops gives a single linear walk that
 // distributes ops into the gaps correctly.
 
-import { parseFoi } from "./parser.js";
+import { parseFoi } from "../foi-toy/src/parser.js";
 import { samples } from "./samples.js";
 
 

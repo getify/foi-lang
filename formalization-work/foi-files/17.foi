@@ -1,0 +1,22 @@
+defn inc(v) ^v + 1;
+defn triple(v) ^v * 3;
+defn half(v) ^v / 2;
+
+def pipeRes: (#>)(11, inc, triple, half);     // expect 18
+def pipeRev: (#>')(half, triple, inc, 11);    // expect 18
+
+def addNumsList: (...)(+);
+def applyRes: addNumsList(<1, 2, 3, 4>);      // expect 10
+
+def concatStrRev: (...)(+');
+def concatRevRes: concatStrRev(<"a","b","c">);
+
+def addAll: (defn(args)^(+)(...args)) #> (...');
+def addAll: (...')(defn(args)^(+)(...args));
+def addAllRes: addAll(1,2,3,4,5);
+
+def doubleInc: (defn(x)^x*2) +> (defn(x)^x+1);
+def doubleIncRes: doubleInc(3);
+
+console.log(pipeRes,pipeRev,applyRes,concatRevRes,addAllRes,doubleIncRes);
+

@@ -23,8 +23,8 @@
 // =============================================================
 
 import { tokenize as origTokenize } from "./orig-tokenizer.js";
-import { tokenize } from "./tokenizer.js";
-import { tokenize as fastTokenize } from "./fast-tokenizer.js";
+import { tokenize } from "../foi-toy/src/tokenizer.js";
+import { tokenize as fastTokenize } from "../foi-toy/src/fast-tokenizer.js";
 
 
 // =============================================================

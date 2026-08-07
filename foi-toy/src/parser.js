@@ -3500,17 +3500,22 @@ export const DefTypeStmt = production("DefTypeStmt",
 // parseFoi(input,opts): async generator yielding shaped top-level
 // statement AST nodes. The lex layer streams tokens into the syn
 // parse; each top-level Program child is yielded as it commits.
+//
+// opts.tokenizer: input -> iterable | async-iterable of tokens.
+// Defaults to the combinator tokenizer. Any function returning
+// either form works; fast-tokenizer.js returns a plain array,
+// which satisfies the sync-iterable branch of makeBufferedInput.
 // =============================================================
 
 export async function *parseFoi(input,opts = {}) {
-	var { shapers = defaultShapers, ...rest } = opts;
+	var { shapers = defaultShapers, tokenizer = tokenize, ...rest } = opts;
 	var config = {
 		preserveTerminals: true,
 		preserveSoftDelims: false,
 		memoize: true,
 		...rest,
 	};
-	var handle = parse(Program, tokenize(input), config);
+	var handle = parse(Program, tokenizer(input), config);
 	var events = handle.subscribe(presets.parseCommitsAtDepth(1,{ includeDepths: true }));
 	var runPromise = handle.run();
 	for await (let ev of events) {
@@ -3524,6 +3529,11 @@ export async function *parseFoi(input,opts = {}) {
 		let loc = tok
 			? `unexpected ${tok.type}(${JSON.stringify(tok.value)}) at char ${tok.start}`
 			: `at end of input`;
-		throw new SyntaxError(`Foi parse failed: ${loc} (token ${result.maxPos})`);
+		let err = new SyntaxError(`Foi parse failed: ${loc} (token ${result.maxPos})`);
+		// char offset, for callers rendering source context. Absent
+		// when the parse ran out of input rather than reaching a token.
+		if (tok) err.pos = tok.start;
+		err.tokenPos = result.maxPos;
+		throw err;
 	}
 }

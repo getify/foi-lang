@@ -61,9 +61,9 @@ compute(3);                             // 7
 It shouldn't take reading thousands of pages of books or watching months of workshop videos to fully grasp the surface area of **Foi**. Hopefully, without too much learning and practice, even more advanced code like this will brighten into clarity:
 
 ```java
-defn getFavoriteMovies(userID) ^(IO ~<< {
+defn getFavoriteMovies(userID) ^IO ~<< {
     def movieIDs:: fetch(`"/movies/`userID`");
-    def movieData:: all(
+    def movieData:: Promise.all@(
         movieIDs ~map (movieID) {
             fetch(`"/movie/`movieID`")
         }
@@ -73,17 +73,17 @@ defn getFavoriteMovies(userID) ^(IO ~<< {
         "",
         (html, title) { `"`html`<li>`title`</li>" }
     );
-    ::setBodyHTML(`"<ul>`itemsHTML`</ul>")
-});
+    $setBodyHTML(`"<ul>`itemsHTML`</ul>")
+};
 
-getFavoriteMovies(123).run(document)
+getFavoriteMovies(123)% document;
 ```
 
 Don't worry for now if that example is just a bowl of symbol-soup; you'll *get it* before too long!
 
 ----
 
-**Note:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions are monadic chain operations. [Here is that snippet alongside its JS equivalent](https://gist.github.com/getify/3542996ab54b5be2a648ecfcb6bb6bc8), in case it's helpful to compare and to understand the **Foi** code better.
+**Note:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions (and `$`-prefixed calls) are monadic chain operations. [Here is that snippet alongside its JS equivalent](https://gist.github.com/getify/3542996ab54b5be2a648ecfcb6bb6bc8), in case it's helpful to compare and to understand the **Foi** code better.
 
 ----
 
@@ -96,7 +96,8 @@ If you're already convinced and ready to jump in, you may want to check these ou
     - [More Foi vs JS code comparisons](https://github.com/getify/foi-lang/discussions/10)
 * [Foi vs JS syntax analysis](Cheatsheet.md#syntax-weightdensity)
 * [(Mostly Complete) Foi Guide](Foi-Guide.md)
-* [Formal Grammar](Grammar.md) (for language theory enthusiasts)
+* [Foi Specification](formalization-work/Foi-Specification.md)
+* [Lexical Grammar](formalization-work/Lexical-Grammar.md) + [Syntactic Grammar](formalization-work/Syntactic-Grammar.md) (for language theory enthusiasts)
 * [Foi-Toy](foi-toy/README.md) (CLI tool)
 * [Foi-Toy Online](https://toy.foi-lang.com) (Web tool)
 
@@ -304,7 +305,7 @@ If you have experience or familiarity with JS, check out the [Foi vs JS Cheatshe
 
 Additionally, [Foi Guide](Foi-Guide.md) is a detailed exploration of the language.
 
-For implementers or language design enthusiasts, a [formal grammar specification](Grammar.md) is in progress.
+For implementers or language design enthusiasts, there's a full [Foi Specification](formalization-work/Foi-Specification.md), [Lexical Grammar](formalization-work/Lexical-Grammar.md), and [Syntactic Grammar](formalization-work/Syntactic-Grammar.md).
 
 ## Tools
 
@@ -320,4 +321,4 @@ Additionally, there's an [online version of Foi-Toy](https://toy.foi-lang.com) t
 
 [![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
 
-All code and documentation are (c) 2022-2023 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).
+All code and documentation are (c) 2022-2026 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).

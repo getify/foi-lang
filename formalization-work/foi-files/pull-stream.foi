@@ -1,0 +1,1025 @@
+// ============================================================
+// PullStream stdlib internals — Message 1 of 3
+// Coverage: Buffer.subj@ + Buffer.recycle@ + Buffer?=
+//           + PullStream.withBuffer@ + PullStream?=.
+// ContinuationTrampoline-converted per §6.14.4.
+// ============================================================
+
+
+// -- Buffer subject-style factory --------------------------------
+// Buffer.subj@ returns a subject carrying its methods + a .buf
+// companion, mirroring Promise.subj@ / PushStream.subj@ shape.
+// Slot: < id, state, capacity, overflow, queued, subscriber >
+// State: "Fresh" | "InUse" | "Closed" per §6.11.5.
+// Single-subscribe invariant → at most one `subscriber` cb slot,
+// not a list. `queued` holds values awaiting the subscriber; when
+// a subscriber is installed and queued is non-empty, values drain
+// through the subscriber; when queued is empty and subscriber
+// installed, arrivals fire the subscriber directly.
+//
+// CONVERSION: the two sites that enter the cb chain from producer
+// code — enqueueFn's subscriber-shortcut and closeFn's close
+// signal — are drive points, applying contRamp to whatever the
+// chain hands back. subscribeFn's residual drain is reified as a
+// pair chain rather than looped, so it returns before any value
+// moves (see drainFrom).
+
+deft BufferSubjectFactory(< int, string >)
+	:Effects(Host.Counter, Host.Slot.Write) ^Buffer;
+defn{BufferSubjectFactory} Buffer.subj@(<:capacity, :overflow>) {
+	def subjId: Effect.Host.Counter%;
+	def bufId: Effect.Host.Counter%;
+	def subj:
+		:buf,
+		ready: readyFn,
+		enqueue: enqueueFn,
+		close: closeFn,
+		subscribe: subscribeFn,
+		unsubscribe: unsubscribeFn
+	>;
+	def buf: < ready: readyFn >;
+
+	Effect.Host.Slot.Write% < subj,
+		id: subjId,
+		state: "Fresh",
+		:capacity,
+		:overflow,
+		queued: <>,
+		subscriber: empty
+	> >;
+
+	// Reverse pointer lives in buf's slot so Buffer.recycle@ can
+	// recover the subj from a userland-held buf.
+	Effect.Host.Slot.Write% < buf, < id: bufId, :subj > >;
+
+	^subj;
+
+	// -----
+
+	deft BufferReadyT() :Effects(Host.Slot.Read) ^bool;
+	defn{BufferReadyT} readyFn() {
+		def st: Effect.Host.Slot.Read% subj;
+		^(st.state !=  "InUse")
+	};
+
+	// Reified drain: one continuation pair per queued value, walked
+	// by index per §6.14.2. The resume advances the index and does
+	// nothing else, so peak pending is one resume regardless of
+	// queue length. Returning the first pair immediately is what
+	// keeps a subscribe from holding a frame across the delivery it
+	// triggers — the concatMap segment chain in PullStream~< opens
+	// each next segment from inside the previous segment's drain.
+	deft BufferDrainT({(Either) ^Any}, Tuple, int) ^Any;
+	deft BufferDrainResumeT(Any) ^Any;
+	defn{BufferDrainT} drainFrom(cb, vals, i) ^?{
+		[i ?< size(vals)]: ContinuationTrampoline@
+			(defn() ^cb(Right@ vals.[i])),
+			(defn{BufferDrainResumeT}(res)
+				^drainFrom(cb, vals, i + 1))
+		>;
+		: Right@ true
+	};
+
+	// Stdlib-privileged writer op (disciplined access — undocumented
+	// at userland surface). Subscriber-shortcut fires first: if a
+	// subscriber is installed, the incoming value fires it directly
+	// rather than entering `queued`. Otherwise, overflow policy
+	// governs at-capacity behavior.
+	//
+	// Drive point: the fired chain may hand back a continuation
+	// pair (a mid-cascade install, or a nested segment's drain);
+	// contRamp bounces it to completion before the producer's call
+	// returns. Return shape is unchanged.
+	deft BufferEnqueueT(Any) :Effects(Host.Slot) ^Either;
+	defn{BufferEnqueueT} enqueueFn(v) {
+		def st: Effect.Host.Slot.Read% subj;
+		^?{
+			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+			[!(st.subscriber ?= empty)]: {
+				Effect.Host.Slot.Write% < subj,
+					&st,
+					state: "InUse"
+				> >;
+				contRamp(st.subscriber(Right@ v));
+				Right@ true
+			};
+			[size(st.queued) ?< st.capacity]: {
+				Effect.Host.Slot.Write% < subj,
+					&st,
+					state: "InUse",
+					queued: < &st.queued, v >
+				> >;
+				Right@ true
+			};
+			[st.overflow ?= "DROP_OLDEST"]: {
+				def kept: < &st.queued.[1..], v >;
+				Effect.Host.Slot.Write% < subj,
+					&st,
+					state: "InUse",
+					queued: kept
+				> >;
+				Right@ true
+			};
+			[st.overflow ?= "DROP_NEWEST"]: Right@ true;
+			: Left@ "Buffer Full"
+		};
+	};
+
+	// Stdlib-privileged close. Destructive per §6.11.5: purges
+	// residual `queued`, fires subscriber (if installed) with the
+	// close signal so the ~<<-drive terminates. Transitions state
+	// to Closed; recycle path (Buffer.recycle@) resets to Fresh.
+	//
+	// Drive point, same rationale as enqueueFn: a close on an inner
+	// stream is what opens the next concatMap segment.
+	deft BufferCloseT() :Effects(Host.Slot) ^Either;
+	defn{BufferCloseT} closeFn() {
+		def st: Effect.Host.Slot.Read% subj;
+		^?{
+			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+			: {
+				Effect.Host.Slot.Write% < subj,
+					&st,
+					state: "Closed",
+					queued: <>,
+					subscriber: empty
+				> >;
+				?[!(st.subscriber ?= empty)]: {
+					contRamp(st.subscriber(Left@ "PullStream Closed"))
+				};
+				Right@ true
+			}
+		};
+	};
+
+	// Stdlib-privileged subscribe. Installs `cb` as the sole
+	// subscriber and hands back a pair chain draining any residual
+	// `queued` values through it. Rejects on already-subscribed or
+	// closed buffer per single-subscribe invariant (§6.11.3).
+	//
+	// Return widens to Any: a Left on rejection (which contRamp
+	// passes through untouched), or a trampoline resolving to
+	// `Right@ true`. Callers see no change in either case.
+	deft BufferSubscribeT({(Either) ^Any})
+		:Effects(Host.Slot) ^Any;
+	defn{BufferSubscribeT} subscribeFn(cb) {
+		def st: Effect.Host.Slot.Read% subj;
+		^?{
+			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+			[!(st.subscriber ?= empty)]: Left@ "Buffer In Use";
+			: {
+				Effect.Host.Slot.Write% < subj,
+					&st,
+					state: "InUse",
+					subscriber: cb,
+					queued: <>
+				> >;
+				drainFrom(cb, st.queued, 0)
+			}
+		};
+	};
+
+	// Stdlib-privileged unsubscribe. Clears the subscriber slot;
+	// leaves state InUse if a producer is still filling, or
+	// transitions to Fresh if no producer is signaled. For sketch
+	// simplicity, state stays InUse — producer-close via closeFn
+	// is the canonical transition path back to a ready state.
+	deft BufferUnsubscribeT() :Effects(Host.Slot) ^empty;
+	defn{BufferUnsubscribeT} unsubscribeFn() {
+		def st: Effect.Host.Slot.Read% subj;
+		Effect.Host.Slot.Write% < subj,
+			&st,
+			subscriber: empty
+		> >;
+	};
+};
+
+
+// -- Buffer.recycle@ ---------------------------------------------
+// Reset-in-place: recover the subj held in buf's slot, reset its
+// state to Fresh, return the subj. Capacity + overflow retained
+// per §6.11.1 (not overridable at recycle). Runtime error if
+// state is InUse — the recycle path is the enforceable check per
+// spec, not `ready()`.
+//
+// SKETCH NOTE: runtime error path modeled as Left-arm return;
+// real impl raises at binding site.
+
+deft BufferRecycleT(Buffer)
+	:Effects(Host.Slot) ^Buffer;
+defn{BufferRecycleT} Buffer.recycle@(buf) {
+	def bufState: Effect.Host.Slot.Read% buf;
+	def subj: bufState.subj;
+	def subjState: Effect.Host.Slot.Read% subj;
+	^?{
+		[subjState.state ?= "InUse"]: Left@ "Buffer Not Ready";
+		: {
+			Effect.Host.Slot.Write% < subj,
+				&subjState,
+				state: "Fresh",
+				queued: <>,
+				subscriber: empty
+			> >;
+			subj
+		}
+	};
+};
+
+
+// -- Buffer reference identity -----------------------------------
+// Compare buf handles by minted id.
+
+deft BufferEqT(Buffer, Buffer)
+	:Effects(Host.Slot.Read) ^bool;
+defn{BufferEqT} Buffer?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id
+		?= (Effect.Host.Slot.Read% b).id
+);
+
+
+// -- PullStream reader factory (internal) ------------------------
+// Not user-callable — bare PullStream@ compile-error at user
+// surface per §6.11 opener. Stdlib constructs readers here.
+// Reader instance is bare `<>`; identity + source live in slot.
+// Slot: < id, source > — single immutable link to the buffer
+// subject (root) or the upstream derived PullStream
+// (~map / ~< / combinator).
+
+deft PullStreamFactory(Any)
+	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+defn{PullStreamFactory} PullStream@(source) {
+	def id: Effect.Host.Counter%;
+	def st: <>;
+
+	Effect.Host.Slot.Write% < st, < :id, :source > >;
+
+	^st;
+};
+
+
+// -- PullStream.withBuffer@ --------------------------------------
+// Two forms per §6.11.1: fresh (< capacity, overflow >) and
+// recycle (< buf: prevBuf >). Both return < st, buf > tuple.
+
+deft PullStreamWithBufferT(Any)
+	:Effects(Host.Counter, Host.Slot) ^Tuple;
+defn{PullStreamWithBufferT} PullStream.withBuffer@(args) {
+	^?(args){
+		[?has "buf"]: {
+			def subj: Buffer.recycle@ args.buf;
+			def st: PullStream@ subj;
+			< :st, buf: subj.buf >
+		};
+		: {
+			def subj: Buffer.subj@ args;
+			def st: PullStream@ subj;
+			< :st, buf: subj.buf >
+		}
+	};
+};
+
+
+// -- PullStream reference identity -------------------------------
+// Compare readers by minted id.
+
+deft PullStreamEqT(PullStream, PullStream)
+	:Effects(Host.Slot.Read) ^bool;
+defn{PullStreamEqT} PullStream?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+);
+
+
+// ============================================================
+// PullStream stdlib internals — Message 2 of 3 (REVISED)
+// Coverage: PullStream~map + PullStream~< + PullStream~<<.
+// ContinuationTrampoline-converted per §6.14.4.
+// ============================================================
+//
+// CB PROTOCOL: every cb and every install step returns its
+// downstream call rather than discarding it. Statement-position
+// calls are not tail positions (§3.4.1.1); under `^` the match
+// arms inherit eligibility (§3.4.1 rules 3-4), so the whole
+// forwarding cascade costs O(1) frames by §3.4 and needs no
+// pairs. Returning also lets a mid-cascade install propagate its
+// pair chain up to the active bounce, so there is exactly one
+// LIFO stack per delivery (§6.14.2), not one per site.
+
+
+// -- PullStream ~map ---------------------------------------------
+// Inert derivation per §6.11.2: mints a derived reader whose slot
+// carries the source link + a `wrap` closure capturing fn. At
+// ~<<-bind time, wrap receives downstreamCb + the recursive
+// installer, builds upstreamCb, and installs it on source. Same
+// closure-of-fn pattern as PushStream's pushCb, deferred to bind
+// time (source is cold).
+// Slot: < id, source, wrap >
+
+deft PullStreamMapT(PullStream, {(Any) ^Any})
+	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+defn{PullStreamMapT} PullStream~map(source, fn) {
+	def id: Effect.Host.Counter%;
+	def st: <>;
+
+	Effect.Host.Slot.Write% < st, < :id, :source, :wrap > >;
+
+	^st;
+
+	// -----
+
+	defn wrap(downstreamCb, installer) {
+		^installer(source, upstreamCb);
+
+		// -----
+
+		defn upstreamCb(either) ^?(either){
+			[?as Left]: downstreamCb(either);
+			[?as Right]: downstreamCb(Right@ fn(either.value));
+		};
+	};
+};
+
+
+// -- PullStream ~< (concatMap) -----------------------------------
+// Inert derivation with concatMap semantic per §6.11.2. Wrap
+// closes over concatmap state (innerActive, pendingOuters,
+// outerClosed); outerCb receives source values, innerCb receives
+// current inner's values. Outer stays subscribed throughout;
+// while an inner drains, subsequent outer arrivals queue in
+// pendingOuters and open sequentially on inner-close.
+// Slot: < id, source, wrap >
+//
+// The per-arm work is hoisted into named helpers: a block used as
+// `^`'s operand does not propagate tail eligibility to its
+// completion value (§3.4.1.1), so state updates have to sit above
+// a `^` rather than beside the forwarding call. This is the axis
+// that mattered — segment k's install ran inside segment k-1's
+// frame, and segment count is user-unbounded.
+
+deft PullStreamBindT(PullStream, {(Any) ^PullStream})
+	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+defn{PullStreamBindT} PullStream~<(source, fn) {
+	def id: Effect.Host.Counter%;
+	def st: <>;
+
+	Effect.Host.Slot.Write% < st, < :id, :source, :wrap > >;
+
+	^st;
+
+	// -----
+
+	defn wrap(downstreamCb, installer) {
+		def innerActive: false;
+		def pendingOuters: <>;
+		def outerClosed: false;
+
+		^installer(source, outerCb);
+
+		// -----
+
+		defn innerCb(either) ^?(either){
+			[?as Left]: onInnerClose();
+			[?as Right]: downstreamCb(either);
+		};
+
+		defn onInnerClose()
+			:over(innerActive, pendingOuters, outerClosed)
+		{
+			innerActive := false;
+			^?{
+				[size(pendingOuters) ?> 0]: openNext();
+				[outerClosed]: downstreamCb(
+					Left@ "PullStream Closed"
+				);
+				: empty
+			};
+		};
+
+		defn openNext() :over(innerActive, pendingOuters) {
+			def nextV: pendingOuters.0;
+			pendingOuters := pendingOuters.[1..];
+			innerActive := true;
+			^installer(fn(nextV), innerCb);
+		};
+
+		defn outerCb(either) ^?(either){
+			[?as Left]: onOuterClose();
+			[?as Right]: onOuterValue(either.value);
+		};
+
+		defn onOuterClose() :over(innerActive, outerClosed) {
+			outerClosed := true;
+			^?{
+				[!innerActive]: downstreamCb(
+					Left@ "PullStream Closed"
+				);
+				: empty
+			};
+		};
+
+		defn onOuterValue(v) :over(innerActive, pendingOuters) {
+			^?{
+				[innerActive]: {
+					pendingOuters := < &pendingOuters, v >;
+					empty
+				};
+				: openInner(v)
+			};
+		};
+
+		defn openInner(v) :over(innerActive) {
+			innerActive := true;
+			^installer(fn(v), innerCb);
+		};
+	};
+};
+
+
+// -- PullStream ~<< ----------------------------------------------
+// Subscribe-and-drive.
+//   Phase 1: extract tail PullStream via Done@ #.value from the
+//            block's first Effect.Host.Do.Bind arm.
+//   Phase 2: build rootCb (dispatches close-signal vs value) and
+//            onValue (opens a fresh do-scope over comp per
+//            delivery, ret v into Bind, capture Map body-terminal
+//            for Done@/Left@ inspection). installCb walks tail's
+//            source chain: derived readers invoke slot.wrap
+//            (which recurses via installer); root reader
+//            subscribes composed cb at Buffer subj.
+//
+// The bind-time install is the third drive point: subscribing at
+// the root drains whatever the buffer already holds, so the
+// install can hand back a pair chain before any producer runs.
+
+deft PullStreamBindHookT(Any, Tuple)
+	:Effects(Host.Slot) ^Promise;
+defn{PullStreamBindHookT} PullStream~<<(comp, ty) {
+	^?(ty){
+		[< PullStream >]: pullBindImpl(comp);
+		: Left@ "Invalid LHS"
+	};
+
+	// -----
+
+	defn pullBindImpl(comp) {
+		def tail: Effect.Host.Do ~<* (eff:: comp) {
+			?(eff){
+				[?as Effect.Host.Do.Bind]: Done@ #.value
+			}
+		};
+
+		def result: Promise.subj@;
+
+		contRamp(installCb(tail, rootCb));
+
+		^result.pr;
+
+		// -----
+
+		defn onValue(v) {
+			def bodyTerminal:
+				Effect.Host.Do ~<* (eff:: comp, ret)
+			{
+				?(eff){
+					[?as Effect.Host.Do.Bind]: {
+						ret(v);
+						empty
+					};
+					[?as Effect.Host.Do.Map]: Done@ #.value;
+				}
+			};
+			^?{
+				[bodyTerminal ?as Left]:
+					result% (Left@ bodyTerminal.value);
+				[bodyTerminal ?as Done]:
+					result% (Right@ bodyTerminal.value);
+				: empty
+			};
+		};
+
+		defn rootCb(either) ^?(either){
+			[?as Left]:
+				result% (Left@ "PullStream Closed");
+			[?as Right]: onValue(either.value);
+		};
+	};
+
+	defn installCb(reader, downstreamCb) {
+		def slot: Effect.Host.Slot.Read% reader;
+		^?{
+			[slot ?has "wrap"]: slot.wrap(downstreamCb, installCb);
+			: slot.source.subscribe(downstreamCb);
+		};
+	};
+};
+
+
+
+
+
+// // Sample Usage:
+
+// // Test stdlib-style producer (stands in for File.readInts@ etc.)
+// defn produce(<buf, values>) {
+// 	def subj: (Effect.Host.Slot.Read% buf).subj;
+// 	values ~each (v) { subj.enqueue(v) };
+// 	subj.close();
+// };
+
+// def <st, buf>: PullStream.withBuffer@ <
+// 	capacity: 8,
+// 	overflow: "DROP_OLDEST"
+// >;
+
+// produce(< :buf, values: <1, 2, 3> >);
+
+// PullStream ~<< (v:: st) {
+// 	log(`"got: `v`");
+// };
+// // got: 1
+// // got: 2
+// // got: 3
+// // (completion Promise resolves Left@ "PullStream Closed")
+
+
+// // recycle buf
+// <st, buf> := PullStream.withBuffer@ < :buf >;
+
+// PullStream ~<< (v:: st) {
+// 	log(`"more: `v`");
+// }
+
+// // note: capacity:8 + DROP_OLDEST --> drops 5-12
+// produce(< :buf, values: 5..20 >);
+// // more: 13
+// // more: 14
+// // more: 15
+// // more: 16
+// // more: 17
+// // more: 18
+// // more: 19
+// // more: 20
+
+
+
+
+
+
+
+// *********************************************
+// ********** PRE-CONT-TRAMPOLINE **************
+// *********************************************
+
+// // ============================================================
+// // PullStream stdlib internals — Message 1 of 3
+// // Coverage: Buffer.subj@ + Buffer.recycle@ + Buffer?=
+// //           + PullStream.withBuffer@ + PullStream?=.
+// // ============================================================
+
+
+// // -- Buffer subject-style factory --------------------------------
+// // Buffer.subj@ returns a subject carrying its methods + a .buf
+// // companion, mirroring Promise.subj@ / PushStream.subj@ shape.
+// // Slot: < id, state, capacity, overflow, queued, subscriber >
+// // State: "Fresh" | "InUse" | "Closed" per §6.11.5.
+// // Single-subscribe invariant → at most one `subscriber` cb slot,
+// // not a list. `queued` holds values awaiting the subscriber; when
+// // a subscriber is installed and queued is non-empty, values drain
+// // through the subscriber; when queued is empty and subscriber
+// // installed, arrivals fire the subscriber directly.
+
+// deft BufferSubjectFactory(< int, string >)
+// 	:Effects(Host.Counter, Host.Slot.Write) ^Buffer;
+// defn{BufferSubjectFactory} Buffer.subj@(<:capacity, :overflow>) {
+// 	def subjId: Effect.Host.Counter%;
+// 	def bufId: Effect.Host.Counter%;
+// 	def subj: <
+// 		:buf,
+// 		ready: readyFn,
+// 		enqueue: enqueueFn,
+// 		close: closeFn,
+// 		subscribe: subscribeFn,
+// 		unsubscribe: unsubscribeFn
+// 	>;
+// 	def buf: < ready: readyFn >;
+
+// 	Effect.Host.Slot.Write% < subj, <
+// 		id: subjId,
+// 		state: "Fresh",
+// 		:capacity,
+// 		:overflow,
+// 		queued: <>,
+// 		subscriber: empty
+// 	> >;
+
+// 	// Reverse pointer lives in buf's slot so Buffer.recycle@ can
+// 	// recover the subj from a userland-held buf.
+// 	Effect.Host.Slot.Write% < buf, < id: bufId, :subj > >;
+
+// 	^subj;
+
+// 	// -----
+
+// 	deft BufferReadyT() :Effects(Host.Slot.Read) ^bool;
+// 	defn{BufferReadyT} readyFn() {
+// 		def st: Effect.Host.Slot.Read% subj;
+// 		^(st.state !=  "InUse")
+// 	};
+
+// 	// Stdlib-privileged writer op (disciplined access — undocumented
+// 	// at userland surface). Subscriber-shortcut fires first: if a
+// 	// subscriber is installed, the incoming value fires it directly
+// 	// rather than entering `queued`. Otherwise, overflow policy
+// 	// governs at-capacity behavior.
+// 	deft BufferEnqueueT(Any) :Effects(Host.Slot) ^Either;
+// 	defn{BufferEnqueueT} enqueueFn(v) {
+// 		def st: Effect.Host.Slot.Read% subj;
+// 		^?{
+// 			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+// 			[!(st.subscriber ?= empty)]: {
+// 				Effect.Host.Slot.Write% < subj, <
+// 					&st,
+// 					state: "InUse"
+// 				> >;
+// 				st.subscriber(Right@ v);
+// 				Right@ true
+// 			};
+// 			[size(st.queued) ?< st.capacity]: {
+// 				Effect.Host.Slot.Write% < subj, <
+// 					&st,
+// 					state: "InUse",
+// 					queued: < &st.queued, v >
+// 				> >;
+// 				Right@ true
+// 			};
+// 			[st.overflow ?= "DROP_OLDEST"]: {
+// 				def kept: < &st.queued.[1..], v >;
+// 				Effect.Host.Slot.Write% < subj, <
+// 					&st,
+// 					state: "InUse",
+// 					queued: kept
+// 				> >;
+// 				Right@ true
+// 			};
+// 			[st.overflow ?= "DROP_NEWEST"]: Right@ true;
+// 			: Left@ "Buffer Full"
+// 		};
+// 	};
+
+// 	// Stdlib-privileged close. Destructive per §6.11.5: purges
+// 	// residual `queued`, fires subscriber (if installed) with the
+// 	// close signal so the ~<<-drive terminates. Transitions state
+// 	// to Closed; recycle path (Buffer.recycle@) resets to Fresh.
+// 	deft BufferCloseT() :Effects(Host.Slot) ^Either;
+// 	defn{BufferCloseT} closeFn() {
+// 		def st: Effect.Host.Slot.Read% subj;
+// 		^?{
+// 			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+// 			: {
+// 				Effect.Host.Slot.Write% < subj, <
+// 					&st,
+// 					state: "Closed",
+// 					queued: <>,
+// 					subscriber: empty
+// 				> >;
+// 				?[!(st.subscriber ?= empty)]: {
+// 					st.subscriber(Left@ "PullStream Closed")
+// 				};
+// 				Right@ true
+// 			}
+// 		};
+// 	};
+
+// 	// Stdlib-privileged subscribe. Installs `cb` as the sole
+// 	// subscriber and drains any residual `queued` values through
+// 	// it before returning. Rejects on already-subscribed or closed
+// 	// buffer per single-subscribe invariant (§6.11.3).
+// 	deft BufferSubscribeT({(Either) ^empty})
+// 		:Effects(Host.Slot) ^Either;
+// 	defn{BufferSubscribeT} subscribeFn(cb) {
+// 		def st: Effect.Host.Slot.Read% subj;
+// 		^?{
+// 			[st.state ?= "Closed"]: Left@ "Buffer Closed";
+// 			[!(st.subscriber ?= empty)]: Left@ "Buffer In Use";
+// 			: {
+// 				Effect.Host.Slot.Write% < subj, <
+// 					&st,
+// 					state: "InUse",
+// 					subscriber: cb,
+// 					queued: <>
+// 				> >;
+// 				st.queued ~each (v) { cb(Right@ v) };
+// 				Right@ true
+// 			}
+// 		};
+// 	};
+
+// 	// Stdlib-privileged unsubscribe. Clears the subscriber slot;
+// 	// leaves state InUse if a producer is still filling, or
+// 	// transitions to Fresh if no producer is signaled. For sketch
+// 	// simplicity, state stays InUse — producer-close via closeFn
+// 	// is the canonical transition path back to a ready state.
+// 	deft BufferUnsubscribeT() :Effects(Host.Slot) ^empty;
+// 	defn{BufferUnsubscribeT} unsubscribeFn() {
+// 		def st: Effect.Host.Slot.Read% subj;
+// 		Effect.Host.Slot.Write% < subj, <
+// 			&st,
+// 			subscriber: empty
+// 		> >;
+// 	};
+// };
+
+
+// // -- Buffer.recycle@ ---------------------------------------------
+// // Reset-in-place: recover the subj held in buf's slot, reset its
+// // state to Fresh, return the subj. Capacity + overflow retained
+// // per §6.11.1 (not overridable at recycle). Runtime error if
+// // state is InUse — the recycle path is the enforceable check per
+// // spec, not `ready()`.
+// //
+// // SKETCH NOTE: runtime error path modeled as Left-arm return;
+// // real impl raises at binding site.
+
+// deft BufferRecycleT(Buffer)
+// 	:Effects(Host.Slot) ^Buffer;
+// defn{BufferRecycleT} Buffer.recycle@(buf) {
+// 	def bufState: Effect.Host.Slot.Read% buf;
+// 	def subj: bufState.subj;
+// 	def subjState: Effect.Host.Slot.Read% subj;
+// 	^?{
+// 		[subjState.state ?= "InUse"]: Left@ "Buffer Not Ready";
+// 		: {
+// 			Effect.Host.Slot.Write% < subj, <
+// 				&subjState,
+// 				state: "Fresh",
+// 				queued: <>,
+// 				subscriber: empty
+// 			> >;
+// 			subj
+// 		}
+// 	};
+// };
+
+
+// // -- Buffer reference identity -----------------------------------
+// // Compare buf handles by minted id.
+
+// deft BufferEqT(Buffer, Buffer)
+// 	:Effects(Host.Slot.Read) ^bool;
+// defn{BufferEqT} Buffer?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id
+// 		?= (Effect.Host.Slot.Read% b).id
+// );
+
+
+// // -- PullStream reader factory (internal) ------------------------
+// // Not user-callable — bare PullStream@ compile-error at user
+// // surface per §6.11 opener. Stdlib constructs readers here.
+// // Reader instance is bare `<>`; identity + source live in slot.
+// // Slot: < id, source > — single immutable link to the buffer
+// // subject (root) or the upstream derived PullStream
+// // (~map / ~< / combinator).
+
+// deft PullStreamFactory(Any)
+// 	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+// defn{PullStreamFactory} PullStream@(source) {
+// 	def id: Effect.Host.Counter%;
+// 	def st: <>;
+
+// 	Effect.Host.Slot.Write% < st, < :id, :source > >;
+
+// 	^st;
+// };
+
+
+// // -- PullStream.withBuffer@ --------------------------------------
+// // Two forms per §6.11.1: fresh (< capacity, overflow >) and
+// // recycle (< buf: prevBuf >). Both return < st, buf > tuple.
+
+// deft PullStreamWithBufferT(Any)
+// 	:Effects(Host.Counter, Host.Slot) ^Tuple;
+// defn{PullStreamWithBufferT} PullStream.withBuffer@(args) {
+// 	^?(args){
+// 		[?has "buf"]: {
+// 			def subj: Buffer.recycle@ args.buf;
+// 			def st: PullStream@ subj;
+// 			< :st, buf: subj.buf >
+// 		};
+// 		: {
+// 			def subj: Buffer.subj@ args;
+// 			def st: PullStream@ subj;
+// 			< :st, buf: subj.buf >
+// 		}
+// 	};
+// };
+
+
+// // -- PullStream reference identity -------------------------------
+// // Compare readers by minted id.
+
+// deft PullStreamEqT(PullStream, PullStream)
+// 	:Effects(Host.Slot.Read) ^bool;
+// defn{PullStreamEqT} PullStream?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+// );
+
+
+// // ============================================================
+// // PullStream stdlib internals — Message 2 of 3 (REVISED)
+// // Coverage: PullStream~map + PullStream~< + PullStream~<<.
+// // ============================================================
+
+
+// // -- PullStream ~map ---------------------------------------------
+// // Inert derivation per §6.11.2: mints a derived reader whose slot
+// // carries the source link + a `wrap` closure capturing fn. At
+// // ~<<-bind time, wrap receives downstreamCb + the recursive
+// // installer, builds upstreamCb, and installs it on source. Same
+// // closure-of-fn pattern as PushStream's pushCb, deferred to bind
+// // time (source is cold).
+// // Slot: < id, source, wrap >
+
+// deft PullStreamMapT(PullStream, {(Any) ^Any})
+// 	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+// defn{PullStreamMapT} PullStream~map(source, fn) {
+// 	def id: Effect.Host.Counter%;
+// 	def st: <>;
+
+// 	Effect.Host.Slot.Write% < st, < :id, :source, :wrap > >;
+
+// 	^st;
+
+// 	// -----
+
+// 	defn wrap(downstreamCb, installer) {
+// 		defn upstreamCb(either) {
+// 			?(either){
+// 				[?as Left]: downstreamCb(either);
+// 				[?as Right]: downstreamCb(
+// 					Right@ fn(either.value)
+// 				);
+// 			};
+// 		};
+// 		installer(source, upstreamCb);
+// 	};
+// };
+
+
+// // -- PullStream ~< (concatMap) -----------------------------------
+// // Inert derivation with concatMap semantic per §6.11.2. Wrap
+// // closes over concatmap state (innerActive, pendingOuters,
+// // outerClosed); outerCb receives source values, innerCb receives
+// // current inner's values. Outer stays subscribed throughout;
+// // while an inner drains, subsequent outer arrivals queue in
+// // pendingOuters and open sequentially on inner-close.
+// // Slot: < id, source, wrap >
+
+// deft PullStreamBindT(PullStream, {(Any) ^PullStream})
+// 	:Effects(Host.Counter, Host.Slot.Write) ^PullStream;
+// defn{PullStreamBindT} PullStream~<(source, fn) {
+// 	def id: Effect.Host.Counter%;
+// 	def st: <>;
+
+// 	Effect.Host.Slot.Write% < st, < :id, :source, :wrap > >;
+
+// 	^st;
+
+// 	// -----
+
+// 	defn wrap(downstreamCb, installer) {
+// 		def innerActive: false;
+// 		def pendingOuters: <>;
+// 		def outerClosed: false;
+
+// 		defn innerCb(either)
+// 			:over(innerActive, pendingOuters)
+// 		{
+// 			?(either){
+// 				[?as Left]: {
+// 					innerActive := false;
+// 					?{
+// 						[size(pendingOuters) ?> 0]: {
+// 							def nextV: pendingOuters.0;
+// 							pendingOuters := pendingOuters.[1..];
+// 							innerActive := true;
+// 							def nextInner: fn(nextV);
+// 							installer(nextInner, innerCb);
+// 						};
+// 						[outerClosed]: downstreamCb(
+// 							Left@ "PullStream Closed"
+// 						);
+// 						: empty
+// 					};
+// 				};
+// 				[?as Right]: downstreamCb(either);
+// 			};
+// 		};
+
+// 		defn outerCb(either)
+// 			:over(innerActive, pendingOuters, outerClosed)
+// 		{
+// 			?(either){
+// 				[?as Left]: {
+// 					outerClosed := true;
+// 					?[!innerActive]: downstreamCb(
+// 						Left@ "PullStream Closed"
+// 					);
+// 				};
+// 				[?as Right]: {
+// 					?{
+// 						[innerActive]: {
+// 							pendingOuters := <
+// 								&pendingOuters,
+// 								either.value
+// 							>
+// 						};
+// 						: {
+// 							innerActive := true;
+// 							def inner: fn(either.value);
+// 							installer(inner, innerCb);
+// 						};
+// 					};
+// 				};
+// 			};
+// 		};
+
+// 		installer(source, outerCb);
+// 	};
+// };
+
+
+// // -- PullStream ~<< ----------------------------------------------
+// // Subscribe-and-drive.
+// //   Phase 1: extract tail PullStream via Done@ #.value from the
+// //            block's first Effect.Host.Do.Bind arm.
+// //   Phase 2: build rootCb (dispatches close-signal vs value) and
+// //            onValue (opens a fresh do-scope over comp per
+// //            delivery, ret v into Bind, capture Map body-terminal
+// //            for Done@/Left@ inspection). installCb walks tail's
+// //            source chain: derived readers invoke slot.wrap
+// //            (which recurses via installer); root reader
+// //            subscribes composed cb at Buffer subj.
+
+// deft PullStreamBindHookT(Any, Tuple)
+// 	:Effects(Host.Slot) ^Promise;
+// defn{PullStreamBindHookT} PullStream~<<(comp, ty) {
+// 	^?(ty){
+// 		[< PullStream >]: pullBindImpl(comp);
+// 		: Left@ "Invalid LHS"
+// 	};
+
+// 	// -----
+
+// 	defn pullBindImpl(comp) {
+// 		def tail: Effect.Host.Do ~<* (eff:: comp) {
+// 			?(eff){
+// 				[?as Effect.Host.Do.Bind]: Done@ #.value
+// 			}
+// 		};
+
+// 		def result: Promise.subj@;
+
+// 		installCb(tail, rootCb);
+
+// 		^result.pr;
+
+// 		// -----
+
+// 		defn onValue(v) {
+// 			def bodyTerminal:
+// 				Effect.Host.Do ~<* (eff:: comp, ret)
+// 			{
+// 				?(eff){
+// 					[?as Effect.Host.Do.Bind]: {
+// 						ret(v);
+// 						empty
+// 					};
+// 					[?as Effect.Host.Do.Map]: Done@ #.value;
+// 				}
+// 			};
+// 			?{
+// 				[bodyTerminal ?as Left]:
+// 					result% (Left@ bodyTerminal.value);
+// 				[bodyTerminal ?as Done]:
+// 					result% (Right@ bodyTerminal.value);
+// 				: empty
+// 			};
+// 		};
+
+// 		defn rootCb(either) {
+// 			?(either){
+// 				[?as Left]:
+// 					result% (Left@ "PullStream Closed");
+// 				[?as Right]: onValue(either.value);
+// 			};
+// 		};
+// 	};
+
+// 	defn installCb(reader, downstreamCb) {
+// 		def slot: Effect.Host.Slot.Read% reader;
+// 		?{
+// 			[slot ?has "wrap"]: slot.wrap(downstreamCb, installCb);
+// 			: slot.source.subscribe(downstreamCb);
+// 		};
+// 	};
+// };
+

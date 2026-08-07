@@ -1,8 +1,8 @@
-# Foi Language: The Incomplete Guide
+# Foi Language: (Mostly Complete) Guide
 
-This stuff is pretty much all subject to change. Consider everything experimental R&D for the foreseeable future.
+Foi has stablized design wise, and now has a [full specification](formalization-work/Foi-Specification.md) though some of the details/semantics may still change.
 
-If you're looking for a [formal grammar specification](Grammar.md) for **Foi**, it's in progress.
+If you're looking for the **Foi** grammar: [Lexical Grammar](formalization-work/Lexical-Grammar.md) and [Syntactic Grammar](formalization-work/Syntactic-Grammar.md)
 
 ## Table of Contents
 

@@ -44,8 +44,8 @@ throughput:   0.09 MB/s
 // after a target byte count; times the full streaming pipeline.
 
 // import { tokenize } from "./orig-tokenizer.js";
-// import { tokenize } from "./tokenizer.js";
-import { tokenize } from "./fast-tokenizer.js";
+// import { tokenize } from "../foi-toy/src/tokenizer.js";
+import { tokenize } from "../foi-toy/src/fast-tokenizer.js";
 import { performance } from "node:perf_hooks";
 
 

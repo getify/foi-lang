@@ -1,0 +1,5 @@
+def data: < a: 1, b: 2 >;
+
+defn process(< :a, :b >:? <>) { console.log(`"a: `a`, b: `b`"); };
+
+process(data);

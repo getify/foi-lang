@@ -1,0 +1,10 @@
+defn foo(x,y,z) { console.log(x,y,z); };
+foo(1,,2);
+foo|1,,2|(5);
+
+console.log((+)|6,12,19|(100));
+
+foo'(1,2,3);
+
+def bar: (')(foo);
+bar(4,5,6);

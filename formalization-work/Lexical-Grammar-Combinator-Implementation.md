@@ -908,3 +908,9 @@ export async function *tokenize(input) {
 `runPromise` is awaited after the event loop drains, so any
 parse-level error (unrecognized input at the final position)
 surfaces from the generator.
+
+## License
+
+[![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
+
+All code and documentation are (c) 2022-2026 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).

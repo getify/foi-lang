@@ -1,0 +1,103 @@
+// =============================================================
+// BlockExprStrict — host-attached defs-init body form.
+//
+// Verifies the new reach at:
+//   - GuardedExpr body              (?[..]: (defs) { body })
+//   - IndepMatch consequent         (?{ ?[..]: (defs) { body }; : ... })
+//   - DepMatch consequent           (?(t){ ?[..]: (defs) { body }; : ... })
+//
+// Inner-entry coverage:
+//   - Single Identifier with init       (y: 3)
+//   - Single Identifier no init         (tmp)         — implicit empty
+//   - Multiple entries, mixed init      (a, b: 0)
+//
+// PEG fall-through verification:
+//   - Bare `(expr)` at host body slot still parses as Expr,
+//     not BlockExprStrict (no `{` after the close paren).
+// =============================================================
+
+def x: 4;
+
+// ---- GuardedExpr body ----
+
+// Ident init: (y: 3) { x + y; }
+console.log(?[x ?< 5]: (y:? 3) { x + y; });
+// expect: 7
+
+// Ident no-init: tmp is empty, then reassigned in body.
+// Verifies declared-uninitialized + reassignment in a strict
+// defs-init body.
+console.log(?[x ?< 5]: (tmp) {
+	tmp := x * 2;
+	tmp + 1;
+});
+// expect: 9
+
+// Multi-entry, mixed init: (a, b: 0)
+console.log(?[x ?< 5]: (a, b:? 0) {
+	a := x;
+	b := x + 1;
+	a + b;
+});
+// expect: 9
+
+// Fall-through: bare `(expr)` at body slot — must parse as Expr
+// (GroupedExpr), not BlockExprStrict. No `{` follows the close paren.
+console.log(?[x ?< 5]: (x + 10));
+// expect: 14
+
+
+// ---- IndepMatch consequent ----
+
+// Ident init
+console.log(?{
+	?[x ?< 5]: (y:? 3) { x + y; };
+	: 0
+});
+// expect: 7
+
+// Ident no-init
+console.log(?{
+	?[x ?< 5]: (tmp) {
+		tmp := x * 10;
+		tmp;
+	};
+	: 0
+});
+// expect: 40
+
+// Multi-entry
+console.log(?{
+	?[x ?< 5]: (a:? 1, b:? 2, c:? 3) { a + b + c + x; };
+	: 0
+});
+// expect: 10
+
+// Else clause is plain expression — BlockExprStrict not admitted
+// here (ElseStmt's MatchConsequentNoSemi Colon-arm reaches it, but
+// the simpler bare-expr form is the common path). Sanity check.
+console.log(?{
+	?[x ?> 100]: 999;
+	: x + 1
+});
+// expect: 5
+
+
+// ---- DepMatch consequent ----
+
+// Ident init, with topic # available inside body
+console.log(?(x){
+	?[?>= 0]: (bump:? 1) { # + bump; };
+	: 0
+});
+// expect: 5
+
+// Ident no-init, body reassigns then uses topic
+console.log(?(x){
+	?[?>= 0]: (tmp) {
+		tmp := # * 3;
+		tmp;
+	};
+	: 0
+});
+// expect: 12

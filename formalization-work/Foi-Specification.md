@@ -10948,3 +10948,9 @@ bootstrap source. User source handles them and does not declare them
 source; whether the mode applies per module or per compilation unit
 set; whether a unit set may mix bootstrap and user source; and whether
 relaxations beyond those above apply.
+
+## License
+
+[![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
+
+All code and documentation are (c) 2022-2026 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).

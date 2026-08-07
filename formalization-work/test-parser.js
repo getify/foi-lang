@@ -14,7 +14,7 @@
 //   - threw, but not our SyntaxError shape → unexpected error type
 
 import util from "node:util";
-import { parseFoi } from "./parser.js";
+import { parseFoi } from "../foi-toy/src/parser.js";
 import { samples } from "./samples.js";
 
 

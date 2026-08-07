@@ -7,7 +7,7 @@
 // remaining ~200 productions begins.
 
 import util from "node:util";
-import { parseFoi } from "./parser.js";
+import { parseFoi } from "../foi-toy/src/parser.js";
 import { samples } from "./samples.js";
 
 

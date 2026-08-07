@@ -1,0 +1,1173 @@
+// -- Continuation-pair helpers ------------------------------------
+// Index-walked delivery over a subscriber snapshot. Each step
+// reifies as a continuation pair: the thunk fires subscriber
+// `idx`, the resume continues at `idx + 1`. A subscriber that
+// returns its own pair chain drains fully before the resume pops,
+// which is depth-first — the order the nested-call form produced
+// (§6.14.2).
+//
+// By-index, never sliced (§6.14.2): a slice per step makes an
+// N-subscriber fan-out O(N²).
+//
+// The LAST subscriber at a level emits §6.14.1's one-argument
+// form: there is no `idx + 1` to continue to, so there is nothing
+// pending, and the bounce performs neither a push nor a later pop
+// for that step. A level with exactly one subscriber therefore
+// costs no heap at all — the all-tail special case of §6.14.5,
+// and the shape every single-subscriber chain (`~map` / `~filter`
+// / `~scan` pipelines) actually has. Genuine fan-out still costs
+// one pending resume per non-final sibling; this narrows the O(N)
+// case rather than removing it.
+//
+// Tuple-length conflation between `< thunk >` and `< thunk, empty >`
+// is immaterial at this slot per §6.14.1 — both denote the absence
+// of a pending resume.
+
+deft PushStreamContStepT() ^Any;
+deft PushStreamContResumeT(Any) ^Any;
+deft PushStreamDeliverT(Tuple, int, Any) ^Any;
+
+defn{PushStreamDeliverT} deliverFrom(subs, idx, msg) ^?{
+	[idx ?>= size(subs)]: empty;
+	[idx ?= size(subs) - 1]: ContinuationTrampoline@ <
+		(defn{PushStreamContStepT}() ^subs[idx](msg))
+	>;
+	: ContinuationTrampoline@ <
+		(defn{PushStreamContStepT}() ^subs[idx](msg)),
+		(defn{PushStreamContResumeT}(res) ^deliverFrom(subs, idx + 1, msg))
+	>
+};
+
+
+// -- Internal stream factory --------------------------------------
+// Not user-callable per §6.10.1 (bare PushStream@ is a compile
+// error at user surface); stdlib source uses it to mint the read
+// side of each subject.
+
+deft ChannelClosedT()
+	:Effects(Host.Slot.Read)
+	^Promise;
+deft PushStreamFactory()
+	:Effects(Host.Counter, Host.Slot.Write) ^PushStream;
+defn{PushStreamFactory} PushStream@() {
+	def id: Effect.Host.Counter%;
+	def closedSubj: Promise.subj@;
+	def st: < closed: closedFn >;
+
+	Effect.Host.Slot.Write% < st, <
+		:id,
+		closed: false,
+		subscribers: <>,
+		:closedSubj
+	>>;
+
+	^st;
+
+	// -----
+
+	defn{ChannelClosedT} closedFn() {
+		def state: Effect.Host.Slot.Read% st;
+		^state.closedSubj.pr
+	};
+};
+
+
+// -- Subject factory ----------------------------------------------
+
+deft ChannelCloseT()
+	:Effects(Host.Slot)
+	^Either;
+deft PushStreamSubjectFactory()
+	:Effects(Host.Counter, Host.Slot.Write)
+	^PushStream;
+defn{PushStreamSubjectFactory} PushStream.subj@() {
+	def id: Effect.Host.Counter%;
+	def st: PushStream@;
+
+	def subj: < :st, close: closeFn >;
+
+	Effect.Host.Slot.Write% < subj, <
+		:id,
+		associated: st
+	>>;
+
+	^subj;
+
+	// -----
+
+	// Drive point. Close enters the chain from user code, so the
+	// pair chain is bounced here rather than returned.
+	defn{ChannelCloseT} closeFn() {
+		def stState: Effect.Host.Slot.Read% st;
+		^?{
+			[stState.closed]: Left@ "PushStream Closed";
+			: {
+				Effect.Host.Slot.Write% < st, < &stState, closed: true >>;
+				stState.closedSubj% (Right@ empty);
+				contRamp(deliverFrom(stState.subscribers, 0, < close: true >));
+				Right@ true
+			}
+		};
+	};
+};
+
+
+// -- Subject broadcast (%) ----------------------------------------
+// Dispatches on any PushStream-namespace instance. Slot shape
+// disambiguates subject vs. stream: subjects carry `associated`,
+// streams carry `subscribers`. Broadcast on a bare stream is
+// ill-formed (spec §6.10.1: "Unary subj% is ill-formed" applies
+// symmetrically — streams have no write capability).
+//
+// Drive point per §6.14.4 step 3. Delivery is driven to completion
+// before the Promise is honored, per §6.10.1's "returned Promise
+// resolves after delivery completes."
+
+deft PushStreamEffectorT(PushStream, Any)
+	:Effects(Host.Slot.Read)
+	^Promise;
+defn{PushStreamEffectorT} PushStream%(inst, v) {
+	def state: Effect.Host.Slot.Read% inst;
+	^?{
+		[state ?has "associated"]: {
+			def stState: Effect.Host.Slot.Read% state.associated;
+			?{
+				[stState.closed]: Promise.renege@ "PushStream Closed";
+				: {
+					contRamp(deliverFrom(stState.subscribers, 0, < value: v >));
+					Promise.honor@ true
+				}
+			}
+		};
+		: Promise.renege@ "PushStream: broadcast requires subject"
+	};
+};
+
+
+// -- Reference identity -------------------------------------------
+
+deft PushStreamEqT(PushStream, PushStream)
+	:Effects(Host.Slot.Read)
+	^bool;
+defn{PushStreamEqT} PushStream?=(a, b) ^(
+	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+);
+
+
+// -- ~map ---------------------------------------------------------
+// Subscribe a transforming callback to source. On a value message,
+// return the pair chain delivering fn(v) to derived's subscribers;
+// on a close message, close derived and cascade. The callback
+// returns its chain rather than walking it — the enclosing bounce
+// drives it.
+
+deft PushStreamMapT(PushStream, {(Any) ^Any})
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamMapT} PushStream~map(source, fn) {
+	def derived: PushStream@;
+	def sourceState: Effect.Host.Slot.Read% source;
+
+	Effect.Host.Slot.Write% < source, <
+		&sourceState,
+		subscribers: < &sourceState.subscribers, pushCb >
+	>>;
+
+	^derived;
+
+	// -----
+
+	deft PushStreamMapCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{PushStreamMapCbT} pushCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: closeDerived();
+			: deliverFrom(dState.subscribers, 0, < value: fn(msg.value) >)
+		};
+	};
+
+	deft PushStreamMapCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{PushStreamMapCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+// -- ~< (bind) ----------------------------------------------------
+// For each source emission, apply fn to get an inner PushStream;
+// subscribe derived's forward-callback to that inner. pushCb
+// installs and returns empty — no delivery happens at this step,
+// since values flow through derived only when the inner's own
+// producer broadcasts.
+//
+// Per §6.10 opener's idempotent-subscription commitment,
+// resubscribing an already-subscribed (derived, inner) pair is a
+// no-op — deferred; naive shape below appends unconditionally.
+//
+// Inner close is ignored (forwardCb's close arm returns empty).
+// §6.10's "derived closes when source closes and every subscribed
+// inner has closed" needs inner refcounting — unchanged gap from
+// the pre-conversion sketch, not introduced here.
+
+deft PushStreamBindT(PushStream, {(Any) ^PushStream})
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamBindT} PushStream~<(source, fn) {
+	def derived: PushStream@;
+	def sourceState: Effect.Host.Slot.Read% source;
+
+	Effect.Host.Slot.Write% < source, <
+		&sourceState,
+		subscribers: < &sourceState.subscribers, pushCb >
+	>>;
+
+	^derived;
+
+	// -----
+
+	deft PushStreamBindCbT(Any)
+		:Effects(Host.Slot)
+		^Any;
+	defn{PushStreamBindCbT} pushCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: closeDerived();
+			: {
+				def inner: fn(msg.value);
+				def innerState: Effect.Host.Slot.Read% inner;
+				Effect.Host.Slot.Write% < inner, <
+					&innerState,
+					subscribers: < &innerState.subscribers, forwardCb >
+				>>;
+				empty
+			}
+		};
+	};
+
+	deft PushStreamBindFwdCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{PushStreamBindFwdCbT} forwardCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: empty;
+			: deliverFrom(dState.subscribers, 0, msg)
+		};
+	};
+
+	deft PushStreamBindCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{PushStreamBindCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+// -- takeUntil combinator -----------------------------------------
+// Forwards sourceSt emissions until signalSt emits its first value
+// (or either closes), then closes derived. Signal value not
+// forwarded — only its arrival triggers close.
+//
+// The two `closedSubj.pr ~<` binds the pre-conversion shape used
+// for close-cascade are gone: both source-close and signal-close
+// now arrive as ordinary messages on the subscriber entries.
+
+deft PushStreamTakeUntilT(<PushStream, PushStream>)
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamTakeUntilT} PushStream.takeUntil@(<sourceSt, signalSt>) {
+	def derived: PushStream@;
+	def sourceState: Effect.Host.Slot.Read% sourceSt;
+	def signalState: Effect.Host.Slot.Read% signalSt;
+
+	Effect.Host.Slot.Write% < sourceSt, <
+		&sourceState,
+		subscribers: < &sourceState.subscribers, forwardCb >
+	>>;
+
+	Effect.Host.Slot.Write% < signalSt, <
+		&signalState,
+		subscribers: < &signalState.subscribers, signalCb >
+	>>;
+
+	^derived;
+
+	// -----
+
+	deft TakeUntilFwdCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{TakeUntilFwdCbT} forwardCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: closeDerived();
+			: deliverFrom(dState.subscribers, 0, msg)
+		};
+	};
+
+	// Any signal message — value or close — closes derived.
+	deft TakeUntilSignalCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{TakeUntilSignalCbT} signalCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			: closeDerived()
+		};
+	};
+
+	deft TakeUntilCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{TakeUntilCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+// -- ~<* (consumption) --------------------------------------------
+// Two-phase per Channel~<* pattern:
+//   1. Discovery scope — run comp, catch first Bind, extract source
+//      stream from #.value via Done@ arm-terminal.
+//   2. Per-emission — subscribe an observer to (source ⋂ signalSt)
+//      via takeUntil@; each emission opens a fresh Effect.Host.Do
+//      scope over comp and runs ret on the payload. Terminal
+//      Left@ payload in the block body dispatches Map-arm →
+//      broadcast the signal subject (unsubscribes this observer
+//      via takeUntil close-cascade) and resolves result with the
+//      Left payload. Source close resolves result with
+//      Left@ "PushStream Closed".
+//
+// `finished` guards reentrancy: broadcasting signalSubj closes
+// `bounded`, whose cascade re-enters observerCb with a close
+// message while this frame is still live. Setting the flag before
+// the broadcast is what keeps the early-exit payload from being
+// overwritten by the close resolution.
+
+deft PushStreamObserverT(Any, Tuple)
+	:Effects(Host.Slot, Host.Counter)
+	^Promise;
+defn{PushStreamObserverT} PushStream~<*(comp, ty) {
+	def result: Promise.subj@;
+	def signalSubj: PushStream.subj@;
+	def finished: false;
+
+	// Phase 1: discovery — extract source from first Bind's payload.
+	def source: Effect.Host.Do ~<* (eff:: comp) {
+		?(eff){
+			[?as Effect.Host.Do.Bind]: Done@ #.value
+		}
+	};
+
+	def bounded: PushStream.takeUntil@ < source, signalSubj.st >;
+	def boundedState: Effect.Host.Slot.Read% bounded;
+
+	Effect.Host.Slot.Write% < bounded, <
+		&boundedState,
+		subscribers: < &boundedState.subscribers, observerCb >
+	>>;
+
+	^result.pr;
+
+	// -----
+
+	// Phase 2: per-emission observer. Fresh Effect.Host.Do scope
+	// over comp per value; Bind arm fires ret(v); Map arm handles
+	// natural completion (empty) or early-exit (Left@ payload).
+	// Leaf subscriber — no downstream stream, so no pair chain.
+	deft PushStreamObsCbT(Any) ^empty;
+	defn{PushStreamObsCbT} observerCb(msg) :over(finished) {
+		?{
+			[finished]: empty;
+			[msg ?has "close"]: {
+				finished := true;
+				result% (Left@ "PushStream Closed");
+				empty
+			};
+			: {
+				Effect.Host.Do ~<* (eff:: comp, ret) {
+					?(eff){
+						[?as Effect.Host.Do.Bind]: {
+							ret(msg.value);
+							empty
+						};
+						[?as Effect.Host.Do.Map]: {
+							?{
+								[#.value ?as Left]: {
+									finished := true;
+									signalSubj% true;
+									result% #.value;
+									empty
+								};
+								: empty
+							}
+						}
+					}
+				};
+				empty
+			}
+		};
+	};
+};
+
+
+// -- merge combinator ---------------------------------------------
+// Fan-in of source streams. Emits every value from every source in
+// arrival order; derived closes once every source has closed.
+// Idempotent-subscription commitment (§6.10 opener) — deferred;
+// duplicate source in `sts` currently would double-forward.
+//
+// The per-source `closedSubj.pr ~<` bind is gone; close arrives on
+// the same subscriber entry that carries values, so the refcount
+// decrements inside forwardCb.
+
+deft PushStreamMergeT(Tuple)
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamMergeT} PushStream.merge@(sts) {
+	def derived: PushStream@;
+	def remaining: size(sts);
+
+	sts ~each (src) {
+		def srcState: Effect.Host.Slot.Read% src;
+		Effect.Host.Slot.Write% < src, <
+			&srcState,
+			subscribers: < &srcState.subscribers, forwardCb >
+		>>;
+		empty
+	};
+
+	^derived;
+
+	// -----
+
+	deft MergeCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{MergeCbT} forwardCb(msg) :over(remaining) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: {
+				remaining := remaining - 1;
+				?{
+					[remaining ?= 0]: closeDerived();
+					: empty
+				}
+			};
+			: deliverFrom(dState.subscribers, 0, msg)
+		};
+	};
+
+	deft MergeCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{MergeCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+// -- filter combinator --------------------------------------------
+// Forwards only source values passing pred.
+
+deft PushStreamFilterPredicateT(Any) ^bool;
+deft PushStreamFilterT(<PushStream, PushStreamFilterPredicateT>)
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamFilterT} PushStream.filter@(<sourceSt, pred>) {
+	def derived: PushStream@;
+	def sourceState: Effect.Host.Slot.Read% sourceSt;
+
+	Effect.Host.Slot.Write% < sourceSt, <
+		&sourceState,
+		subscribers: < &sourceState.subscribers, forwardCb >
+	>>;
+
+	^derived;
+
+	// -----
+
+	deft FilterCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{FilterCbT} forwardCb(msg) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: closeDerived();
+			[pred(msg.value)]: deliverFrom(dState.subscribers, 0, msg);
+			: empty
+		};
+	};
+
+	deft FilterCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{FilterCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+// -- scan combinator ----------------------------------------------
+// Stateful fold across source emissions. `init` is not emitted;
+// first emission is fn(init, v0).
+
+deft PushStreamScanReducerT(Any, Any) ^Any;
+deft PushStreamScanT(<PushStream, Any, PushStreamScanReducerT>)
+	:Effects(Host.Counter, Host.Slot)
+	^PushStream;
+defn{PushStreamScanT} PushStream.scan@(<sourceSt, init, fn>) {
+	def derived: PushStream@;
+	def sourceState: Effect.Host.Slot.Read% sourceSt;
+	def acc: init;
+
+	Effect.Host.Slot.Write% < sourceSt, <
+		&sourceState,
+		subscribers: < &sourceState.subscribers, forwardCb >
+	>>;
+
+	^derived;
+
+	// -----
+
+	deft ScanCbT(Any)
+		:Effects(Host.Slot.Read)
+		^Any;
+	defn{ScanCbT} forwardCb(msg) :over(acc) {
+		def dState: Effect.Host.Slot.Read% derived;
+		^?{
+			[dState.closed]: empty;
+			[msg ?has "close"]: closeDerived();
+			: {
+				acc := fn(acc, msg.value);
+				deliverFrom(dState.subscribers, 0, < value: acc >)
+			}
+		};
+	};
+
+	deft ScanCloseT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{ScanCloseT} closeDerived() {
+		def dState: Effect.Host.Slot.Read% derived;
+		Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+		dState.closedSubj% (Right@ empty);
+		^deliverFrom(dState.subscribers, 0, < close: true >);
+	};
+};
+
+
+
+
+
+// // Sample Usage:
+
+// // -- Subject broadcast + ~map observers (no-replay) --
+
+// def subj: PushStream.subj@;
+
+// subj.st ~map (v) { log(`"a: `v`") };
+// // PushStream{}
+
+// subj% 1;
+// // a: 1
+
+// subj.st ~map (v) { log(`"b: `v`") };
+// // PushStream{}
+
+// subj% 2;
+// // a: 2
+// // b: 2
+
+
+// // -- ~<* observation + close cascade --
+
+// def subj: PushStream.subj@;
+
+// def watcher: PushStream ~<* (v:: subj.st) {
+// 	log(`"got: `v`");
+// };
+// // Promise{pending}
+
+// subj% 10;
+// // got: 10
+
+// subj% 20;
+// // got: 20
+
+// subj.close();
+// // Right{true}
+
+// watcher;
+// // Promise{Left{"PushStream Closed"}}
+
+
+// // -- ~< observational bind (source selects inner) --
+
+// def signals: PushStream.subj@;
+// def dataA: PushStream.subj@;
+// def dataB: PushStream.subj@;
+
+// def selected: signals.st ~< (which) {
+// 	?(which){
+// 		["A"]: dataA.st;
+// 		["B"]: dataB.st;
+// 		: dataA.st;
+// 	};
+// };
+
+// PushStream ~<* (v:: selected) {
+// 	log(`"v: `v`");
+// };
+
+// dataA% 1;      // (no subscription yet)
+// dataB% 2;      // (no subscription yet)
+
+// signals% "A";  // (selected now subscribed to dataA.st)
+// dataA% 10;     // v: 10
+// dataB% 20;     // (not subscribed to dataB)
+
+// signals% "B";  // (selected ALSO subscribed to dataB.st)
+// dataB% 30;     // v: 30
+// dataA% 40;     // v: 40
+
+
+// // -- Combinator pipeline + Left@-terminal unsubscribe --
+
+// def su1: PushStream.subj@;
+// def su2: PushStream.subj@;
+// def stop: PushStream.subj@;
+
+// def merged: PushStream.merge@ < su1.st, su2.st >;
+
+// def evens: PushStream.filter@ <
+// 	merged,
+// 	(defn(v) ^(mod(v, 2) ?= 0))
+// >;
+
+// def totals: PushStream.scan@ <
+// 	evens,
+// 	0,
+// 	(defn(acc, v) ^(acc + v))
+// >;
+
+// def bounded: PushStream.takeUntil@ < totals, stop.st >;
+
+// def watcher: PushStream ~<* (t:: bounded) {
+// 	?{
+// 		[t ?> 50]: Left@ `"overflow: `t`";
+// 		: log(`"total: `t`");
+// 	};
+// };
+
+// su1% 1;         // (odd — filtered)
+// su2% 4;         // total: 4
+// su1% 3;         // (odd — filtered)
+// su2% 6;         // total: 10
+// su1% 10;        // total: 20
+// su2% 100;       // (Left@ "overflow: 120" — watcher unsubscribes)
+
+// watcher;
+// // Promise{Left{"overflow: 120"}}
+
+// su2% 8;         // (nothing — watcher unsubscribed)
+
+
+
+
+
+
+// *********************************************
+// ********** PRE-CONT-TRAMPOLINE **************
+// *********************************************
+
+// // -- Internal stream factory --------------------------------------
+// // Not user-callable per §6.10.1 (bare PushStream@ is a compile
+// // error at user surface); stdlib source uses it to mint the read
+// // side of each subject.
+
+// deft ChannelClosedT()
+// 	:Effects(Host.Slot.Read)
+// 	^Promise;
+// deft PushStreamFactory()
+// 	:Effects(Host.Counter, Host.Slot.Write) ^PushStream;
+// defn{PushStreamFactory} PushStream@() {
+// 	def id: Effect.Host.Counter%;
+// 	def closedSubj: Promise.subj@;
+// 	def st: < closed: closedFn >;
+
+// 	Effect.Host.Slot.Write% < st, <
+// 		:id,
+// 		closed: false,
+// 		subscribers: <>,
+// 		:closedSubj
+// 	>>;
+
+// 	^st;
+
+// 	// -----
+
+// 	defn{ChannelClosedT} closedFn() {
+// 		def state: Effect.Host.Slot.Read% st;
+// 		^state.closedSubj.pr;
+// 	};
+// };
+
+
+// // -- Subject factory ----------------------------------------------
+
+// deft ChannelCloseT()
+// 	:Effects(Host.Slot)
+// 	^Either;
+// deft PushStreamSubjectFactory()
+// 	:Effects(Host.Counter, Host.Slot.Write)
+// 	^PushStream;
+// defn{PushStreamSubjectFactory} PushStream.subj@() {
+// 	def id: Effect.Host.Counter%;
+// 	def st: PushStream@;
+
+// 	def subj: < :st, close: closeFn >;
+
+// 	Effect.Host.Slot.Write% < subj, <
+// 		:id,
+// 		associated: st
+// 	>>;
+
+// 	^subj;
+
+// 	// -----
+
+// 	defn{ChannelCloseT} closeFn() {
+// 		def stState: Effect.Host.Slot.Read% st;
+// 		^?{
+// 			[stState.closed]: Left@ "PushStream Closed";
+// 			: {
+// 				Effect.Host.Slot.Write% < st, < &stState, closed: true >>;
+// 				stState.closedSubj% (Right@ empty);
+// 				Right@ true
+// 			}
+// 		};
+// 	};
+// };
+
+
+// // -- Subject broadcast (%) ----------------------------------------
+// // Dispatches on any PushStream-namespace instance. Slot shape
+// // disambiguates subject vs. stream: subjects carry `associated`,
+// // streams carry `subscribers`. Broadcast on a bare stream is
+// // ill-formed (spec §6.10.1: "Unary subj% is ill-formed" applies
+// // symmetrically — streams have no write capability).
+
+// defn{PushStreamEffectorT} PushStream%(inst, v) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^?{
+// 		[state ?has "associated"]: {
+// 			def stState: Effect.Host.Slot.Read% state.associated;
+// 			?{
+// 				[stState.closed]: Promise.renege@ "PushStream Closed";
+// 				: {
+// 					stState.subscribers ~each (#>)|v|
+// 					Promise.honor@ true
+// 				}
+// 			}
+// 		}
+// 		: Promise.renege@ "PushStream: broadcast requires subject"
+// 	};
+// };
+
+
+// // -- Reference identity -------------------------------------------
+
+// deft PushStreamEqT(PushStream, PushStream)
+// 	:Effects(Host.Slot.Read)
+// 	^bool;
+// defn{PushStreamEqT} PushStream?=(a, b) ^(
+// 	(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id
+// );
+
+
+// // -- ~map ---------------------------------------------------------
+// // Subscribe a transforming callback to source; broadcast fn(v) to
+// // derived's own subscribers. Close-cascade wires through the
+// // source's closedSubj Promise.
+
+// deft PushStreamMapT(PushStream, {(Any) ^Any})
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamMapT} PushStream~map(source, fn) {
+// 	def derived: PushStream@;
+// 	def sourceState: Effect.Host.Slot.Read% source;
+
+// 	deft PushStreamPushCbT(Any)
+// 		:Effects(Host.Slot.Read)
+// 		^empty;
+// 	defn{PushStreamPushCbT} pushCb(v) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			def transformed: fn(v);
+// 			dState.subscribers ~each (#>)|transformed|
+// 		};
+// 	};
+
+// 	Effect.Host.Slot.Write% < source, <
+// 		&sourceState,
+// 		subscribers: < &sourceState.subscribers, pushCb >
+// 	>>;
+
+// 	// close-cascade: when source's closedSubj resolves, close derived.
+// 	sourceState.closedSubj.pr ~< {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 			dState.closedSubj% (Right@ empty);
+// 		};
+// 		empty
+// 	};
+
+// 	^derived
+// };
+
+
+// // -- ~< (bind) ----------------------------------------------------
+// // For each source emission, apply fn to get an inner PushStream;
+// // subscribe derived's push-callback to that inner. Close-cascade
+// // mirrors ~map (source close closes derived). Per §6.10 opener's
+// // idempotent-subscription commitment, resubscribing an already-
+// // subscribed (derived, inner) pair is a no-op — deferred; naive
+// // shape below appends unconditionally.
+
+// deft PushStreamBindT(PushStream, {(Any) ^PushStream})
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamBindT} PushStream~<(source, fn) {
+// 	def derived: PushStream@;
+// 	def sourceState: Effect.Host.Slot.Read% source;
+
+// 	deft PushStreamPushCbT(Any)
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn{PushStreamPushCbT} pushCb(v) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		^?[dState.closed]: empty
+// 		{
+// 			def inner: fn(v);
+// 			def innerState: Effect.Host.Slot.Read% inner;
+
+// 			deft PushStreamForwardCbT(Any)
+// 				:Effects(Host.Slot)
+// 				^empty;
+// 			defn{PushStreamForwardCbT} forwardCb(w) {
+// 				def dState2: Effect.Host.Slot.Read% derived;
+// 				?[!dState2.closed]: {
+// 					dState2.subscribers ~each (#>)|w|
+// 				};
+// 				empty
+// 			};
+
+// 			Effect.Host.Slot.Write% < inner, <
+// 				&innerState,
+// 				subscribers: < &innerState.subscribers, forwardCb >
+// 			>>;
+// 			empty
+// 		};
+// 	};
+
+// 	Effect.Host.Slot.Write% < source, <
+// 		&sourceState,
+// 		subscribers: < &sourceState.subscribers, pushCb >
+// 	>>;
+
+// 	sourceState.closedSubj.pr ~< {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 			dState.closedSubj% (Right@ empty);
+// 		};
+// 		empty
+// 	};
+
+// 	^derived
+// };
+
+// // -- takeUntil combinator -----------------------------------------
+// // Forwards sourceSt emissions until signalSt emits its first value
+// // (or either closes), then closes derived. Signal value not
+// // forwarded — only its arrival triggers close.
+
+// deft PushStreamTakeUntilT(<PushStream, PushStream>)
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamTakeUntilT} PushStream.takeUntil@(<sourceSt, signalSt>) {
+// 	def derived: PushStream@;
+// 	def sourceState: Effect.Host.Slot.Read% sourceSt;
+// 	def signalState: Effect.Host.Slot.Read% signalSt;
+
+// 	deft TakeUntilForwardCbT(Any)
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn{TakeUntilForwardCbT} forwardCb(v) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			dState.subscribers ~each (#>)|v|
+// 		};
+// 		empty
+// 	};
+
+// 	deft TakeUntilSignalCbT(Any)
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn{TakeUntilSignalCbT} signalCb() {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 			dState.closedSubj% (Right@ empty)
+// 		};
+// 		empty
+// 	};
+
+// 	Effect.Host.Slot.Write% < sourceSt, <
+// 		&sourceState,
+// 		subscribers: < &sourceState.subscribers, forwardCb >
+// 	>>;
+
+// 	Effect.Host.Slot.Write% < signalSt, <
+// 		&signalState,
+// 		subscribers: < &signalState.subscribers, signalCb >
+// 	>>;
+
+// 	// close-cascade: either source or signal closing closes derived.
+// 	sourceState.closedSubj.pr ~< { signalCb(empty) };
+// 	signalState.closedSubj.pr ~< { signalCb(empty) };
+
+// 	^derived
+// };
+
+
+// // -- ~<* (consumption) --------------------------------------------
+// // Two-phase per Channel~<* pattern:
+// //   1. Discovery scope — run comp, catch first Bind, extract source
+// //      stream from #.value via Done@ arm-terminal.
+// //   2. Per-emission — subscribe an observer to (source ⋂ signalSt)
+// //      via takeUntil@; each emission opens a fresh Effect.Host.Do
+// //      scope over comp and runs ret on the payload. Terminal
+// //      Left@ payload in the block body dispatches Map-arm →
+// //      broadcast the signal subject (unsubscribes this observer
+// //      via takeUntil close-cascade) and resolves result with the
+// //      Left payload. Source close resolves result with
+// //      Left@ "PushStream Closed".
+
+// deft PushStreamObserverT(Any, Tuple)
+// 	:Effects(Host.Slot, Host.Counter)
+// 	^Promise;
+// defn{PushStreamObserverT} PushStream~<*(comp, ty) {
+// 	def result: Promise.subj@;
+// 	def signalSubj: PushStream.subj@;
+
+// 	// Phase 1: discovery — extract source from first Bind's payload.
+// 	def source: Effect.Host.Do ~<* (eff:: comp) {
+// 		?(eff){
+// 			[?as Effect.Host.Do.Bind]: Done@ #.value
+// 		}
+// 	};
+
+// 	def bounded: PushStream.takeUntil@ < source, signalSubj.st >;
+// 	def boundedState: Effect.Host.Slot.Read% bounded;
+
+// 	// Phase 2: per-emission observer. Fresh Effect.Host.Do scope
+// 	// over comp per value; Bind arm fires ret(v); Map arm handles
+// 	// natural completion (empty) or early-exit (Left@ payload).
+// 	deft PushStreamObsCbT(Any) ^empty;
+// 	defn{PushStreamObsCbT} observerCb(v) {
+// 		Effect.Host.Do ~<* (eff:: comp, ret) {
+// 			?(eff){
+// 				[?as Effect.Host.Do.Bind]: {
+// 					ret(v);
+// 					empty
+// 				};
+// 				[?as Effect.Host.Do.Map]: {
+// 					?{
+// 						[#.value ?as Left]: {
+// 							signalSubj% true;
+// 							result% #.value;
+// 							empty
+// 						}
+// 						: empty
+// 					}
+// 				}
+// 			}
+// 		};
+// 		empty
+// 	};
+
+// 	Effect.Host.Slot.Write% < bounded, <
+// 		&boundedState,
+// 		subscribers: < &boundedState.subscribers, observerCb >
+// 	>>;
+
+// 	// Source close → resolve outer completion Promise.
+// 	def sourceState: Effect.Host.Slot.Read% source;
+// 	sourceState.closedSubj.pr ~< {
+// 		result% (Left@ "PushStream Closed");
+// 	};
+
+// 	^result.pr
+// };
+
+// // -- merge combinator ---------------------------------------------
+// // Fan-in of source streams. Emits every value from every source in
+// // arrival order; derived closes once every source has closed.
+// // Idempotent-subscription commitment (§6.10 opener) — deferred;
+// // duplicate source in `sts` currently would double-forward.
+
+// deft PushStreamMergeT(Tuple)
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamMergeT} PushStream.merge@(sts) {
+// 	def derived: PushStream@;
+// 	def remaining: size(sts);
+
+// 	deft MergeFwdCbT(Any)
+// 		:Effects(Host.Slot.Read)
+// 		^empty;
+// 	defn{MergeFwdCbT} forwardCb(v) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			dState.subscribers ~each (#>)|v|
+// 		};
+// 		empty
+// 	};
+
+// 	deft MergeOnCloseT()
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn{MergeOnCloseT} onSrcClose() :over(remaining) {
+// 		remaining := remaining - 1;
+// 		?[remaining ?= 0]: {
+// 			def dState: Effect.Host.Slot.Read% derived;
+// 			?[!dState.closed]: {
+// 				Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 				dState.closedSubj% (Right@ empty)
+// 			}
+// 		};
+// 		empty
+// 	};
+
+// 	sts ~each (src) {
+// 		def srcState: Effect.Host.Slot.Read% src;
+// 		Effect.Host.Slot.Write% < src, <
+// 			&srcState,
+// 			subscribers: < &srcState.subscribers, forwardCb >
+// 		>>;
+// 		srcState.closedSubj.pr ~< { onSrcClose() };
+// 	};
+
+// 	^derived
+// };
+
+
+// // -- filter combinator --------------------------------------------
+// // Forwards only source values passing pred.
+
+// deft PushStreamFilterT(<PushStream, {(Any) ^bool}>)
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamFilterT} PushStream.filter@(<sourceSt, pred>) {
+// 	def derived: PushStream@;
+// 	def sourceState: Effect.Host.Slot.Read% sourceSt;
+
+// 	deft FilterFwdCbT(Any)
+// 		:Effects(Host.Slot.Read)
+// 		^empty;
+// 	defn{FilterFwdCbT} forwardCb(v) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed ?and pred(v)]: {
+// 			dState.subscribers ~each (#>)|v|
+// 		};
+// 		empty
+// 	};
+
+// 	Effect.Host.Slot.Write% < sourceSt, <
+// 		&sourceState,
+// 		subscribers: < &sourceState.subscribers, forwardCb >
+// 	>>;
+
+// 	sourceState.closedSubj.pr ~< {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 			dState.closedSubj% (Right@ empty)
+// 		};
+// 		empty
+// 	};
+
+// 	^derived
+// };
+
+
+// // -- scan combinator ----------------------------------------------
+// // Stateful fold across source emissions. `init` is not emitted;
+// // first emission is fn(init, v0).
+
+// deft PushStreamScanT(<PushStream, Any, {(Any, Any) ^Any}>)
+// 	:Effects(Host.Counter, Host.Slot)
+// 	^PushStream;
+// defn{PushStreamScanT} PushStream.scan@(<sourceSt, init, fn>) {
+// 	def derived: PushStream@;
+// 	def sourceState: Effect.Host.Slot.Read% sourceSt;
+// 	def acc: init;
+
+// 	deft ScanFwdCbT(Any)
+// 		:Effects(Host.Slot)
+// 		^empty;
+// 	defn{ScanFwdCbT} forwardCb(v) :over(acc) {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			acc := fn(acc, v);
+// 			dState.subscribers ~each (#>)|acc|
+// 		};
+// 		empty
+// 	};
+
+// 	Effect.Host.Slot.Write% < sourceSt, <
+// 		&sourceState,
+// 		subscribers: < &sourceState.subscribers, forwardCb >
+// 	>>;
+
+// 	sourceState.closedSubj.pr ~< {
+// 		def dState: Effect.Host.Slot.Read% derived;
+// 		?[!dState.closed]: {
+// 			Effect.Host.Slot.Write% < derived, < &dState, closed: true >>;
+// 			dState.closedSubj% (Right@ empty)
+// 		};
+// 		empty
+// 	};
+
+// 	^derived
+// };

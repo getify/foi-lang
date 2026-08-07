@@ -1,0 +1,111 @@
+// -- Fan-out ordering, isolated from Promise --
+
+defn chain2(tag) ^ContinuationTrampoline@ <
+	(defn()      { console.log(`"`tag`1"); empty }),
+	(defn(prior) { console.log(`"`tag`2"); empty })
+>;
+
+deft FanT(List, int) ^Any;
+defn{FanT} fan(cbs, i) ^?{
+	[i ?>= size(cbs)]: empty;
+	: ContinuationTrampoline@ <
+		(defn() ^cbs[i]()),
+		(defn(prior) ^fan(cbs, i + 1))
+	>
+};
+
+def subs: < (defn() ^chain2("A")), (defn() ^chain2("B")) >;
+
+contRamp(fan(subs, 0));
+
+
+
+// ============================================================
+// ContinuationTrampoline smoke test — Promise2
+// ============================================================
+
+def N: 100000;
+
+defn inc(v) ^v + 1;
+defn incP(v) ^Promise2.honor@ (v + 1);
+
+
+// -- 1. DEPTH through ~map. Resolving fires one cb, which
+//    resolves the next promise, which fires its cb, N deep. --
+
+def mapSubj: Promise2.subj@;
+def mapChain: mapSubj.pr;
+
+1..N ~each {
+	mapChain := mapChain ~map inc;
+	empty
+};
+
+mapSubj% (Right@ 0);
+
+mapChain ~map (v) {
+	log(`"map depth: `v`");        // 100000
+	v
+};
+
+
+// -- 2. DEPTH through ~<. Exercises the new inner cb in
+//    Promise2~< — specifically its already-resolved arm,
+//    whose tail `resolve(..)` must propagate the trampoline
+//    out rather than swallow it. --
+
+def bindSubj: Promise2.subj@;
+def bindChain: bindSubj.pr;
+
+1..N ~each {
+	bindChain := bindChain ~< incP;
+	empty
+};
+
+bindSubj% (Right@ 0);
+
+bindChain ~map (v) {
+	log(`"bind depth: `v`");       // 100000
+	v
+};
+
+
+// -- 3. ORDERING. Two subscribers on one pending promise,
+//    each with its own downstream. --
+
+def ordSubj: Promise2.subj@;
+def root: ordSubj.pr;
+
+def a1: root ~map (v) { log("A1"); v };
+def a2: a1   ~map (v) { log("A2"); v };
+def b1: root ~map (v) { log("B1"); v };
+def b2: b1   ~map (v) { log("B2"); v };
+
+ordSubj% (Right@ 0);
+// A1
+// A2
+// B1
+// B2   <-- depth-first: A's whole subtree drains before B
+//          starts. A1/B1/A2/B2 would mean the walk went
+//          breadth-first and the conversion is wrong.
+
+
+// -- 4. ~ap. Routes through the converted ~< on the function
+//    side and ~map on the value side, both pending at compose
+//    time. Resolving the value last puts the real work behind
+//    the second resolve. --
+
+defn add(x)(y) ^x + y;
+
+def fnSubj: Promise2.subj@;
+def valSubj: Promise2.subj@;
+
+def applied: fnSubj.pr ~ap valSubj.pr;
+
+applied ~map (v) {
+	log(`"ap: `v`");               // 42
+	v
+};
+
+fnSubj% (Right@ add(1));
+valSubj% (Right@ 41);

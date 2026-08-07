@@ -1,0 +1,74 @@
+defn Iter@(source) {
+	^?{
+		[source ?as Iter]: source;
+		[source ?as Tuple]: makeTupleIter(source);
+	};
+};
+
+defn Iter%(inst, resumeVal) {
+	^inst.step(resumeVal);
+};
+
+defn makeTupleIter(source) {
+	def pos: 0;
+	^< step: defn(_) :over(pos) {
+		^?{
+			[pos ?>= size(source)]: Left@ "Iterator Exhausted";
+			: {
+				def v: source[pos];
+				pos := pos + 1;
+				Right@ v;
+			};
+		};
+	} >;
+};
+
+defn Iter~<<(comp, typ) {
+	^?(typ){
+		[< Iter >]: iterBindImpl(comp);
+		: Left@ "Invalid LHS"
+	};
+};
+
+defn iterBindImpl(comp) {
+	def iter: empty;
+
+    // synchronously extract :: iterator binding
+	Effect.Do ~<* (eff:: comp(), ret) {
+		?(eff){
+			[?as Effect.Do.Bind]: {
+				iter := #.value;
+				Done@ empty;
+			};
+			: empty
+		};
+	};
+
+	^drainStep();
+
+	defn drainStep() {
+		def stepResult: iter%;
+		^?(stepResult){
+			[?as Left]: stepResult;
+			[?as Right]: {
+				def bodyTerminal: empty;
+				Effect.Do ~<* (eff:: comp(), ret) {
+					?(eff){
+						[?as Effect.Do.Bind]: {
+							ret(stepResult.value);
+							empty
+						};
+						[?as Effect.Do.Map]: {
+							bodyTerminal := #.value;
+							Done@ empty;
+						};
+					};
+				};
+				?(bodyTerminal){
+					[?as Done]: Left@ #.value;
+					: drainStep()
+				};
+			};
+		};
+	};
+};

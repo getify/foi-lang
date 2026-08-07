@@ -1,0 +1,87 @@
+defn IterP@(source) {
+	^?{
+		[source ?as IterP]: source;
+		[source ?as List]: makeTupleIterP(source);   // strict elementwise Promise check per §6.5.4
+		: < step: source >;         // stdlib-internal callable-source path
+	};
+};
+
+defn IterP%(inst, resumeVal) {
+	^inst.step(resumeVal);
+};
+
+defn makeTupleIterP(source) {
+	def pos: 0;
+	^< step: defn(_) :over(pos) {
+		^?{
+			[pos ?>= size(source)]: Promise.renege@ "IterP Exhausted";
+			: {
+				def p: source[pos];
+				pos := pos + 1;
+				p;   // Promise element verbatim per Level 1
+			};
+		};
+	} >;
+};
+
+defn IterP.of@(source) {
+	// Natural-transformation lift Iter → IterP.
+	^< step: defn(v) {
+		def r: source% v;
+		^?(r){
+			[?as Left]: Promise.renege@ #.value;
+			[?as Right]: Promise.honor@ #.value;
+		};
+	} >;
+};
+
+defn IterP~<<(comp, typ) {
+	^?(typ){
+		[< IterP >]: iterPBindImpl(comp);
+		: Left@ "Invalid LHS"
+	};
+};
+
+defn iterPBindImpl(comp) {
+	def iter: empty;
+
+    // synchronously extract :: iterator binding
+	Effect.Do ~<* (eff:: comp(), ret) {
+		?(eff){
+			[?as Effect.Do.Bind]: {
+				iter := #.value;
+				Done@ empty;
+			};
+			: empty
+		};
+	};
+
+	^drainStep();
+
+	defn drainStep() {
+		^(iter% empty) ~< (env) {
+			?(env){
+				[?as Right]: {
+					def bodyTerminal: empty;
+					Effect.Do ~<* (eff:: comp(), ret) {
+						?(eff){
+							[?as Effect.Do.Bind]: {
+								ret(env.value);
+								empty
+							};
+							[?as Effect.Do.Map]: {
+								bodyTerminal := #.value;
+								Done@ empty;
+							};
+						};
+					};
+					?(bodyTerminal){
+						[?as Done]: Promise.honor@ #.value;
+						: drainStep()
+					};
+				};
+				[?as Left]: Promise.renege@ env.value;
+			};
+		};
+	};
+};

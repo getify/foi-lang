@@ -49,6 +49,13 @@ textarea {
 	overflow-y: scroll;
 }
 
+#ast-output {
+	font-family: "Source Code Pro", monospace;
+	white-space: pre;
+	overflow: auto;
+	max-height: 30em;
+}
+
 summary {
 	cursor: pointer;
 }

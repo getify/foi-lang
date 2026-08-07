@@ -600,3 +600,9 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     deliberate — committing to a multi-char Escape with no
     follow-on content would emit a token that has no meaningful
     downstream interpretation.
+
+## License
+
+[![License](https://img.shields.io/badge/license-MIT-a1356a)](LICENSE.txt)
+
+All code and documentation are (c) 2022-2026 Kyle Simpson and released under the [MIT License](http://getify.mit-license.org/). A copy of the MIT License [is also included](LICENSE.txt).

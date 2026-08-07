@@ -1,0 +1,35 @@
+def nums: < 1, 2, 3, 4, 5 >;
+def total: 0;
+def i: 0;
+
+console.log("== callable RHS ==");
+nums ~each console.log;
+
+console.log("== block w/ def (mutates outer) ==");
+nums ~each (v) {
+	total := total + v;
+};
+console.log(`"sum: `total`");
+
+console.log("== bare block, no defs ==");
+< "a", "b", "c" > ~each {
+	console.log("tick");
+};
+
+console.log("== record range (Object.values dispatch) ==");
+< a: 10, b: 20, c: 30 > ~each console.log;
+
+console.log("== conditional range w/ mutable counter ==");
+?[i ?< 3] ~each {
+	console.log(`"i=`i`");
+	i := i + 1;
+};
+
+console.log("== Done@ early break at v>3 ==");
+nums ~each (v) {
+	console.log(`"checking: `v`");
+	?[v ?> 3]: Done@ 1;
+};
+
+def printAll: (~each)|,console.log|;
+printAll(< 5, 10, 15, 20, 25 >);

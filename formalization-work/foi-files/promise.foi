@@ -1,0 +1,648 @@
+// ============================================================
+// Promise module
+//   Exports: types Promise, PromiseSubject;
+//            constructors Promise.honor@, Promise.renege@, Promise.subj@
+//
+//   Chain depth: resolving a promise fires its deferred list, and
+//   each cb resolves a downstream promise, which fires its own list.
+//   A chain of length N nested N native resolve frames. `resolve`
+//   now reifies its fan-out as ContinuationTrampoline pairs and
+//   returns them; PromiseSubject% drives the bounce. Order is
+//   unchanged — depth-first, subscriber 0's whole subtree before
+//   subscriber 1.
+// ============================================================
+
+// -- PRIVATE: raw factory. Mints a pending Promise instance paired
+//    with a resolve closure whose Slot writes are Promise-scoped by
+//    lexical capture. --
+
+deft ResolveT(Either)
+	:Effects(Effect.Host.Slot)
+	^Any;
+
+deft PromiseFactoryT()
+	:Effects(Host.Slot.Write, Host.Counter)
+	^<pr: Promise, resolve: ResolveT>;
+defn{PromiseFactoryT} Promise@() {
+	def pr: <>;
+	def id: Effect.Host.Counter%;
+	Effect.Host.Slot.Write% <pr, <:id, resolved: false, either: empty, deferred: <>>>;
+
+	defn{ResolveT} resolve(either) {
+		def state: Effect.Host.Slot.Read% pr;
+		^?{
+			[state.resolved]: empty;
+			: {
+				Effect.Host.Slot.Write% <pr, <&state, resolved: true, either: either, deferred: <>>>;
+				fanOut(state.deferred, 0, either)
+			}
+		};
+	};
+
+	^<:pr, :resolve>
+};
+
+// -- PRIVATE: PromiseSubject factory. --
+
+deft PromiseSubjectFactoryT()
+	:Effects(Host.Slot.Write)
+	^PromiseSubject;
+defn{PromiseSubjectFactoryT} PromiseSubject@() {
+	def <:pr, :resolve>: Promise@;
+	def subj: <:pr>;
+	Effect.Host.Slot.Write% <subj, resolve>;
+	^subj
+};
+
+// -- The one drive point. Every other `resolve` call site either
+//    fires against an empty deferred list (honor@/renege@, and the
+//    already-resolved arms below, whose `pr` was just constructed)
+//    or sits in tail position inside a cb, where the trampoline
+//    must propagate rather than bounce. --
+
+deft PromiseSubjectEffectorT(PromiseSubject, Either)
+	:Effects(Host.Slot.Read)
+	^Either;
+defn{PromiseSubjectEffectorT} PromiseSubject%(inst, either) {
+	def resolve: Effect.Host.Slot.Read% inst;
+	contRamp(resolve(either));
+	^either
+};
+
+// -- PUBLIC: user-facing constructors. --
+
+deft PromiseHonorT(Any) ^Promise;
+defn{PromiseHonorT} Promise.honor@(v) {
+	def <:pr, :resolve>: Promise@;
+	resolve(Right@ v);
+	^pr
+};
+
+deft PromiseRenegeT(Any) ^Promise;
+defn{PromiseRenegeT} Promise.renege@(reason) {
+	def <:pr, :resolve>: Promise@;
+	resolve(Left@ reason);
+	^pr
+};
+
+deft PromiseSubjT() ^PromiseSubject;
+defn{PromiseSubjT} Promise.subj@() ^PromiseSubject@;
+
+// -- Monadic operators on Promise. --
+
+deft PromiseMapT(Promise, {(Any) ^Any})
+	:Effects(Host.Slot)
+	^Promise;
+defn{PromiseMapT} Promise~map(inst, fn) {
+	def state: Effect.Host.Slot.Read% inst;
+	^?{
+		[state.resolved]: {
+			def <:pr, :resolve>: Promise@;
+			resolve(state.either ~map fn);
+			pr
+		};
+		: {
+			def <:pr, :resolve>: Promise@;
+			def cb: defn(either) #> (# ~map fn) #> resolve;
+			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb>>>;
+			pr
+		}
+	};
+};
+
+deft PromiseBindT(Promise, {(Any) ^Promise})
+	:Effects(Host.Slot)
+	^Promise;
+defn{PromiseBindT} Promise~<(inst, fn) {
+	def state: Effect.Host.Slot.Read% inst;
+	deft BindFwdCbT(Either)
+		:Effects(Host.Slot)
+		^Any;
+	^?{
+		[state.resolved]:
+			(~cata)(state.either, Promise.renege.@, fn);
+		: {
+			def <:pr, :resolve>: Promise@;
+			def cb: defn{BindFwdCbT}(either) {
+				def inner: (~cata)(either, Promise.renege.@, fn);
+				def innerState: Effect.Host.Slot.Read% inner;
+				^?{
+					[innerState.resolved]: resolve(innerState.either);
+					: {
+						Effect.Host.Slot.Write% <inner, <&innerState, deferred: < &innerState.deferred, resolve >>>;
+						empty
+					}
+				};
+			};
+			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb >>>;
+			pr
+		}
+	};
+};
+
+deft PromiseCataT(Promise, {(Any) ^Any}, {(Any) ^Any})
+	:Effects(Host.Slot)
+	^Promise;
+defn{PromiseCataT} Promise~cata(inst, leftFn, rightFn) {
+	def state: Effect.Host.Slot.Read% inst;
+	^?{
+		[state.resolved]:
+			Promise.honor@ ((~cata)(state.either, leftFn, rightFn));
+		: {
+			def <:pr, :resolve>: Promise@;
+			def cb: defn(either) #> (~cata)(#, leftFn, rightFn) #> Right.@ #> resolve;
+			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb >>>;
+			pr
+		}
+	};
+};
+
+deft PromiseApT(Promise, Promise) ^Promise;
+defn{PromiseApT} Promise~ap(fnPr, valPr)
+	^(fnPr ~< (~map)| valPr |);
+
+deft PromiseEqT(Promise, Any)
+	:Effects(Host.Slot.Read)
+	^bool;
+defn{PromiseEqT} Promise?=(a, b) ^?{
+	[b ?as Promise]:
+		(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id;
+	: false
+};
+
+// -- Module-internal: reify a subscriber list as a right-nested
+//    trampoline. Walks by index — slicing would rebuild the list
+//    per step and make an N-subscriber fan-out O(N²). Recursion
+//    here is not stack growth: each call returns a pair
+//    immediately, and the next call comes from the bounce loop's
+//    resume, not from a nested frame. --
+
+deft FanOutT(List, int, Either) ^Any;
+defn{FanOutT} fanOut(cbs, i, either) ^?{
+	[i ?>= size(cbs)]: empty;
+	: ContinuationTrampoline@ <
+		(defn() ^cbs[i](either)),
+		(defn(prior) ^fanOut(cbs, i + 1, either))
+	>
+};
+
+
+
+
+// // Sample Usage:
+
+// def subj1: Promise.subj@;
+// def subj2: Promise.subj@;
+
+// subj1.pr ~map (v) { log(`"v: `v`") };
+// // Promise{pending}
+
+// subj1% Right@ 42;
+// // v: 42
+
+// (~cata)(
+// 	subj2.pr,
+// 	defn(reason) { log(`"reason: `reason`") },
+// 	defn(v) { log(`"v: `v`") }
+// );
+
+// subj2% Left@ "Timeout!";
+// // reason: Timeout!
+
+// (~cata)(
+// 	(Promise.honor@ 21)
+// 		~map (v) { v * 2; }
+// 		~< (v) {
+// 			?(v){
+// 				[?> 50]: Promise.renege@ `"Ooops: `v`";
+// 				: Promise.honor@ v;
+// 			}
+// 		},
+// 	defn(reason) { log(reason) },
+// 	defn(v) { log(`"v: `v`") }
+// );
+// // v: 42
+
+
+
+// defn findCustomer(searchStr) {
+// 	// ..
+// 	^subj.pr;
+// };
+
+// defn getCustomerOrders(customerID) {
+// 	// ..
+// 	^subj.pr;
+// };
+
+// Promise ~<< {
+// 	def customer:: findCustomer("Kyle Simpson");
+// 	def orders:: getCustomerOrders(customer.id);
+// 	log(`"`customer.id`: `orders`")
+// };
+// // 123: < < oid: 456, ..>, .. >
+
+
+
+
+
+
+
+// *********************************************
+// ************ PRE-CONT-TRAMPOLINE ************
+// *********************************************
+
+// // ============================================================
+// // Promise module
+// //   Exports: types Promise, PromiseSubject;
+// //            constructors Promise.honor@, Promise.renege@, Promise.subj@
+// // ============================================================
+
+// // -- PRIVATE: raw factory. Mints a pending Promise instance paired
+// //    with a resolve closure whose Slot writes are Promise-scoped by
+// //    lexical capture. --
+
+// deft ResolveT(Either)
+// 	:Effects(Effect.Host.Slot)
+// 	^empty;
+
+// deft PromiseFactoryT()
+// 	:Effects(Host.Slot.Write, Host.Counter)
+// 	^<pr: Promise, resolve: ResolveT>;
+// defn{PromiseFactoryT} Promise@() {
+// 	def pr: <>;
+// 	def id: Effect.Host.Counter%;
+// 	Effect.Host.Slot.Write% <pr, <:id, resolved: false, either: empty, deferred: <>>>;
+
+// 	defn{ResolveT} resolve(either) {
+// 		def state: Effect.Host.Slot.Read% pr;
+// 		?{
+// 			[state.resolved]: empty;
+// 			: {
+// 				Effect.Host.Slot.Write% <pr, <&state, resolved: true, either: either, deferred: <>>>;
+// 				state.deferred ~each (#>)|either|;
+// 			}
+// 		};
+// 	};
+
+// 	^<:pr, :resolve>
+// };
+
+// // -- PRIVATE: PromiseSubject factory. --
+
+// deft PromiseSubjectFactoryT()
+// 	:Effects(Host.Slot.Write)
+// 	^PromiseSubject;
+// defn{PromiseSubjectFactoryT} PromiseSubject@() {
+// 	def <:pr, :resolve>: Promise@;
+// 	def subj: <:pr>;
+// 	Effect.Host.Slot.Write% <subj, resolve>;
+// 	^subj
+// };
+
+// deft PromiseSubjectEffectorT(PromiseSubject, Either)
+// 	:Effects(Host.Slot.Read)
+// 	^Either;
+// defn{PromiseSubjectEffectorT} PromiseSubject%(inst, either) {
+// 	def resolve: Effect.Host.Slot.Read% inst;
+// 	resolve(either);
+// 	^either
+// };
+
+// // -- PUBLIC: user-facing constructors. --
+
+// deft PromiseHonorT(Any) ^Promise;
+// defn{PromiseHonorT} Promise.honor@(v) {
+// 	def <:pr, :resolve>: Promise@;
+// 	resolve(Right@ v);
+// 	^pr
+// };
+
+// deft PromiseRenegeT(Any) ^Promise;
+// defn{PromiseRenegeT} Promise.renege@(reason) {
+// 	def <:pr, :resolve>: Promise@;
+// 	resolve(Left@ reason);
+// 	^pr
+// };
+
+// deft PromiseSubjT() ^PromiseSubject;
+// defn{PromiseSubjT} Promise.subj@() ^PromiseSubject@;
+
+// // -- Monadic operators on Promise. --
+
+// deft PromiseMapT(Promise, {(Any) ^Any})
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// defn{PromiseMapT} Promise~map(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^?{
+// 		[state.resolved]: {
+// 			def <:pr, :resolve>: Promise@;
+// 			resolve(state.either ~map fn);
+// 			pr
+// 		};
+// 		: {
+// 			def <:pr, :resolve>: Promise@;
+// 			def cb: defn(either) #> (# ~map fn) #> resolve;
+// 			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb>>>;
+// 			pr
+// 		}
+// 	};
+// };
+
+// deft PromiseBindT(Promise, {(Any) ^Promise})
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// defn{PromiseBindT} Promise~<(inst, fn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^?{
+// 		[state.resolved]:
+// 			(~cata)(state.either, Promise.renege.@, fn);
+// 		: {
+// 			def <:pr, :resolve>: Promise@;
+// 			def cb: defn(either) #> (~cata)(#, Promise.renege.@, fn) #> forwardTo(#, resolve);
+// 			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb >>>;
+// 			pr
+// 		}
+// 	};
+// };
+
+// deft PromiseCataT(Promise, {(Any) ^Any}, {(Any) ^Any})
+// 	:Effects(Host.Slot)
+// 	^Promise;
+// defn{PromiseCataT} Promise~cata(inst, leftFn, rightFn) {
+// 	def state: Effect.Host.Slot.Read% inst;
+// 	^?{
+// 		[state.resolved]:
+// 			Promise.honor@ ((~cata)(state.either, leftFn, rightFn));
+// 		: {
+// 			def <:pr, :resolve>: Promise@;
+// 			def cb: defn(either) #> (~cata)(#, leftFn, rightFn) #> Right.@ #> resolve;
+// 			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb >>>;
+// 			pr
+// 		}
+// 	};
+// };
+
+// deft PromiseApT(Promise, Promise) ^Promise;
+// defn{PromiseApT} Promise~ap(fnPr, valPr)
+// 	^fnPr ~< (~map)| valPr |;
+
+// deft PromiseEqT(Promise, Any)
+// 	:Effects(Host.Slot.Read)
+// 	^bool;
+// defn{PromiseEqT} Promise?=(a, b) ^?{
+// 	[b ?as Promise]:
+// 		(Effect.Host.Slot.Read% a).id ?= (Effect.Host.Slot.Read% b).id;
+// 	: false
+// };
+
+// // -- Module-internal helper: forward source Promise's resolution
+// //    to a resolve closure. --
+
+// defn forwardTo(sourcePr, resolve) {
+// 	(~cata)(sourcePr, Left.@ +> resolve, Right.@ +> resolve);
+// };
+
+
+
+
+
+
+// *********************************************
+// ******* OLD SKETCH **************************
+// *********************************************
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// def subj: empty;
+// def res: empty;
+// def one: Promise@ 100;
+
+// def two: one ~map (v) {
+// 	v * 2;
+// };
+
+// def three: two ~< (v) {
+// 	def four: Promise@ (v * 3);
+// 	four;
+// };
+
+// three ~map (v) {
+// 	log("Value: " + v);
+// };
+// // Value: 600
+
+
+// // **********************************************
+
+// subj := PromiseSubject@;
+// one := subj.pr;
+
+// two := one ~map (v) {
+// 	log("v: " + v);
+// };
+
+// one.resolved();
+// // false
+
+// two.resolved();
+// // false
+
+// subj.resolve(11);
+// // v: 11
+
+// subj.resolve(12);
+// // Left{"Promise already resolved"}
+
+// one.resolved();
+// // true
+
+// two.resolved();
+// // true
+
+
+// // **********************************************
+
+// one := Promise(defn(resolve) :over (res){
+// 	res := resolve;
+// });
+
+// two := one ~map (v) {
+// 	log("val: " + v);
+// };
+
+// res(20);
+// // val: 20
+
+// res(25);
+// // Left{"Promise already resolved"}
+
+
+// // **********************************************
+
+// subj := PromiseSubject@;
+// one := subj.pr;
+
+// two := Promise@ 42;
+
+// race(< one, two >);
+// // Promise{42}
+
+
+// // **********************************************
+
+// subj := PromiseSubject@;
+// one := subj.pr;
+
+// two := Promise@ 42;
+
+// all(< one, two >);
+// ~map (vals) {
+// 	log("Vals: " + vals);
+// };
+// // Promise{..pending..}
+
+// subj.resolve(10);
+// // Right{true}
+// // Vals: < 10, 42 >
+
+// // NOTE: only using .java extension for syntax highlighting here on github
+
+
+// // type definitions
+// deft PromiseConstructor(?Init) -> Promise;
+// deft Init(Resolve) -> empty;
+// deft Resolve(any) -> Either;
+// deft Promise <
+// 	chain: Chain,
+// 	map: Map,
+// 	resolved: Resolved,
+// >;
+// deft Chain(ChainCB) -> Promise;
+// deft ChainCB(any) -> Promise;
+// deft Map(MapCB) -> Promise;
+// deft MapCB(any) -> any;
+// deft Resolved() -> bool;
+// deft Race(List@Promise) -> Promise;
+// deft All(List@Promise) -> Promise;
+// deft PromiseSubjectUnitConstructor() -> PromiseSubject;
+// deft PromiseSubject <
+// 	pr: Promise,
+// 	resolve: Resolve,
+// >;
+// deft PromiseUnitConstructor(any) -> Promise;
+
+
+// // module-local variables
+// def subscribers: <>;
+
+
+// // module-local functions
+// defn subscribe(pr,cb) :over (subscribers) {
+// 	?{
+// 		?[subscribers ?has pr]: {
+// 			def cbs: subscribers[pr] $+ < cb >;
+// 			subscribers := < &subscribers, %from: cbs >;
+// 		}
+// 		?: {
+// 			subscribers := < &subscribers, %pr: < cb > >;
+// 		}
+// 	};
+// };
+
+// defn notifyValue(pr,v)
+// 	![subscribers ?has pr]: Left@ "No subscribers"
+// {
+// 	subscribers[stream] ~each (cb) {
+// 		cb(v);
+// 	};
+// 	^Right@ true;
+// };
+
+// defn{Race} race(prs)
+// 	![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
+// {
+// 	def subj: PromiseSubject@;
+// 	prs ~each (pr) {
+// 		pr ~map subj.resolve;
+// 	};
+// 	^subj.pr;
+// };
+
+// defn{All} all(prs)
+// 	![size(prs) ?> 0]: Promise@ (Left@ "Empty list of promises")
+// {
+// 	def subj: PromiseSubject@;
+// 	def resCount: 0;
+// 	def res: <>;
+// 	prs ~each (pr,idx) {
+// 		pr ~map (v) {
+// 			resCount := resCount + 1;
+// 			res := < &res, %idx: v >;
+// 			?[resCount ?= size(prs) ?and !subj.pr.resolved()]: {
+// 				subj.resolve(res);
+// 			};
+// 		};
+// 	};
+// 	^subj.pr;
+// };
+
+// defn{PromiseSubjectUnitConstructor} PromiseSubject@() {
+// 	def resolve;
+// 	def pr: Promise(
+// 		defn(res) :over (resolve) { resolve := res; }
+// 	);
+// 	^< :pr, :resolve >;
+// };
+
+// defn{PromiseUnitConstructor} Promise@(v)
+// 	?[?empty v]: Promise()
+// {
+// 	def subj: PromiseSubject@;
+// 	subj.resolve(v);
+// 	^subj.pr;
+// };
+
+// defn{PromiseConstructor} Promise(initFn) {
+// 	def value: empty;
+// 	def pending: true;
+// 	def publicAPI: <
+// 		:chain,
+// 		:map,
+// 		:resolved,
+// 	>;
+// 	?[initFn ?as Init]: initFn(resolve);
+// 	^publicAPI;
+	
+// 	// **************************
+	
+// 	defn{Resolve} resolve(v)
+// 		![pending]: Left@ "Promise already resolved"
+// 		:over (value,pending)
+// 	{
+// 		value := v;
+// 		pending := false;
+// 		notifyValue(publicAPI,value);
+// 		^Right@ v;
+// 	};
+	
+// 	defn{Chain} chain(fn)
+// 		![pending]: fn(value)
+// 	{
+// 		def subj: PromiseSubject@;
+// 		subscribe(publicAPI,fn +> (~map subj.resolve));
+// 		^subj.pr;
+// 	};
+	
+// 	defn{Map} map(fn)
+// 		![pending]: Promise@ fn(value)
+// 	{
+// 		def subj: PromiseSubject@;
+// 		subscribe(publicAPI,fn +> subj.resolve);
+// 		^subj.pr;
+// 	};
+	
+// 	defn{Resolved} resolved() ^!pending;
+// };

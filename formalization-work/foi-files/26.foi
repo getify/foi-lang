@@ -1,0 +1,43 @@
+defn Function_@(v) ^(defn() ^v);
+
+defn MyIO@(effect) ^< :effect >;
+defn MyIO%(self, env) ^self.effect(env);
+defn MyIO_@(v) ^MyIO@(Function_@v);
+
+def hello: MyIO@ (defn () { console.log("hello"); });
+
+def greet: MyIO@ (defn (env) { console.log(`"hi `env.name`"); });
+
+defn readFile(path) {
+	^MyIO@ (defn () { console.log(`"read `path`"); });
+};
+
+def tasks: <
+	a: MyIO@ (defn () { console.log("a"); }),
+	b: MyIO@ (defn () { console.log("b"); })
+>;
+
+def meaningOfLife: MyIO_@42;
+
+hello%;
+greet % <name: "alice">;
+readFile("file.txt")%;
+tasks.a%;
+tasks.b % empty;
+
+def n: 42;
+def nm: "alice";
+console.log(n%);
+console.log(nm%);
+
+def runEff: (%);
+def runEffRev: (%');
+runEff(hello, empty);
+runEffRev(<name: "bob">, greet);
+
+// constructor extraction via `.@`
+def makeIO: MyIO.@;
+def shout: makeIO(defn () { console.log("HELLO!"); });
+shout%;
+
+console.log(`"meaning of life: `meaningOfLife%`");

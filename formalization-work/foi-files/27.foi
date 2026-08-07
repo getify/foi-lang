@@ -1,0 +1,138 @@
+// =============================================================
+// DepCondBoolExpr NamedUnaryOp arm — 5th atom kind.
+//
+// Verifies bare `?empty` / `!empty` at DepCondClause atom
+// position; the topic supplies the implicit operand (extending
+// the "topic-as-implicit-LHS" principle from the operator-led
+// arm to the unary case).
+//
+// Coverage:
+//   - Bare atom (implicit `?` polarity):    [?empty] / [!empty]
+//   - Explicit `?` polarity on clause:      ?[?empty]
+//   - Clause `!` polarity flip:             ![?empty]
+//   - OR-list mixing with other atom kinds
+//   - Topic reference `#` in consequent
+//   - Consequent shapes: bare block, def-block (BlockExprStrict)
+//   - Nested dep-match (inner topic shadows outer)
+//
+// Parse-error cases documented at file end (commented).
+// =============================================================
+
+def missing: empty;
+def present: 42;
+def zero: 0;
+def negValue: -7;
+def name: "Kyle";
+
+
+// ---- Bare atom, implicit ? polarity ----
+
+// missing is empty → ?empty matches
+console.log(?(missing){ [?empty]: "none"; [!empty]: "some" });
+// expect: none
+
+// present is 42 → !empty matches
+console.log(?(present){ [?empty]: "none"; [!empty]: "some" });
+// expect: some
+
+// zero is falsy in JS but NOT empty in Foi — ?empty is
+// null/undefined only, not any falsy value.
+console.log(?(zero){ [?empty]: "none"; [!empty]: "some" });
+// expect: some
+
+
+// ---- Explicit ? polarity on clause ----
+
+// Same semantic as bare; verifies the parse admits the sigil.
+console.log(?(missing){ ?[?empty]: "none"; ?[!empty]: "some" });
+// expect: none
+
+
+// ---- Clause ! polarity flip ----
+
+// ![?empty] matches when the atom does NOT match — i.e., the
+// topic is non-empty. Distinct from the atom-level `!empty`
+// (though semantically equivalent for the single-atom case).
+console.log(?(missing){ ![?empty]: "some"; : "none" });
+// expect: none
+
+console.log(?(present){ ![?empty]: "some"; : "none" });
+// expect: some
+
+
+// ---- OR-list mixing atom kinds ----
+
+// [?empty, ?< 0] — clause matches when topic is empty OR
+// negative. Verifies the unary atom sits alongside operator-led
+// atoms cleanly in a comma-separated OR-list.
+console.log(?(missing){ [?empty, ?< 0]: "bad"; : "ok" });
+// expect: bad
+
+console.log(?(negValue){ [?empty, ?< 0]: "bad"; : "ok" });
+// expect: bad
+
+console.log(?(present){ [?empty, ?< 0]: "bad"; : "ok" });
+// expect: ok
+
+
+// ---- Topic reference # in consequent ----
+
+console.log(?(name){
+	[?empty]: "anonymous";
+	[!empty]: `"Hello, `#`"
+});
+// expect: Hello, Kyle
+
+
+// ---- Bare block consequent ----
+
+console.log(?(present){
+	[!empty]: {
+		def doubled: # * 2;
+		doubled + 1;
+	};
+	: 0
+});
+// expect: 85
+
+
+// ---- Def-block (BlockExprStrict) consequent ----
+
+// # is available inside the def-block body; defs-init supplies
+// additional locals with explicit initializers (strict inner).
+console.log(?(present){
+	[!empty]: (bump: 8) { # + bump; };
+	: 0
+});
+// expect: 50
+
+
+// ---- Nested dep-match; inner topic shadows outer ----
+
+def outer: "set";
+def inner: empty;
+
+console.log(?(outer){
+	[!empty]: ?(inner){
+		[?empty]: "outer-set, inner-empty";
+		[!empty]: "both-set"
+	};
+	: "outer-empty"
+});
+// expect: outer-set, inner-empty
+
+
+// ---- Parse errors — must remain so ----
+//
+// The unary arm admits ONLY NamedUnaryOp (`?empty` / `!empty`),
+// not any other bare operator forms. Uncommenting any of the
+// following should fail at parse time.
+//
+// ?(x){ [?<]: a };                   // bare CompareOp, no RHS
+// ?(x){ [?in]: a };                  // bare containment, no RHS
+// ?(x){ [?has]: a };                 // same
+// ?(x){ [?and]: a };                 // bare AndOp, no RHS
+//
+// The last four are already locked in as negative test cases in
+// test-parser.js failSamples; kept here as human-readable
+// documentation adjacent to the positive coverage.
