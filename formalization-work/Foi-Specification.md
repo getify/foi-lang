@@ -69,7 +69,7 @@ Sections are organized by semantic category, not by grammar production. Current 
 - §6 Suspension and Evaluation Control *(done)*
 - §7 Loops and Comprehensions *(done)*
 - §8 Modules *(done)*
-- §9 Type System *(partial)*
+- §9 Type System *(done)*
 - §10 Runtime Bootstrap *(partial)*
 
 ---
@@ -1892,7 +1892,7 @@ Each admitted marker installs a hook of signature `(inst, rhs)` where `inst` is 
 
 **Missing hook at call site.** When the LHS at a binary call site is a namespaced instance and the namespace has not declared the corresponding hook, the expression is rejected at compile time. There is no primitive fallback for user namespaces: an instance of a user namespace declaring `+` but not `-` does not silently fall through to numeric arithmetic on `-`.
 
-Primitive dispatch on non-namespaced operands is unaffected. `2 + 3`, `"a" + "b"`, and other non-instance operands continue to route through their language-level operator semantics per §1.3 and the corresponding tier in §9. Only LHS values carrying a namespace identity (per §3.8) engage the hook-dispatch route.
+Primitive dispatch on non-namespaced operands is unaffected. `2 + 3`, `"a" + "b"`, and other non-instance operands continue to route through their language-level operator semantics per §1.3 and the corresponding tier in §9. Only LHS values carrying a namespace tag (§3.8) engage the hook-dispatch route.
 
 **Multi-decl uniqueness.** At most one hook per marker per namespace per scope; multiple declarations of the same marker on the same namespace are rejected at compile time.
 
@@ -2457,7 +2457,11 @@ Each operator's behavior against a value is not fixed at the language level; it 
 
 It invokes a **type namespace**: a binding whose name serves as a type identity, a constructor when invoked, and a dispatch target when values constructed through it appear in an operator position. A single binding slot (e.g., `Maybe`, `IO`, `List`, `Vector`) plays all three roles. `?as Maybe` and `:as Maybe` check namespace identity; `Maybe@x` invokes the namespace's constructor hook; `inst%` (§3.9) dispatches an effector hook on the same namespace.
 
-The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values -- `%` in the next section, and eventually others -- read the dispatch target from the value itself, which carries a runtime tag identifying its owning type namespace. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
+The family's operators split by where they read their dispatch target. `@` reads it from the LHS namespace handle directly: `Foo@x` looks up `Foo`'s constructor hook. Operators that act on constructed values -- `%` in the next section, and eventually others -- read the dispatch target from the value itself, which carries a **namespace tag**. Both routes converge on the same rule: the operator's behavior against a value is the behavior the value's type namespace declared for that operator.
+
+**The namespace tag is established at construction and read at dispatch.** An `@`-marked construction stamps the resulting value with the namespace that constructed it, and that stamp is the tag. A value not produced by such a construction carries no tag, and the dispatch route that reads one is unavailable to it (§3.1.1.4, §3.9.1, §3.10.9).
+
+**The tag is opaque and carries no access surface.** No expression reads it and no annotation writes it: `?as` tests against it (§9.6), `:as` leaves it as it found it (§9.7.6), and §3.8.5 is where dispatch consults it. This specification fixes what the tag distinguishes and where it is read; it fixes no representation for it. An implementation may carry it on the value, in a side table keyed by the value's runtime identity (§6.1.5), or in any form answering the same questions.
 
 The result is a namespace-attached operator system that behaves as a typeclass in the ad-hoc-polymorphism sense: a type namespace's set of declared hooks IS the set of operations that admit its instances. The namespace is the main entity; there is no separate class abstraction, no external instance declarations, no orphan installations. A hook is well-defined only against the namespace that declared it; a hook is invoked only against values that identify with that namespace.
 
@@ -2579,22 +2583,27 @@ The primary consumer of this mechanism is the dispatch-type introspection surfac
 
 #### §3.8.5 Hook Resolution Through Membership
 
-A hook is declared on a namespace (§3.1.1) and installs there. A namespace declared by `deft` may be a union (§9.2.3), and its members reach its hooks: dispatch does not stop at the value's own `__ns`.
+A hook is declared on a namespace (§3.1.1) and installs there. A namespace declared by `deft` may be a union (§9.2.3), and its members reach its hooks: dispatch does not stop at the namespace the value's tag names.
 
 At a dispatch site -- `%` (§3.9), a comprehension marker (§3.10.9), or an arithmetic or `?=` marker (§3.1.1.4) -- resolution is one step, not a chain of fallbacks:
 
-1. After alias normalization (§3.10.9.1), collect every type reachable from the value's `__ns` by membership (§9.2.3), the `__ns` itself included, that declares a hook for the marker at hand. Call this the **candidate set**.
+1. After alias normalization (§3.10.9.1), collect every type reachable by membership (§9.2.3) from the namespace the value's tag names (§3.8), that namespace included, that declares a hook for the marker at hand. Call this the **candidate set**.
 2. If the candidate set is empty, the marker's own missing-hook rule applies unchanged: `%` is a type error (§3.9.1); a Tier 1 comprehension is rejected and a Tier 2 comprehension expands its language-provided default (§3.10.9.3); an arithmetic or `?=` marker is rejected (§3.1.1.4). A Tier 2 default composes over the namespace's declared primitives, and each primitive it reaches resolves by this same procedure.
 3. If the candidate set has a unique **most specific** member -- one that is a member of every other candidate -- the hook declared there is invoked.
-4. Otherwise the expression is rejected at compile time. The diagnostic names the value's namespace, the marker, and each incomparable candidate with its declaring module.
+4. Otherwise, read the top of the dispatch operand's view stack (§9.7.2). If it is a rank-1 entry (§9.7.1) naming a member of the candidate set, the hook declared there is invoked.
+5. Otherwise the expression is rejected at compile time. The diagnostic names the value's namespace, the marker, and each incomparable candidate with its declaring module.
 
 **Most-specific-wins is forced, not chosen.** A namespace's own hook is a candidate at membership distance zero, and a union it belongs to may declare the same marker. If the nearer declaration did not win, a namespace could never carry a hook that a union above it also carries: a union could never supply a default that a member overrides, and delegation would have no use. The rule that makes distance zero win is the same rule at every distance.
 
-Step 4 therefore fires only when two candidates are genuinely incomparable -- the value's namespace belongs to two unions, neither a member of the other, and both declare the marker. Declaration order does not change the answer, which is why this rejects rather than picking.
+Step 4 is reached only when two candidates are genuinely incomparable -- the tagged namespace belongs to two unions, neither a member of the other, and both declare the marker. Declaration order does not change the answer, which is why order does not arbitrate.
 
-The **disambiguation surface** for step 4 is whether a written type annotation participates in dispatch. Dispatch reads `__ns` (§9.6), and an annotation does not rewrite it (§9.7.6), so no annotation redirects resolution. A step-4 rejection is resolved at the declarations: one of the two unions drops the marker, or the member declares its own. Whether a disambiguation surface should exist at all is §9.10's.
+**Step 4 is the one place a written type reaches dispatch.** Rank 1 is what the program states about the operand's type (§9.7.1): a `:as`, a `?as`-arm narrowing, or the declared-type brace. Rank 2 is construction evidence, which is where the tag came from -- it produced the ambiguity and cannot arbitrate it. Multiple rank-1 entries order among themselves by enclosure, so the top is already determined and this step adds no tiebreaking rule of its own.
 
-**Constructors do not participate.** The `@` marker dispatches on a namespace handle rather than on an instance's `__ns` (§3.8), and a union declares no constructor (§9.2.3). `U@ x` against a union is rejected whether or not `U`'s members declare constructors.
+**Selection, not redirection.** The named type must be a member of the candidate set. A rank-1 entry naming anything else has no effect here and step 5 rejects: the annotation still does not write a namespace tag (§9.6, §9.7.6), and every hook reachable at step 4 was already reachable at step 1. An operand annotated as a type outside the candidate set dispatches nowhere new.
+
+**Steps 3 and 4 do not compete.** A candidate that is most specific settles the site before step 4 is reached, so a member's override of a union's default cannot be defeated from a use site. Step 4 also inherits step 5's timing: it resolves a site that would otherwise be a compile error, and adds no runtime step.
+
+**Constructors do not participate.** The `@` marker dispatches on a namespace handle rather than on an instance's tag (§3.8), and a union declares no constructor (§9.2.3). `U@ x` against a union is rejected whether or not `U`'s members declare constructors.
 
 ### §3.9 The `%` Effector Call Operator
 
@@ -3126,7 +3135,7 @@ Every hook invocation receives, as its trailing positional argument, a value tha
 
 The tuple's length signals nesting depth; the shape is always a tuple, uniformly, including at plain-LHS sites. Entries are namespace values themselves; per §3.8's four-way collapse, a namespace name is a first-class value, and namespace-value identity comparison via `?=` is specified at §3.8.
 
-**Emission source.** For static-LHS call sites (a bare namespace name or a compound LHS form at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's owning-namespace tag; the tag was established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
+**Emission source.** For static-LHS call sites (a bare namespace name or a compound LHS form at the LHS position, as in `Foo@ x` per §3.10.7, `List ~<< {..}` per §7.2, or `List{Promise} ~<<` per §6.8.3), `ty` is a compile-time literal tuple built directly from the LHS. For instance-LHS call sites (an instance value at the LHS position, as in `inst%` per §3.10.8 or `xs ~map fn` per §3.10.9), `ty` is read at dispatch time from the instance's namespace tag, established at the instance's `@`-marked construction (§3.8). The depth carried by an instance tag reflects the construction path and is not inferred from the instance's contents.
 
 For a call against a reference extracted by `.@` (§3.8.2), `ty` is fixed at the extraction site: `def cons: Foo.@;` captures `< Foo >` into the reference, and every `cons@x` emits that tuple. The extraction site is a static-LHS position, so the tuple is a compile-time literal there.
 
@@ -8068,8 +8077,8 @@ asymmetry is one-directional by construction -- nothing else about
 ambients is untyped.
 
 Nothing downstream is compiled on the assumption: dispatch reads a
-value's `__ns` rather than any view (§9.7.2), and §9.7.7 forbids
-reading an assertion as license for a representation choice.
+value's namespace tag rather than any view (§3.8, §9.7.2), and §9.7.7
+forbids reading an assertion as license for a representation choice.
 
 Ambient effects are handled by a runtime-installed handler scope
 wrapping **the whole program run**: established before the
@@ -9865,9 +9874,10 @@ type-reference positions.
   and equality hook declared on it (§3.1.1.1--§3.1.1.4).
 
 There is no per-hook reach. Instance-LHS dispatch resolves no name at
-all: `xs ~map fn` reads `xs`'s `__ns` (§9.6). Static-LHS positions --
-`Foo@ x`, a labeled `Foo.from@ x`, and `Foo ~<< {..}` -- resolve `Foo`
-in the reaching scope and reach the corresponding hook through it.
+all: `xs ~map fn` reads `xs`'s namespace tag (§3.8, §9.6). Static-LHS
+positions -- `Foo@ x`, a labeled `Foo.from@ x`, and `Foo ~<< {..}` --
+resolve `Foo` in the reaching scope and reach the corresponding hook
+through it.
 
 A hook's declared type rides with the entry; the checker holds it
 whether or not a name for it was reached. Reaching a name for that type is an ordinary `deft X from ".."` against the type named in the hook's declaration (§3.7).
@@ -9921,13 +9931,12 @@ Argument-count variation is the `?` optional-argument modifier
 
 Three positions write a type name down: `:as` and `?as` (§5), which
 annotate and test a value, and the declared-type brace (§3.7,
-§9.6.2), which types a binding. Dispatch reads the value's `__ns`
-(§3.8) and involves no name.
+§9.6.2), which types a binding. Dispatch reads the value's namespace tag (§3.8). A written name reaches it at one step only -- §3.8.5's step 4, selecting among candidates the tag already reaches when no candidate is most specific.
 
 `?as Foo` resolves `Foo` **at that source position** and tests the
-value's `__ns` against the entity it resolves to, not against some
-namespace spelled `Foo` elsewhere. The test succeeds when the `__ns`
-is that entity, and when the `__ns` is a **member** of it (§9.2.3). A
+value's tag against the entity it resolves to, not against some
+namespace spelled `Foo` elsewhere. The test succeeds when the tag
+names that entity, and when it names a **member** of it (§9.2.3). A
 `?as` against a union succeeds for every member, at any membership
 depth.
 
@@ -10142,7 +10151,7 @@ type. Two string literals denoting the same string write the same type,
 delimiter escaping (§1.4.1) included.
 
 **A literal type is transparent**, in §9.9.2's sense. It names a value
-rather than minting a namespace, and a value carries no `__ns` naming
+rather than minting a namespace, and a value carries no tag naming
 the `deft` that wrote it down.
 
 `empty` is a literal type by this rule, and the one §9.9.1 already
@@ -10153,7 +10162,7 @@ states rules for.
 Every expression has a **view**: the type these rules derive for it at
 its source position. A view is a compile-time fact. It is not carried
 on the value and it is not consulted by dispatch, which reads the
-value's `__ns` (§9.6, §3.8.5).
+value's namespace tag (§3.8, §9.6).
 
 A view is derived from **evidence**, held in a **view stack** -- an
 ordered record of what the program says about that expression's type,
@@ -10235,12 +10244,16 @@ Consumers, enumerated:
 - **Refinement** reads the top plus every lower entry compatible with
   it.
 
-**Dispatch is not a consumer.** A marker resolves against the value's
-`__ns` through §3.8.5's candidate-set procedure. Where a compiler can
-determine that `__ns` statically it may resolve the site at compile
-time, and the top view is what it reads to do so; where it cannot, the
-site resolves at runtime. Neither path is altered by anything in this
-section, and no view rewrites a `__ns`.
+**Dispatch consumes the top at one step and nowhere else.** A marker
+resolves against the value's namespace tag (§3.8) through §3.8.5's
+candidate-set procedure. Where a compiler can determine that tag
+statically it may resolve the site at compile time, and the top view
+is what it reads to do so; where it cannot, the site resolves at
+runtime. The one step that reads this section's stack is §3.8.5's
+step 4, which selects among candidates already reachable from the tag
+when no candidate is most specific, and only when the top is a rank-1
+entry. No view writes a tag, and no view makes a hook reachable that
+step 1 did not already collect.
 
 **Annotation checking falls out of the conflict rule.** An annotated
 function carries a rank-1 entry above its inferred rank-2 layers, so
@@ -10280,10 +10293,12 @@ without bound and the pass count is finite.
 rank-1 entry the fixpoint must satisfy; inference fills the positions
 no declaration covers. Both are checked on the same pass.
 
-**First call wins.** The lexically first evidence-bearing call fixes an
-unannotated signature position. A later call whose argument does not
-conform is an error **at that later call**. The diagnostic lands where
-the disagreement is visible, rather than inside a body that is correct
+**First call wins.** The lexically first evidence-bearing call (a
+return position joins instead, and a function-typed position's effect
+set resolves per call site; both at §9.7.4) fixes an unannotated
+signature position. A later call whose argument does not conform is
+an error **at that later call**. The diagnostic lands where the
+disagreement is visible, rather than inside a body that is correct
 as written.
 
 **An inference cycle grounds at `Any`.** A declared function type
@@ -10330,19 +10345,25 @@ entered (§3.5), so its consequent produces a function result without
 reaching the `^`. The consequent is rank-2 construction evidence at
 the return position of the tier the precondition lifts to (§3.5.1).
 
-Nothing in the ordering is new. Where the function carries no
-declared type, preconditions precede the body lexically, so the first
-consequent fixes the return position and a body that diverges is an
-error at the body -- the fixed-once rule below, applied at a return.
-Where the function's declared type states a return, that declaration
-is the rank-1 entry and each consequent is a lower one; a consequent
-the declared return does not admit is a conflict reported at that
-consequent (§9.7.2).
+**A return position joins over completion paths.** A call completes
+by the body's return or by one matched consequent, and the single-`^`
+rule (§3.3.2) makes the body's paths exactly one. The position's
+entry is the union of the body's type with each consequent lifting to
+that tier. Where the function's declared type states a return, that
+declaration is the rank-1 entry and each completion path is a lower
+one; a path the declared return does not admit is a conflict reported
+at that path (§9.7.2).
 
-**A consequent shaped differently from the body requires a declared
-return type.** `?[x ?< 0]: Left@ "Undefined"` above a body returning
-an `int` diverges at the return position. A function whose result
-type varies declares it, and use sites narrow (§9.5).
+§3.5's `safeDiv` and §3.5.2's `factorial` each carry a consequent
+shaped differently from their body and each is written without a
+declared type; this is the rule that admits them.
+
+**The join reaches every tier.** A tier before the last completes by
+producing the next tier's function value or by a consequent lifting
+to that tier, so its return position is the union of those. §3.5.1's
+declared `Add` and `Mult` write down what the rule derives: `Left` at
+every tier `add`'s preconditions reach, and at `mult`'s innermost
+return alone.
 
 **A parameter has no value-side route.** `:? expr` is a runtime default
 (§3.10.2), not a type slot, and the native types are keywords rather
@@ -10384,21 +10405,33 @@ structural-usage evidence about its source -- inference flowing
 backward out of a use, the mirror of a call argument flowing inward to
 a parameter.
 
-**Signature positions are fixed once; variable slots take a join.**
-A parameter or return position is fixed by first-wins (§9.7.3), and a
-later divergence is an error. A `def` slot genuinely varies -- §9.6.2
-makes `def x: 3; x := "3";` well-formed -- so its view is the join of
-every write reaching it. A write inside a conditional may not have
-executed, and the join is what the binding's whole lifetime supports.
+**Parameters are fixed once; returns and slots take a join.** A
+parameter is fixed by first-wins (§9.7.3), and a later divergence is
+an error: a parameter names what every call supplies at that position.
+A return position joins over its completion paths, per the rule above.
+A `def` slot genuinely varies -- §9.6.2 makes `def x: 3; x := "3";`
+well-formed -- so its view is the join of every write reaching it. A
+write inside a conditional may not have executed, and the join is what
+the binding's whole lifetime supports.
+
+**A function-typed position fixes its value shape once and resolves
+its effect set per call site.** The parameter and return shapes of a
+function-typed signature position are fixed like any other. Its effect
+set is not: coverage is a property of the call stack rather than of
+the function (§6.13.4), and an undeclared higher-order function's
+effect surface resolves separately at each call site (§6.13.3). The
+shape is the function's; the budget is the call's. Where a slot names
+its budget -- `:Effects(Any)` at a callback position, or any narrower
+clause -- that clause is a written type and conformance runs against
+it at each supply site (§9.9.4).
 
 **A literal view widens to its native at those three sites.** A
-parameter fixed by first-wins, a return position fixed the same way,
-and a slot's join each derive a **range**: what the position holds
-across every execution, which §9.6.2 already distinguishes from the
-type of one value written into it. A literal is one observed value, so
-its literal type (§9.6.4) is evidence about that write and not about
-the range, and the entry those three sites record is the literal's
-native:
+parameter fixed by first-wins, a return position's join, and a slot's
+join each derive a **range**: what the position holds across every
+execution, which §9.6.2 already distinguishes from the type of one
+value written into it. A literal is one observed value, so its literal
+type (§9.6.4) is evidence about that write and not about the range,
+and the entry those three sites record is the literal's native:
 
 ```java
 defn f(s) ^s;
@@ -10488,12 +10521,14 @@ An annotation adopted without discharging carries a runtime assertion
 (§9.7.7). Both are the same check arriving at the same answer, and the
 pass discharges the part it can reach.
 
-**`:as` annotates a value; it does not redirect dispatch.** Dispatch
-reads `__ns` (§9.6) and an annotation does not rewrite it, so an
-annotation written at a dispatch site does not select among §3.8.5's
-candidates. A step-4 rejection there is resolved at the declarations.
-Whether an annotation should supply a disambiguation surface at all is
-§9.10's.
+**`:as` annotates a value; it does not write a namespace tag.**
+Dispatch reads the tag (§3.8, §9.6), and an annotation leaves it as
+it found it. An annotation therefore never moves a dispatch site to a
+hook the value's namespace does not already reach. Where two candidates
+are incomparable and no candidate is most specific, §3.8.5's step 4
+selects among them by the top of the view stack; a rank-1 annotation
+naming one of those candidates is what supplies the choice, and
+naming anything else supplies nothing.
 
 #### §9.7.7 Adopted Annotations At Runtime
 
@@ -10612,9 +10647,9 @@ every conjunct held:
 ```
 
 **A narrowing is evidence, not a runtime mechanism.** The test that
-executes is `?as`'s own, against `__ns` (§9.6). Narrowing changes what
-the checker knows inside the region and changes nothing about what
-runs.
+executes is `?as`'s own, against the value's namespace tag (§9.6).
+Narrowing changes what the checker knows inside the region and changes
+nothing about what runs.
 
 ### §9.9 Subsumption
 
@@ -10708,7 +10743,7 @@ namespace** -- `defn Name@(..)` (§3.1.1.1) and a union `deft`
 (§9.2.3). Every other `deft` is **transparent**: it names whatever its
 right-hand side names, and both relations read through it to that
 shape. `deft A <x: int>;` beside `deft B <x: int>;` compares by
-§9.9.5 rather than by name, and a structured value carries no `__ns`
+§9.9.5 rather than by name, and a structured value carries no tag
 naming either declaration.
 
 **Partial intersection is the middle case.** With `deft U A | B;`
@@ -10857,28 +10892,6 @@ Literal types compose through the sections above without addition. A
 union of them relates by §9.9.2, and one at a data shape entry relates
 by §9.9.5 -- `deft Ok <status: 200, body: string>;` is disjoint from
 `<status: 201, body: string>` at the shared named entry.
-
-### §9.10 Open
-
-The following are unspecified. Each is a rule this specification owes.
-
-**Annotation at a dispatch site.** Whether a written type annotation
-ever participates in marker resolution. §9.7.6 states that it does not
-under the rules as written, which leaves §3.8.5's step-4 incomparable
-case resolved only at the declarations.
-
-**Intermediate-tier return positions.** A multi-tier `defn` (§3.2.5)
-produces a function value at every tier before the last. §9.7.4 types
-the return position a precondition lifting to the final tier reaches.
-A precondition lifting to an earlier tier (§3.5.1) supplies that
-tier's result in place of the next tier's function value, and no rule
-states how a tier chain's intermediate results are typed.
-
-**Signature first-call-wins against per-call-site effect
-specialization.** §9.7.3 fixes an unannotated value signature at its
-first evidence-bearing call, while §6.13.3 resolves an undeclared
-function's effect surface separately at each call site. Whether the two
-should reconcile, and in which direction, is undecided.
 
 ## §10 Runtime Bootstrap
 
