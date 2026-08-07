@@ -14,7 +14,7 @@ Expressiveness means reducing the distance between what the programmer means and
 
 **Foi** does make `defn` relatively lightweight, especially compared to JavaScript's `function` syntax. But something more important is happening.
 
-**Foi** does not want you to burden you with *any function definition syntax* merely to express a common adapter pattern.
+**Foi** does not want to burden you with *any function definition syntax* merely to express a common adapter pattern.
 
 Instead, **Foi** provides many syntactic affordances in places where most FP languages would require a wrapping lambda: to partially apply arguments, skip argument positions, reverse argument order, invoke operators as functions, negate predicates, spread tuple values into calls, or route a pipeline topic into a specific argument position.
 
@@ -244,7 +244,7 @@ formattedPrices = prices.map(cents => {
 **Foi**'s comprehensions like `~map` are operators, and can similarly be invoked with functions when appropriate:
 
 ```java
-def doubledNums: nums ~map defn(n) ^n * 2;
+def doubledNums: nums ~map (defn(n) ^n * 2);
 def tripledNums: nums ~map mulBy3;
 ```
 
