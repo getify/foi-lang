@@ -18,14 +18,14 @@ defn{ChannelT} Channel@(cap :? 0)
 	![cap ?as int ?and cap ?>= 0]: Left@ "Invalid buffer capacity"
 {
 	def id: Effect.Host.Counter%;
-	def inst:
+	def inst: <
 		put: putFn,
 		take: takeFn,
 		peek: peekFn,
 		close: closeFn
 	>;
 
-	Effect.Host.Slot.Write% < inst,
+	Effect.Host.Slot.Write% < inst, <
 		:id,
 		closed: false,
 		capacity: cap,
@@ -56,14 +56,14 @@ defn{ChannelT} Channel@(cap :? 0)
 			};
 
 			[size(state.buffer) ?< state.capacity]: {
-				Effect.Host.Slot.Write% < inst, < &state, buffer: <[ &state.buffer, v ]>> >;
+				Effect.Host.Slot.Write% < inst, < &state, buffer: < &state.buffer, v >>>;
 				drainPeeks(v);
 				Promise.honor@ true
 			};
 
 			: {
 				def subj: Promise.subj@;
-				Effect.Host.Slot.Write% < inst, < &state, putQueue: <[ &state.putQueue, < :subj, value: v > ]>> >;
+				Effect.Host.Slot.Write% < inst, < &state, putQueue: < &state.putQueue, < :subj, value: v >>>>;
 				drainPeeks(v);
 				subj.pr
 			}
@@ -81,7 +81,7 @@ defn{ChannelT} Channel@(cap :? 0)
 					[size(state.putQueue) ?> 0]: {
 						def putEntry: state.putQueue.0;
 						Effect.Host.Slot.Write% < inst, < &state,
-							buffer: <[ &restBuf, putEntry.value ]>,
+							buffer: < &restBuf, putEntry.value >,
 							putQueue: state.putQueue.[1..]
 						>>;
 						putEntry.subj% (Right@ true);
@@ -104,7 +104,7 @@ defn{ChannelT} Channel@(cap :? 0)
 
 			: {
 				def subj: Promise.subj@;
-				Effect.Host.Slot.Write% < inst, < &state, takeQueue: <[ &state.takeQueue, subj ]>> >;
+				Effect.Host.Slot.Write% < inst, < &state, takeQueue: < &state.takeQueue, subj >>>;
 				subj.pr;
 			}
 		};
@@ -125,7 +125,7 @@ defn{ChannelT} Channel@(cap :? 0)
 
 			: {
 				def subj: Promise.subj@;
-				Effect.Host.Slot.Write% < inst, < &state, peekWaiters: <[ &state.peekWaiters, subj ]>> >;
+				Effect.Host.Slot.Write% < inst, < &state, peekWaiters: < &state.peekWaiters, subj >>>;
 				subj.pr;
 			}
 		};
@@ -224,6 +224,163 @@ defn{ChannelDoT} Channel~<*(comp, ty) {
 				// no channel iteration ever happened.
 				Done@ (Promise.honor@ #.value);
 			};
+		};
+	};
+};
+
+
+// -- Module-internal: positional replace. Rebuilds rather than
+//    mutating, so arrival order never reaches the result — the
+//    index fixes the slot. O(N) per arrival by construction.
+
+deft SetAtT(List, int, Any) ^List;
+defn{SetAtT} setAt(xs, i, v) ^(
+	(List.entries@ xs) ~map (< idx, cur >) {
+		?{
+			[idx ?= i]: v;
+			: cur
+		}
+	}
+);
+
+
+// -- PUBLIC: coordination combinators (§6.9.5).
+//
+//    The derived channel is capacity-1, not unbuffered. takeFn
+//    checks the buffer before [state.closed], and closeFn clears
+//    the queues but leaves the buffer — so a value put into a
+//    capacity-1 derived survives the auto-close and the caller's
+//    later take() still receives it. Unbuffered would park the put
+//    in putQueue, which close reneges.
+//
+//    alts@ observes with peek(), not take(). take() on every source
+//    would leave consuming takes queued on the losers with no way
+//    to cancel them. peek() doesn't consume, resolves in-line when
+//    a value is already queued (giving left-to-right arbitration),
+//    and a stale peek resolving after the race is decided is
+//    discarded by the `won` guard. Only the winner is taken from.
+
+deft ChannelAltsT(List)
+	:Effects(Host.Slot)
+	^Channel;
+defn{ChannelAltsT} Channel.alts@(chs) {
+	def derived: Channel@ 1;
+	def coord: <>;
+	Effect.Host.Slot.Write% <coord, < won: false, closedCount: 0 >>;
+
+	?{
+		[size(chs) ?= 0]: derived.close();
+		: chs ~each (src) {
+			(~cata)(
+				src.peek(),
+				(defn(reason) ^noteClosed()),
+				(defn(v) ^tryWin(src))
+			);
+		}
+	};
+
+	^derived;
+
+	// ***********************
+
+	deft TryWinT(Channel)
+		:Effects(Host.Slot)
+		^Any;
+	defn{TryWinT} tryWin(src) {
+		def c: Effect.Host.Slot.Read% coord;
+		^?{
+			[c.won]: empty;
+			: {
+				Effect.Host.Slot.Write% <coord, < &c, won: true >>;
+				(~cata)(
+					src.take(),
+					(defn(reason) ^empty),
+					(defn(v) {
+						derived.put(< value: v, channel: src >);
+						derived.close();
+					})
+				)
+			}
+		};
+	};
+
+	deft NoteClosedT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{NoteClosedT} noteClosed() {
+		def c: Effect.Host.Slot.Read% coord;
+		def next: < &c, closedCount: c.closedCount + 1 >;
+		Effect.Host.Slot.Write% <coord, next>;
+		^?{
+			[!next.won ?and next.closedCount ?= size(chs)]: derived.close();
+			: empty
+		};
+	};
+};
+
+deft ChannelEveryT(List)
+	:Effects(Host.Slot)
+	^Channel;
+defn{ChannelEveryT} Channel.every@(chs) {
+	def derived: Channel@ 1;
+	def coord: <>;
+	Effect.Host.Slot.Write% <coord,
+		settled: 0,
+		done: false,
+		results: (chs ~map (c) { empty })
+	>>;
+
+	?{
+		[size(chs) ?= 0]: derived.close();
+		: (List.entries@ chs) ~each (< idx, src >) {
+			(~cata)(
+				src.take(),
+				(defn(reason) ^bail()),
+				(defn(v) ^arrive(idx, v))
+			);
+		}
+	};
+
+	^derived;
+
+	// ***********************
+
+	deft EveryArriveT(int, Any)
+		:Effects(Host.Slot)
+		^Any;
+	defn{EveryArriveT} arrive(idx, v) {
+		def c: Effect.Host.Slot.Read% coord;
+		^?{
+			[c.done]: empty;
+			: {
+				def next: < &c,
+					settled: c.settled + 1,
+					results: setAt(c.results, idx, v)
+				>;
+				Effect.Host.Slot.Write% <coord, next>;
+				?{
+					[next.settled ?= size(chs)]: {
+						Effect.Host.Slot.Write% <coord, < &next, done: true >>;
+						derived.put(next.results);
+						derived.close();
+					};
+					: empty
+				}
+			}
+		};
+	};
+
+	deft BailT()
+		:Effects(Host.Slot)
+		^Any;
+	defn{BailT} bail() {
+		def c: Effect.Host.Slot.Read% coord;
+		^?{
+			[c.done]: empty;
+			: {
+				Effect.Host.Slot.Write% <coord, < &c, done: true >>;
+				derived.close()
+			}
 		};
 	};
 };

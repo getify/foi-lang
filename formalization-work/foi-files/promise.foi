@@ -1,7 +1,9 @@
 // ============================================================
 // Promise module
 //   Exports: types Promise, PromiseSubject;
-//            constructors Promise.honor@, Promise.renege@, Promise.subj@
+//            constructors Promise@, Promise.honor@,
+//            Promise.renege@, Promise.subj@,
+//            Promise.race@, Promise.all@
 //
 //   Chain depth: resolving a promise fires its deferred list, and
 //   each cb resolves a downstream promise, which fires its own list.
@@ -12,22 +14,43 @@
 //   subscriber 1.
 // ============================================================
 
-// -- PRIVATE: raw factory. Mints a pending Promise instance paired
-//    with a resolve closure whose Slot writes are Promise-scoped by
-//    lexical capture. --
+// -- Promise@ carries two arities.
+//
+//    Unary over an Either is the §6.8.1 unit constructor: it writes
+//    an already-resolved slot in one shot. Per §6.8.2 such a promise
+//    never accumulates continuations, so there is no deferred list
+//    to fan out and no pair to drive.
+//
+//    Nullary mints a pending Promise instance paired with a resolve
+//    closure whose Slot writes are Promise-scoped by lexical
+//    capture. That arm is stdlib-privileged: §6.8.1 requires an
+//    Either, a nullary application supplies empty, and empty is not
+//    an Either — so the form is statically rejected at the userland
+//    construction surface (cf. PushStream@ §6.10.1, the PullStream
+//    writer side §6.11.5).
+//
+//    The pending arm has to live on this hook rather than on a
+//    separate private one. Slot storage keys on
+//    (namespace-identity, value-identity), and namespace identity
+//    is the declaration form of the lexically-enclosing hook
+//    (§6.1.5.3). A factory named anything but Promise@ would key its
+//    writes to a namespace no Promise~* hook reads from. --
 
-deft ResolveT(Either)
-	:Effects(Effect.Host.Slot)
-	^Any;
-
-deft PromiseFactoryT()
+deft PromiseResolvedT()
+	:Effects(Host.Slot.Read)
+	^bool;
+deft PromiseFactoryT(?Either)
 	:Effects(Host.Slot.Write, Host.Counter)
-	^<pr: Promise, resolve: ResolveT>;
-defn{PromiseFactoryT} Promise@() {
-	def pr: <>;
-	def id: Effect.Host.Counter%;
-	Effect.Host.Slot.Write% <pr, <:id, resolved: false, either: empty, deferred: <>>>;
+	^Any;
+defn{PromiseFactoryT} Promise@(init) {
+	defn{PromiseResolvedT} resolved() ^(Effect.Host.Slot.Read% pr).resolved;
 
+	def pr: < :resolved >;
+	def id: Effect.Host.Counter%;
+
+	deft ResolveT(Either)
+		:Effects(Effect.Host.Slot)
+		^Any;
 	defn{ResolveT} resolve(either) {
 		def state: Effect.Host.Slot.Read% pr;
 		^?{
@@ -39,7 +62,16 @@ defn{PromiseFactoryT} Promise@() {
 		};
 	};
 
-	^<:pr, :resolve>
+	^?{
+		[?empty init]: {
+			Effect.Host.Slot.Write% <pr, <:id, resolved: false, either: empty, deferred: <>>>;
+			<:pr, :resolve>
+		};
+		: {
+			Effect.Host.Slot.Write% <pr, <:id, resolved: true, either: init, deferred: <>>>;
+			pr
+		}
+	};
 };
 
 // -- PRIVATE: PromiseSubject factory. --
@@ -55,10 +87,12 @@ defn{PromiseSubjectFactoryT} PromiseSubject@() {
 };
 
 // -- The one drive point. Every other `resolve` call site either
-//    fires against an empty deferred list (honor@/renege@, and the
-//    already-resolved arms below, whose `pr` was just constructed)
-//    or sits in tail position inside a cb, where the trampoline
-//    must propagate rather than bounce. --
+//    fires against an empty deferred list (the combinators'
+//    construction-time arms, whose derived `pr` was just minted and
+//    is not yet visible to any caller) or sits in tail position
+//    inside a cb, where the trampoline must propagate rather than
+//    bounce. The already-resolved constructors reach no `resolve`
+//    at all — unary Promise@ writes a resolved slot directly. --
 
 deft PromiseSubjectEffectorT(PromiseSubject, Either)
 	:Effects(Host.Slot.Read)
@@ -69,46 +103,31 @@ defn{PromiseSubjectEffectorT} PromiseSubject%(inst, either) {
 	^either
 };
 
-// -- PUBLIC: user-facing constructors. --
+// -- PUBLIC: named constructor sugars (§6.8.1). Each unconditionally
+//    wraps its argument in the corresponding Either branch and hands
+//    it to Promise@; neither is a smart selector. --
 
 deft PromiseHonorT(Any) ^Promise;
-defn{PromiseHonorT} Promise.honor@(v) {
-	def <:pr, :resolve>: Promise@;
-	resolve(Right@ v);
-	^pr
-};
+defn{PromiseHonorT} Promise.honor@(v) ^Promise@ (Right@ v);
 
 deft PromiseRenegeT(Any) ^Promise;
-defn{PromiseRenegeT} Promise.renege@(reason) {
-	def <:pr, :resolve>: Promise@;
-	resolve(Left@ reason);
-	^pr
-};
+defn{PromiseRenegeT} Promise.renege@(reason) ^Promise@ (Left@ reason);
 
 deft PromiseSubjT() ^PromiseSubject;
 defn{PromiseSubjT} Promise.subj@() ^PromiseSubject@;
 
 // -- Monadic operators on Promise. --
 
-deft PromiseMapT(Promise, {(Any) ^Any})
-	:Effects(Host.Slot)
-	^Promise;
-defn{PromiseMapT} Promise~map(inst, fn) {
-	def state: Effect.Host.Slot.Read% inst;
-	^?{
-		[state.resolved]: {
-			def <:pr, :resolve>: Promise@;
-			resolve(state.either ~map fn);
-			pr
-		};
-		: {
-			def <:pr, :resolve>: Promise@;
-			def cb: defn(either) #> (# ~map fn) #> resolve;
-			Effect.Host.Slot.Write% <inst, <&state, deferred: < &state.deferred, cb>>>;
-			pr
-		}
-	};
-};
+// -- ~map is the standard derivation from ~<: lift fn's result into
+//    an already-resolved Promise and bind. Either-awareness comes
+//    for free — ~< routes Left through Promise.renege.@ without
+//    invoking the lifted fn, which is exactly what Either ~map does
+//    with a Left. Touches no slot itself, so it declares no effects
+//    (§6.13.3: propagated effects are never required). --
+
+deft PromiseMapT(Promise, {(Any) ^Any}) ^Promise;
+defn{PromiseMapT} Promise~map(inst, fn)
+	^(inst ~< (defn(v) ^Promise.honor@ (fn(v))));
 
 deft PromiseBindT(Promise, {(Any) ^Promise})
 	:Effects(Host.Slot)
@@ -180,13 +199,104 @@ defn{PromiseEqT} Promise?=(a, b) ^?{
 deft FanOutT(List, int, Either) ^Any;
 defn{FanOutT} fanOut(cbs, i, either) ^?{
 	[i ?>= size(cbs)]: empty;
-	: ContinuationTrampoline@ <
+	: ContinuationTrampoline@
 		(defn() ^cbs[i](either)),
 		(defn(prior) ^fanOut(cbs, i + 1, either))
 	>
 };
 
+// -- Module-internal: positional replace. Rebuilds rather than
+//    mutating, so arrival order never reaches the result — the
+//    index fixes the slot. O(N) per arrival by construction.
 
+deft SetAtT(List, int, Any) ^List;
+defn{SetAtT} setAt(xs, i, v) ^(
+	(List.entries@ xs) ~map (< idx, cur >) {
+		?{
+			[idx ?= i]: v;
+			: cur
+		}
+	}
+);
+
+// -- PUBLIC: coordination combinators (§6.8.4).
+//
+//    Both subscribe to the raw deferred list rather than composing
+//    through ~map / ~< / ~cata. Those three are Either-aware and
+//    forward Left unchanged, which would lose the branch; race is
+//    branch-neutral by §6.8.4, so it needs the either intact.
+//
+//    Neither needs a drive point. The derived `pr` is constructed
+//    here and not yet visible to any caller, so its deferred list
+//    is empty and a construction-time `resolve` returns `empty`
+//    rather than a pair. Every later `resolve` fires as a deferred
+//    cb from fanOut's bounce, where the pair propagates on its own.
+
+deft PromiseRaceT(List)
+	:Effects(Host.Slot)
+	^Promise;
+defn{PromiseRaceT} Promise.race@(prs)
+	![size(prs) ?> 0]: Promise.renege@ "Empty list of promises"
+{
+	def <:pr, :resolve>: Promise@;
+
+	prs ~each (src) {
+		def state: Effect.Host.Slot.Read% src;
+		?{
+			[state.resolved]: resolve(state.either);
+			: Effect.Host.Slot.Write% <src, <&state, deferred: < &state.deferred, resolve >>>;
+		};
+	};
+
+	^pr
+};
+
+deft PromiseAllT(List)
+	:Effects(Host.Slot)
+	^Promise;
+defn{PromiseAllT} Promise.all@(prs)
+	![size(prs) ?> 0]: Promise.renege@ "Empty list of promises"
+{
+	def <:pr, :resolve>: Promise@;
+	def coord: <>;
+	Effect.Host.Slot.Write% <coord,
+		settled: 0,
+		results: (prs ~map (p) { empty })
+	>>;
+
+	(List.entries@ prs) ~each (< idx, src >) {
+		def cb: defn(either) ^(~cata)(
+			either,
+			(defn(reason) ^resolve(Left@ reason)),
+			(defn(v) ^arrive(idx, v))
+		);
+		def state: Effect.Host.Slot.Read% src;
+		?{
+			[state.resolved]: cb(state.either);
+			: Effect.Host.Slot.Write% <src, <&state, deferred: < &state.deferred, cb >>>;
+		};
+	};
+
+	^pr;
+
+	// ***********************
+
+	deft AllArriveT(int, Any)
+		:Effects(Host.Slot)
+		^Any;
+	defn{AllArriveT} arrive(idx, v) {
+		def c: Effect.Host.Slot.Read% coord;
+		def next: < &c,
+			settled: c.settled + 1,
+			results: setAt(c.results, idx, v)
+		>;
+		Effect.Host.Slot.Write% <coord, next>;
+		^?{
+			[next.settled ?= size(prs)]: resolve(Right@ next.results);
+			: empty
+		};
+	};
+};
 
 
 // // Sample Usage:
