@@ -837,7 +837,9 @@ The "no thunk past end of `def` statement(s) section" guarantee holds at both co
 
 ### §2.3 Constancy
 
-A `def` binding that is never reassigned within its scope is **observably constant**; the slot's value at every point after its initialization is the value the initializer produced.
+The rules of this section apply to every **assignable binding**: `def` bindings, function parameters (§3.2.1), and destructure entries (§2.13). Each introduces a slot on identical terms (§0.1), and each is a valid `:=` target. `defn` and `deft` bindings are not assignable; §2.3.1 covers them.
+
+An assignable binding that is never reassigned within its scope is **observably constant**; the slot's value at every point after its initialization is the value the initializer produced.
 
 ```java
 def pi: 3.14159;
@@ -848,7 +850,7 @@ log(pi * pi);
 
 Observably-constant bindings need no `:over` annotation on functions that close over them (§3.6). The language treats such bindings as candidates for optimizations that depend on immutability, and their constancy may be carried through inferred types, though `:over` itself is a closure-capture declaration, not a type annotation.
 
-A `def` binding with any reassignment (§2.4) in scope is **mutable**:
+An assignable binding with any reassignment (§2.4) in scope is **mutable**:
 
 ```java
 def counter: 0;
@@ -888,6 +890,8 @@ birthday := (+);
 The name `birthday`, created by `defn`, is enforced-constant, meaning re-assignment is disallowed at compile time.
 
 `deft` type definitions (§9) are structurally constant; they cannot be reassigned via another `deft` (of the same name) or `:=` at all.
+
+Structural constancy is the complement of assignability: a structurally constant name is not a valid `:=` target, so §2.3's constancy question does not arise for it.
 
 ### §2.4 Reassignment With `:=`
 
@@ -1227,7 +1231,7 @@ Inside loop blocks (`~each` and the comprehension family, §7), each iteration a
 def fs: < >;
 
 0..3 ~each (i) {
-    fs := < &fs, @|i| >;
+    fs := < &fs, (@)|i| >;
 };
 
 fs.0();                     // 0
@@ -1236,7 +1240,7 @@ fs.2();                     // 2
 fs.3();                     // 3
 ```
 
-**NOTE:** `&fs` is pick-spreading (§2.12.6) the existing `fs` Tuple into the new re-assigned Tuple. `@` is the identity function (§3.8.1), and `| .. |` is partial application (§3.11) to *capture* the per-iteration `i` via closure.
+**NOTE:** `&fs` is pick-spreading (§2.12.6) the existing `fs` Tuple into the new re-assigned Tuple. `(@)` is the operator-as-function lift of `@` (§3.8.1), the unary value-identity function, and `| .. |` is partial application (§3.11) to *capture* the per-iteration `i` via closure.
 
 Each closure captures the frame in which its iteration ran; that frame is distinct for each iteration.
 
@@ -2375,7 +2379,7 @@ defn lookup(id) :over (cache) {
 };
 ```
 
-**Mutability and closure-capture rule.** A binding (`def`) is internally flagged as **mutable** if it is the target of any `:=` reassignment anywhere in a scope it's accessible within (§2.3). A function literal that closes over a mutable binding from its enclosing scope **MUST** list that binding in its `:over` clause.
+**Mutability and closure-capture rule.** An assignable binding (§2.3) -- a `def`, a function parameter, or a destructure entry -- is internally flagged as **mutable** if it is the target of any `:=` reassignment anywhere in a scope it's accessible within. A function literal that closes over a mutable binding from its enclosing scope **MUST** list that binding in its `:over` clause.
 
 **Direct closure only.** `:over` declares **direct** closure references within the function itself.
 
@@ -2398,10 +2402,21 @@ defn incTwice() {
 };
 ```
 
+```java
+// `n` is a parameter, reassigned in the body →
+// mutable on identical terms to a `def`
+defn countdown(n) {
+    defn step() :over(n) {
+        n := n - 1;
+    };
+    ^step;
+};
+```
+
 **Constant bindings need no `:over`:**
 
 ```java
-def pi: \3.14159;                        // never reassigned → constant
+def pi: 3.14159;                        // never reassigned → constant
 
 defn area(r) ^pi * r * r;               // no :over needed
 ```
