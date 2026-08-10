@@ -463,10 +463,9 @@ tuple-mode (record's list requires at least one entry) with an empty
 
 <BareOperandExpr>      := EmptyLit | BareOperandExprNoEmpty | GroupedBareOpExpr;
 
-<BareOperandExprNoEmpty> := CallExpr | BooleanLit | NumberLit
-                          | StringLit | DataStructLit
-                          | BareIdentifier | OpFuncExpr
-                          | GroupedBareOpExprNoEmpty;
+<BareOperandExprNoEmpty> := CallExpr | ThunkExpr | BooleanLit | NumberLit
+                          | StringLit | DataStructLit | BareIdentifier
+                          | OpFuncExpr | GroupedBareOpExprNoEmpty;
 
 (* AsExpr — the sole non-paren carrier of `:as`. Inner is restricted
    to <AsableExpr>: anything tighter than binary (chain/access via
@@ -597,6 +596,9 @@ PEG ordering notes:
   Within `CallExpr`, `AtCallExpr` precedes `ChainExpr` so `foo@ 5`
   (an `AtCallExpr` with payload) is preferred over a no-payload
   `foo@` with a dangling `5` it can't reach.
+- In `<BareOperandExprNoEmpty>`, `ThunkExpr`'s `DoubleAt` opener is
+  disjoint from every other arm, so its position is mechanical. It
+  sits after `CallExpr` to keep the call forms contiguous.
 
 ## §6 Identifier / Access Expressions
 
@@ -809,6 +811,27 @@ PartialCallSuffix := Pipe CallArgs Pipe;
    ExportNamedBinding.source, DestructureNamedDef.source, etc.). *)
 AtCallExpr           := IdentBase SingleAccessExpr? _ At (_ ExprNoBlock)?
                       | IdentityFunc _ ExprNoBlock;
+
+(* ThunkExpr — deferred-evaluation construct. `@@ expr` produces
+   a thunk over `expr` rather than evaluating it.
+
+   The operand is greedy `ExprNoBlock`, same as AtCallExpr's
+   IdentityFunc arm and EffectorTail's optional arg: `@@ a + b`
+   is a thunk over `a + b`, not a thunk over `a` added to `b`.
+   Parens group for the narrower reading.
+
+   NOT a ChainBase — `@@ f(x).bar` puts the access inside the
+   thunk. To chain off the thunk itself, paren-lift:
+   `(@@ f(x)).bar`, the same route `%` uses.
+
+   NOT in <AsableInner> — the greedy operand consumes any `:as`
+   tail, so `@@ x :as T` is a thunk over an annotated `x`.
+   `(@@ x) :as T` annotates the thunk.
+
+   Shapes as ThunkExpr { expr } with no callee field: `@@`
+   applied to an expression is one indivisible construct, same
+   rationale as IdentityCallExpr. *)
+ThunkExpr            := DoubleAt _ ExprNoBlock;
 
 <CallArgs>           := (Op SingleQuote? &(CloseParen)) | (_ CallArgList? _);
 <CallArgList>        := (_ Comma)* (_ CallArgExpr (_ Comma (_ CallArgExpr)?)*)?;
@@ -1584,6 +1607,14 @@ DoBlockDefsInit clause (e.g., `Channel ~<* (v:: ch) { ... }`).
    from BareOperandExprNoEmpty, an AsExpr wrapping `<lit> :as T` works
    at any outer-position expression slot.
 
+   RecordTupleValue is a hand-listed operand alphabet parallel to
+   <BareOperandExprNoEmpty> (§5), NOT a reach into it. Any new
+   operand form admitted at outer-position expression slots must
+   be added HERE TOO or it silently fails inside structure
+   literals — entries reach RecordTupleValue directly, never
+   through the §5 chain. SetEntry inherits from this production,
+   so sets follow automatically.
+
    RecordTupleValue gains AsExpr as its first alternative so that
    `<x :as int, y>` continues to parse — without it, leaves inside
    record/tuple entries would lose access to `:as`. *)
@@ -1594,8 +1625,8 @@ RecordTupleLit         := OpenAngle _ RecordTupleEntryList _ CloseAngle;
 <RecordTupleEntryList> := (_ Comma)* (_ RecordTupleEntry (_ Comma (_ RecordTupleEntry)?)*)?;
 <RecordTupleEntry>     := PickValue | RecordProperty | RecordTupleValue;
 
-RecordTupleValue       := AsExpr | UnaryExpr | CallExpr | EmptyLit
-                        | BooleanLit | NumberLit | StringLit
+RecordTupleValue       := AsExpr | UnaryExpr | CallExpr | ThunkExpr
+                        | EmptyLit | BooleanLit | NumberLit | StringLit
                         | DataStructLit | BareIdentifier | OpFuncExpr
                         | (OpenParen _ Expr _ CloseParen);
 

@@ -81,6 +81,9 @@ Tokens                  := Token*;
                          | TriplePeriod
                          | DoublePeriod
                          | DoubleColon
+                         | DoubleAt
+                         | Mountain
+                         | Valley
                          | EscapePlain                     (* standalone "\" *)
                          | (ExprEndingOp ExprEndingTail)   (* Note 9 *)
                          | SingleCharOp;                   (* Note 2 *)
@@ -226,6 +229,23 @@ TriplePeriod            := "...";
 DoublePeriod            := "..";
 DoubleColon             := "::";
 
+(* DoubleAt ("@@") — thunk construct opener (see
+   Syntactic-Grammar.md §7 ThunkExpr).
+
+   In <Token>, DoubleAt appears before the <SingleCharOp> spread
+   so "@@" wins over two bare At tokens. Without it, "@@x" reaches
+   AtCallExpr's IdentityFunc arm twice — "@(@x)", nested identity
+   — which is a legal parse and would compete with the thunk
+   reading at every site.
+
+   This claims the cuddled `Foo@@x` spelling, which previously
+   reached AtCallExpr arm 1 as `Foo@` applied to `@x`. Write
+   `Foo@ @x` or `Foo@(@x)` for that form.
+
+   Adjacency is strict: "@ @" stays two At tokens. Same discipline
+   as ".@" (AtRefTail). *)
+DoubleAt                := "@" "@";
+
 (* Mountain ("/\") and Valley ("\/") — postfix curry / uncurry
    operators (see Syntactic-Grammar.md §7 ChainExpr and §10
    UnaryOpSym).
@@ -352,6 +372,7 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     ```
     TriplePeriod      before DoublePeriod      before Period
     DoubleColon       before Colon
+    DoubleAt          before At
     BlockComment      before LineComment
     LexInterpStr      before the single-char Backtick
     LexSpacingInterpStr / LexSpacingEscapedStr / EscapedNumber  before EscapePlain

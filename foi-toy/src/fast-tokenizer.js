@@ -122,7 +122,7 @@ var EXPR_ENDING_OP_NAMES = new Set([
 export const OPERATOR_TYPES = new Set([
 	...Object.keys(C),
 	"TriplePeriod", "DoublePeriod", "DoubleColon",
-	"Mountain", "Valley", "ForwardSlash",
+	"DoubleAt", "Mountain", "Valley", "ForwardSlash",
 ]);
 
 
@@ -242,6 +242,7 @@ function stepBase(state, mode) {
 		case "!":  return stepQmarkOrExmark(state, "Exmark", "!");
 		case ":":  return stepColon(state);
 		case ".":  return stepPeriod(state);
+		case "@":  return stepAt(state);
 		case "-":  return stepHyphen(state);
 	}
 
@@ -882,6 +883,33 @@ function stepPeriod(state) {
 		return true;
 	}
 	emit(state, "Period", ".", pos, pos);
+	state.pos = pos + 1;
+	return true;
+}
+
+
+// =============================================================
+// AT DISPATCH:  DoubleAt | At
+//
+// `@@` → DoubleAt (thunk construct opener)
+// `@`  → standalone At
+//
+// Strict adjacency — `@ @` falls through to two standalone At
+// emissions on successive iterations. `At` is not in
+// EXPR_ENDING_OP_NAMES, so neither arm probes for a tail.
+// =============================================================
+
+function stepAt(state) {
+	var src = state.src;
+	var pos = state.pos;
+
+	if (src[pos + 1] === "@") {
+		emit(state, "DoubleAt", "@@", pos, pos + 1);
+		state.pos = pos + 2;
+		return true;
+	}
+
+	emit(state, "At", "@", pos, pos);
 	state.pos = pos + 1;
 	return true;
 }

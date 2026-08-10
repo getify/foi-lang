@@ -1989,4 +1989,51 @@ export const samples = [
 	  src: "<, 1, 2>;" },
 	{ label: "SetEntryList: leading-skip + WS + entry",
 	  src: "<[, 1, 2]>;" },
+
+	// ThunkExpr — `@@` deferred-evaluation construct. Greedy
+	// ExprNoBlock operand (same as `@` and `%`); shapes as
+	// ThunkExpr { expr } with no callee field.
+
+	{ label: "ThunkExpr (adjacent ident): @@x",                  src: "@@x;" },
+	{ label: "ThunkExpr (spaced ident): @@ x",                   src: "@@ x;" },
+	{ label: "ThunkExpr (multi-WS): @@   x",                     src: "@@   x;" },
+	{ label: "ThunkExpr (number operand): @@42",                 src: "@@42;" },
+	{ label: "ThunkExpr (call operand): @@ f(x)",                src: "@@ f(x);" },
+	{ label: "ThunkExpr (paren operand): @@(x + 1)",             src: "@@(x + 1);" },
+
+	// Greedy operand — the whole binary lands inside the thunk.
+	{ label: "ThunkExpr (greedy binary): @@ x + 1",              src: "@@ x + 1;" },
+	{ label: "ThunkExpr (greedy access): @@ x.y.z",              src: "@@ x.y.z;" },
+	{ label: "ThunkExpr (greedy at-call): @@ foo@bar",           src: "@@ foo@bar;" },
+
+	// Stacking — `@@@x` is a thunk over identity-applied x;
+	// `@@@@x` is a thunk over a thunk (nesting is admitted).
+	{ label: "ThunkExpr (over IdentityCall): @@@x",              src: "@@@x;" },
+	{ label: "ThunkExpr (nested): @@@@x",                        src: "@@@@x;" },
+
+	// Positions.
+	{ label: "ThunkExpr (def init): def t: @@ f(x)",             src: "def t: @@ f(x);" },
+	{ label: "ThunkExpr (call arg): f(@@x)",                     src: "f(@@x);" },
+	{ label: "ThunkExpr (record field): < v: @@ expand(v) >",    src: "< v: @@ expand(v) >;" },
+	{ label: "ThunkExpr (tuple slot): < @@a, @@b >",             src: "< @@a, @@b >;" },
+
+	// Paren-lift to reach ChainBase — same route as `(task%).field`.
+	{ label: "ThunkExpr (paren-lift access): (@@ f(x)).bar",     src: "(@@ f(x)).bar;" },
+	{ label: "ThunkExpr (paren-lift :as): (@@ x) :as int",       src: "(@@ x) :as int;" },
+
+	// Adjacent (zero-trivia) operands — `_` admits zero, so every
+	// spaced form above has a cuddled twin. Call and suffix forms
+	// are the ones worth pinning: the operand is a full ChainExpr,
+	// so the suffixes land inside the thunk.
+	{ label: "ThunkExpr (adjacent call): @@x()",              src: "@@x();" },
+	{ label: "ThunkExpr (adjacent call w/args): @@x(1,2)",    src: "@@x(1,2);" },
+	{ label: "ThunkExpr (adjacent call + access): @@f(x).bar", src: "@@f(x).bar;" },
+	{ label: "ThunkExpr (adjacent partial): @@x|1|",          src: "@@x|1|;" },
+	{ label: "ThunkExpr (adjacent structure): @@<1,2>",       src: "@@<1,2>;" },
+	{ label: "ThunkExpr (adjacent negative): @@-5",           src: "@@-5;" },
+
+	{ label: "ThunkExpr (explicit int key): < 1: @@x >",       src: "< 1: @@x >;" },
+	{ label: "ThunkExpr (set entry): <[ @@a, @@b ]>",          src: "<[ @@a, @@b ]>;" },
+	{ label: "ThunkExpr (nested struct): < a: < b: @@x > >",   src: "< a: < b: @@x > >;" },
+	{ label: "ThunkExpr (mixed entries): < @@a, k: @@b, c >",  src: "< @@a, k: @@b, c >;" },
 ];

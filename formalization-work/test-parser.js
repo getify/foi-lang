@@ -524,6 +524,12 @@ var failSamples = [
 
 	// Compound LHS is not an arm of DoLoopComprLHS.
 	"Channel{Promise} ~<* { x; };",
+
+	"@@;",
+	"@@",
+	"@@@;",
+	"@@ { x };",
+	"Foo@@x;",
 ];
 
 var passed = 0;

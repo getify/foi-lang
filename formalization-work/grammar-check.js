@@ -14,6 +14,7 @@
 // original definition wasn't deleted. Orphan check is warning-level,
 // not fatal; LR cycles remain exit-1.
 
+import path from "node:path";
 import fs from "node:fs";
 
 
@@ -355,7 +356,7 @@ var reachableFrom = (root, productions, allRefs) => {
 // MAIN
 // =============================================================
 
-var srcPath = process.argv[2] || "Syntactic-Grammar.md";
+var srcPath = path.resolve(import.meta.dirname,process.argv[2] || "Syntactic-Grammar.md");
 var ROOT    = process.argv[3] || "Program";
 var src = fs.readFileSync(srcPath, "utf-8");
 

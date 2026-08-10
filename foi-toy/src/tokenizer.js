@@ -175,6 +175,24 @@ export const TriplePeriod = production("TriplePeriod", and(ch(C.Period), ch(C.Pe
 export const DoublePeriod = production("DoublePeriod", and(ch(C.Period), ch(C.Period)));
 export const DoubleColon  = production("DoubleColon",  and(ch(C.Colon), ch(C.Colon)));
 
+// DoubleAt (`@@`) — thunk construct opener. Two-char token via
+// maximal-munch.
+//
+// Placed BEFORE the symb spread in BaseTokenOr (where the bare
+// `At` lives) so `@@` lexes atomically rather than as two `At`
+// tokens. Without it, `@@x` reaches AtCallExpr's IdentityFunc
+// arm twice — `@(@x)`, nested identity — a legal parse today
+// that would compete with the thunk reading.
+//
+// This claims the cuddled `Foo@@x` spelling, which previously
+// reached AtCallExpr arm 1 as `Foo@` applied to `@x`. Write
+// `Foo@ @x` or `Foo@(@x)` for that form.
+//
+// Adjacency is strict: `@ @` stays two `At` tokens.
+//
+// See §7 ThunkExpr (parser.js) for the syntactic form.
+export const DoubleAt = production("DoubleAt", and(ch(C.At), ch(C.At)));
+
 // Mountain (`/\`) and Valley (`\/`) — postfix curry / uncurry
 // operators. Two-char tokens via maximal-munch.
 //
@@ -578,7 +596,7 @@ function numberEnding(p) {
 // Order is important. Try longer/more-specific lexemes before
 // their prefixes; try typed identifiers before the General
 // catch-all. See Lexical-Grammar-Combinator-Implementation.md
-// §13 for the full ordering rationale.
+// §14 for the full ordering rationale.
 //
 // EscapePlain appears explicitly (between DoubleColon and the
 // symb spread) to provide the standalone-"\" emission slot —
@@ -605,6 +623,7 @@ var BaseTokenOr = or(
 	TriplePeriod,
 	DoublePeriod,
 	DoubleColon,
+	DoubleAt,
 	Mountain,
 	Valley,
 	EscapePlain,

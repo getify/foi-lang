@@ -1930,6 +1930,27 @@ export const defaultShapers = {
 		return withDelims(node, delims);
 	},
 
+	// ThunkExpr := DoubleAt _ ExprNoBlock;
+	//
+	// Parts: [DoubleAt token, maybe soft delims, ExprNoBlock node].
+	// DoubleAt and any soft delims flow into `delims` so
+	// emitGeneric re-emits them at their source positions,
+	// recovering `@@x` / `@@ x` / `@@  x` alike — same handling
+	// EffectorTail gives its Percent.
+	//
+	// No callee field: `@@` applied to an expression is one
+	// indivisible construct, not a call of `@@` on the operand.
+	// Same rationale as IdentityCallExpr.
+	ThunkExpr(frame,parts) {
+		var expr = null;
+		var delims = [];
+		for (let p of parts) {
+			if (isNode(p)) expr = p;
+			else delims.push(p); // DoubleAt + WS / comments
+		}
+		return withDelims({ type: "ThunkExpr", expr }, delims);
+	},
+
 	// EffectorTail := _ Percent (_ ExprNoBlock)?;
 	//
 	// Transient inner production — collapses to EffectorCallExpr

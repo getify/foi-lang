@@ -184,6 +184,34 @@ const KNOWN_DIVERGENT = new Map([
 		"Legacy commits 'a~each' to General; new splits into General('a') + Comprehension('~each'). Same family as bare 'a~each'" ],
 	[ "defn ~each~() ^empty;",
 		"Legacy commits '~each~' to General; new splits into Comprehension('~each') + Tilde. Same family as bare '~each~'" ],
+	[ "@@",
+		"`@@` is a DoubleAt token (thunk construct opener); legacy predates the token and emits At + At. Every adjacent-`@@` sample below shares this root cause" ],
+	[ "@@x",
+		"Same: DoubleAt + General('x') vs. legacy At + At + General('x')" ],
+	[ "@@ x",
+		"Same: DoubleAt + Whitespace + General('x'); trivia after the token is unaffected" ],
+	[ "@@42",
+		"Same: DoubleAt + Number(42). Adjacent numeric operand needs no separator" ],
+	[ "@@(x + 1)",
+		"Same: DoubleAt + OpenParen + ...; parens are grouping, not part of the token" ],
+	[ "@@ (x + 1)",
+		"Same, spaced form" ],
+	[ "@@@x",
+		"Maximal munch left-to-right: new emits DoubleAt + At + General('x'); legacy emits three At. The trailing odd `@` reaches AtCallExpr's IdentityFunc arm" ],
+	[ "@@@@x",
+		"Same principle across two runs: new emits DoubleAt + DoubleAt; legacy emits four At" ],
+	[ "@@@",
+		"Same as '@@@x' with no operand — DoubleAt + At. Lexes cleanly; syntactic legality is a separate lane" ],
+	[ "f(@@x)",
+		"Same DoubleAt divergence, call-argument position. Confirms the token is position-independent" ],
+	[ "< v: @@ expand(v) >",
+		"Same DoubleAt divergence, structure-field position — the motivating case for the construct (a thunk that escapes its construction scope)" ],
+	[ "@@x;",
+		"Same DoubleAt divergence, statement-terminated" ],
+	[ "Foo@@x",
+		"Divergence on a form that was previously reachable rather than degenerate: legacy's At + At let `Foo@` apply to `@x` via AtCallExpr arm 1 (§3.10.7). DoubleAt claims the cuddled spelling; write `Foo@ @x` or `Foo@(@x)` for the namespaced `@`-call. Same discipline as cuddled closing angles" ],
+	[ "@@-5",
+		"Same DoubleAt divergence with an adjacent signed literal. DoubleAt is not in EXPRESSION_ENDING_OP_NAMES, so `-5` lexes as NegativeIntegerLit rather than a binary Hyphen — matching `At`'s handling in `foo@-5`" ],
 ]);
 
 
@@ -1054,6 +1082,40 @@ async function runTests() {
 		// Lexer-level: General + Mountain + General. Parser will
 		// reject, but the lex layer is well-formed.
 		"foo/\\bar",
+
+		// =============================================================
+		// DoubleAt (`@@`) — thunk construct opener. Two-char token
+		// via maximal-munch, placed before the symb spread so it
+		// wins over two bare `At` tokens. Adjacency is strict.
+		//
+		// Both tokenizers must lockstep here; the combinator side
+		// gets it from BaseTokenOr ordering, the fast side from
+		// stepAt's first-char dispatch.
+		// =============================================================
+
+		"@@",                                  // bare token
+		"@@x",                                 // adjacent operand
+		"@@ x",                                // spaced operand
+		"@@42",                                // adjacent number operand
+		"@@(x + 1)",                           // grouped operand, adjacent
+		"@@ (x + 1)",                          // grouped operand, spaced
+
+		// Adjacency — these are NOT DoubleAt:
+		"@ @x",                                // two At tokens
+		"@ @ x",                               // two At tokens, both spaced
+
+		// Maximal munch across runs:
+		"@@@x",                                // DoubleAt + At
+		"@@@@x",                               // DoubleAt + DoubleAt
+		"@@@",                                 // DoubleAt + At, no operand
+
+		// In surrounding contexts:
+		"f(@@x)",                              // call-argument position
+		"< v: @@ expand(v) >",                 // structure-field position (motivating case)
+		"Foo@@x",                              // ident + DoubleAt (syn legality separate)
+		"@@x;",                                // statement-terminated
+
+		"@@-5",                                // adjacent negative literal
 
 		// Sample Foi source: audio player module (~90 lines).
 		// First real-world .foi file through the lex harness — probes the

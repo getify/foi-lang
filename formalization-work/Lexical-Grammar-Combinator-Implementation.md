@@ -81,7 +81,7 @@ Whitespace, Comment, Number, PositiveIntegerLit, NegativeIntegerLit, General,
 Keyword, Native, Builtin, Comprehension, BooleanOper,
 String, StringEscapedChar, DoubleQuote,
 Backtick, Escape, Hyphen,
-TriplePeriod, DoublePeriod, DoubleColon,
+TriplePeriod, DoublePeriod, DoubleColon, DoubleAt,
 <all single-char operator names: Tilde, Exmark, …, Backtick>
 ```
 
@@ -795,6 +795,7 @@ expressionEnding(General)
 TriplePeriod                         (* before DoublePeriod before single Period *)
 DoublePeriod
 DoubleColon                          (* before single Colon *)
+DoubleAt                             (* before single At *)
 Mountain                             (* before single-char ForwardSlash *)
 Valley                               (* before EscapePlain and before single-char ForwardSlash *)
 EscapePlain                          (* standalone "\" — after all multi-char Escape forms *)
@@ -843,6 +844,8 @@ Why each non-obvious ordering matters:
 - `TriplePeriod` before `DoublePeriod` before single `Period`
   (via the symb spread): longest match first.
 - `DoubleColon` before single `Colon` (via the symb spread):
+  same.
+- `DoubleAt` before single `At` (via the symb spread):
   same.
 - `Mountain` before the symb spread (where `ForwardSlash` lives):
   `/\` is a two-char op; without Mountain trying first, `/\`

@@ -616,7 +616,7 @@ Each such reference requires `Lazy@`. The working version (from above):
 ```java
 def life: <
     meaning: defn(x, y) ^x + y,
-    answer: @Lazy life.meaning(2, 40)
+    answer: Lazy@ life.meaning(2, 40)
 >;
 ```
 
@@ -709,6 +709,8 @@ A `Lazy@` participates only in the `def` statement(s) section of its directly en
 A `Lazy@` written inside a nested block (function body's `def` statement(s) section, nested block expression's `def` statement(s) section, or any inner scope) belongs to that inner scope's section and resolves under that scope's rules. It is invisible to the outer scope's resolution and does not interact with the enclosing scope's section timing.
 
 **Do-comprehension blocks: `Lazy@` prohibited.** `Lazy@` is not permitted inside a `~<<` or `~<*` block (§7). Each do-block statement is its own single-statement scope (§2.1.1); there are no sibling `def` bindings within a statement scope for `Lazy@` to forward-reference, so the construct has no valid role. A `Lazy@` appearing at any position inside a do-block is rejected at the semantic-check layer.
+
+**`@@` operands: `Lazy@` prohibited.** `Lazy@` is not permitted in a `@@` operand (§3.14). The operand is a single expression, so it introduces no `def` statement(s) section at all -- the same absence the do-block case above describes, arrived at differently: a do-block nests a fresh scope per statement, and a `@@` operand has only the one expression. Neither offers the contiguous single scope layer a `Lazy@` resolves across. A `Lazy@` appearing at any position directly inside (not inside its own function) a `@@` operand is rejected at the semantic-check layer.
 
 #### §2.2.7 Cross-Scope Restriction
 
@@ -834,6 +836,16 @@ x;                      // 42
 The carry-and-force model admits aggressive compile-time optimization. A `Lazy@` whose dependencies are statically traceable through the `def` statement(s) section compiles to ordinary eager evaluation with bindings reordered to satisfy dependencies. No runtime thunk is produced in such cases. The runtime thunk mechanism is required only when the dependency path passes through opaque carriers (function calls returning compound values, library-provided constructors, or any operation whose internal use of the thunk is not visible to the compiler).
 
 The "no thunk past end of `def` statement(s) section" guarantee holds at both compile time and runtime. Compile-time folding may eliminate the thunk entirely; runtime resolution settles any thunk that survives compilation before the section exits. Code outside the section -- including the surrounding scope's statement-block, the body of any enclosing function, and any escaped value -- interacts only with resolved values.
+
+#### §2.2.12 Distinction From `@@`
+
+`Lazy@` and `@@` (§3.14) both defer evaluation and both wear `@`. They are unrelated mechanisms, and the resemblance stops at the sigil.
+
+A `Lazy@` produces a **thunk** in §0.1's suspended-computation sense. It belongs to the `def` section of its directly enclosing scope (§2.2.6); it resolves through the pending-set machinery of §2.2.4 rather than by anything a program calls; it cannot be forced from another scope (§2.2.7); and none survives the end-of-section force pass (§2.2.5). It exists so that a value under construction can reference a name the section has not reached yet.
+
+A `@@` produces a **function**. It has no pending set, no section, and no force pass. It is forced by calling it, it may escape its construction scope and be forced from anywhere, and it lives as long as a reference to it does. It exists so that an expression can be deferred at argument and structure-field positions, which `Lazy@` does not reach.
+
+Neither substitutes for the other, and they do not nest: §2.2.6 rejects a `Lazy@` written directly in a `@@` operand, since the operand carries no `def` section for one to reach into. In the other direction, a `Lazy@` cannot be handed to a caller as a value to force later -- forcing one outside its own section is the case §2.2.7 rejects, and `@@` is what covers that need.
 
 ### §2.3 Constancy
 
@@ -2309,7 +2321,7 @@ A precondition is syntactically the same as a guard-expression: `?[cond]: conseq
 
 **No effect perform-sites in preconditions.** A precondition's guard expression and its consequent expression may not syntactically contain the `%` effect-perform operator (or its `<::` sugar); the compiler statically rejects any perform-site inside a `FuncPrecondList` clause. Effects reached indirectly through called functions follow standard §6.13 tracking against the outer callable's call site.
 
-### §3.5.1 Multi-Parameter Function Preconditions
+#### §3.5.1 Multi-Parameter Function Preconditions
 
 For multi-parameter (curried) function definitions with preconditions, the compiler will lift each precondition to the earliest tier at which all *parameter* references in the precondition -- both those in the guard and those in the consequent -- are bound. Closure-captured references from the defining scope are reachable at every tier (they are bound before any tier fires) and do not gate lifting; only parameter references do.
 
@@ -2352,7 +2364,7 @@ Conceptually, preconditions guard the initial function call. That's why the `add
 
 But since the precondition on `mult()` requires all three parameters to be evaluated, the precondition must wait for the final function call (as in `mult(2)(-3)(4)` to evaluate the precondition, rather than failing at `mult(2)(-3)` or at `mult(-5)`).
 
-### §3.5.2 Precondition Tail Calls
+#### §3.5.2 Precondition Tail Calls
 
 Function preconditions operate as guard expressions; if the function call itself is already tail-eligible (§3.4), and a matching precondition contains a tail-eligible function call in its consequent, then *this* consequent function call is eligible to operate as a tail-call.
 
@@ -3387,7 +3399,7 @@ The prime forms `(+>')` and `(<+')` reverse the operand list per §3.12.1: `(+>'
 
 **Chain-mixing with other Flow-tier operators.** Compose lives at the Flow tier alongside pipeline (§3.10.12) and comprehension operators (§3.10.9); mixing within a single Flow-tier chain is admitted per §3.10.12's chain-mixing note.
 
-## §3.11 Partial Application: `f|arg,arg,..|`
+### §3.11 Partial Application: `f|arg,arg,..|`
 
 The `f|arg,arg,..|` form (Syntactic-Grammar `PartialCallSuffix` at §7) produces a partially-applied function value:
 
@@ -3513,6 +3525,8 @@ Partial application is exclusive to standard call-form functions; a namespace de
 
 Foi provides four operator-shape transforms on function values: prime `'` (reverse), mountain `/\` (curry), valley `\/` (uncurry), and the primed-inverse forms of each. All four are postfix operators on the function value's grammar position (Syntactic-Grammar `PostfixCallTail` at §7). All four can also appear as operator-as-function (`(/\)`, `(\/)`, `(/\')`, `(\/')`, `(')`); see §3.13.
 
+**A transform is canonical per source.** Each transform is a function of the value it transforms and captures nothing else, so a given source yields one transformed value: `f' ?= f'` is `true`, and `f/\ ?= f/\` is `true`. Whether a runtime derives that value eagerly or mints it on first demand is not observable. Function-value identity is specified at §6.1.5.6.
+
 #### §3.12.1 Reverse: `f'`
 
 The prime operator `'` produces a function value that reverses its argument order at call time:
@@ -3586,6 +3600,8 @@ def uncurry: (/\');
 def curry: (\/');
 ```
 
+**A doubled prime is not two applications.** `f''` **is** `f`: the same value, not a reversal of a reversal. Argument order carries a polarity, and a doubled prime leaves that polarity unflipped rather than flipping it twice. `f'' ?= f` is `true` (§6.1.5.6).
+
 ### §3.13 Operator-as-Function
 
 Any operator can be lifted to a function value by parenthesizing it (Syntactic-Grammar `OpFuncExpr` at §7): `(+)`, `(?and)`, `(.)`, `(.<a, b>)`. The `@` operator lifts the same way: `(@)` evaluates to the unary value-identity function (the `@`-call operator with no LHS callee; see §3.8.1).
@@ -3598,6 +3614,78 @@ The per-operator argument arity, argument types, and semantic behavior of each l
 2. Calling that function value evaluates the operator against the supplied arguments.
 3. The prime `'` form applies §3.12.1 reverse semantics to the lifted function value.
 4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §3.10.13), and `#>` (pipelines, §3.10.12).
+
+**Operator lifts are canonical.** A given operator lifts to one function value: `(+) ?= (+)` is `true`, and `(+) ?= (-)` is `false`. A lift captures nothing and carries no per-site content, so two occurrences of the same lift have nothing to differ in; the lift names that operator's function value rather than allocating one, which is what separates it from partial application (§3.11) and composition (§3.10.13). Function-value identity is specified at §6.1.5.6.
+
+**The two prime spellings name one value.** `(+')` and `(+)'` are the same function value: the parenthesized form names the prime of `(+)`, and the postfix form applies §3.12's prime to `(+)`, which is canonical per source. `(+') ?= (+)'` is `true`, as is `(+') ?= (+')`. The same holds for `(/\')` against `(/\)'`, and `(\/')` against `(\/)'`.
+
+### §3.14 Thunks: `@@ expr`
+
+The `@@` construct (Syntactic-Grammar `ThunkExpr` at §7) produces a **zero-parameter function value** whose body is the operand expression:
+
+```java
+def t: @@ expensiveOperation();
+
+t();                                     // runs expensiveOperation()
+```
+
+Constructing the thunk does not evaluate the operand. The resulting value is an ordinary function value in every respect this section covers: it binds, passes, returns, stores in a Record or Tuple, annotates, and answers `?as`. Forcing it is an ordinary call, and nothing else forces it.
+
+`@@` does not introduce a new value category. §0.1's **suspended computation** category is `Lazy@`'s (§2.2); a `@@` produces a **function**, and §2.2's machinery -- pending sets, carry operations, the end-of-section force pass -- does not reach it. §2.2.12 states the distinction.
+
+**Operand shape.** The operand is greedy: `@@ a + b` defers the whole binary expression, matching `@`'s operand greed at §3.10.7. Parentheses group for the narrower reading and are expression-grouping, not an argument list. A `@@` with no operand is a parse error.
+
+**What it reaches that nothing else does.** A thunk may escape the scope that constructed it and be forced anywhere, which is what makes deferral usable at structure-field and argument positions:
+
+```java
+defn node(v) ^< value: v, children: @@ expand(v) >;
+```
+
+Structure access is unchanged by the presence of a thunk in a field. `n.children` reads the field and yields the function; `n.children()` forces it. §1.5.1's `ResolveStructureValue` needs no clause for this, because a thunk is a value like any other.
+
+**Each evaluation of a `@@` expression produces a distinct value.** Two constructions never share a memo cell: `@@ a` written twice produces two thunks, forcing one leaves the other unforced, and the two are not `?=`-equal (§6.1.5.6).
+
+#### §3.14.1 Forcing and Memoization
+
+The first call evaluates the operand and retains its value; every later call returns that value and runs nothing. A thunk's body runs at most once.
+
+The memo cell lives in the function value: a forced flag and a value slot, written once, on the call that runs the body. §0.1 states that reassignment of binding slots is Foi's only mutability. The cell is not an exception to that rule but invisible to it -- it is written at most once, it holds the value the operand already produced, and the purity gate below is what makes a memoizing thunk indistinguishable from one that re-evaluates on every call.
+
+#### §3.14.2 The Purity Gate
+
+Memoization is coherent only where re-evaluation would produce the same result, so the construct is gated. The gate has two halves, each catching what the other structurally cannot.
+
+**Tracked effects, at compile time.** A tracked effect in a `@@` operand's effect set rejects the construct. §6.13.3's inference computes that set from the operand's own perform sites and its callees' declared surfaces; the construct requires it empty. Where the perform is lexical within the operand, the error is reported there; where the effect arrives from a callee, it is reported at the `@@` naming the callee. The remedy is a `defn`: an ordinary function value defers the same expression, carries a declared effect surface, and does not memoize.
+
+**Ambient effects, at force time.** §6.13.5 exempts ambients from the declaration discipline entirely -- no declaration, no emit-edge, no coverage -- so §6.13.3's set cannot contain them by construction and the compile-time half is blind to them. `@@ now()` and `@@ roll()` both carry the empty set, and both would memoize a value the next call has every reason to expect fresh. The forcing call therefore establishes a boundary over the ambient kinds for the duration of the operand's evaluation. An ambient perform reaching that boundary **terminates the run**, naming the effect kind, the perform site, and the enclosing `@@`.
+
+**It terminates rather than resumes.** Resuming with `empty`, or exiting via `Done@` (§6.4), would memoize a value the operand did not compute and hand it to every later force. Either converts a rejection into a silent wrong answer.
+
+**It is not an effect.** The termination is a diagnostic, not a perform: it is not a kind under `Effect.Sys.Fatal.*`, and no `~<*` catches it. §6.13.5 makes fatality a property of a kind's default handler rather than of the kind -- a `~<*` over a fatal kind receives the perform and may resume -- and `Effect.Sys.Fatal ~<*` is the idiom for covering every fatal condition in a region at once. Routing this through that family would let a program catching divide-by-zero also catch a thunk-purity violation and resume the operand with a value of its choosing, which is the outcome the gate exists to prevent.
+
+**A handler inside the operand is found first.** §6.1.2's dynamic lookup is unchanged here: a `~<*` scope established lexically within the operand, above a perform site, catches that perform before the `@@` boundary sees it. Such a handler is itself inside the operand and gated on the same terms.
+
+**The check is dynamic, and therefore path-sensitive.**
+
+```java
+def t: @@ (?[useClock]: now());
+```
+
+Forced with `useClock` false, this completes and memoizes `empty`. The perform did not occur on the path that produced the memoized value, so nothing was memoized that a re-evaluation would produce differently. Only a perform that actually happens terminates. Because the operand runs at most once (§3.14.1), the dynamic check runs at most once.
+
+**The gate reads what it can see.** §9.9.4 does not admit an unrecoverable effect set, and §9.7.3 grounds an inference cycle at `Any`. A `@@` over a call through a slot declaring `:Effects(Any)`, or over an undeclared parameter whose surface never resolves, does not pass the compile-time half. The construct is for operands whose bodies the compiler can read.
+
+**Acquisition at a distance.** A callee several levels below the operand that comes to perform an ambient breaks every `@@` above it, and nothing writable at the construction site remedies it; the remedy is to rewrite the construct as a `defn`. The termination message therefore names the call path from the operand to the acquiring callee, since the acquisition may sit arbitrarily far below the `@@` and nothing at the construction site records it. A tracked effect acquired the same way is caught earlier, by propagation through §6.13.3's inference.
+
+**The boundary satisfies no coverage obligation.** It is not a `~<*` scope and does not count toward §6.13.4, at module top level under that section's statement substitution or anywhere else. A tracked perform inside an operand is rejected by the compile-time half rather than covered here.
+
+**Nesting is admitted.** Constructing a thunk performs nothing, so an inner `@@` contributes no effects to the enclosing operand's set. If the outer operand forces the inner thunk, the inner thunk's own boundary applies at that call.
+
+#### §3.14.3 Typing
+
+A thunk's type is a zero-parameter function type whose return type is the operand's type, inferred exactly as an unannotated `defn`'s return type is (§9.7).
+
+The construct carries **no declaration surface** -- there is nowhere on a `@@` to write a return type, and none is assigned. In particular the return type is not `Any`. The operand is lexically present at the construction site, so §9.7's fixpoint reads it directly.
 
 ## §4 Decisions and Guards
 
@@ -4821,19 +4909,45 @@ By value category, the user-facing rules are:
 
 - **Minted values** (`Effect.Host.Counter` results, §6.1.5.8):
   identity at both layers; language-provided identity-`?=`. No
-  namespace owns a minted value, so no `?=` hook is consulted --
-  this is the one `@`-free category with unconditional `?=`.
+  namespace owns a minted value, so no `?=` hook is consulted.
 
-Reference identity is **bounded, not eliminated**. General
-userland has no operator to observe it, and cross-namespace
+- **Function values** (§1.6, and every value produced by a form
+  that allocates one): identity at both layers; language-provided
+  identity-`?=`. Two function values are `?=`-equal exactly when
+  they are the same value. No namespace owns a function value, so
+  no `?=` hook is consulted, and no structural comparison is
+  attempted -- two functions with identical bodies over identical
+  captured frames are not equal. The identity's representation is
+  not fixed: substrate identity and a value minted per §6.1.5.8
+  both answer it.
+
+**"The same value" for a function is per-evaluation.** Evaluating a
+function literal produces a function value; evaluating it again
+produces another, whatever the two bodies and captured frames hold
+in common. Where a form allocates a function value -- partial
+application (§3.11.1), composition (§3.10.13), the thunk construct
+(§3.14) -- the allocated value is equal neither to its source nor
+to a second allocation from the same source. Two forms allocate
+nothing: an operator-as-function lift is canonical per operator
+(§3.13), and a shape transform is canonical per source value (§3.12).
+Both are unary on a function value and capture nothing else, so two
+occurrences have nothing to differ in. Composition (§3.10.13) is not
+among them -- it builds a body that did not previously exist, over two
+operands rather than one -- and neither is partial application, which
+captures separately evaluated arguments.
+
+Reference identity is **bounded, not eliminated**. Three categories
+expose it through `?=` -- namespace handles, minted values, and
+function values -- and each is a category with no structure to
+compare and no namespace to consult. Everywhere else `?=` compares
+structurally, by value, or through a declared hook, and the
+runtime's interning choices are unobservable. Cross-namespace
 observation is structurally impossible per the compile-time
 lexical property of namespace identity established above. Within
 a namespace's own hooks, reference identity of the namespace's
 own instances is intrinsically observable -- that is what
 per-instance state requires, and slot access via
 `Effect.User.Slot.*` is the surface Foi provides for it.
-A namespace may expose reference-identity-derived semantics
-through its public `?=` hook.
 
 ##### §6.1.5.7 Cross-Namespace Grants
 
@@ -8183,6 +8297,17 @@ rules):
 // legal, documentary; no compile effect
 deft LogsProgress(int) :Effects(Sys.Log) ^empty;
 ```
+
+**A `@@` thunk boundary catches them** (§3.14.2). The exemption above
+is exactly what makes that necessary: an ambient enters no declared
+set and no inferred one, so a thunk operand performing one clears the
+compile-time half of that construct's purity gate. The boundary
+established for the duration of a forcing call is a handler scope in
+§6.1.2's dynamic-lookup sense -- it is what such a perform finds
+first, absent a nearer one -- but it installs no arms and resumes
+nothing: it terminates the run. It is not a handler a program can
+install, shadow, or displace, and it is not reached by any perform
+outside a thunk operand.
 
 **NOTE:** Effects that write to persistent state and effects that
 open network or file resources are outside the ambient category; they

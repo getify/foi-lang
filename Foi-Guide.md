@@ -48,6 +48,7 @@ If you're looking for the **Foi** grammar: [Lexical Grammar](formalization-work/
     - [Function Overs](#function-overs)
     - [Function Composition](#function-composition)
     - [Function Pipelines](#function-pipelines)
+    - [Deferred Expressions](#deferred-expressions)
     - [`@`-suffix (At) Functions](#--suffix-at-functions)
     - [`%`-suffix (Percent) Functions](#--suffix-percent-functions)
     - [`~`-suffix (Comprehension) Functions](#--suffix-comprehension-functions)
@@ -1107,6 +1108,8 @@ def answer: compute();      // 42 -- `seed` is just a regular value now
 ...or to restructure so the lazy deferral only gets consumed within its immediate enclosing scope.
 
 This restriction reflects a broader **Foi** commitment: deferral doesn't quietly suspend executing functions (no deep continuations). The `def` section is the narrow, well-defined area of effect, and `Lazy@` operates within it.
+
+If what you wanted was a deferred computation that *does* travel -- something you can hand to another function and run whenever -- that's a different tool: see [Deferred Expressions](#deferred-expressions).
 
 #### Automatic Resolution + Errors
 
@@ -2376,6 +2379,28 @@ compute(11);    // 18
 ```
 
 The previous `#>` *pipeline function* form is more powerful/flexible than the `+>` approach, in that a pipeline function can declare multiple parameters, and access any of them throughout the pipeline via `#`.
+
+### Deferred Expressions
+
+Sometimes you want to put a computation somewhere without running it -- a record field most callers never read, an argument the callee might not need. `@@ expr` holds `expr` unevaluated:
+
+```java
+def report: <
+    entries: entries,
+    breakdown: @@ groupByCategory(entries)
+>;
+
+report.breakdown;        // the deferred computation itself
+report.breakdown();      // runs groupByCategory(..)
+```
+
+**Calling it is how you run it.** `@@` hands you an ordinary function that takes no arguments, so there's no special syntax to learn and no special rule at the field access -- `report.breakdown` reads the field like any other, and the `()` runs it. It's a value like any other, too: pass it, store it, return it, keep it long after the scope that built it is gone.
+
+**It runs at most once.** The first call evaluates the expression and keeps the result; every call after that hands back the same result without running anything. That's the difference between `@@ expr` and writing `defn() ^expr` yourself -- the `defn` runs fresh every time you call it.
+
+**The expression has to be pure.** Since the answer gets kept, a `@@` that *did* something -- performed an effect, read the clock, rolled a random number -- would hand every later caller a stale answer. So **Foi** doesn't let you write one. An effect your code declares is a compile error, reported right at the perform. Something ambient like `log()`, `now()`, or `random()` doesn't show up until the code actually runs, so that case stops the program the moment you force it, naming what it found. Either way you hear about it; you never quietly get a wrong number. When you want deferral *and* effects, write the `defn() ^..`; it runs fresh every call and keeps nothing.
+
+**It isn't `Lazy@`.** They may seem related, but they aren't. `Lazy@` (see [Lazy Forward References](#lazy-forward-references)) is about *names* -- letting one `def` mention another that hasn't been written yet -- and it's done resolving by the time the definition section closes. `@@` is about *values*, and what it gives you travels. One consequence of the split: you can't write a `Lazy@` inside a `@@`, because there's no definition section in there for it to reach into.
 
 ### `@`-Suffix (At) Functions
 

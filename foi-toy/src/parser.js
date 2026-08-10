@@ -616,6 +616,7 @@ var BareOperandExpr = or(
 // alone) fall through to the later alternatives via PEG.
 var BareOperandExprNoEmpty = or(
 	lazy(() => CallExpr),
+	lazy(() => ThunkExpr),
 	BooleanLit,
 	NumberLit,
 	StringLit,
@@ -1178,6 +1179,26 @@ export const AtCallExpr = production("AtCallExpr",
 		),
 		and(IdentityFunc, delim(), ExprNoBlock)
 	)
+);
+
+var DoubleAt = tokType("DoubleAt");
+
+// ThunkExpr := DoubleAt _ ExprNoBlock;
+//
+// Deferred-evaluation construct. The operand is greedy
+// ExprNoBlock — `@@ a + b` is a thunk over the whole binary,
+// matching AtCallExpr's IdentityFunc arm and EffectorTail's
+// optional arg. Parens group for the narrower reading.
+//
+// The operand is REQUIRED (no optional wrapper), unlike
+// AtCallExpr's IdentBase arm where a bare `Foo@` calls with an
+// `empty` default. A thunk over nothing has no meaning, so
+// `@@;` is a parse error.
+//
+// Not reachable from ChainBase — `(@@ f(x)).bar` paren-lifts,
+// same as `(task%).field`.
+export const ThunkExpr = production("ThunkExpr",
+	and(DoubleAt, delim(), lazy(() => ExprNoBlock))
 );
 
 // <ChainBase> := DefFuncExpr | MatchExpr | GuardedExpr | AssignmentExpr
@@ -3096,6 +3117,14 @@ var RecordProperty = or(ConcisePropDef, ExplicitPropDef);
 // RecordTupleValue arm — `<[!x, (+)]>` and `<[(defn()^42), (x #> f)]>`
 // both admit.
 //
+// RecordTupleValue is a hand-listed operand alphabet parallel to
+// <BareOperandExprNoEmpty> (§5), NOT a reach into it. Any new
+// operand form admitted at outer-position expression slots must
+// be added HERE TOO or it silently fails inside structure
+// literals — entries reach RecordTupleValue directly, never
+// through the §5 chain. SetEntry inherits from this production,
+// so sets follow automatically.
+//
 // Visible production (promoted from combinator alias): the paren-
 // wrap arm needs its own frame so its OpenParen/CloseParen tokens
 // land at entry granularity rather than splicing up to
@@ -3114,6 +3143,7 @@ var RecordTupleValue = production("RecordTupleValue", or(
 	AsExpr,
 	UnaryExpr,
 	CallExpr,
+	ThunkExpr,
 	EmptyLit,
 	BooleanLit,
 	NumberLit,
