@@ -75,7 +75,11 @@ async function main() {
 	}
 
 	if (args.ast) {
-		await out(`${JSON.stringify(ast,null,2)}\n`);
+		await out(`${JSON.stringify(
+			ast?.[(ast?.length ?? 1) - 1] ?? ast,
+			null,
+			2
+		)}\n`);
 	}
 	else {
 		await renderTokens(tokens);

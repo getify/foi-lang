@@ -34,7 +34,15 @@ async function onMessage({ data, }) {
 	// Serialize here rather than cloning the node tree across the
 	// boundary: the string is what the display needs, and the
 	// stringify cost lands on this thread instead of the main one.
-	self.postMessage({ seq, ok: true, ast: JSON.stringify(ast,null,2), });
+	self.postMessage({
+		seq,
+		ok: true,
+		ast: JSON.stringify(
+			ast?.[(ast?.length ?? 1) - 1] ?? ast,
+			null,
+			2
+		),
+	});
 }
 
 // Error objects survive structured clone, but only their standard

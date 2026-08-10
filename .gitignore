@@ -1,6 +1,6 @@
 node_modules/
 foi-toy/web/syntax-color.html
-foi-toy/web/js/parser-combinator.js
+foi-toy/web/js/parser-combinators.js
 foi-toy/web/js/parser.js
 foi-toy/web/js/default-shapers.js
 foi-toy/web/js/source-context.js
