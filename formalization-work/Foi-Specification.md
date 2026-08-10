@@ -297,7 +297,7 @@ def bookTitle: `"*`title`* by `author`";
 
 ### §1.5 Structured Values: Tuples and Records
 
-Foi has two structured value categories -- Tuples and Records -- that share a single literal syntax (Syntactic-Grammar `RecordTupleLit`). The form is an angle-bracketed comma-separated list of entries:
+Foi has two structured value categories -- Tuples and Records. The angle-bracketed literal (Syntactic-Grammar `RecordTupleLit`) produces either, as a comma-separated list of entries:
 
 ```java
 < entry, entry, ..., entry >
@@ -308,6 +308,8 @@ Each entry is either:
 - A **positional entry**: a bare expression with no name.
 - A **named entry**: explicit `name: expr`, concise `:name`, or computed `%expr: value`.
 - A **spread entry**: `&src`, lifting entries from `src` into this structure. Also, `&` spread entries support a subset of the "pick" syntax, such as `&src.[1..3]` and `&src.<x,y>`.
+
+A second literal form, `<[ ... ]>` (Syntactic-Grammar `SetLit`), produces a Tuple whose entries are unique. It is specified at §1.5.6.
 
 #### §1.5.1 Tuple/Record Literal Construction
 
@@ -371,9 +373,11 @@ The `GetEntries(structure,startIndex)` algorithm are:
 
 The `ResolveStructureValue(value)` steps are:
 
-1. If `IsStructure(value)`: return the result of `DefineStructure(value)`
+1. If `IsSetLiteral(value)`: return the result of `DefineSet(value)` (§1.5.6)
 
-2. Return `value`
+2. If `IsStructure(value)`: return the result of `DefineStructure(value)`
+
+3. Return `value`
 
 ----
 
@@ -432,7 +436,7 @@ A spread entry `&src` lifts entries from `src` into the enclosing structure. The
 < 10, &more, 20 >;  // spread interleaved positionally
 ```
 
-**NOTE:** Spread's effect on the enclosing structure's type follows §1.5.1: spreading a Record's named entries forces the enclosing structure to be a Record; spreading only positional content into an otherwise-positional structure preserves Tuple type.
+**NOTE:** Spread's effect on the enclosing structure's type follows §1.5.1: spreading a Record's named entries forces the enclosing structure to be a Record; spreading only positional content into an otherwise-positional structure preserves Tuple type. Inside a `<[ ... ]>` set literal a spread source carrying named entries is instead a compile error, per §1.5.6.
 
 #### §1.5.5 The Empty Angle-Bracket Form
 
@@ -441,6 +445,82 @@ A spread entry `&src` lifts entries from `src` into the enclosing structure. The
 When spread into another structure, `< >` contributes nothing regardless of the enclosing context's type. The empty Record and empty Tuple are the same value at the literal level; the type system does not need to disambiguate at the empty case.
 
 At the type level, `< >` is a single value and the data shape type `< >` names it (§9.6.3). A data shape type declares no Record-or-Tuple mode, so nothing needs disambiguating at the empty case.
+
+#### §1.5.6 Set-Form Literals
+
+`<[ ... ]>` (Syntactic-Grammar `SetLit`) is a second structure literal, producing a **Tuple** whose entries are unique:
+
+```java
+def digits: <[ 4, 5, 5, 6 ]>;        // < 4, 5, 6 >
+```
+
+The value it produces is a Tuple in every respect; the form introduces no value category of its own, and §0.1's catalogue carries no separate entry for it.
+
+**Entry forms.** A set entry is a positional entry or a spread entry (Syntactic-Grammar `SetEntry`). Named entries -- explicit `name: expr`, concise `:name`, and computed `%expr: value` -- are not admitted.
+
+**Duplicate entries.** Two entries are duplicates when `?=` holds between their resolved values (§6.1.5.6). The **first** occurrence is retained and each later duplicate is dropped; retained entries keep their relative order of first appearance, and their positional indices are renumbered contiguously from `0`.
+
+First-occurrence retention is a rule rather than a consequence. Where `?=` is structural or by value, two duplicates are indistinguishable and the choice decides only position. Where `?=` is a namespace's declared hook (§6.1.5.6), the hook may hold equal two values that differ in content the hook does not read, and which one survives is then observable.
+
+`?=` on the produced value is ordinary Tuple equality, and therefore order-sensitive: two set literals over the same values in different orders produce Tuples that are not `?=`-equal to each other.
+
+**Values whose `?=` is a compile error.** Deduplication applies `?=` to every entry. An entry whose value is an `@`-constructed instance whose namespace declares no `?=` hook is a compile error at that entry per §6.1.5.6; the set literal introduces no exception.
+
+**Function values follow §6.1.5.6.** An operator lift is canonical per operator, so two lifts of the same operator are one entry; a function literal allocates per evaluation, so two occurrences are two entries:
+
+```java
+<[ (+), (+) ]>;                       // one entry
+<[ (defn(x) ^x), (defn(x) ^x) ]>;     // two entries
+```
+
+**Spread.** A spread entry lifts its source's entries on §1.5.4's terms, and deduplication runs over the combined list, so duplicates are removed across the spread boundary:
+
+```java
+def numbers: <[ 4, 5, 5, 6 ]>;
+def more: <[ 6, 7, 7 ]>;
+
+<[ 0, 1, 1, &numbers, 6, &more, 8 ]>;    // < 0, 1, 4, 5, 6, 7, 8 >
+```
+
+A spread source carrying named entries is a compile error at the spread entry. A spread is the only route by which a named entry could reach a set literal.
+
+**Deduplication is a consuming operation** in §2.2.3's sense, since it applies `?=`. A set literal inside a `def` statement(s) section whose entries include an unresolved `Lazy@` reference therefore defers its whole initializer per §2.2.4, where the corresponding `< >` literal would carry the thunk into position without reading it.
+
+----
+
+Set literals are constructed by the `DefineSet()` algorithm.
+
+The `DefineSet(structure)` steps are:
+
+1. Let `[entries, _, hasKeyed]` be the result of `GetEntries(structure,0)`
+
+2. If `hasKeyed` is `true`: report a compile error
+
+3. Let `uniqueEntries` be the result of `DedupeEntries(entries)`
+
+4. If `Length(uniqueEntries)` is `0`: return the result of `AllocateStructure("Empty")`
+
+5. Return the result of `AllocateStructure("Tuple",uniqueEntries)`
+
+----
+
+The `DedupeEntries(entries)` steps are:
+
+1. Let `unique` be an empty list
+
+2. Let `i` be `0`
+
+3. For each entry `[ key, value ]` in `entries`, in order:
+
+    - If `unique` holds an entry `[ _, priorValue ]` for which `priorValue ?= value`: continue (3)
+
+    - Append `[ i, value ]` to `unique`; let `i` be `i + 1`
+
+4. Return `unique`
+
+----
+
+`DefineSet` reaches the same `AllocateStructure` cases §1.5.1 uses; the set form introduces no allocation case of its own.
 
 ### §1.6 Functions As Values
 

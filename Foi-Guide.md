@@ -1957,7 +1957,7 @@ def digits: <[
 digits;    // < 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 >
 ```
 
-**Warning** The `<[ ... ]>` set literal deduplication applies to Tuple content only, not Records.
+**Warning:** Since field names aren't allowed in a set, spreading a *Record* into one is a compile error. A spread is the only way a named entry could get in, so it's the only place this comes up.
 
 Set equality comparison deserves special attention. Since Sets are merely a construction form for Tuples, the `?=` will perform Tuple equality comparison, where order matters. This would likely produce undesired results (false negatives).
 
