@@ -593,8 +593,25 @@ re-matched and emitted by the next outer iteration.
 The wrapper is applied at the Token alternation level (see §14
 for the full BaseTokenOr listing). The single-char ops are
 wrapped selectively via the `EXPRESSION_ENDING_OP_NAMES` set;
-the rest are inlined unwrapped. `EscapePlain` is not wrapped —
-`\` is not an expression-ending form.
+the rest are inlined unwrapped. Three multi-char forms carry an
+explicit wrap in the listing rather than through that set:
+`EscapedNumber` — the only wrapped alternative emitting more
+than one token, with the tail outside the whole
+Escape-plus-content pair — and `Mountain` / `Valley`, the
+postfix curry and uncurry chain terminators.
+
+Four glyphs that look expression-ending are excluded, each
+because a following `-Digit` has a competing reading the lexer
+cannot resolve without cross-token state:
+
+- `EscapePlain` — `\` opens a form, it does not end one.
+- `CloseAngle` — `>` closes a structure literal and is also the
+  last token of `?>`, `?>=`, `?<>`, `?<=>`, `#>`, and `+>`. An
+  unconditional wrap eats the sign in `x ?> -3`, which §8 leaves
+  unparseable. Separating the two roles needs lookbehind the
+  tail probe doesn't have.
+- `At` and `Percent` — both take an operand, so the `-3` in
+  `Maybe@-3` and `task%-3` is a sign, not a subtraction.
 
 ### 11.1 The NumberEnding Wrapper
 
@@ -783,7 +800,7 @@ InterpStr                            (* before single-char Backtick *)
 SpacingInterpStr                     (* before EscapePlain *)
 SpacingEscapedStr                    (* before EscapedNumber and EscapePlain *)
 StringLit                            (* anonymous and(...) — see §7 *)
-EscapedNumber                        (* before EscapePlain *)
+expressionEnding(EscapedNumber)      (* before EscapePlain *)
 expressionEnding(Keyword)            (* before General *)
 expressionEnding(Native)
 expressionEnding(Builtin)
@@ -796,8 +813,8 @@ TriplePeriod                         (* before DoublePeriod before single Period
 DoublePeriod
 DoubleColon                          (* before single Colon *)
 DoubleAt                             (* before single At *)
-Mountain                             (* before single-char ForwardSlash *)
-Valley                               (* before EscapePlain and before single-char ForwardSlash *)
+expressionEnding(Mountain)           (* before single-char ForwardSlash *)
+expressionEnding(Valley)             (* before EscapePlain and before single-char ForwardSlash *)
 EscapePlain                          (* standalone "\" — after all multi-char Escape forms *)
 ...(symb spread with STANDALONE_EXCLUDED_OPS filter, EXPRESSION_ENDING_OP_NAMES wrap)
 ```

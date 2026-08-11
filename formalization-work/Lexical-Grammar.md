@@ -69,7 +69,7 @@ Tokens                  := Token*;
                          | LexSpacingInterpStr
                          | LexSpacingEscapedStr
                          | LexStringLit
-                         | EscapedNumber
+                         | (EscapedNumber ExprEndingTail)  (* Note 9 *)
                          | (Keyword ExprEndingTail)        (* Note 1, Note 9 *)
                          | (Native ExprEndingTail)         (* Note 1, Note 9 *)
                          | (Builtin ExprEndingTail)        (* Note 1, Note 9 *)
@@ -82,8 +82,8 @@ Tokens                  := Token*;
                          | DoublePeriod
                          | DoubleColon
                          | DoubleAt
-                         | Mountain
-                         | Valley
+                         | (Mountain ExprEndingTail)       (* Note 9 *)
+                         | (Valley ExprEndingTail)         (* Note 9 *)
                          | EscapePlain                     (* standalone "\" *)
                          | (ExprEndingOp ExprEndingTail)   (* Note 9 *)
                          | SingleCharOp;                   (* Note 2 *)
@@ -517,6 +517,16 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     any trailing `..` is consumed. The reverse order would cause
     `-2..-1` to consume the second `-` as a binary Hyphen rather
     than leaving it for NegativeIntegerLit on the next iteration.
+
+    EscapedNumber is the one wrapped alternative emitting more
+    than one token. The tail sits outside the whole
+    Escape-plus-content pair, so `\hFF-3` yields Escape, Number,
+    Hyphen, PositiveIntegerLit. It takes ExprEndingTail only,
+    never NumberEndingTail — see Note 11.
+
+    Mountain and Valley are wrapped as postfix chain terminators
+    (Syntactic-Grammar.md §7): each ends the access chain, so a
+    following `-Digit` is binary.
 
 10. **Digit-leading identifier disambiguation (`!IdentCont`).**
 

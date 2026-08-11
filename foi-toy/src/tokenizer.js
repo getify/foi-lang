@@ -557,11 +557,22 @@ export const SpacingEscapedStr = and(
 // HYPHEN-AS-SIGN DISAMBIGUATION
 // =============================================================
 
-// Tokens whose legacy-tokenizer counterparts set minusOpAllowed = true.
-// Single-char symbols in this set are wrapped with expressionEnding;
-// the rest stay unwrapped.
+// Single-char ops whose token ends an expression, after which a
+// `-Digit` reads as binary subtraction. Members are wrapped with
+// expressionEnding in BaseTokenOr; the rest stay unwrapped.
+//
+// CloseAngle is excluded because `>` has two roles: it closes a
+// structure literal, and it is the last token of `?>` / `?>=` /
+// `?<>` / `?<=>` / `#>` / `+>`. Wrapping it unconditionally eats
+// the sign in `x ?> -3`, which §8 leaves unparseable (no prefix
+// unary minus). Separating the roles needs lookbehind this tail
+// probe doesn't carry, so structure-close subtraction is spelled
+// `(<1,2,3>)-3` or `<1,2,3> - 3`. At and Percent are excluded for
+// a different reason: both take an operand, so the `-3` in
+// `Maybe@-3` and `task%-3` is a sign.
 var EXPRESSION_ENDING_OP_NAMES = new Set([
-	"CloseParen", "CloseBrace", "Hash", "Pipe",
+	"CloseParen", "CloseBrace", "CloseBracket",
+	"Hash", "Pipe", "SingleQuote",
 ]);
 
 // Wrap a production whose tokens semantically end an expression.
@@ -611,7 +622,7 @@ var BaseTokenOr = or(
 	SpacingInterpStr,
 	SpacingEscapedStr,
 	StringLit,
-	EscapedNumber,
+	expressionEnding(EscapedNumber),
 	expressionEnding(Keyword),
 	expressionEnding(Native),
 	expressionEnding(Builtin),
@@ -624,8 +635,8 @@ var BaseTokenOr = or(
 	DoublePeriod,
 	DoubleColon,
 	DoubleAt,
-	Mountain,
-	Valley,
+	expressionEnding(Mountain),
+	expressionEnding(Valley),
 	EscapePlain,
 	...Object.entries(symb)
 		.filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))

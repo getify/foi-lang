@@ -115,6 +115,10 @@ const KNOWN_DIVERGENT = new Map([
 		"OpFuncExpr primed Valley `(\\/')`; legacy splits the leading two chars as Escape + ForwardSlash." ],
 	[ "foo/\\bar",
 		"Postfix Mountain followed by identifier — lexer-level: Mountain + General; legacy: ForwardSlash + Escape + General. Parser will reject the input, but lex layer is well-formed." ],
+	[ "foo/\\-3",
+		"Postfix Mountain then binary hyphen; legacy emits ForwardSlash + Escape in place of Mountain and carries no expressionEnding tail there." ],
+	[ "foo\\/-3",
+		"Postfix Valley then binary hyphen; legacy emits Escape + ForwardSlash in place of Valley and carries no expressionEnding tail there." ],
 
 	// =========================================================
 	// KEYWORD SET DRIFT — :Effects (§6.13.1)
@@ -212,6 +216,16 @@ const KNOWN_DIVERGENT = new Map([
 		"Divergence on a form that was previously reachable rather than degenerate: legacy's At + At let `Foo@` apply to `@x` via AtCallExpr arm 1 (§3.10.7). DoubleAt claims the cuddled spelling; write `Foo@ @x` or `Foo@(@x)` for the namespaced `@`-call. Same discipline as cuddled closing angles" ],
 	[ "@@-5",
 		"Same DoubleAt divergence with an adjacent signed literal. DoubleAt is not in EXPRESSION_ENDING_OP_NAMES, so `-5` lexes as NegativeIntegerLit rather than a binary Hyphen — matching `At`'s handling in `foo@-5`" ],
+	[ "foo[0]-3",
+		"CloseBracket joins EXPRESSION_ENDING_OP_NAMES. `]` closes an index access and nothing that follows it takes an operand, so `-3` is binary subtraction. Legacy omits CloseBracket from minusOpAllowed and emits Number(-3)." ],
+	[ "arr.[1..3]-2",
+		"Same CloseBracket addition, after a range access. Legacy emits Number(-2)." ],
+	[ "foo'-3",
+		"SingleQuote joins EXPRESSION_ENDING_OP_NAMES. `'` is a PostfixCallTail that terminates the access chain (Syntactic-Grammar.md §7) and admits only call suffixes after it, so `-3` is binary. Legacy omits it and emits Number(-3)." ],
+	[ "<1,2,-3>-3",
+		"CloseAngle is not expression-ending here, and this is a narrower behavior than legacy's, not a corrected one. `>` closes a structure literal but is also the last token of `?>` / `?>=` / `?<>` / `?<=>` / `#>` / `+>`; an unconditional wrap would eat the sign in `x ?> -3`, and §8 admits no prefix unary minus, so that input would have no parse. Legacy separates the two roles by inspecting what precedes the `>` — lookbehind the post-emit tail probe doesn't carry. New emits Number(-3); legacy emits Hyphen + Number(3). Write `(<1,2,-3>)-3` or `<1,2,-3> - 3`." ],
+	[ "x > -3",
+		"Same CloseAngle exclusion. Bare `>` is not a Foi operator, so this input has no parse either way — it sits here as the lex-level companion to `x ?> -3`, where new and legacy agree. New emits Number(-3); legacy emits Hyphen + Number(3)." ],
 ]);
 
 
@@ -486,6 +500,39 @@ async function runTests() {
 		"\\-5",                                // EscapePlain + BareNumber(-5)
 		"\\-123_456",                          // EscapePlain + BareNumber(-int with sep)
 		"\\-5foo",                             // EscapePlain + General fallback (existing divergent)
+
+		// expressionEnding on EscapedNumber — every escape arm followed
+		// by a binary `-Digit`: Escape + Number + Hyphen + PosInt, not
+		// Escape + Number + NegInt.
+		"\\-3-3",                              // EscapePlain + BareNumber
+		"\\-3 -3",                             // trivia before the hyphen
+		"\\hFF-3",                             // EscapeHex
+		"\\o427-3",                            // EscapeOctal
+		"\\b1011-3",                           // EscapeBinary
+		"\\42_000-3",                          // EscapePlain + PositiveIntegerLitWithSep
+		"\\100_000.25-3",                      // EscapePlain + BareNumber decimal
+		"\\h_foo-3",                           // General-fallback arm
+
+		// Controls — unchanged by the wrapper.
+		"\\-3--3",                             // doubled hyphen already gave binary
+		"\\-3 \\-3",                           // two operands, still no operator
+		"\\-5..-1",                            // `..` wins; no numberEnding on escapes
+		"\\5_000..10",                         // top-level DoublePeriod unchanged
+
+		// expressionEnding on the remaining chain terminators.
+		"foo[0]-3",                            // CloseBracket
+		"arr.[1..3]-2",                        // CloseBracket after range
+		"foo'-3",                              // SingleQuote
+		"foo/\\-3",                            // Mountain
+		"foo\\/-3",                            // Valley
+		"(+')-3",                              // control — CloseParen already wrapped
+
+		// Deliberate non-members — a following `-Digit` stays a sign.
+		"<1,2,-3>-3",                          // CloseAngle
+		"x > -3",                              // lex-level only; no bare `>` operator
+		"x ?> -3",                             // the case that decides CloseAngle
+		"Maybe@-3",                            // At takes an operand
+		"task%-3",                             // Percent takes an operand
 
 		// Digit-leading identifier formation: integer-only number
 		// productions back off via NotIdentCont when followed by any

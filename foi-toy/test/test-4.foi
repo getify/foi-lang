@@ -21,8 +21,8 @@ deft ChainCB(any) ^Promise;
 deft Map(MapCB) ^Promise;
 deft MapCB(any) ^any;
 deft Resolved() ^bool;
-deft Race(List{Promise}) ^Promise;
-deft All(List{Promise}) ^Promise;
+deft Race(< *Promise >) ^Promise;
+deft All(< *Promise >) ^Promise;
 deft PromiseSubjectUnitConstructor() ^PromiseSubject;
 deft PromiseSubject <
 	pr: Promise,
@@ -38,11 +38,11 @@ def subscribers: <>;
 // module-local functions
 defn subscribe(pr,cb) :over (subscribers) {
 	?{
-		?[subscribers ?has pr]: {
-			def cbs: subscribers[pr] $+ < cb >;
+		[subscribers ?has pr]: {
+			def cbs: <[ &subscribers[pr], cb ]>;
 			subscribers := < &subscribers, %from: cbs >;
-		}
-		?: {
+		};
+		: {
 			subscribers := < &subscribers, %pr: < cb > >;
 		}
 	};
@@ -87,9 +87,7 @@ defn all(prs)
 	^subj.pr;
 };
 
-defn PromiseSubject@()
-	:as PromiseSubjectUnitConstructor
-{
+defn{PromiseSubjectUnitConstructor} PromiseSubject@() {
 	def resolve: empty;
 	def pr: Promise(
 		defn(res) :over (resolve) { resolve := res; }
@@ -97,18 +95,15 @@ defn PromiseSubject@()
 	^< :pr, :resolve >;
 };
 
-defn Promise@(v)
+defn{PromiseUnitConstructor} Promise@(v)
 	?[?empty v]: Promise()
-	:as PromiseUnitConstructor
 {
 	def subj: PromiseSubject@;
 	subj.resolve(v);
 	^subj.pr;
 };
 
-defn Promise(initFn)
-	:as PromiseConstructor
-{
+defn{PromiseConstructor} Promise(initFn) {
 	def value: empty;
 	def pending: true;
 	def publicAPI: <
@@ -121,10 +116,9 @@ defn Promise(initFn)
 	
 	// **************************
 	
-	defn resolve(v)
+	defn{Resolve} resolve(v)
 		![pending]: Left@ "Promise already resolved"
 		:over (value,pending)
-		:as Resolve
 	{
 		value := v;
 		pending := false;
@@ -132,23 +126,21 @@ defn Promise(initFn)
 		^Right@ v;
 	};
 	
-	defn chain(fn)
+	defn{Chain} chain(fn)
 		![pending]: fn(value)
-		:as Chain
 	{
 		def subj: PromiseSubject@;
-		subscribe(publicAPI,fn +> |~map ,subj.resolve|);
+		subscribe(publicAPI,fn +> (~map)|,subj.resolve|);
 		^subj.pr;
 	};
 	
-	defn map(fn)
+	defn{Map} map(fn)
 		![pending]: Promise@ fn(value)
-		:as Map
 	{
 		def subj: PromiseSubject@;
 		subscribe(publicAPI,fn +> subj.resolve);
 		^subj.pr;
 	};
 	
-	defn resolved() :as Resolved ^!pending;
+	defn{Resolved} resolved() ^!pending;
 };

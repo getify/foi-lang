@@ -304,6 +304,12 @@ var failSamples = [
 	"foo\\/';",        // postfix stacking — \/ then ' (locked C)
 	"foo/\\\\/;",      // postfix stacking — /\ then \/
 	"foo\\//\\;",      // postfix stacking — \/ then /\
+	// CloseAngle stays unwrapped by necessity — `>` is also the
+	// comparison operator, so `-3` after a tuple close is a signed
+	// literal and there is no binary operator between the operands.
+	// Parenthesize (`(<1,2,-3>)-3`) or space it (`<1,2,-3> - 3`).
+	"<1,2,-3>-3;",
+	"\\-3 \\-3;",                     // two escaped operands, no operator
 	// Narrowed \u<hex> — character escape admitted only as the sole
 	// contents of an InterpExpr slot. See parser.js InterpExpr /
 	// UnicodeCharLit and Syntactic-Grammar.md §2.

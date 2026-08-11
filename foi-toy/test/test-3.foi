@@ -11,11 +11,11 @@ def a: 3..4 ~map (v) { v + 1; } ~< { Id@ true; };
 
 def b: \400_000..\hfffe3;
 
-def c: | ... myFN |;
+def c: myFN| ...args |;
 
 def d: empty;
 
-def ~e~: true;
+def e: true;
 
 def f: "Hello world";
 
@@ -23,4 +23,4 @@ def g: `"Hello, `name`!";
 
 def _h_var: 32a + \h32a + \3_200;
 
-?[b ?and c ?or !empty d]: |c ...f|;
+?[b ?and c ?or !empty d]: c(...f);

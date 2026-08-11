@@ -18,13 +18,13 @@ defn renderLargeOrders() ^(Promise ~<< {
 		< &order, customer: customers[idx] >;
 	};
 	`"<ul>`
-		(| ~fold records, "", (html,record) { `"`html`
+		(~fold)(records, "", defn(html,record) ^\`"`html`
 			<li id=""order-`record.orderId`"">
 				<span>Order #`record.orderId`</span>
 				<span>Total: $`format(record.total)`</span>
 				<span>Customer: `record.customer.name` (`record.custId`)</span>
 			</li>
-		"; } |)
+		")
 	`</ul>";
 });
 

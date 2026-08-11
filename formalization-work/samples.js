@@ -42,6 +42,22 @@ export const samples = [
 	{ label: "NumberLit: \\-1_000 (sep'd signed integer)",        src: "\\-1_000;" },
 	{ label: "NumberLit: \\100_000_003.25 (sep'd decimal)",       src: "\\100_000_003.25;" },
 
+	// An escaped number ends an expression, so a following `-Digit`
+	// is a binary hyphen — the same rule the bare Number and
+	// IntegerLit forms carry. Chain terminators (`]`, `'`, `/\`,
+	// `\/`) behave identically.
+	{ label: "NumberLit: \\-3-3 (escaped, binary tail)",          src: "\\-3-3;" },
+	{ label: "NumberLit: \\hFF-3 (hex, binary tail)",             src: "\\hFF-3;" },
+	{ label: "NumberLit: \\42_000 -3 (sep'd, spaced tail)",       src: "\\42_000 -3;" },
+	{ label: "ChainExpr: foo[0]-3 (CloseBracket tail)",           src: "foo[0]-3;" },
+	{ label: "PostfixCallTail: foo'-3 (SingleQuote tail)",        src: "foo'-3;" },
+	{ label: "CurriedExpr: foo/\\-3 (Mountain tail)",             src: "foo/\\-3;" },
+
+	// CloseAngle is not expression-ending — `?>` is Qmark + CloseAngle,
+	// so a wrapped `>` would eat the sign and leave the comparison
+	// without an operand.
+	{ label: "CompareBinExpr: x ?> -3 (negative RHS)",            src: "x ?> -3;" },
+
 	// NumberLit `\u263A` form — NARROWED. No longer reachable at value
 	// position; admitted only as the sole contents of an interpolation
 	// slot (see InterpExpr in parser.js). Value-position use case is

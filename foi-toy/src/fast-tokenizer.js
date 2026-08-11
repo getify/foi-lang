@@ -109,10 +109,14 @@ for (let [name, ch] of Object.entries(C)) {
 	CHAR_TO_OP_NAME[ch] = name;
 }
 
-// Single-char ops whose tokens end an expression — receive
-// expressionEnding tail probe after emission.
+// Single-char ops whose token ends an expression, after which a
+// `-Digit` reads as binary subtraction — receive the
+// expressionEnding tail probe after emission. Mirrors
+// tokenizer.js's EXPRESSION_ENDING_OP_NAMES, including its
+// deliberate exclusions of CloseAngle, At, and Percent.
 var EXPR_ENDING_OP_NAMES = new Set([
-	"CloseParen", "CloseBrace", "Hash", "Pipe",
+	"CloseParen", "CloseBrace", "CloseBracket",
+	"Hash", "Pipe", "SingleQuote",
 ]);
 
 // Token types naming an operator or punctuation glyph rather than
@@ -296,6 +300,7 @@ function stepSlash(state) {
 	if (c1 === "\\") {
 		emit(state, "Mountain", "/\\", pos, pos + 1);
 		state.pos = pos + 2;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -617,6 +622,7 @@ function stepBackslash(state) {
 	if (c1 === "/") {
 		emit(state, "Valley", "\\/", pos, pos + 1);
 		state.pos = pos + 2;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -626,9 +632,12 @@ function stepBackslash(state) {
 	return true;
 }
 
-// Try one of the typed-escape number arms (\h, \u, \o, \b, \@).
+// Try one of the typed-escape number arms (\h, \u, \o, \b).
 // Atomic: either commits Escape + (Number | General), or
-// leaves state.pos unchanged.
+// leaves state.pos unchanged. Both commit paths run the
+// expressionEnding tail probe — the escaped pair ends an
+// expression, so a following `-Digit` is binary. No
+// numberEnding probe here, per Lexical-Grammar.md Note 11.
 function tryEscapedNumberArm(state, c1, expectedC1, escapeVal, kind) {
 	if (c1 !== expectedC1) return false;
 	var pos = state.pos;
@@ -640,6 +649,7 @@ function tryEscapedNumberArm(state, c1, expectedC1, escapeVal, kind) {
 		emit(state, "Escape", escapeVal, pos, pos + 1);
 		emit(state, "Number", state.src.slice(innerStart, numEnd), innerStart, numEnd - 1);
 		state.pos = numEnd;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -649,6 +659,7 @@ function tryEscapedNumberArm(state, c1, expectedC1, escapeVal, kind) {
 		emit(state, "Escape", escapeVal, pos, pos + 1);
 		emit(state, "General", state.src.slice(innerStart, identEnd), innerStart, identEnd - 1);
 		state.pos = identEnd;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -656,7 +667,8 @@ function tryEscapedNumberArm(state, c1, expectedC1, escapeVal, kind) {
 }
 
 // EscapePlain arm: \ + (PositiveIntegerLitWithSep | BareNumber
-// | General). Atomic per the same pattern.
+// | General). Atomic per the same pattern, with the same
+// expressionEnding tail probe on every commit path.
 function tryEscapedPlainArm(state) {
 	var src = state.src;
 	var pos = state.pos;
@@ -669,6 +681,7 @@ function tryEscapedPlainArm(state) {
 		emit(state, "Escape", "\\", pos, pos);
 		emit(state, "PositiveIntegerLit", src.slice(innerStart, posIntEnd), innerStart, posIntEnd - 1);
 		state.pos = posIntEnd;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -678,6 +691,7 @@ function tryEscapedPlainArm(state) {
 		emit(state, "Escape", "\\", pos, pos);
 		emit(state, "Number", src.slice(innerStart, bareEnd), innerStart, bareEnd - 1);
 		state.pos = bareEnd;
+		tryExprEndingTail(state);
 		return true;
 	}
 
@@ -687,6 +701,7 @@ function tryEscapedPlainArm(state) {
 		emit(state, "Escape", "\\", pos, pos);
 		emit(state, "General", src.slice(innerStart, identEnd), innerStart, identEnd - 1);
 		state.pos = identEnd;
+		tryExprEndingTail(state);
 		return true;
 	}
 
