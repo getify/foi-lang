@@ -6,38 +6,32 @@
 
 ----
 
-**Foi** is a practical functional language where common semantic moves -- function adaptation, immutable derivation, decision logic, and effect boundaries -- are promoted into regular surface syntax instead of being rebuilt with lambdas, helper functions, mutation conventions, or hidden control flow.
+**Foi** is a general purpose, gradually and inferentially typed, *effect*ual, compiled (WASM, LLVM), functional programming (FP) language.
 
 ```java
-greetings("my friend");
-// Hello, my friend!
-
 defn greetings(who) {
     def msg: `"Hello, `who`!";
-    log(msg)
-}
+    ^upper(msg)
+};
+
+greetings("my friend") #> log
+// HELLO, MY FRIEND!
 ```
 
-You'll find many features designed for [uncommonly coherent expressiveness](Expressive.md) around these common FP idioms.
+You don't have to *already speak* FP, but learning **Foi** will help you use all the most common FP techniques for more semantic clarity -- what you think is what you code -- and higher confidence that what you *intend* is what the program does.
 
-**Foi** pulls inspiration for various syntax and behaviors from a variety of languages, including: JS, Scala, Haskell, F#, Go, Clojure, Scheme, and more.
+**Foi**'s features are designed for [uncommonly coherent expressiveness](Expressive.md). All the usual semantic moves -- function adaptation, immutable derivation, decision logic, and effect boundaries -- are promoted into syntax designed with intuitive visual semantics.
 
-The language is designed for general application programming purposes, but with a clear emphasis on FP (and de-emphasis on OOP). It's not trying to compete in performance or capability with systems languages like C or Rust. Eventually, **Foi** will compile to WASM so it should be usable for applications in a variety of environments, from the web to the server to mobile devices.
-
-An important design goal is that a somewhat experienced developer -- especially one with both FP and imperative experience/curiosity -- should be able to sufficiently or fully learn **Foi** in several days.
-
-In the following code snippet, you might recognize familiar mechanisms like function calls and pattern matching. There's also some standard FP idioms like partial application and composition (and a monad!). You might also spot a fun trick (operators-as-functions)!
+Inside **Foi**'s distinct flavor, you'll spot many familiar best parts of various programming languages -- JS, Scala, Haskell, F#, Go, Clojure, Scheme, and more! -- along with a few unique tricks you didn't know you needed!
 
 ```java
-defn arithmetic(op) ^(
-  ?(op){
+defn arithmetic(op) ^?(op){
     ["add"]: (+);
     ["subtract"]: (-);
     ["multiply"]: (*);
     ["divide"]: (/);
     : Left@ "Invalid"
-  }
-);
+};
 def adder: arithmetic("add");
 def subtractor: arithmetic("subtract");
 def tripler: (*)|3|;
@@ -83,11 +77,9 @@ defn getFavoriteMovies(userID) ^IO ~<< {
 getFavoriteMovies(123)% document;
 ```
 
+**Note:** The above snippet defines a function using the `IO` monad's "do-notation"; the `::` definitions (and `$`-prefixed calls) are monadic chain operations. [Here is that snippet alongside its JS equivalent](https://gist.github.com/getify/3542996ab54b5be2a648ecfcb6bb6bc8), in case it's helpful to compare and to understand the **Foi** code better.
+
 Don't worry for now if that example is just a bowl of symbol-soup; you'll *get it* before too long!
-
-----
-
-**Note:** The above snippet defines a function using the "do-syntax" against the `IO` monad, where the `::` definitions (and `$`-prefixed calls) are monadic chain operations. [Here is that snippet alongside its JS equivalent](https://gist.github.com/getify/3542996ab54b5be2a648ecfcb6bb6bc8), in case it's helpful to compare and to understand the **Foi** code better.
 
 ----
 
@@ -95,15 +87,16 @@ Don't worry for now if that example is just a bowl of symbol-soup; you'll *get i
 
 If you're already convinced and ready to jump in, you may want to check these out next:
 
+* [(Mostly Complete) Foi Guide](Foi-Guide.md)
+* [Foi Expressiveness](Expressive.md)
+* [Foi-Toy Online](https://toy.foi-lang.com) (Web tool)
+* [Foi-Toy](foi-toy/README.md) (CLI tool)
+* [Foi Specification](formalization-work/Foi-Specification.md)
+* [Lexical Grammar](formalization-work/Lexical-Grammar.md) + [Syntactic Grammar](formalization-work/Syntactic-Grammar.md) (for language theory enthusiasts)
 * [Foi vs JS Cheatsheet](Cheatsheet.md)
 * [Foi vs JS code snippets](Cheatsheet.md#comparison-examples)
     - [More Foi vs JS code comparisons](https://github.com/getify/foi-lang/discussions/10)
 * [Foi vs JS syntax analysis](Cheatsheet.md#syntax-weightdensity)
-* [(Mostly Complete) Foi Guide](Foi-Guide.md)
-* [Foi Specification](formalization-work/Foi-Specification.md)
-* [Lexical Grammar](formalization-work/Lexical-Grammar.md) + [Syntactic Grammar](formalization-work/Syntactic-Grammar.md) (for language theory enthusiasts)
-* [Foi-Toy](foi-toy/README.md) (CLI tool)
-* [Foi-Toy Online](https://toy.foi-lang.com) (Web tool)
 
 But if you're still skeptical, please read on for more about the [intent](#mission) and [design philosophy](#design-philosophy) of the **Foi** language.
 
@@ -207,7 +200,9 @@ To prepare for exploration of **Foi**, here are some aspects of the design philo
 
 * **Side Effects** Since there are no mutable values in **Foi**, the most common type of (in-program) side effect (bug!) in programming is completely impossible.
 
-    The only possible in-program *side effect* is re-assignment of a variable (which is actually rarely the source of bugs, despite popular claims to the contrary). **Foi** allows such re-assignments, unlike many languages (especially FP languages) that have forms like `const` to disallow re-assignment.
+    In-program *side effects* come in two forms:
+
+        - Re-assignment of a variable (which is actually rarely the source of bugs, despite popular claims to the contrary). **Foi** allows such re-assignments, unlike many languages (especially FP languages) that have forms like `const` to disallow re-assignment.
 
     However, these re-assignment side effects must be declared if they cross a function boundary (via closure). You do so in the function signature, via the `:over` clause:
 
