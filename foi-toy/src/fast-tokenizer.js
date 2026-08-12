@@ -113,9 +113,20 @@ for (let [name, ch] of Object.entries(C)) {
 // `-Digit` reads as binary subtraction — receive the
 // expressionEnding tail probe after emission. Mirrors
 // tokenizer.js's EXPRESSION_ENDING_OP_NAMES, including its
-// deliberate exclusions of CloseAngle, At, and Percent.
+// deliberate exclusions of At and Percent.
+//
+// CloseAngle is a member only in its structure-close role. The
+// `>`-terminal operator sequences (`?>` / `!>` / `?<>` / `!<>` /
+// `?<=>` / `!<=>` / `#>` / `+>`) are matched by forward peek at
+// their opening glyph — see stepQmarkOrExmark and the symb
+// fallthrough in stepBase — and emit their CloseAngle without a
+// probe, so a `>` reaching this set is necessarily closing a
+// structure. That mirrors tokenizer.js's GtTerminalOp arms;
+// forward peek is used rather than lookbehind on state.tokens so
+// the adjacency requirement matches the combinator exactly
+// (`? >` is Qmark then a wrapped CloseAngle, not `?>`).
 var EXPR_ENDING_OP_NAMES = new Set([
-	"CloseParen", "CloseBrace", "CloseBracket",
+	"CloseParen", "CloseBrace", "CloseBracket", "CloseAngle",
 	"Hash", "Pipe", "SingleQuote",
 ]);
 
@@ -180,11 +191,11 @@ export function tokenize(src) {
 				ok = stepSpacingEscapedStr(state);
 				break;
 			default:
-				throw new Error(`tokenize: unknown mode ${mode}`);
+				throw new Error(`Tokenizer Error: unknown mode ${mode}`);
 		}
 		if (!ok) {
 			let err = new Error(
-				`tokenize: cannot advance at position ${state.pos}, ` +
+				`Tokenizer Error: cannot advance at position ${state.pos}, ` +
 				`char=${JSON.stringify(src[state.pos])}, mode=${mode}`
 			);
 			err.pos = state.pos;
@@ -263,6 +274,14 @@ function stepBase(state, mode) {
 	// Escape (handled by stepBackslash above).
 	var opName = CHAR_TO_OP_NAME[c];
 	if (opName && !STANDALONE_EXCLUDED.has(opName)) {
+		// `#>` / `+>` — the trailing CloseAngle is operator
+		// content; neither token takes a tail probe.
+		if ((c === "#" || c === "+") && src[pos + 1] === ">") {
+			emit(state, opName, c, pos, pos);
+			emit(state, "CloseAngle", ">", pos + 1, pos + 1);
+			state.pos = pos + 2;
+			return true;
+		}
 		emit(state, opName, c, pos, pos);
 		state.pos = pos + 1;
 		if (EXPR_ENDING_OP_NAMES.has(opName)) {
@@ -724,7 +743,7 @@ function scanTypedNumberContent(src, start, kind) {
 
 	// Plain typed digits (no separators in the inner content for
 	// hex/unicode/octal/binary).
-	let digsEnd = p;
+	var digsEnd = p;
 	while (digsEnd < src.length && predicate(src[digsEnd])) digsEnd++;
 	if (digsEnd === p) return start;
 	return digsEnd;
@@ -792,9 +811,9 @@ function stepTilde(state) {
 
 	if (c1 && isAlpha(c1)) {
 		// Peek to check if this is a reserved comprehension name.
-		var end = pos + 2;
+		let end = pos + 2;
 		while (end < src.length && isIdentCont(src[end])) end++;
-		var word = src.slice(pos, end);
+		let word = src.slice(pos, end);
 
 		if (COMPREHENSIONS_SET.has(word)) {
 			emit(state, "Comprehension", word, pos, end - 1);
@@ -823,10 +842,36 @@ function stepQmarkOrExmark(state, opName, opChar) {
 	var pos = state.pos;
 	var c1 = src[pos + 1];
 
+	// `>`-terminal comparison sequences. The trailing CloseAngle
+	// is operator content, not a structure close, so it is emitted
+	// without a tail probe. `?>=` / `?<=` are absent deliberately:
+	// they end in Equal, which is unwrapped either way.
+	if (c1 === "<" && src[pos + 2] === "=" && src[pos + 3] === ">") {
+		emit(state, opName, opChar, pos, pos);
+		emit(state, "OpenAngle", "<", pos + 1, pos + 1);
+		emit(state, "Equal", "=", pos + 2, pos + 2);
+		emit(state, "CloseAngle", ">", pos + 3, pos + 3);
+		state.pos = pos + 4;
+		return true;
+	}
+	if (c1 === "<" && src[pos + 2] === ">") {
+		emit(state, opName, opChar, pos, pos);
+		emit(state, "OpenAngle", "<", pos + 1, pos + 1);
+		emit(state, "CloseAngle", ">", pos + 2, pos + 2);
+		state.pos = pos + 3;
+		return true;
+	}
+	if (c1 === ">") {
+		emit(state, opName, opChar, pos, pos);
+		emit(state, "CloseAngle", ">", pos + 1, pos + 1);
+		state.pos = pos + 2;
+		return true;
+	}
+
 	if (c1 && isAlpha(c1)) {
-		var end = pos + 2;
+		let end = pos + 2;
 		while (end < src.length && isIdentCont(src[end])) end++;
-		var trailing = src.slice(pos + 1, end);
+		let trailing = src.slice(pos + 1, end);
 		if (BOOLEAN_NAMED_OPERATORS_SET.has(trailing)) {
 			let word = src.slice(pos, end);
 			emit(state, "BooleanOper", word, pos, end - 1);
@@ -853,9 +898,9 @@ function stepColon(state) {
 	// Try :-prefixed Keyword.
 	var c1 = src[pos + 1];
 	if (c1 && isIdentStart(c1)) {
-		var end = pos + 2;
+		let end = pos + 2;
 		while (end < src.length && isIdentCont(src[end])) end++;
-		var word = src.slice(pos, end);
+		let word = src.slice(pos, end);
 		if (KEYWORDS_SET.has(word)) {
 			emit(state, "Keyword", word, pos, end - 1);
 			state.pos = end;
@@ -945,11 +990,11 @@ function stepHyphen(state) {
 	if (isDigit(src[pos + 1])) {
 		// Try NegativeIntegerLit: - + digits + NotDotDigit +
 		// NotIdentCont.
-		var p = pos + 1;
+		let p = pos + 1;
 		while (p < src.length && isDigit(src[p])) p++;
-		var afterDigs = p;
-		var notDotDigit = !(src[afterDigs] === "." && isDigit(src[afterDigs + 1] || ""));
-		var notIdentCont = !isIdentCont(src[afterDigs] || "");
+		let afterDigs = p;
+		let notDotDigit = !(src[afterDigs] === "." && isDigit(src[afterDigs + 1] || ""));
+		let notIdentCont = !isIdentCont(src[afterDigs] || "");
 		if (notDotDigit && notIdentCont) {
 			emit(state, "NegativeIntegerLit", src.slice(pos, afterDigs), pos, afterDigs - 1);
 			state.pos = afterDigs;
@@ -959,7 +1004,7 @@ function stepHyphen(state) {
 		}
 
 		// Try NumberLit (decimal with sign).
-		var numEnd = scanNumberLitDecimal(src, pos);
+		let numEnd = scanNumberLitDecimal(src, pos);
 		if (numEnd > pos) {
 			emit(state, "Number", src.slice(pos, numEnd), pos, numEnd - 1);
 			state.pos = numEnd;
@@ -1018,7 +1063,7 @@ function stepDigitStart(state) {
 
 	// NumberLit decimal.
 	if (!notDotDigit) {
-		var numEnd = scanNumberLitDecimal(src, pos);
+		let numEnd = scanNumberLitDecimal(src, pos);
 		if (numEnd > pos) {
 			emit(state, "Number", src.slice(pos, numEnd), pos, numEnd - 1);
 			state.pos = numEnd;

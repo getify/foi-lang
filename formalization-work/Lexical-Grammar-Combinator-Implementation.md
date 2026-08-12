@@ -605,13 +605,16 @@ because a following `-Digit` has a competing reading the lexer
 cannot resolve without cross-token state:
 
 - `EscapePlain` — `\` opens a form, it does not end one.
-- `CloseAngle` — `>` closes a structure literal and is also the
-  last token of `?>`, `?>=`, `?<>`, `?<=>`, `#>`, and `+>`. An
-  unconditional wrap eats the sign in `x ?> -3`, which §8 leaves
-  unparseable. Separating the two roles needs lookbehind the
-  tail probe doesn't have.
-- `At` and `Percent` — both take an operand, so the `-3` in
-  `Maybe@-3` and `task%-3` is a sign, not a subtraction.
+- `At` and `Percent` are the exclusions; both take an operand, so
+  the `-3` in `Maybe@-3` and `task%-3` is a sign, not a subtraction.
+- `CloseAngle` is not  an exclusion. `>` carries two roles — structure
+  close, and the final glyph of `?>`, `!>`, `?<>`, `!<>`, `?<=>`,
+  `!<=>`, `#>`, `+>` — and the roles are separated by ordering rather
+  than lookbehind. `GtTerminalOp` (a bare `or(...)` of `and(...)`
+  sequences, no frame) sits ahead of the symb spread and consumes each
+  operator sequence whole, so a `>` reaching the wrapped arm is
+  necessarily a structure close. The arms emit the same constituent
+  tokens the spread would have; only the tail-probe routing differs.
 
 ### 11.1 The NumberEnding Wrapper
 
@@ -892,10 +895,16 @@ var handle = parse(Tokens, input, { preserveTerminals: true });
 ```
 
 This causes every `terminal()` match to push the consumed
-character into `frame.matched` of the innermost named frame. The
-gates in typed-identifier productions (§4, §5) and the
-`sawNonDigit` accumulator (§4) all read from `f.matched`, so this
-config is mandatory.
+character into `frame.matched` of the innermost named frame.
+
+`run()`'s result carries `pos`, and `tokenize()` checks it
+against `handle.elementAt(pos)` once the subscription drains.
+`any(...)` succeeds on zero matches, so `Tokens` commits over
+whatever prefix it recognized; the check is what turns a
+short parse into the Note 13 error rather than a silently
+truncated stream. The gates in typed-identifier productions
+(§4, §5) and the `sawNonDigit` accumulator (§4) all read from
+`f.matched`, so this config is mandatory.
 
 Memoization is off; the lex grammar is shallow and ordered choice
 rarely backtracks far enough to make it worthwhile. (The

@@ -561,19 +561,41 @@ export const SpacingEscapedStr = and(
 // `-Digit` reads as binary subtraction. Members are wrapped with
 // expressionEnding in BaseTokenOr; the rest stay unwrapped.
 //
-// CloseAngle is excluded because `>` has two roles: it closes a
-// structure literal, and it is the last token of `?>` / `?>=` /
-// `?<>` / `?<=>` / `#>` / `+>`. Wrapping it unconditionally eats
+// CloseAngle is a member, but only in its structure-close role.
+// `>` is also the final glyph of `?>` / `!>` / `?<>` / `!<>` /
+// `?<=>` / `!<=>` / `#>` / `+>`, and wrapping it there would eat
 // the sign in `x ?> -3`, which §8 leaves unparseable (no prefix
-// unary minus). Separating the roles needs lookbehind this tail
-// probe doesn't carry, so structure-close subtraction is spelled
-// `(<1,2,3>)-3` or `<1,2,3> - 3`. At and Percent are excluded for
-// a different reason: both take an operand, so the `-3` in
-// `Maybe@-3` and `task%-3` is a sign.
+// unary minus). GtTerminalOp below matches those sequences whole,
+// ahead of the spread, so a `>` reaching this set is necessarily
+// closing a structure. `?>=` and `?<=` need no arm — they end in
+// Equal, which is unwrapped.
+//
+// At and Percent are excluded for a different reason: both take
+// an operand, so the `-3` in `Maybe@-3` and `task%-3` is a sign.
 var EXPRESSION_ENDING_OP_NAMES = new Set([
-	"CloseParen", "CloseBrace", "CloseBracket",
+	"CloseParen", "CloseBrace", "CloseBracket", "CloseAngle",
 	"Hash", "Pipe", "SingleQuote",
 ]);
+
+// <GtTerminalOp> — multi-token operator sequences ending in `>`.
+// Emits constituent single-char tokens (each symb entry is its
+// own production); the enclosing and/or are anonymous and commit
+// nothing, same shape as expressionEnding's own wrapper. Output
+// is byte-identical to what the spread would emit; the arms exist
+// solely to route the CloseAngle away from the wrapped arm.
+//
+// Longest first per Note 2. The `<=>`/`<>` pairs are disjoint at
+// their third glyph, so that ordering is presentational.
+var GtTerminalOp = or(
+	and(symb.Qmark,  symb.OpenAngle, symb.Equal, symb.CloseAngle),
+	and(symb.Exmark, symb.OpenAngle, symb.Equal, symb.CloseAngle),
+	and(symb.Qmark,  symb.OpenAngle, symb.CloseAngle),
+	and(symb.Exmark, symb.OpenAngle, symb.CloseAngle),
+	and(symb.Qmark,  symb.CloseAngle),
+	and(symb.Exmark, symb.CloseAngle),
+	and(symb.Hash,   symb.CloseAngle),
+	and(symb.Plus,   symb.CloseAngle)
+);
 
 // Wrap a production whose tokens semantically end an expression.
 // After p matches, optionally consume trivia (Whitespace / Comment
@@ -638,6 +660,7 @@ var BaseTokenOr = or(
 	expressionEnding(Mountain),
 	expressionEnding(Valley),
 	EscapePlain,
+	GtTerminalOp,
 	...Object.entries(symb)
 		.filter(([name]) => !STANDALONE_EXCLUDED_OPS.has(name))
 		.map(([name, prod]) =>
@@ -675,6 +698,25 @@ export async function *tokenize(input) {
 			};
 		}
 	}
+
 	// Surface any parse-level error after subscription drains.
-	await runPromise;
+	var result = await runPromise;
+
+	// `Tokens` is `Token*` with an EOF requirement the combinator
+	// form can't express as `eof()`: failing the production would
+	// suppress cascadeCommit and yield zero tokens instead of the
+	// recognized prefix. So the requirement is enforced here as a
+	// post-run position check. A character no Token alternative can
+	// start leaves `pos` short of the input's end; elementAt returns
+	// null once past the buffered tail, which is exactly the
+	// consumed-everything case.
+	var stuckAt = handle.elementAt(result.pos);
+	if (stuckAt != null) {
+		let err = new Error(
+			`Tokenizer Error: cannot advance at position ${result.pos}, ` +
+			`char=${JSON.stringify(stuckAt)}`
+		);
+		err.pos = result.pos;
+		throw err;
+	}
 }

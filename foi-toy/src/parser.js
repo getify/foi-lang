@@ -3559,7 +3559,7 @@ export async function *parseFoi(input,opts = {}) {
 		let loc = tok
 			? `unexpected ${tok.type}(${JSON.stringify(tok.value)}) at char ${tok.start}`
 			: `at end of input`;
-		let err = new SyntaxError(`Foi parse failed: ${loc} (token ${result.maxPos})`);
+		let err = new SyntaxError(`Parser Error: ${loc} (token ${result.maxPos})`);
 		// char offset, for callers rendering source context. Absent
 		// when the parse ran out of input rather than reaching a token.
 		if (tok) err.pos = tok.start;

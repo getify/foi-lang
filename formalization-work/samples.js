@@ -2052,4 +2052,8 @@ export const samples = [
 	{ label: "ThunkExpr (set entry): <[ @@a, @@b ]>",          src: "<[ @@a, @@b ]>;" },
 	{ label: "ThunkExpr (nested struct): < a: < b: @@x > >",   src: "< a: < b: @@x > >;" },
 	{ label: "ThunkExpr (mixed entries): < @@a, k: @@b, c >",  src: "< @@a, k: @@b, c >;" },
+
+	{ label: "Structure-close subtraction: <1,2,3>-3",   src: "<1,2,3>-3;" },
+	{ label: "Structure-close subtraction (neg member): <1,2,-3>-3", src: "<1,2,-3>-3;" },
+	{ label: "Pick-close subtraction: foo.<a,b>-3",      src: "foo.<a,b>-3;" },
 ];

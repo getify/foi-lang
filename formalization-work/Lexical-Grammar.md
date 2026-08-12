@@ -61,7 +61,7 @@ into AST. The lex versions are hidden and reachable from the lex
 ```ebnf
 (*************** Top Level ***************)
 
-Tokens                  := Token*;
+Tokens                  := Token* <EOF>;                  (* Note 14 *)
 
 <Token>                 := Whitespace
                          | Comment
@@ -85,8 +85,9 @@ Tokens                  := Token*;
                          | (Mountain ExprEndingTail)       (* Note 9 *)
                          | (Valley ExprEndingTail)         (* Note 9 *)
                          | EscapePlain                     (* standalone "\" *)
+                         | GtTerminalOp                    (* Note 13 *)
                          | (ExprEndingOp ExprEndingTail)   (* Note 9 *)
-                         | SingleCharOp;                   (* Note 2 *)
+                         | SingleCharOp;                   (* Note 2 *)                  (* Note 2 *)
 
 <ExprEndingTail>        := ((Whitespace | Comment)* &("-" Digit) Hyphen)?;
 <NumberEndingTail>      := DoublePeriod?;                 (* Note 11 *)
@@ -267,7 +268,20 @@ Valley                  := "\\" "/";
 
 (* Operators that end an expression context. Wrapped with
    ExprEndingTail at the Token level. See Note 9. *)
-<ExprEndingOp>          := CloseParen | CloseBrace | Hash | Pipe;
+<ExprEndingOp>          := CloseParen | CloseBrace | CloseBracket
+                         | CloseAngle | Hash | Pipe | SingleQuote;
+
+(* Multi-token operator sequences whose final glyph is ">".
+   Matched ahead of ExprEndingOp and SingleCharOp so the trailing
+   CloseAngle is consumed here as operator content and never
+   reaches the wrapped arm. Emits its constituent single-char
+   tokens; no node of its own. Longest first per Note 2.
+   See Note 13. *)
+<GtTerminalOp>          := (Qmark | Exmark) (OpenAngle Equal CloseAngle)
+                         | (Qmark | Exmark) (OpenAngle CloseAngle)
+                         | (Qmark | Exmark) CloseAngle
+                         | Hash CloseAngle
+                         | Plus CloseAngle;
 
 (* All other single-char operators. Escape ("\") is NOT here —
    it's covered by EscapePlain in the <Token> alternation. *)
@@ -631,6 +645,49 @@ SpacingEscapedStrChars  := (!(WsChar) #"[^\"]")+;         (* emitted as String *
     deliberate — committing to a multi-char Escape with no
     follow-on content would emit a token that has no meaningful
     downstream interpretation.
+
+13. **`>`-terminal operator sequences.**
+
+    `>` carries two roles: it closes a structure literal, and it
+    is the final glyph of `?>`, `!>`, `?<>`, `!<>`, `?<=>`,
+    `!<=>`, `#>`, and `+>`. Only the structure-close role ends an
+    expression context, so only that role admits a following
+    `-Digit` as binary subtraction.
+
+    The lexer carries no cross-token state (Note 9), so the roles
+    are separated by ordering instead: GtTerminalOp matches each
+    operator sequence whole, ahead of the alternatives that would
+    reach a bare CloseAngle. A `>` arriving at ExprEndingOp is
+    therefore necessarily a structure close, and takes the tail.
+
+    GtTerminalOp is output-neutral. It emits exactly the
+    single-char tokens the sequence would have produced
+    alternative-by-alternative; the syntactic layer's
+    SymbolicCompareOp, PipelineOp, and ComposeOp read the same
+    token pairs as before.
+
+    `?>=` / `!>=` / `?<=` / `!<=` need no arm: their final token
+    is Equal, which is not in ExprEndingOp, so a following
+    `-Digit` already reads as a sign.
+
+14. **Full consumption.**
+
+    The token stream covers the whole input. A character that no
+    Token alternative can start is a lexical error reported at
+    its position, not a stopping point.
+
+    Every printable ASCII character is reachable from some
+    alternative, so the condition is confined to control
+    characters outside WsChar and to non-ASCII characters that
+    are neither WsChar nor identifier content — IdentStart and
+    IdentCont are ASCII-only (Note 3).
+
+    Implementation caveat: the combinator lexer cannot realize
+    the EOF requirement as an `eof()` inside `Tokens`. Failing
+    the top-level production suppresses the commit cascade, so
+    the whole token stream would vanish rather than the error
+    surfacing at one position. It is enforced after the parse
+    completes instead.
 
 ## License
 

@@ -222,10 +222,10 @@ const KNOWN_DIVERGENT = new Map([
 		"Same CloseBracket addition, after a range access. Legacy emits Number(-2)." ],
 	[ "foo'-3",
 		"SingleQuote joins EXPRESSION_ENDING_OP_NAMES. `'` is a PostfixCallTail that terminates the access chain (Syntactic-Grammar.md §7) and admits only call suffixes after it, so `-3` is binary. Legacy omits it and emits Number(-3)." ],
-	[ "<1,2,-3>-3",
-		"CloseAngle is not expression-ending here, and this is a narrower behavior than legacy's, not a corrected one. `>` closes a structure literal but is also the last token of `?>` / `?>=` / `?<>` / `?<=>` / `#>` / `+>`; an unconditional wrap would eat the sign in `x ?> -3`, and §8 admits no prefix unary minus, so that input would have no parse. Legacy separates the two roles by inspecting what precedes the `>` — lookbehind the post-emit tail probe doesn't carry. New emits Number(-3); legacy emits Hyphen + Number(3). Write `(<1,2,-3>)-3` or `<1,2,-3> - 3`." ],
-	[ "x > -3",
-		"Same CloseAngle exclusion. Bare `>` is not a Foi operator, so this input has no parse either way — it sits here as the lex-level companion to `x ?> -3`, where new and legacy agree. New emits Number(-3); legacy emits Hyphen + Number(3)." ],
+	[ "<>-3",
+		"Structure-close subtraction on an empty literal. New wraps CloseAngle, so the hyphen is binary: OpenAngle + CloseAngle + Hyphen + PositiveIntegerLit. Legacy's `case \"<\"` sets minusOpAllowed=false and `case \">\"` makes no assignment, so `>` inherits false and legacy merges into NegativeIntegerLit(-3). New is correct — a structure close ends an expression regardless of which glyph opened it." ],
+	[ "x #> -3",
+		"Pipeline op then signed literal. New matches `#>` as a GtTerminalOp sequence, emitting CloseAngle unwrapped, so `-3` is NegativeIntegerLit. Legacy's `case \"#\"` sets minusOpAllowed=true (right for a bare topic reference) and `case \">\"` inherits it, so legacy emits a binary Hyphen. New is correct — `#>` requires an RHS, so a binary hyphen there has no parse." ],
 ]);
 
 
@@ -978,6 +978,39 @@ async function runTests() {
 		"foo -",                               // trailing hyphen, no digit
 		"foo -x",                              // hyphen + non-digit
 		"foo- 5",                              // hyphen adjacent to ident, digit after space
+
+		// CloseAngle role separation — structure close TAKES the
+		// tail; `>`-terminal operator sequences do NOT.
+		// Fix cases (previously lexed the trailing -3 as signed):
+		"<1,2,3>-3",
+		"<1,2,-3>-3",
+		"<a,b>-3",
+		"foo.<a,b>-3",
+		"<1,<2,3>>-3",
+		"<>-3",                                // KNOWN_DIVERGENT
+
+		// Operator sequences — must stay signed literals:
+		"x ?> -3",
+		"x !> -3",
+		"x ?<> -3",
+		"x !<> -3",
+		"x ?<=> -3",
+		"x !<=> -3",
+		"x +> -3",
+		"x #> -3",                             // KNOWN_DIVERGENT
+
+		// No-arm controls — final token is Equal, unwrapped:
+		"x ?>= -3",
+		"x !>= -3",
+		"x ?<= -3",
+		"x !<= -3",
+
+		// Adjacency + non-fire controls:
+		"x ?>-3",
+		"x ?>=-3",
+		"x ?< -3",
+		"<1,2,3> - 3",
+		"(<1,2,-3>)-3",
 
 		// operator boundary soup.
 		// Probes ExprEndingTail across no-space adjacencies and the

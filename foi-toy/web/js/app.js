@@ -26,8 +26,8 @@ var sentSrc = null;
 var pendingSrc = null;
 var inFlight = false;
 
-var updater = Scheduler(50,300);
-var checker = Scheduler(100,750);
+var updater = Scheduler(50,150);
+var checker = Scheduler(300,2500);
 
 main().catch(console.log);
 
@@ -146,8 +146,7 @@ function onParserMessage({ data, }) {
 			// The tokens are good even though the parse isn't, so
 			// the highlight stays up and only the status changes.
 			setStatus(
-				`${data.label} error: ${data.message}\n` +
-				sourceContext(sentSrc,data.pos)
+				`${data.message}\n${sourceContext(sentSrc,data.pos)}`
 			);
 			// No complete AST exists; a partial one would be
 			// truncated at an unmarked point.
@@ -164,6 +163,7 @@ function onParserError(evt) {
 }
 
 async function renderSyntaxColor(tokens) {
+	var x = Date.now();
 	var html = "";
 	for await (let htmlChunk of highlight(tokens)) {
 		html += htmlChunk;
@@ -176,6 +176,7 @@ async function renderSyntaxColor(tokens) {
 	syntaxColorEl.contentWindow.document.close();
 
 	syntaxColorEl.classList.remove("hidden");
+	console.log(Date.now() - x);
 }
 
 function hideOutput() {
