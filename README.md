@@ -69,7 +69,7 @@ defn getFavoriteMovies(userID) ^IO ~<< {
     def itemsHTML: (~fold)(
         movieData ~map (.)|, "title"|,
         "",
-        (html, title) { `"`html`<li>`title`</li>" }
+        defn(html, title) ^`"`html`<li>`title`</li>"
     );
     $setBodyHTML(`"<ul>`itemsHTML`</ul>")
 };

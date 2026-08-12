@@ -719,15 +719,17 @@ A `Lazy@ expr` construct is evaluated against the binding state of the enclosing
 
 The construct's completion value, in cases where the residual fully resolves at construction, is the value of the residual expression. In cases where unresolved identifiers remain, the completion value is the thunk; the thunk's eventual resolved value becomes observable to the rest of the program through the mechanisms described below.
 
-#### §2.2.3 Carry and Force
+#### §2.2.3 Carry and Consume
 
 A thunk produced by `Lazy@` is a first-class value. It may flow through expressions, into containers, and through function calls, on the same terms as any other value. Operations on the thunk divide into two classes:
 
 **Structural operations** move the thunk into a position without inspecting its value. Placing a thunk in a record field, in a tuple slot, or as a function-call argument falls in this class. A structural operation receives a thunk and produces a value that holds the thunk in some position. The thunk's reference cell is shared with all such positions; resolution of the cell is visible at every position simultaneously.
 
-**Consuming operations** read into the thunk's value. Arithmetic, comparison, logical operators, conditional tests, pattern matches against value patterns, computed record keys, spread (`&thunk`), pick (`thunk.name`), slice (`thunk.[a..b]`), destructure-and-rebind against a thunk source, and explicit `%` forcing all fall in this class. A consuming operation requires the thunk's resolved value at the moment of the operation. If the thunk is resolved, the value is read cheaply. If the thunk is unresolved, the consuming operation cannot complete; instead, the surrounding initializer's evaluation is itself deferred, and the binding being defined adopts a derived thunk pending on the same identifiers.
+**Consuming operations** read into the thunk's value. Arithmetic, comparison, logical operators, conditional tests, pattern matches against value patterns, computed record keys, spread (`&thunk`), pick (`thunk.name`), slice (`thunk.[a..b]`), and destructure-and-rebind against a thunk source all fall in this class. A consuming operation requires the thunk's resolved value at the moment of the operation. If the thunk is resolved, the value is read cheaply. If the thunk is unresolved, the consuming operation cannot complete; instead, the surrounding initializer's evaluation is itself deferred, and the binding being defined adopts a derived thunk pending on the same identifiers.
 
-The class of an operation is determined by the operation, not by user annotation. The language carries thunks through positions that store them and forces them at positions that read them. No syntax marks the distinction.
+`%` is not among them. The `Lazy@` namespace's `_percent` hook is identity and reads nothing (§2.2.9); no operation a program writes settles a thunk.
+
+The class of an operation is determined by the operation, not by user annotation. The language carries thunks through positions that store them and requires their values at positions that read them. No syntax marks the distinction.
 
 #### §2.2.4 Propagation and Deferral Through the Section
 
@@ -741,7 +743,7 @@ Within a `def` statement(s) section, a consuming operation that encounters an un
 A derived thunk participates in subsequent expressions on the same terms as a `Lazy@`-produced thunk: structural operations carry it forward, consuming operations may further defer if it remains unresolved.
 
 ```java
-// computed key forces `label`; `life` becomes
+// computed key reads `label`; `life` becomes
 // a derived thunk pending {label}
 def life: < %(Lazy@ label): 42 >;
 
@@ -752,9 +754,9 @@ def label: "meaning";
 life.meaning;   // 42
 ```
 
-Carry operations during the section do not force their thunk operands. A thunk may flow into a record field, a tuple slot, a closure capture, or a function call argument, and remain unresolved within that position for the duration of the section, provided its referenced identifier(s) resolve before the force pass.
+Carry operations during the section do not read into their thunk operands. A thunk may flow into a record field, a tuple slot, a closure capture, or a function call argument, and remain unresolved within that position for the duration of the section, provided its referenced identifier(s) resolve before the settle pass.
 
-**At module scope, a pending identifier may name a binding in another module.** The compilation unit set loads in phases (§8.3.1): every module's `def` section completes before the force pass runs, so a reference across the set is pending in exactly the way a reference to a later `def` in the same section is. Two kinds of pending entry result, both shrinking the same pending set by the same procedure:
+**At module scope, a pending identifier may name a binding in another module.** The compilation unit set loads in phases (§8.3.1): every module's `def` section completes before the settle pass runs, so a reference across the set is pending in exactly the way a reference to a later `def` in the same section is. Two kinds of pending entry result, both shrinking the same pending set by the same procedure:
 
 - **In-section.** The listener fires when that `def` is reached, during phase 1.
 - **Cross-module.** The listener fires when that module's binding resolves, during phase 2.
@@ -765,16 +767,16 @@ A cross-module entry still pending when phase 2 completes is a resolution failur
 
 Cross-module pending is a module-scope phenomenon. An inner scope's section is governed by §2.2.6 unchanged.
 
-#### §2.2.5 End-of-Section Force and Resolution
+#### §2.2.5 The End-of-Section Settle Pass
 
 At the moment the `def` statement(s) section completes, the runtime performs a final resolution pass over every binding in the scope:
 
 1. Every binding's value is structurally walked.
-2. Every thunk encountered -- held directly by a binding, or carried inside a structural value (record field, tuple slot, captured closure variable, container element) -- is forced.
+2. Every thunk encountered -- held directly by a binding, or carried inside a structural value (record field, tuple slot, captured closure variable, container element) -- is settled.
 3. A thunk whose pending set is empty resolves cheaply (its referenced identifiers all became bound during the section).
 4. A thunk whose pending set is non-empty at end-of-section cannot resolve; this is reported as a resolution failure.
 
-This pass is the point at which carried thunks become forced. During the section, carry operations defer the question of whether a thunk's value is needed; at end-of-section, that question is answered for every thunk in scope. Anything still pending is reported.
+This pass is the point at which carried thunks settle. During the section, carry operations defer the question of whether a thunk's value is needed; at end-of-section, that question is answered for every thunk in scope. Anything still pending is reported.
 
 After this pass, no thunks remain in any value reachable from the scope. The scope's bindings, and all values reachable through them, contain only resolved values from end-of-section onward. Code in the surrounding scope, in the statement-block, in escaped values, and in any future continuation of execution interacts only with values.
 
@@ -794,11 +796,11 @@ A `Lazy@` written inside a nested block (function body's `def` statement(s) sect
 
 #### §2.2.7 Cross-Scope Restriction
 
-A `Lazy@`-produced thunk may be forced only within the scope in which it was constructed. While the thunk remains unresolved, a force attempt from a different scope is reported as an error at the force point.
+A `Lazy@`-produced thunk settles only within the scope in which it was constructed. While the thunk remains unresolved, a consuming operation (§2.2.3) reached from a different scope is reported as an error at that operation.
 
 This restriction applies regardless of how the thunk crossed the boundary: as a function argument, via a closure-captured name, or as part of a structural value flowing into another scope's execution. A thunk that has already resolved (its referenced identifiers all bound, its value cached) is then a concrete value (no longer a thunk) and may be read from any scope; the restriction applies only to unresolved thunks.
 
-A function closure that references a `Lazy@`-defined name is safe in itself. The closure captures the name, not a snapshot of its current state; the body reads the name's current value at each call. If the name has resolved by the time the function is called, the body reads a value and proceeds normally. The cross-scope restriction triggers only when the body actually executes a force on the still-pending thunk during a call.
+A function closure that references a `Lazy@`-defined name is safe in itself. The closure captures the name, not a snapshot of its current state; the body reads the name's current value at each call. If the name has resolved by the time the function is called, the body reads a value and proceeds normally. The cross-scope restriction triggers only when the body actually performs a consuming operation on the still-pending thunk during a call.
 
 This example is well-formed (`seed` is fully resolved before needed by `compute()`):
 
@@ -818,7 +820,7 @@ def answer: compute();           // error: `seed` is not resolved yet
 def scale: 3;
 ```
 
-The language does not commit to compile-time detection of cross-scope thunk escape; the error is reported at the force point, inside the other scope's executing body at the unresolved name (in this example, `seed` inside `seed * 2`). The function body is attempting to force a thunk from a scope it doesn't own, which is not permitted. An implementation is free to detect some escape cases earlier via static analysis, but is not required to.
+The language does not commit to compile-time detection of cross-scope thunk escape; the error is reported at the consuming operation, inside the other scope's executing body at the unresolved name (in this example, `seed` inside `seed * 2`). The function body is attempting to read into a thunk belonging to a scope it doesn't own, which is not permitted. An implementation is free to detect some escape cases earlier via static analysis, but is not required to.
 
 **NOTE:** This rhymes with the temporal dead zone (TDZ) semantics that other languages apply to bindings accessed before their declared scope state allows.
 
@@ -829,7 +831,7 @@ Two means of avoiding the error:
 
 `:over` annotations are a compile-time enforcement, and do not resolve this kind of error.
 
-This restriction reflects a broader language commitment: Foi does not implicitly suspend function execution. `Lazy@`'s deferral mechanism operates within a single scope's `def` statement(s) section because the section is the well-defined unit of arrangement. Allowing a thunk to be forced from a different scope would require pausing the executing function, returning to the construction scope to make further progress, and resuming the function later: an implicit continuation. The language has no implicit continuations; deferral does not cross scope boundaries.
+This restriction reflects a broader language commitment: Foi does not implicitly suspend function execution. `Lazy@`'s deferral mechanism operates within a single scope's `def` statement(s) section because the section is the well-defined unit of arrangement. Allowing a thunk to settle in answer to code in a different scope would require pausing the executing function, returning to the construction scope to make further progress, and resuming the function later: an implicit continuation. The language has no implicit continuations; deferral does not cross scope boundaries.
 
 Compare the above broken code to this form, which works fine:
 
@@ -842,9 +844,9 @@ answer;                     // 42
 
 There is no scope boundary being crossed here, so the deferred resolution of `seed` and `answer` works as expected.
 
-**The unit-set force pass is not a cross-scope force.** Under §8.3.1's phased load, phase 2 resolves thunks across every module's outermost scope at once, and two modules' outermost scopes are different scopes (§2.10). The restriction above does not reach it. What the restriction forbids is forcing a thunk from *executing code in another scope*, which would require suspending that code and resuming it later. Phase 2 is not executing code in any scope; it is a phase between two of them, running after every module's `def` section has completed and before any module's remaining statements begin. Nothing pauses and nothing resumes.
+**The unit-set settle pass is not a cross-scope read.** Under §8.3.1's phased load, phase 2 resolves thunks across every module's outermost scope at once, and two modules' outermost scopes are different scopes (§2.10). The restriction above does not reach it. What the restriction forbids is reading into a thunk from *executing code in another scope*, which would require suspending that code and resuming it later. Phase 2 is not executing code in any scope; it is a phase between two of them, running after every module's `def` section has completed and before any module's remaining statements begin. Nothing pauses and nothing resumes.
 
-The restriction applies unchanged to a force reached through a **call** during a module's `def` section. A function body that forces another module's still-pending binding is the ordinary cross-scope case, reported at the force point inside that body, with no compile-time detection promised.
+The restriction applies unchanged to a consuming operation reached through a **call** during a module's `def` section. A function body that reads into another module's still-pending binding is the ordinary cross-scope case, reported at that operation inside that body, with no compile-time detection promised.
 
 #### §2.2.8 Resolution Failures
 
@@ -854,13 +856,13 @@ A `Lazy@` construct fails to resolve, in its proper immediately enclosing scope,
 
 2. **Value-shaped cycle.** A set of thunks transitively requires each other's values through consuming operations (e.g., `def x: Lazy@ z; def z: x + 1`). At end-of-section, none of the participants have resolved; the error is reported as a cyclic resolution failure, naming the participants and the path of the cycle.
 
-Reference-shaped cycles -- where identifiers reference each other through structural operations that carry thunks without forcing -- are not failures. Each cycle participant's referenced identifier resolves through the section, the listener mechanism updates each thunk's reference cell to its resolved value, and the cycle in the value graph is preserved. The end-of-section force pass walks these values, finds all thunks resolved, and produces no error.
+Reference-shaped cycles -- where identifiers reference each other through structural operations that carry thunks without forcing -- are not failures. Each cycle participant's referenced identifier resolves through the section, the listener mechanism updates each thunk's reference cell to its resolved value, and the cycle in the value graph is preserved. The end-of-section settle pass walks these values, finds all thunks resolved, and produces no error.
 
 #### §2.2.9 The `%` Effector Operator and `Lazy@`
 
 The `%` effector operator dispatches to the LHS's `_percent` hook (§3.10.9). Applying `%` to a value whose namespace defines no `_percent` hook is a type error.
 
-The `Lazy@` namespace defines a `_percent` hook that is identity: `x%` for a `Lazy@`-bound name resolves to the same value a bare `x` read produces. Resolution of the deferred reference is performed exclusively by the carry-and-force machinery (§2.2.3 through §2.2.5), which is not user-callable; the identity hook exists so that `%` remains well-typed on a `Lazy@`-bound name without introducing a special-cased resolution path.
+The `Lazy@` namespace defines a `_percent` hook that is identity: `x%` for a `Lazy@`-bound name resolves to the same value a bare `x` read produces. Resolution of the deferred reference is performed exclusively by the carry-and-settle machinery (§2.2.3 through §2.2.5), which is not user-callable; the identity hook exists so that `%` remains well-typed on a `Lazy@`-bound name without introducing a special-cased resolution path.
 
 `%` on a `Lazy@`-bound name has no operational effect.
 
@@ -913,7 +915,7 @@ x;                      // 42
 
 #### §2.2.11 Implementation Notes
 
-The carry-and-force model admits aggressive compile-time optimization. A `Lazy@` whose dependencies are statically traceable through the `def` statement(s) section compiles to ordinary eager evaluation with bindings reordered to satisfy dependencies. No runtime thunk is produced in such cases. The runtime thunk mechanism is required only when the dependency path passes through opaque carriers (function calls returning compound values, library-provided constructors, or any operation whose internal use of the thunk is not visible to the compiler).
+The carry-and-settle model admits aggressive compile-time optimization. A `Lazy@` whose dependencies are statically traceable through the `def` statement(s) section compiles to ordinary eager evaluation with bindings reordered to satisfy dependencies. No runtime thunk is produced in such cases. The runtime thunk mechanism is required only when the dependency path passes through opaque carriers (function calls returning compound values, library-provided constructors, or any operation whose internal use of the thunk is not visible to the compiler).
 
 The "no thunk past end of `def` statement(s) section" guarantee holds at both compile time and runtime. Compile-time folding may eliminate the thunk entirely; runtime resolution settles any thunk that survives compilation before the section exits. Code outside the section -- including the surrounding scope's statement-block, the body of any enclosing function, and any escaped value -- interacts only with resolved values.
 
@@ -921,11 +923,11 @@ The "no thunk past end of `def` statement(s) section" guarantee holds at both co
 
 `Lazy@` and `@@` (§3.14) both defer evaluation and both wear `@`. They are unrelated mechanisms, and the resemblance stops at the sigil.
 
-A `Lazy@` produces a **thunk** in §0.1's suspended-computation sense. It belongs to the `def` section of its directly enclosing scope (§2.2.6); it resolves through the pending-set machinery of §2.2.4 rather than by anything a program calls; it cannot be forced from another scope (§2.2.7); and none survives the end-of-section force pass (§2.2.5). It exists so that a value under construction can reference a name the section has not reached yet.
+A `Lazy@` produces a **thunk** in §0.1's suspended-computation sense. It belongs to the `def` section of its directly enclosing scope (§2.2.6); it resolves through the pending-set machinery of §2.2.4 rather than by anything a program calls; it cannot be read into from another scope (§2.2.7); and none survives the end-of-section settle pass (§2.2.5). It exists so that a value under construction can reference a name the section has not reached yet.
 
-A `@@` produces a **function**. It has no pending set, no section, and no force pass. It is forced by calling it, it may escape its construction scope and be forced from anywhere, and it lives as long as a reference to it does. It exists so that an expression can be deferred at argument and structure-field positions, which `Lazy@` does not reach.
+A `@@` produces a **function**. It has no pending set, no section, and no settle pass. It is forced by calling it, it may escape its construction scope and be forced from anywhere, and it lives as long as a reference to it does. It exists so that an expression can be deferred at argument and structure-field positions, which `Lazy@` does not reach.
 
-Neither substitutes for the other, and they do not nest: §2.2.6 rejects a `Lazy@` written directly in a `@@` operand, since the operand carries no `def` section for one to reach into. In the other direction, a `Lazy@` cannot be handed to a caller as a value to force later -- forcing one outside its own section is the case §2.2.7 rejects, and `@@` is what covers that need.
+Neither substitutes for the other, and they do not nest: §2.2.6 rejects a `Lazy@` written directly in a `@@` operand, since the operand carries no `def` section for one to reach into. In the other direction, a `Lazy@` cannot be handed to a caller as a value to force later -- reading into one outside its own section is the case §2.2.7 rejects, and `@@` is what covers that need.
 
 ### §2.3 Constancy
 
@@ -3711,7 +3713,7 @@ t();                                     // runs expensiveOperation()
 
 Constructing the thunk does not evaluate the operand. The resulting value is an ordinary function value in every respect this section covers: it binds, passes, returns, stores in a Record or Tuple, annotates, and answers `?as`. Forcing it is an ordinary call, and nothing else forces it.
 
-`@@` does not introduce a new value category. §0.1's **suspended computation** category is `Lazy@`'s (§2.2); a `@@` produces a **function**, and §2.2's machinery -- pending sets, carry operations, the end-of-section force pass -- does not reach it. §2.2.12 states the distinction.
+`@@` does not introduce a new value category. §0.1's **suspended computation** category is `Lazy@`'s (§2.2); a `@@` produces a **function**, and §2.2's machinery -- pending sets, carry operations, the end-of-section settle pass -- does not reach it. §2.2.12 states the distinction.
 
 **Operand shape.** The operand is greedy: `@@ a + b` defers the whole binary expression, matching `@`'s operand greed at §3.10.7. Parentheses group for the narrower reading and are expression-grouping, not an argument list. A `@@` with no operand is a parse error.
 
@@ -9726,7 +9728,7 @@ phase before any module begins the next.
 
 1. Each module's `def` section is evaluated per §2.2, in that module's
    source order.
-2. The force pass of §2.2.5 runs once, over the outermost scope of
+2. The settle pass of §2.2.5 runs once, over the outermost scope of
    every module in the set. It is demand-driven in dependency order
    across the whole set -- not module-by-module, and not source order.
    No thunk survives it (§2.2.11).
@@ -9775,8 +9777,8 @@ operation in §2.2.3's sense.
   value at registration. `Lazy@` is not applicable.
 - `export { :a.b }` and `export { a: b.c }` carry an access path, which
   is a consuming operation. An entry whose path reaches a `def`
-  declared later in the section is a forward reference through a force
-  point and takes `Lazy@`.
+  declared later in the section is therefore a forward reference and
+  takes `Lazy@`.
 
 ### §8.4 Specifiers
 
