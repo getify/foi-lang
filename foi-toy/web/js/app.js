@@ -163,7 +163,6 @@ function onParserError(evt) {
 }
 
 async function renderSyntaxColor(tokens) {
-	var x = Date.now();
 	var html = "";
 	for await (let htmlChunk of highlight(tokens)) {
 		html += htmlChunk;
@@ -176,7 +175,6 @@ async function renderSyntaxColor(tokens) {
 	syntaxColorEl.contentWindow.document.close();
 
 	syntaxColorEl.classList.remove("hidden");
-	console.log(Date.now() - x);
 }
 
 function hideOutput() {
