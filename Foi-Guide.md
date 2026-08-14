@@ -3828,8 +3828,8 @@ any(b);     // true
 The above is a nice application of a monoid, but the `?and` and `?or` operators are already n-ary, thus we could have done:
 
 ```java
-defn all(bools) ^(~fold)(bools, true, (?and));
-defn any(bools) ^(~fold)(bools, false, (?or));
+defn all(bools) ^(?and)(...bools);
+defn any(bools) ^(?or)(...bools);
 
 def a: < true, true, true, true >;
 def b: < true, false, true, true >;
