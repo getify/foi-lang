@@ -478,6 +478,46 @@ scope must list it in `:over`. Two diagnostics fall out once `constant` and
 mutable binding only its nested function touches. Read `crossesFunction`
 against the nearest enclosing function scope, not any of them.
 
+**Reads count.** Neither diagnostic filters on reference kind. §3.6's rule is
+about the capture, not the direction of the access; a `read` reference with
+`crossesFunction: true` to a `constant: false` binding is missing-`:over`
+exactly as a `write` is.
+
+**A comprehension block operand is a boundary with no annotation.** §3.6.1: a
+block at a `ComprOp` RHS, or a `~<<` / `~<*` do-block body, closes over on the
+same terms as a function literal but carries no `FuncOverClause` and never
+can. A crossing reference to a `constant: false` binding is therefore a
+distinct diagnostic from missing-`:over` -- there is nothing the author can
+add to satisfy it, and the message must say so and name the `defn`-with-`:over`
+rewrite rather than a name to list.
+
+This means `crossesFunction` cannot be computed against function scopes alone.
+Set it on the ordinary rule (§4.1) plus these block scopes, and carry a second
+flag distinguishing which kind of boundary the reference crossed nearest --
+a function scope satisfies the obligation from `overNames`, a comprehension
+block scope cannot satisfy it at all.
+
+**`~each` is a boundary; the check is what forks.** §3.6.1 waives enforcement
+at `~each`, not the boundary. Mark every comprehension block scope alike in
+the walk -- the walk needs to know nothing about comprehension operators --
+and suppress the diagnostic at check time when the scope's enclosing
+`FlowBinExpr` carries `op: "~each"`. The `op` string is the only
+discrimination available: every comprehension shapes to `FlowBinExpr` and the
+block node is identical across all of them, so a node-type test finds nothing.
+
+Suppression is per-boundary, not per-reference. A reference crossing a waived
+`~each` scope and then an enclosing function scope still owes that function
+its `:over`. The outward walk continues past the waived scope unchanged and
+the function-level check runs on §3.6's ordinary terms.
+
+**A `defn` inside a block operand discharges its own obligation.** Direct
+closure only applies unchanged: the block makes no direct reference to what
+only a nested function literal touches, and is not flagged for it.
+
+**The defs clause is inside the block scope.** A `:?` initializer and every
+`::` bind resolve within the block, per §3.6.1. The walk already registers
+them there; nothing changes except that the boundary flag now covers them.
+
 **A curried declaration's tiers are one boundary for this check.** Satisfy
 the obligation from the referencing scope's `overNames`, which every tier of
 a declaration shares (§2.1).
@@ -673,6 +713,9 @@ makes listing a mutable capture a MUST and says nothing against listing more.
   rejects it in user-source mode.
 - `#` with no enclosing binder (§5.2.2.1).
 - Missing `:over` (error) / superfluous `:over` (warning) — §3.6.
+- Mutable binding captured by a comprehension block operand (error) — §3.6.1.
+  Not satisfiable by any annotation; the message names the `defn`-with-`:over`
+  rewrite. Enforcement is waived at `~each`.
 
 ### §7.2 Reported At The Declaration
 

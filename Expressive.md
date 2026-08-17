@@ -32,8 +32,10 @@ That distinction matters. Expressive syntax is only valuable when it corresponds
 * invoke an operator as a function
 * negate a predicate or relation
 * derive a new immutable record/tuple from an existing one
+* subtract entries from a derived record/tuple
 * expose preconditions in the function signature
 * declare closure-crossing reassignment effects
+* declare, perform, and handle effects as resumable structure
 * compose, pipe, map, fold, chain, and sequence computations
 * comprehension operators accept blocks as *lightweight* function operands
 
@@ -203,8 +205,9 @@ Several **Foi** features make more sense when grouped together:
 (?=)(x,y,z)     // invoke operator as n-ary function
 !isOdd          // complement a predicate
 foo|1,,3|       // partially apply selected argument positions
-foo'(...)       // reverse argument order
-(...)(+)        // adapt a function to accept a tuple/list of arguments
+foo'(..)        // reverse argument order
+(...)(+)        // adapt a function (e.g., `+` operator) to accept
+                // a tuple/list of arguments
 ```
 
 The shared theme is function adaptation.
@@ -333,6 +336,26 @@ def profile: < &person.<first,nickname> >;
 // < first: "Kyle", nickname: "getify" >
 ```
 
+Exclude fields instead of naming them:
+
+```java
+def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
+def entry: < &person.!<nickname> >;
+// < first: "Kyle", last: "Simpson" >
+```
+
+Exclude a tuple span:
+
+```java
+def numbers: < 3, 4, 5, 6, 7 >;
+def ends: < &numbers.![1..3] >;
+// < 3, 7 >
+```
+
+`.!< .. >` and `.![ .. ]` are the negatives of `.< .. >` and `.[ .. ]`. That matters more than symmetry: without a subtractive form, "everything except this one field" has to be written as reconstruction — enumerate every field kept, and silently drop whatever the source later gains. Subtraction says the thing that was meant, and keeps saying it when the shape changes.
+
+A pick is a selection or a subtraction, never both. There is no per-entry `!`, and no chaining one pick onto another; each pick names slots in its own source.
+
 This is not merely a shorter spelling for property access. The `&` form preserves and splices structure.
 
 **Foi** gives structural projection and structural splicing a unified notation across records and tuples.
@@ -343,21 +366,30 @@ In many languages, the same family of operations is scattered across property ac
 
 The `&` syntax is not isolated. It supports a broader language stance: records, tuples, maps, and sets share one structural model.
 
-Records and tuples use `< .. >`. Sets are unique-filtered tuples. Maps are records that can use non-primitive keys through `%`.
+Records and tuples use `< .. >`. Sets are unique-filtered tuples. The `%` sigil computes a field name from an expression — and because that expression may evaluate to any value, including a record or tuple, a record can serve as a map:
 
 ```java
-def person: < name: "Kyle Simpson", %"favorite number": 42 >;
+def field: "first";
+def person: < %field: "Kyle", last: "Simpson" >;
+// < first: "Kyle", last: "Simpson" >
+
+def numbers: < 4, 5, 6 >;
+def dataMap: < %numbers: "my favorites" >;
+dataMap[numbers];               // "my favorites"
 ```
+
+Map keys are not a separate feature. They are what one sigil already admits.
 
 This unification matters because a programmer does not need to learn unrelated literal forms for arrays, objects, maps, sets, spreading, computed keys, and derivation.
 
 **Foi** asks the programmer to learn one structural family, then extends it with regular sigils:
 
-* `< .. >` constructs records/tuples
-* `<[ .. ]>` constructs unique tuples as sets
+* `< ... >` constructs records/tuples
+* `<[ ... ]>` constructs unique tuples as sets
 * `&` picks/splices existing structure into new structure
 * `%` computes a record/map key
-* `empty` removes a field from a derived record/tuple
+* `.< ... >` / `.[ ... ]` select named or positional entries from a pick
+* `.!< ... >` / `.![ ... ]` withhold them
 
 That is a real expressiveness claim: one mental model covers several common data-shaping tasks.
 
@@ -416,6 +448,40 @@ Those are not the same operation. **Foi** makes the difference visible.
 
 That is expressiveness through effect visibility, not through purity absolutism.
 
+## Effects as Declared, Resumable Structure
+
+`:over` makes one specific effect visible at the function header (mutability dependence across function-scopes). The general case is the same move at the same place.
+
+An effect kind is a namespace. Performing one is `%` on an effect-kinded value; the function that performs it declares that fact on its type:
+
+```java
+deft AskName(int) :Effects(User.Ask) ^string;
+
+defn{AskName} askName(id) ^Effect.User.Ask% id;
+
+defn askNameUndeclared(id) ^Effect.User.Ask% id;    // COMPILE ERROR
+```
+
+The declaration is required only where an effect is first performed. Callers up the chain don't restate it — the compiler infers their effect sets from their callees, so the ceremony sits at the edge that introduces the capability and nowhere else.
+
+A handler scope catches the perform and decides what the perform site evaluates to:
+
+```java
+Effect.User.Ask ~<* (eff:: greetUser(id), ret) {
+    ?(eff){
+        [?as Effect.User.Ask]: ret("Kyle");
+    };
+};
+```
+
+This resembles try/catch but is distinct. `ret` **resumes** the computation at the perform site with the supplied value; the work below the handler continues rather than unwinding. And an unhandled perform is a compile error, not a runtime surprise — there is no ambient runtime error path.
+
+That is the differentiator against the languages **Foi** is most often compared to. Monadic effect representation makes a computation's effects visible in its type, but colors every function along the way and forces composition through the wrapper. Exceptions cost nothing at the call site and record nothing in the signature. Effects give the surface commitment without the coloring: the type says what suspension points a function exposes, the caller either handles them or passes them upward, and the code in between reads as ordinary direct-style code.
+
+The escape hatch is that a handler may decline to resume.
+
+Also, a small ambient set needs no declaration at all — logging, warnings, randomness, the clock — and their handlers resume by default. Two fatal ambients, divide-by-zero and a failed `:as` assertion, end the run instead. Those are ordinary effects underneath, so a `~<*` over them takes the decision back.
+
 ## Controlled Imperative Escape Hatches
 
 **Foi**'s mission is not to ban imperative programming. It is to make risky or effectful operations apparent.
@@ -426,8 +492,9 @@ That matters because practical FP often fails when a language pushes all impurit
 * derivation syntax instead of mutation
 * reassignment allowed
 * closure-crossing reassignment declared
-* external effects represented through monadic constructs like `IO`
-* no runtime exceptions; errors are represented as `Left`
+* external effects represented through monadic constructs like `IO`, and through declared, resumable effect performs
+* no ambient error path — a failure is a value a function returns or an effect a program may handle, never an exception every expression must be written to account for
+* the two fatal ambients end the run by default, but a handler can override that
 
 **Foi** is expressive for the seam between pure transformation and real programs.
 
@@ -512,7 +579,7 @@ Examples:
 x !and y
 !isOdd
 foo|1,,3|
-foo'(...)
+foo'(..)
 < &person.<first,nickname> >
 defn myFn(x) ![x ?> 10]: empty { ... }
 defn lookupCustomer(id) :over (customerCache) { ... }
@@ -542,23 +609,26 @@ Operators-as-functions, partial application, function composition, pipeline oper
 
 **Foi** is a novel collection/combination of these features in a compact, regular, mutually reinforcing surface syntax, with some of its own unique ideas woven in.
 
-The `&` structural projection/splicing syntax is one of the more distinctive pieces, especially because it works across whole values, fields, indexes, multi-picks, and slices. The `:over` clause is also distinctive because it separates read-only closure from closure-crossing reassignment.
+The `&` structural projection/splicing syntax is one of the more distinctive pieces, especially because it works across whole values, fields, indexes, multi-picks, and slices — and because each of those has a negative counterpart. The `:over` clause is also distinctive because it separates read-only closure from closure-crossing reassignment.
+
+Algebraic effects are the least common of these in the languages **Foi** is compared to. Their combination with `:over` is what makes the effect story coherent rather than partial: both are declarations at the function header, both are verified, and both describe something the function does to the world outside its own frame.
 
 For other features, the real expressive value in **Foi** is that common adaptations are cheap and visually local.
 
 ## In other words...
 
-**Foi**'s expressiveness comes from its insistance that common semantic idioms don't suffer accidental boilerplate.
+**Foi**'s expressiveness comes from its insistence that common semantic idioms don't suffer accidental boilerplate.
 
-Where many languages make programmers repeatedly construct these ideas out of lower-level mechanics, **Foi** gives them native shapes:
+Where many languages make programmers repeatedly construct these ideas out of lower-level mechanics -- and thus end up relying on an explosion of userland extension to the stdlib -- **Foi** gives them native shapes:
 
 * n-ary operators as functions
 * negated operators and predicates
 * positional partial application
 * argument reversal
-* structural pick/splice derivation
+* structural pick/splice derivation, positive and negative
 * signature-level preconditions
 * declared closure reassignment
+* declared, resumable effects
 * visually consistent decision-making
 
 **Foi** offers a deliberate, coherent surface for practical functional programming.

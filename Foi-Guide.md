@@ -2871,6 +2871,34 @@ The `~filter` comprehension requires a list (Tuple) *range*, and its final resul
 
 **Note:** Just like with loops, all these comprehensions support the *iteration* operand being a function, an inline function definition, or an inline-block.
 
+----
+
+There's one thing an inline-block can't do that a function can: close over a variable you reassign somewhere.
+
+```java
+def total: 0;
+
+prices ~map (cents) {
+    total := total + cents;     // COMPILE ERROR
+    cents;
+};
+```
+
+That's not an oversight in the block syntax. A `defn` [declares mutable closure with `:over`](#function-overs), and a block has nowhere to put that declaration -- so **Foi** rejects the reference rather than letting it through silently. *Reading* a mutable variable is rejected on the same terms as reassigning one: the block runs on the comprehension's schedule rather than yours, and a read at a moment you didn't pick is the same hazard as a write.
+
+If you really do need it, write the operand as a `defn` and declare it:
+
+```java
+def total: 0;
+
+prices ~map (defn(cents) :over (total) {
+    total := total + cents;
+    ^cents;
+});
+```
+
+`~each` is the *only* exception: it's an imperative loop, it runs straight through at its own position, and the conditional form exists precisely so you can reassign what the condition reads -- so the restriction is waived there.
+
 ### Map Comprehension (List)
 
 Perhaps one of the most common/recognizable list comprehensions is *map*:

@@ -2602,6 +2602,78 @@ def pi: 3.14159;                        // never reassigned → constant
 defn area(r) ^pi * r * r;               // no :over needed
 ```
 
+**Reads count.** "Closes over" is any reference the function makes to the binding, on either side of a `:=`. A function that only reads a mutable binding from an enclosing scope lists it on the same terms as one that reassigns it, because §2.11's captured frame is live: the value the read produces depends on when the call happens, and `:over` is what records that dependency at the header.
+
+#### §3.6.1 Comprehension Block Operands
+
+A comprehension's iteration operand may be a function value, an inline `defn`, or a **block** -- §2.9's bare-block and block-defs forms at a `ComprOp` RHS, and the do-block body of `~<<` and `~<*`.
+
+A block at these positions is a **closure boundary** on the same terms as a function literal: a reference from inside it to a binding declared outside it crosses that boundary, and §3.6's rule applies to the crossing. This holds at every comprehension without exception, `~each` included. What `~each` carries is a waiver on enforcement, specified below -- not a different boundary.
+
+A block carries no `:over` clause. The grammar admits none at any block form. §3.6's requirement is therefore unsatisfiable at a block operand, and a crossing reference to a mutable binding is a **compile error**:
+
+```java
+def total: 0;
+
+prices ~map (cents) {
+    total := total + cents;         // COMPILE ERROR
+    cents;
+};
+
+def rate: 1;
+rate := 2;
+
+prices ~map (cents) {
+    cents * rate;                   // COMPILE ERROR -- `rate` is mutable
+};
+```
+
+Both directions are rejected, per §3.6's reads-count rule. The read is the more important half here: a block operand runs on a schedule its author does not write, so a mutable binding read inside one is read at a moment the surrounding code does not mark.
+
+**The remedy is a function literal.** Where the dependency is real, write the operand as a `defn` and declare it:
+
+```java
+def total: 0;
+
+prices ~map (defn(cents) :over (total) {
+    total := total + cents;
+    ^cents;
+});
+```
+
+**Direct closure only, unchanged.** §3.6's nesting rule applies without modification. A `defn` written *inside* a block operand declares its own `:over` and satisfies the rule there; the enclosing block makes no direct reference and is not rejected for it.
+
+**The block-defs clause is inside the boundary.** A `:?` initializer evaluates in the block's own frame when the implicit input is empty (§2.9), and each `::` bind of a `~<<` chain after the first evaluates within the iteration of the one ahead of it. Both are governed by this section, not by the enclosing scope's rules.
+
+**A block's own bindings are unaffected.** A `def` introduced inside the block, reassigned inside the block, crosses nothing. Per-iteration freshness (§2.11.1) applies to it as to any iteration-local binding.
+
+**`~each` waives enforcement.** `~each`'s operand block is a closure boundary like any other; what it carries is an exception to the rule above. A crossing reference to a mutable binding is admitted there, with no `:over` and no rewrite:
+
+```java
+def done: false;
+
+![done] ~each {
+    // legal: enforcement is waived at `~each`
+    done := true;
+};
+```
+
+The exception is deliberate and narrow -- an escape hatch for imperative work, granted at `~each` alone. §7.1 designates `~each` the imperative-iteration comprehension: its produced value is not an accumulation, its purpose is side-effect driving over a bounded sequence, and its conditional-LHS form is Foi's while-loop. It runs synchronously to completion at its lexical position -- it introduces no suspension, resolves no promise, and awaits no external arrival, so every iteration falls between the statement before it and the statement after it.
+
+**The waiver covers the block boundary only.** A reference that also crosses an enclosing *function* boundary is governed by §3.6 unchanged:
+
+```java
+def done: false;
+
+defn run() :over (done) {
+    ![done] ~each {
+        done := true;
+    };
+};
+```
+
+`run` lists `done` because `run`'s own boundary is not waived. Nothing about `~each` reaches it.
+
 ### §3.7 Declared Type: `{ }`
 
 A function declaration optionally carries its type in a brace clause
@@ -8275,7 +8347,9 @@ A function that **directly performs** a non-ambient effect must carry a declared
 
 "Directly performs" means the function's own body contains a perform site (via `%` on an effect-kinded LHS, per §6.2, or via the `<::` sugar of §6.2.2) for the effect in question. Performs that occur only in callees are not direct; they belong to those callees' emit-edge declarations.
 
-Inline blocks are part of the enclosing function's own body. A comprehension block-operand (§3.10.9.2), a pipeline-RHS block, a match consequent, and a guarded-expression body are blocks, not functions: they carry no declared type, no `:over` clause, and no declaration surface of any kind. A perform site inside one is a direct perform of the function that lexically contains the block, and declares there. That a comprehension hook invokes the block does not make it a callee; a callee is a function value with its own declared surface, and a block has none. This parallels `:over` (§2.11), which likewise attaches only at function declarations while inline blocks capture from the enclosing scope implicitly.
+Inline blocks are part of the enclosing function's own body. A comprehension block-operand (§3.10.9.2), a pipeline-RHS block, a match consequent, and a guarded-expression body are blocks, not functions: they carry no declared type, no `:over` clause, and no declaration surface of any kind. A perform site inside one is a direct perform of the function that lexically contains the block, and declares there. That a comprehension hook invokes the block does not make it a callee; a callee is a function value with its own declared surface, and a block has none.
+
+`:over` attaches only at function declarations on the same grounds, and for a match consequent, a guard-expression body, and a pipeline-RHS block the consequence is the same as it is here: the block captures from the enclosing scope implicitly and the enclosing declaration carries whatever must be declared. A comprehension block operand is the one position where the two rules diverge. §3.6.1 makes such a block a closure boundary and rejects a crossing reference to a mutable binding outright, because the comprehension's hook decides when the block runs. Effect attribution has no corresponding hazard -- a perform is attributed by *where it is written*, not by when it executes -- so it continues to attribute upward.
 
 A perform site at module top level -- inside a block or not -- has no enclosing function and therefore no emit-edge. Coverage (§6.13.4) applies to it independently of declaration.
 
@@ -8894,6 +8968,8 @@ Early exit via `Done@` still applies (§7.9).
 0..3 ~each (v) { log(v); };             // block-defs clause
 pairs ~each (<:k, :v>) { log(k, v); };  // destructure block-defs
 ```
+
+**Mutable capture is admitted.** `~each`'s operand block is a closure boundary like every other comprehension's; §3.6.1 waives the enforcement there. It may read and reassign mutable bindings from the enclosing scope with no `:over` and no rewrite to a `defn`. The waiver is an escape hatch for imperative work, it is `~each`'s alone, and it does not reach the boundary an enclosing function establishes.
 
 **Produced value.** The `~each` expression evaluates to the LHS range itself, enabling chaining: `a ~each b ~each c` loops `b` over `a`, then loops `c` over `a`. For the conditional-range form (above), the produced value is an empty Tuple `<>`.
 
