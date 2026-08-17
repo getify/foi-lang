@@ -648,6 +648,36 @@ BracketExpr          := OpenBracket _ ExprNoBlock _ CloseBracket;
 DotBracketExpr       := Period OpenBracket _ RangeExpr _ CloseBracket;
 DotAngleExpr         := Period OpenAngle _ AnglePropertyList _ CloseAngle;
 
+(* Negative-pick segments — the complements of DotBracketExpr /
+   DotAngleExpr (spec §2.12.3, §2.12.4). Each takes its positive
+   counterpart's entry alphabet unchanged: NegDotBracketExpr a
+   RangeExpr, NegDotAngleExpr an AnglePropertyList. The alphabets
+   stay split on both polarities — a range is not admitted at the
+   angle form, and named slots are not admitted at the bracket form.
+
+   Reachable from PickValue (§17) and OpFuncExpr (§7) only, NOT
+   from MultiAccessExpr. MultiAccessExpr is shared with
+   AssignmentExpr's LHS, ExportNamedBinding, and DestructureNamedDef;
+   a negative segment there would put `foo.!<a> := 5` and
+   `def <a: rec.!<b>>:` into the grammar for the semantic layer to
+   reject. Consequence accepted: standalone `person.!<x>` is a parse
+   error, and paren-wrapping does not rescue it.
+
+   `!` and the following delimiter are two tokens at the syn layer
+   (Exmark then OpenAngle / OpenBracket) — `!<` is SymbolicCompareOp's
+   "not less than" assembled from two tokens, and `![` is CondClause's
+   negated opener, so the lex layer needs no change and no new token.
+
+   No trivia between Period and Exmark, or between Exmark and the
+   delimiter — same adjacency rule the positive forms carry between
+   Period and their delimiter.
+
+   Both shape to their POSITIVE counterpart's AST node type with
+   `negated: true` appended. No new node types; parallel to
+   `polarity` on CondClause / DepCondClause. *)
+NegDotBracketExpr    := Period Exmark OpenBracket _ RangeExpr _ CloseBracket;
+NegDotAngleExpr      := Period Exmark OpenAngle _ AnglePropertyList _ CloseAngle;
+
 (* Dynamic-pick arms inside DotAngleExpr — `.<%expr>` (computed
    name, one slot) and `.<&src>` (key-stream spread, N slots).
    ComputedPropName is shared with ExplicitPropDef (§17, full
@@ -848,8 +878,19 @@ ExplicitNamedArg     := Identifier _ Colon _ Expr;
    then OpFuncExpr's outer `and` fails at CloseParen and rolls
    back the whole production without giving the longer arms a
    chance. The `[]` arm is disjoint (OpenBracket opener); Op last
-   catches bare-operator forms like `(.)`, `(+)`, `(..)`. *)
-OpFuncExpr           := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
+   catches bare-operator forms like `(.)`, `(+)`, `(..)`.
+
+   The two Neg arms lead — longest prefix (Period Exmark plus
+   delimiter). They are disjoint from the positive arms at the
+   second token (Exmark vs OpenAngle / OpenBracket), so order
+   between the two groups is mechanical rather than load-bearing;
+   they lead for consistency with the longest-first discipline
+   the rest of the alternation follows.
+
+   OpFuncExpr is the SECOND reference site for the Neg segments
+   and does not reach them through MultiAccessExpr, so admitting
+   them here leaves §6's restriction intact. *)
+OpFuncExpr           := OpenParen (NegDotAngleExpr | NegDotBracketExpr | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
 ```
 
 PEG ordering notes for `<ChainBase>`:
@@ -1630,7 +1671,15 @@ RecordTupleValue       := AsExpr | UnaryExpr | CallExpr | ThunkExpr
                         | DataStructLit | BareIdentifier | OpFuncExpr
                         | (OpenParen _ Expr _ CloseParen);
 
-PickValue              := Ampersand IdentBase MultiAccessExpr?;
+(* PickValue's optional NegPickSeg tail is terminal — one negative
+   segment, nothing after it. `&foo.!<a>.!<b>` is a parse error.
+   A positive access chain may precede it (`&order.items.!<a>`),
+   and a positive pick preceding a negative one
+   (`&rec.<a,b>.!<c>`) is admitted by grammar and rejected at the
+   semantic layer per spec §2.12.4 — the same treatment
+   positive-pick chaining (`&rec.<a,b>.<c>`) already gets. *)
+PickValue              := Ampersand IdentBase MultiAccessExpr? NegPickSeg?;
+<NegPickSeg>           := NegDotAngleExpr | NegDotBracketExpr;
 <RecordProperty>       := ConcisePropDef | ExplicitPropDef;
 ConcisePropDef         := Colon PropertyExpr;
 ExplicitPropDef        := (ComputedPropName | PropertyExpr) _ Colon _ RecordTupleValue;

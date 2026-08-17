@@ -315,6 +315,8 @@ A second literal form, `<[ ... ]>` (Syntactic-Grammar `SetLit`), produces a Tupl
 
 Tuple/Record literals are constructed (recursively, if necessary) by the `DefineStructure()` algorithm.
 
+Each entry `e` has a **key** and a **value expression** (`e.value`). A positional entry has no key and *is* its own value expression. A concise entry `:name` has key `name` and value expression the identifier `name`, per §1.5.3's shorthand. A spread entry has no key; its value expression is the spread source, including any pick tail.
+
 ----
 
 The `DefineStructure(structure)` steps are:
@@ -337,13 +339,9 @@ The `GetEntries(structure,startIndex)` algorithm are:
 
 3. Let `hasKeyed` be `false`
 
-4. For each entry `e` in the `structure`:
+4. For each entry `e` in the `structure`, in source order:
 
-    - If `isNull(e.key)`: let `key` be `i`; let `value` be `ResolveStructureValue(e)`; let `i` be `i + 1`
-
-    - If `isComputed(e.key)`: let `key` be the result of `computeKey(e.key)`; let `value` be the result of `ResolveStructureValue(e.value)`
-
-    - If `isSpread(e.value)`:
+    - If `isSpread(e)`:
 
         * If `HasPick(e.value)`: let `spreadValue` be the result of `ComputePick(ResolveStructureValue(e.value))`
 
@@ -359,15 +357,45 @@ The `GetEntries(structure,startIndex)` algorithm are:
 
         * Continue (4)
 
-    - If `isConcise(e)`: let `key` be `e.name`; let `value` be the result of `ResolveStructureValue(e.value)`
+    - If `isNull(e.key)`: let `key` be `i`
 
-    - Otherwise: let `key` be `e.key`; let `value` be `ResolveStructureValue(e.value)`
+    - Otherwise if `isComputed(e.key)`: let `key` be the result of `computeKey(e.key)`
 
-    - If `key` is not a positive integer: let `hasKeyed` be `true`
+    - Otherwise if `isConcise(e)`: let `key` be `e.name`
+
+    - Otherwise: let `key` be `e.key`
+
+    - Let `value` be the result of `ResolveStructureValue(e.value)`
+
+    - If `key` is a positive integer: let `i` be the greater of `i` and `key + 1`
+
+    - Otherwise: let `hasKeyed` be `true`
 
     - Append `[ key, value ]` to `entries`
 
 5. Return `[entries, i, hasKeyed]`
+
+----
+
+The index counter advances past every integer key, whether that key was implicit (positional), explicit (`3: v`), or computed to a positive integer (`%idx: v`). A following positional entry takes the next unused index rather than colliding with the keyed entry:
+
+```java
+def idx: 3;
+< 5, 10, 15, %idx: 20, 25 >;    // < 5, 10, 15, 20, 25 >
+< 1, 3, 2: 5, 7, 9 >;           // < 1, 3, 5, 7, 9 >
+```
+
+The counter never moves backward. An integer key below the current index fills that slot without disturbing the run that follows:
+
+```java
+< 1, 2, 0: 9, 7 >;              // < 9, 2, 7 >
+```
+
+An integer key above the current index leaves the intervening indices unfilled; they hold `empty`, as though written with the comma form of §1.5.2:
+
+```java
+< 5: 9 >;                       // < empty, empty, empty, empty, empty, 9 >
+```
 
 ----
 
@@ -381,7 +409,7 @@ The `ResolveStructureValue(value)` steps are:
 
 ----
 
-`AllocateStructure("Record", entries)` reduces the entries list to a Record value applying rightmost-wins deduplication on colliding named keys per §1.5.3: each named key retains the value of its last-appearing entry in the input list, and positional keys are preserved by their integer identity. `AllocateStructure("Tuple", entries)` retains all entries in input order without deduplication.
+`AllocateStructure("Record", entries)` and `AllocateStructure("Tuple", entries)` each reduce the entries list applying rightmost-wins deduplication on colliding keys per §1.5.3: every key -- named or integer -- retains the value of its last-appearing entry in the input list. Integer keys retain their integer identity in both cases. In the Tuple case the integer keys *are* the positional sequence: the result is ordered by integer key rather than by source position, and any index below the highest key with no entry holds `empty`. In the Record case positional entries occupy their integer slots with no filling; a read of an unoccupied slot resolves to `empty` per §2.12.1. `AllocateStructure("Empty")` produces the empty structured value of §1.5.5.
 
 #### §1.5.2 Tuple-Form Literals
 
@@ -433,6 +461,8 @@ A spread entry `&src` lifts entries from `src` into the enclosing structure. The
 < &rec.x >;         // pick only rec.x
 < &rec.<a, b> >;    // pick rec.a and rec.b
 < &rec.[0..3] >;    // pick rec's four indexed positions (0-3, inclusive)
+< &rec.!<a, b> >;   // every entry of rec except a and b
+< &rec.![0..3] >;   // every positional entry of rec except 0-3
 < 10, &more, 20 >;  // spread interleaved positionally
 ```
 
@@ -1450,6 +1480,29 @@ items.[-99..99];    // < 10, 20, 30, 40, 50 >  (both clipped)
 
 Resolution precedes clipping: a negative endpoint is converted to an absolute index against `L` first, and only the converted value is clipped. If `S > E` after both steps, or the source has no positional entries, the result is the empty Tuple `< >`.
 
+**Negative range pick: `.![N..M]`.** The complement. `.![N..M]` reads every positional entry of the source *outside* the range and returns them as a Tuple:
+
+```java
+// items: < 10, 20, 30, 40, 50 >
+
+items.![1..3];              // < 10, 50 >
+items.![..1];               // < 30, 40, 50 >
+items.![3..];               // < 10, 20, 30 >
+items.![-2..];              // < 10, 20, 30 >
+```
+
+Endpoint resolution, negative endpoints, open-ended forms, and clipping are the positive form's, applied identically -- the range is resolved first and the membership test against it is then inverted. Where `.[N..M]` yields the empty Tuple, `.![N..M]` yields the source's positional entries entire; where `.[N..M]` yields them entire, `.![N..M]` yields `< >`.
+
+**Abstract execution:**
+
+1. Evaluate the base expression to a source value.
+2. Resolve `S` and `E` by steps 2 and 3 of the positive form.
+3. Read the positional entries at every index of the source *other than* `S, S+1, ..., E`, in source order.
+4. The resulting entries take indices assigned in that order per §1.5.1, starting at `0`.
+5. The resulting Tuple is the value of the expression.
+
+Named entries of the source are not positional and the range does not reach them; a negative range pick on a Record retains every named entry and drops only the positional ones the range covers.
+
 #### §2.12.4 Multi-Pick: `.<a, b>`
 
 A multi-pick produces a new Record whose entries are the selected names or positional indices paired with their corresponding values from the source. Each entry slot may be a bare identifier (named slot), a positive integer literal (positional slot), a `%expr` computed key (§2.12.5), or a `&src` spread (§2.12.6); it's the same entry forms available inside Record/Tuple literals.
@@ -1477,6 +1530,40 @@ items.<1, 3>;               // < 20, 40 >
     2. For `%expr` (computed name), see §2.12.5.
     3. For `&src` (spread), see §2.12.6.
 3. The completed Record is the value of the expression.
+
+**Negative multi-pick: `.!<a, b>`.** The complement. `.!<a, b>` produces a new structure carrying every entry of the source *except* those the list names:
+
+```java
+// rec: < x: 1, y: 2, z: 3 >
+
+rec.!<x, y>;                // < z: 3 >
+
+// items: < 10, 20, 30, 40, 50 >
+
+items.!<1, 3>;              // < 10, 30, 50 >
+```
+
+The entry alphabet is the positive form's entire: a bare identifier, a positive integer literal, a `%expr` computed key (§2.12.5), or a `&src` spread (§2.12.6). Each names a slot to withhold rather than one to select; the entries themselves are read the same way.
+
+```java
+def k: "x";
+def keys: < "x", "y" >;
+
+rec.!<%k>;                  // < y: 2, z: 3 >
+rec.!<&keys>;               // < z: 3 >
+```
+
+A pick is a selection or a subtraction, never both: an entry list mixes no polarity, and there is no per-entry negation form. Naming a slot the source does not carry withholds nothing and is not an error, the same way selecting a missing slot reads `empty` per §2.12.1.
+
+**Abstract execution:**
+
+1. Evaluate the base expression to a source value.
+2. Resolve the pick list to a set of names and positional indices, by the same per-entry rules the positive form uses.
+3. For each entry of the source, in order, add it to the result unless its name or index is in that set.
+4. Positional entries surviving step 3 take indices assigned in their surviving order per §1.5.1, starting at `0`. Named entries keep their names.
+5. The completed structure is the value of the expression.
+
+Because step 4 renumbers, `.[N..M]` and `.<a, b>` describe positions in the *source*, and so do their negative counterparts. A pick reads one source and the picked value is complete before it meets any enclosing literal, so no pick is ever expressed against the result of another.
 
 #### §2.12.5 Computed-Name Pick: `.< %expr >`
 
@@ -3675,6 +3762,18 @@ flat("https://my.site", "/api/find", "name=getify");
 
 #### §3.12.4 Primed inverses
 
+Prime resolves in three cases, checked in order.
+
+**A declared pair.** Where an operator has a declared partner, prime names the partner. Pairs are declared only where prime would otherwise be vacuous -- at operators taking one argument -- so a pair never displaces a live reversal. Five are declared: `/\` with `\/`, the two pick pairs, and the two unary boolean pairs, all below.
+
+**Otherwise, argument reversal** (§3.12.1). This is the default and covers every operator taking two or more arguments.
+
+**Otherwise, identity on the lifted value.** Where reversal is vacuous and no pair is declared, prime leaves the value unchanged. `(@')` and `(@)` are the same function value. An operator does not acquire a partner by being unary; being unary is only what frees the prime slot for a partner to claim.
+
+`(%)` is the one lift whose arity is not fixed. It is arity-polymorphic (§3.9.3), dispatching on the count supplied, so the last two cases separate per call rather than per lift: `(%')(env, inst)` reverses at the two-argument shape, and `(%')(inst)` is `(%)(inst)`.
+
+----
+
 `/\` and `\/` are each other's inverses; `'` is its own inverse. Each transform therefore admits a primed-inverse form expressing the other:
 
 ```java
@@ -3682,7 +3781,29 @@ def uncurry: (/\');
 def curry: (\/');
 ```
 
-**A doubled prime is not two applications.** `f''` **is** `f`: the same value, not a reversal of a reversal. Argument order carries a polarity, and a doubled prime leaves that polarity unflipped rather than flipping it twice. `f'' ?= f` is `true` (§6.1.5.6).
+The pick lifts are the second and third pairs. `(.<a, b>)` and `(.[N..M])` carry their entry list inside the lift, so each takes one argument -- the source. Their partners are the negative picks of §2.12.3 and §2.12.4:
+
+```java
+def without: (.<a, b>');       // same value as (.!<a, b>)
+def outside: (.[1..3]');       // same value as (.![1..3])
+```
+
+`(.)` and `([])` are binary and keep reversal -- the pair reading reaches only the two lift arms that embed an entry list.
+
+The unary boolean operators are the fourth and fifth pairs. `?` and `!` are each other's negation, as are `?empty` and `!empty`, and each takes a single operand:
+
+```java
+def not: (?');                 // same value as (!)
+def truthy: (!');              // same value as (?)
+def nonEmpty: (?empty');       // same value as (!empty)
+def isEmpty: (!empty');        // same value as (?empty)
+```
+
+**The `?`/`!` compare operators are not pairs.** The symbolic compare family (`?=`/`!=`, `?<`/`!<`, `?<=>`/`!<=>`, and the rest), the named compare family (`?in`/`!in`, `?has`/`!has`), the boolean connectives (`?and`/`!and`, `?or`/`!or`), and `?as`/`!as` are all binary. Prime is already reversal at each of them and the slot is not free: `(?<')` is the reversed comparison, not `(!<)`. The negation of a binary compare is written by spelling its `!` form, which is what that form is for.
+
+**A doubled prime is not two applications.** `f''` **is** `f`: the same value, not a reversal of a reversal. Argument order carries a polarity, and a doubled prime leaves that polarity unflipped rather than flipping it twice. `f'' ?= f` is `true` (§6.1.5.6). The rule holds in all three cases: reversal is its own inverse, identity trivially so, and a declared pair swaps back on the second prime.
+
+**A pair is a naming relation, not a composition one.** Priming twice returns the original operator; it does not follow that the two members cancel when applied in sequence. `/\` and `\/` do compose to identity on a function value, but `.<a, b>` followed by `.!<a, b>` yields `< >`, and `!` applied twice yields `?` rather than the operand untouched. What a declaration fixes is which operator prime names.
 
 ### §3.13 Operator-as-Function
 
@@ -3694,12 +3815,12 @@ The per-operator argument arity, argument types, and semantic behavior of each l
 
 1. The parenthesized operator-symbol expression produces a function value.
 2. Calling that function value evaluates the operator against the supplied arguments.
-3. The prime `'` form applies §3.12.1 reverse semantics to the lifted function value.
+3. The prime `'` form resolves per §3.12.4: the declared partner where the operator has one, §3.12.1 reverse semantics otherwise, and identity where the lift takes one argument.
 4. Operator-as-function values compose freely with `|args|` (§3.11), `/\` (§3.12.2), `\/` (§3.12.3), `+>` (composition, §3.10.13), and `#>` (pipelines, §3.10.12).
 
 **Operator lifts are canonical.** A given operator lifts to one function value: `(+) ?= (+)` is `true`, and `(+) ?= (-)` is `false`. A lift captures nothing and carries no per-site content, so two occurrences of the same lift have nothing to differ in; the lift names that operator's function value rather than allocating one, which is what separates it from partial application (§3.11) and composition (§3.10.13). Function-value identity is specified at §6.1.5.6.
 
-**The two prime spellings name one value.** `(+')` and `(+)'` are the same function value: the parenthesized form names the prime of `(+)`, and the postfix form applies §3.12's prime to `(+)`, which is canonical per source. `(+') ?= (+)'` is `true`, as is `(+') ?= (+')`. The same holds for `(/\')` against `(/\)'`, and `(\/')` against `(\/)'`.
+**The two prime spellings name one value.** `(+')` and `(+)'` are the same function value: the parenthesized form names the prime of `(+)`, and the postfix form applies §3.12's prime to `(+)`, which is canonical per source. `(+') ?= (+)'` is `true`, as is `(+') ?= (+')`. The same holds for `(/\')` against `(/\)'`, and `(\/')` against `(\/)'`. At the pick lifts a third spelling joins them, since the negated form is directly writable: `(.!<a, b>)`, `(.<a, b>')`, and `(.<a, b>)'` are one value. They differ in AST -- `negated` on the payload against `primed` on the lift -- as `(+')` and `(+)'` already do.
 
 ### §3.14 Thunks: `@@ expr`
 
@@ -10328,10 +10449,12 @@ value (§1.5) by its entries. Four entry forms appear in the list:
 - A **named entry** `name: T` declares a named entry `name` whose
   value satisfies `T`.
 - A **positional entry**, a bare `T`, declares a positional slot. The
-  type's positional entries take indices in their own order, as
-  §1.5.1 assigns them at a literal: the index advances at positional
-  entries and at no others, so `<a: int, string>` declares a named
-  `a` and index `0`.
+  type's entry forms carry no integer key -- a named entry's name is
+  an identifier (Syntactic-Grammar `DataStructFieldType`) -- so the
+  index advances at positional entries and nowhere else, starting at
+  `0`: `<a: int, string>` declares a named `a` and index `0`.
+  §1.5.1's rules for integer keys at a literal have no counterpart
+  here.
 - A **positional rest entry** `*T`, admitted in final position only,
   declares zero or more further positional entries, each satisfying
   `T`.

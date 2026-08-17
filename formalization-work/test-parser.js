@@ -535,6 +535,14 @@ var failSamples = [
 	"@@@;",
 	"@@ { x };",
 	"Foo@@x;",
+
+	"person.!<x>;",
+	"(person.!<x>);",
+	"foo.!<a> := 5;",
+	"def <a: rec.!<b>>: src;",
+	"<&foo.!<a>.!<b>>;",
+	"<&foo. !<a>>;",
+	"<&foo.! <a>>;",
 ];
 
 var passed = 0;
@@ -574,7 +582,7 @@ for (let i = 0; i < failSamples.length; i++) {
 	}
 	else if (
 		threw instanceof SyntaxError &&
-		threw.message.startsWith("Foi parse failed:")
+		threw.message.startsWith("Parser Error:")
 	) {
 		negativePassed++;
 	}

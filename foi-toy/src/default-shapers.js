@@ -246,6 +246,13 @@ function applyChainSeg(object,seg) {
 		throw new Error(`ChainExpr: unexpected segment type "${t}"`);
 	}
 	if (seg.delims) node.delims = seg.delims;
+	// Negative-pick polarity rides from the segment onto the folded
+	// node. DotAngleExpr / DotBracketExpr do not survive the fold —
+	// they become PropertyPickExpr / RangeAccessExpr — so the flag
+	// has to be carried across explicitly. Optional-field pattern:
+	// positive segments never set it and their folded nodes stay
+	// byte-identical.
+	if (seg.negated) node.negated = true;
 	return node;
 }
 
@@ -272,6 +279,98 @@ function foldAccess(base,access) {
 		node = applyChainSeg(node,seg);
 	}
 	return node;
+}
+
+// Segment-shaper bodies for the pick forms, hoisted so the negative
+// productions (NegDotAngleExpr / NegDotBracketExpr) reuse them
+// rather than carrying duplicates. Both emit the POSITIVE node type;
+// the negative wrappers append `negated` after the call.
+function shapeDotBracket(frame,parts) {
+	var range;
+	var delims = [];
+	for (let p of parts) {
+		if (isNode(p)) range = p;
+		else delims.push(p); // Period, Exmark, OpenBracket, CloseBracket
+	}
+	return withDelims({ type: "DotBracketExpr", range }, delims);
+}
+
+function shapeDotAngle(frame,parts) {
+	var properties = [];
+	var delims = [];
+	var i = 0;
+	while (i < parts.length) {
+		let p = parts[i];
+		if (isNode(p)) {
+			properties.push({
+				type: "PickAccessor",
+				accessor: p,
+				start: p.start,
+				end: p.end,
+			});
+			i++;
+		}
+		else if (p.type === "PositiveIntegerLit") {
+			properties.push({
+				type: "PickIndex",
+				index: p.value,
+				start: p.start,
+				end: p.end,
+			});
+			i++;
+		}
+		else if (p.type === "Percent") {
+			let percent = p;
+			let computedParts = [percent];
+			i++;
+			while (i < parts.length) {
+				let q = parts[i];
+				if (isNode(q)) {
+					computedParts.push(q);
+					i++;
+					break;
+				}
+				computedParts.push(q);
+				i++;
+			}
+			let computed = shapeComputedPropName(computedParts);
+			properties.push({
+				type: "PickComputed",
+				expr: computed.expr,
+				start: computed.start,
+				end: computed.end,
+				delims: [percent],
+			});
+		}
+		else if (p.type === "Ampersand") {
+			let amp = p;
+			i++;
+			let base = parts[i];
+			i++;
+			let access;
+			if (
+				i < parts.length &&
+				isNode(parts[i]) &&
+				parts[i].type === "MultiAccessExpr"
+			) {
+				access = parts[i];
+				i++;
+			}
+			let source = foldAccess(base, access);
+			properties.push({
+				type: "PickSpread",
+				source,
+				start: amp.start,
+				end: source.end,
+				delims: [amp],
+			});
+		}
+		else {
+			delims.push(p); // Period, Exmark, OpenAngle, CloseAngle, Comma, EscapePlain
+			i++;
+		}
+	}
+	return withDelims({ type: "DotAngleExpr", properties }, delims);
 }
 
 // Helper for the two "named binding" productions —
@@ -1326,14 +1425,20 @@ export const defaultShapers = {
 	//
 	// Period → delims (same rationale as DotIdentifier). Brackets
 	// → delims.
-	DotBracketExpr(frame,parts) {
-		var range;
-		var delims = [];
-		for (let p of parts) {
-			if (isNode(p)) range = p;
-			else delims.push(p); // Period, OpenBracket, CloseBracket
-		}
-		return withDelims({ type: "DotBracketExpr", range }, delims);
+	DotBracketExpr: shapeDotBracket,
+
+	// NegDotBracketExpr := Period Exmark OpenBracket _ <RangeExpr> _ CloseBracket;
+	//
+	// Same body as the positive form — the Exmark falls into the
+	// else-branch alongside Period and the brackets, so it lands in
+	// delims with its source position and emitGeneric recovers it
+	// without an emitter change. `negated` is appended AFTER the
+	// node is built, so positive nodes are unchanged and negative
+	// ones carry the flag last.
+	NegDotBracketExpr(frame,parts) {
+		var node = shapeDotBracket(frame,parts);
+		node.negated = true;
+		return node;
 	},
 
 	// DotAngleExpr := Period OpenAngle _ <AnglePickEntry> (_ Comma _ <AnglePickEntry>)* _ CloseAngle;
@@ -1365,113 +1470,20 @@ export const defaultShapers = {
 	// Walk is index-driven (not for-of) so multi-token entries
 	// (Percent + inner; Ampersand + base + optional access) can
 	// consume forward parts atomically.
-	DotAngleExpr(frame,parts) {
-		var properties = [];
-		var delims = [];
-		var i = 0;
-		while (i < parts.length) {
-			let p = parts[i];
-			if (isNode(p)) {
-				properties.push({
-					type: "PickAccessor",
-					accessor: p,
-					start: p.start,
-					end: p.end,
-				});
-				i++;
-			}
-			else if (p.type === "PositiveIntegerLit") {
-				properties.push({
-					type: "PickIndex",
-					index: p.value,
-					start: p.start,
-					end: p.end,
-				});
-				i++;
-			}
-			else if (p.type === "Percent") {
-				// ComputedPropName arm — narrowed alphabet (§17 grammar).
-				// Bare arm: BooleanLit / StringLit / ComputedPropAccessChain
-				// fold output (all nodes) plus the numeric-literal alphabet
-				// (raw tokens — PositiveIntegerLit alone, bare Number alone,
-				// NegativeIntegerLit alone, or Escape + PositiveIntegerLit/
-				// Number). Paren-wrap arm: unwrapped OperandExpr node.
-				//
-				// Walk forward collecting the Percent and all trailing
-				// non-node tokens up to the next node (or until the next
-				// Percent/Ampersand/Identifier arm opener). Hand the slice
-				// to shapeComputedPropName which produces a ComputedPropName
-				// node; unwrap its .expr into PickComputed.
-				//
-				// Percent rides on PickComputed's OWN delims (not parent's)
-				// — mirrors SpreadArg's TriplePeriod-on-delims pattern.
-				// emitGeneric recurs into PickComputed and the inner
-				// piece-walk recovers the sigil at its source position
-				// alongside the expr node.
-				let percent = p;
-				let computedParts = [percent];
-				i++;
-				// Collect up to and including the first node (BooleanLit,
-				// StringLit, AccessChain fold, or paren-wrap unwrap), OR
-				// the full raw-integer-token sequence if no node arrives.
-				let sawNode = false;
-				while (i < parts.length) {
-					let q = parts[i];
-					if (isNode(q)) {
-						computedParts.push(q);
-						sawNode = true;
-						i++;
-						break;
-					}
-					// Raw token after Percent — numeric-literal alphabet
-					// (PositiveIntegerLit / NegativeIntegerLit / Number
-					// alone, or Escape + PositiveIntegerLit/Number).
-					// Collect.
-					computedParts.push(q);
-					i++;
-				}
-				let computed = shapeComputedPropName(computedParts);
-				properties.push({
-					type: "PickComputed",
-					expr: computed.expr,
-					start: computed.start,
-					end: computed.end,
-					delims: [percent],
-				});
-			}
-			else if (p.type === "Ampersand") {
-				// SpreadPropName arm: Ampersand + IdentBase + optional
-				// MultiAccessExpr. Ampersand rides on PickSpread's OWN
-				// delims (same SpreadArg-style pattern as PickComputed).
-				// Access folds via foldAccess.
-				let amp = p;
-				i++;
-				let base = parts[i];
-				i++;
-				let access;
-				if (
-					i < parts.length &&
-					isNode(parts[i]) &&
-					parts[i].type === "MultiAccessExpr"
-				) {
-					access = parts[i];
-					i++;
-				}
-				let source = foldAccess(base, access);
-				properties.push({
-					type: "PickSpread",
-					source,
-					start: amp.start,
-					end: source.end,
-					delims: [amp],
-				});
-			}
-			else {
-				delims.push(p); // Period, OpenAngle, CloseAngle, Comma, EscapePlain
-				i++;
-			}
-		}
-		return withDelims({ type: "DotAngleExpr", properties }, delims);
+	DotAngleExpr: shapeDotAngle,
+
+	// NegDotAngleExpr := Period Exmark OpenAngle _ <AnglePickEntry> (_ Comma _ <AnglePickEntry>)* _ CloseAngle;
+	//
+	// Same body as the positive form. The Exmark falls into the
+	// else-branch with Period / angles / commas, so it lands in
+	// delims positioned. All four entry arms — PickAccessor,
+	// PickIndex, PickComputed, PickSpread — carry over untouched,
+	// which is what makes `.!<%k>` and `.!<&keys>` work with no
+	// additional wiring.
+	NegDotAngleExpr(frame,parts) {
+		var node = shapeDotAngle(frame,parts);
+		node.negated = true;
+		return node;
 	},
 
 	// SingleAccessExpr — list of access segments. Each segment is
@@ -1564,6 +1576,10 @@ export const defaultShapers = {
 				else if (p.type === "DotBracketExpr") {
 					node.range = p.range;
 				}
+				// The wrapper is dropped when its payload is hoisted,
+				// so polarity has to be copied across the same way
+				// applyChainSeg copies it at the PickValue path.
+				if (p.negated) node.negated = true;
 			}
 			else if (p.type === "SingleQuote") {
 				node.primed = true;
@@ -3295,21 +3311,33 @@ export const defaultShapers = {
 		return withDelims({ type: "SetLit", entries }, delims);
 	},
 
-	// PickValue := Ampersand <IdentBase> MultiAccessExpr?;
+	// PickValue := Ampersand IdentBase MultiAccessExpr? NegPickSeg?;
 	//
 	// Ampersand sigil is structural → delims.
 	PickValue(frame,parts) {
-		var nodes = [];
+		var base, access, negSeg;
 		var delims = [];
 		for (let p of parts) {
-			if (isNode(p)) nodes.push(p);
-			else delims.push(p); // Ampersand
+			if (!isNode(p)) {
+				delims.push(p); // Ampersand
+			}
+			else if (p.type === "MultiAccessExpr") {
+				access = p;
+			}
+			else if (p.negated) {
+				// NegPickSeg tail — a DotAngleExpr / DotBracketExpr
+				// node carrying `negated`. Folded after the access
+				// chain so it applies to the chain's result, which
+				// is the source it names.
+				negSeg = p;
+			}
+			else {
+				base = p;
+			}
 		}
-		var [ base, access ] = nodes;
-		return withDelims({
-			type: "PickValue",
-			source: foldAccess(base, access),
-		}, delims);
+		var source = foldAccess(base, access);
+		if (negSeg) source = applyChainSeg(source, negSeg);
+		return withDelims({ type: "PickValue", source }, delims);
 	},
 
 	// ComputedPropAccessChain := IdentBase (DotIdentifier | BracketExpr)*;

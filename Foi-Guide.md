@@ -1823,19 +1823,31 @@ def profile: < &person.<first,nickname> >;
 
 ----
 
-There is no dedicated *exclude* syntactic form for "skipping" an index/field while deriving a new Record/Tuple. However, subsequently assigning an `empty` value to an index or field has the same effect:
+To *exclude* an index/field while deriving, add a `!` to the pick sigil. `.!< .. >` and `.![ ..  ]` are the negatives of `.< .. >` and `.[ ..  ]` -- everything the source has *except* what you name:
 
 ```java
 def numbers: < 3, 4, 5, 6, 7 >;
-def fewer: < 0, &numbers, 2: empty, 4: empty >;
-// < 0, 3, 5, 6 >
+def fewer: < 0, &numbers.!<1,3> >;
+// < 0, 3, 5, 7 >
 
 def person: < first: "Kyle", last: "Simpson", nickname: "getify" >;
-def entry: < &person, nickname: empty >;
+def entry: < &person.!<nickname> >;
 // < first: "Kyle", last: "Simpson" >
 ```
 
-As shown, `empty` means the *absence of a value*, and thus cannot actually be held in a Record/Tuple.
+The range form drops a span instead of naming slots:
+
+```java
+def numbers: < 3, 4, 5, 6, 7 >;
+def ends: < &numbers.![1..3] >;
+// < 3, 7 >
+```
+
+Everything the positive picks admit, the negative ones admit too -- the dynamic `&` and `%` forms included (`.!<&excluded>`, `.!<%field>`). And like the positive picks, they lift to operator-as-function values: `(.!<nickname>)` is a function taking a Record and returning it without that field.
+
+A pick is a selection or a subtraction, never both -- there's no per-entry `!`, and no chaining one pick onto another. Each pick names slots in *its own source*, so to exclude from several spreads, write the exclusion on each: `< &a.!<x>, &b.!<x> >`.
+
+**Note:** `empty` is an ordinary value and can be held in a Record/Tuple like any other. `< &person, nickname: empty >` gives you a `nickname` field whose value is `empty` -- present, with no value -- which is a different thing from not having the field at all. Use `.!< .. >` when you want the field gone.
 
 #### Dynamic Pick
 

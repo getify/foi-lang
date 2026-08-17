@@ -968,6 +968,32 @@ export const DotAngleExpr = production("DotAngleExpr",
 	and(Period, OpenAngle, delim(), AnglePropertyList, delim(), CloseAngle)
 );
 
+// NegDotBracketExpr := Period Exmark OpenBracket _ RangeExpr _ CloseBracket;
+// NegDotAngleExpr   := Period Exmark OpenAngle _ AnglePropertyList _ CloseAngle;
+//
+// Negative-pick segments. Entry alphabets are their positive
+// counterparts' verbatim — RangeExpr and AnglePropertyList — so
+// the dynamic arms (`%expr`, `&src`) come along on the angle side
+// with no extra wiring.
+//
+// No trivia between Period and Exmark, or between Exmark and the
+// delimiter (same adjacency rule the positive forms carry).
+//
+// Exmark is declared in §8 (used there by SymbolicUnaryExpr);
+// forward-ref via lazy(), the same route OpFuncExpr uses to reach
+// §10's Op from §7.
+//
+// Reachable from PickValue (§17) and OpFuncExpr (§7) ONLY —
+// deliberately absent from MultiAccessSeg above, so a negative
+// segment cannot appear on an AssignmentExpr LHS, an export
+// binding, or a destructure source.
+export const NegDotBracketExpr = production("NegDotBracketExpr",
+	and(Period, lazy(() => Exmark), OpenBracket, delim(), lazy(() => RangeExpr), delim(), CloseBracket)
+);
+export const NegDotAngleExpr = production("NegDotAngleExpr",
+	and(Period, lazy(() => Exmark), OpenAngle, delim(), AnglePropertyList, delim(), CloseAngle)
+);
+
 // SingleAccessExpr := SingleAccessSeg (_ SingleAccessSeg)*;
 // <SingleAccessSeg> := DotIdentifier | BracketExpr;
 var SingleAccessSeg = or(DotIdentifier, BracketExpr);
@@ -1442,7 +1468,7 @@ export const ChainExpr = production("ChainExpr",
 // payload when present at this position.
 var CallExpr = or(AtCallExpr, ChainExpr);
 
-// OpFuncExpr := OpenParen (DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
+// OpFuncExpr := OpenParen (NegDotAngleExpr | NegDotBracketExpr | DotAngleExpr | DotBracketExpr | (OpenBracket CloseBracket) | Op) SingleQuote? CloseParen;
 //
 // No `:as` tail — annotation comes via AsExpr (§5).
 //
@@ -1458,6 +1484,8 @@ export const OpFuncExpr = production("OpFuncExpr",
 	and(
 		OpenParen,
 		or(
+			NegDotAngleExpr,
+			NegDotBracketExpr,
 			DotAngleExpr,
 			DotBracketExpr,
 			and(OpenBracket, CloseBracket),
@@ -2868,11 +2896,20 @@ export const DoLoopComprExpr = production("DoLoopComprExpr",
 // §17 DATA STRUCTURE LITERALS
 // =============================================================
 
-// PickValue := Ampersand IdentBase MultiAccessExpr?;
+// PickValue := Ampersand IdentBase MultiAccessExpr? NegPickSeg?;
+// <NegPickSeg> := NegDotAngleExpr | NegDotBracketExpr;
 //
 // No trivia between Ampersand and IdentBase (per grammar).
+//
+// NegPickSeg is a terminal tail — at most one, nothing after.
+// `&foo.!<a>.!<b>` fails here rather than at the semantic layer.
+// A positive access chain may precede it; MultiAccessExpr's segs
+// all fail at `.!` (DotIdentifier wants an ident after the Period,
+// DotBracketExpr wants OpenBracket, DotAngleExpr wants OpenAngle),
+// so the iter exits cleanly and the tail matches.
+var NegPickSeg = or(NegDotAngleExpr, NegDotBracketExpr);
 export const PickValue = production("PickValue",
-	and(Ampersand, IdentBase, optional(MultiAccessExpr))
+	and(Ampersand, IdentBase, optional(MultiAccessExpr), optional(NegPickSeg))
 );
 
 // ComputedPropAccessChain := IdentBase ((DotIdentifier | BracketExpr))*;

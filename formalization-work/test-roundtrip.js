@@ -371,12 +371,13 @@ var handlers = {
 		// are filtered out.
 		var inner;
 		var skip = null;
+		var bang = node.negated ? "!" : "";
 		if (node.properties) {
-			inner = ".<" + emitProperties(node.properties, recur) + ">";
+			inner = "." + bang + "<" + emitProperties(node.properties, recur) + ">";
 			skip = new Set(node.properties);
 		}
 		else if (node.range) {
-			inner = ".[" + recur(node.range) + "]";
+			inner = "." + bang + "[" + recur(node.range) + "]";
 			skip = new Set([ node.range ]);
 		}
 		else {

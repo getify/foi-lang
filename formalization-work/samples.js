@@ -1449,6 +1449,51 @@ export const samples = [
 	{ label: "PickValue: angle-pick (spread)",                   src: "<&foo.<&keys>>;" },
 	{ label: "PickValue: angle-pick (mixed dynamic)",            src: "<&foo.<a, %k, &keys>>;" },
 
+	// === Negative pick — PickValue tail ===
+	// Terminal tail, one per spread. Admitted off PickValue and
+	// OpFuncExpr only; the standalone and MultiAccessExpr forms
+	// are in failSamples.
+	{ label: "PickValue: neg angle-pick (named)",                src: "<&foo.!<a,b>>;" },
+	{ label: "PickValue: neg angle-pick (positional)",           src: "<&foo.!<1,3>>;" },
+	{ label: "PickValue: neg range-pick (closed)",               src: "<&foo.![1..3]>;" },
+	{ label: "PickValue: neg range-pick (leading)",              src: "<&foo.![2..]>;" },
+	{ label: "PickValue: neg range-pick (trailing)",             src: "<&foo.![..3]>;" },
+	{ label: "PickValue: neg angle-pick (computed)",             src: "<&foo.!<%k>>;" },
+	{ label: "PickValue: neg angle-pick (spread)",               src: "<&foo.!<&keys>>;" },
+	{ label: "PickValue: neg angle-pick (mixed dynamic)",        src: "<&foo.!<a, %k, &keys>>;" },
+	{ label: "PickValue: access chain then neg pick",            src: "<&foo.bar.!<a>>;" },
+	{ label: "PickValue: neg pick alongside positive entries",   src: "<x, &foo.!<a>, y>;" },
+	{ label: "SetLit: neg angle-pick",                           src: "<[&foo.!<a>]>;" },
+	{ label: "SetLit: neg range-pick",                           src: "<[&foo.![1..3]]>;" },
+
+	// === Negative pick — OpFuncExpr lift ===
+	{ label: "OpFuncExpr (neg angle-pick): (.!<a,5>)",           src: "(.!<a,5>);" },
+	{ label: "OpFuncExpr (neg angle-pick computed): (.!<%k>)",   src: "(.!<%k>);" },
+	{ label: "OpFuncExpr (neg angle-pick spread): (.!<&keys>)",  src: "(.!<&keys>);" },
+	{ label: "OpFuncExpr (neg range-access): (.![1..5])",        src: "(.![1..5]);" },
+	{ label: "OpFuncExpr (neg primed): (.!<a,b>')",              src: "(.!<a,b>');" },
+	{ label: "OpFuncExpr (neg) applied: (.!<a>)(rec)",           src: "(.!<a>)(rec);" },
+
+	{ label: "OpFuncExpr (unary bool): (?)",                 src: "(?);" },
+	{ label: "OpFuncExpr (unary bool): (!)",                 src: "(!);" },
+	{ label: "OpFuncExpr (named unary): (?empty)",           src: "(?empty);" },
+	{ label: "OpFuncExpr (named unary): (!empty)",           src: "(!empty);" },
+	{ label: "OpFuncExpr (unary bool primed): (?')",         src: "(?');" },
+	{ label: "OpFuncExpr (unary bool primed): (!')",         src: "(!');" },
+	{ label: "OpFuncExpr (named unary primed): (?empty')",   src: "(?empty');" },
+	{ label: "OpFuncExpr (named unary primed): (!empty')",   src: "(!empty');" },
+	{ label: "Shortcut primed unary: foo(?')",               src: "foo(?');" },
+	{ label: "Grouped NamedUnaryExpr (not a lift): (?empty rec)", src: "(?empty rec);" },
+
+	{ label: "OpFuncExpr (effector): (%)",           src: "(%);" },
+	{ label: "OpFuncExpr (identity): (@)",           src: "(@);" },
+	{ label: "OpFuncExpr (effector primed): (%')",   src: "(%');" },
+	{ label: "OpFuncExpr (identity primed): (@')",   src: "(@');" },
+	{ label: "OpFuncExpr (%) 1-arg: (%)(inst)",      src: "(%)(inst);" },
+	{ label: "OpFuncExpr (%) 2-arg: (%)(inst, env)", src: "(%)(inst, env);" },
+	{ label: "OpFuncExpr (%') 2-arg: (%')(env, inst)", src: "(%')(env, inst);" },
+	{ label: "OpFuncExpr (@) applied: (@)(42)",      src: "(@)(42);" },
+
 	// Set-context dynamic-pick.
 	{ label: "SetLit: angle-pick (computed)",                    src: "<[&foo.<%k>]>;" },
 	{ label: "SetLit: angle-pick (spread)",                      src: "<[&foo.<&keys>]>;" },
