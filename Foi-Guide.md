@@ -4272,13 +4272,13 @@ Recall the `~<*` async-comprehension discussed in the `Promise` section. It's qu
 def ch: Channel@;
 
 1..3 ~<* (v) {
-    ::putVal(ch,v);
+    $putVal(ch,v);
 };
 // Promise{..pending..}
 
 // elsewhere:
 Promise ~<* {
-    ::takeVal(ch);
+    $takeVal(ch);
 };
 // Value put: 1
 // Value taken: 1
@@ -4332,7 +4332,7 @@ putVal(ch,4);
 // Promise{..pending..}
 
 Promise ~<* {
-    ::takeVal(ch);
+    $takeVal(ch);
 };
 // Value put: 4
 // Value taken: 1
@@ -5020,7 +5020,7 @@ def ch: Channel@ 1;
 def task: IO ~<< {
     ch.put(42);
     def v:: getValue(ch);       // Promise, not IO
-    ::printValue(v);
+    $printValue(v);
 };
 
 task%;
